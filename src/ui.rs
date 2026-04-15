@@ -61,6 +61,7 @@ pub fn draw_sidebar(
     show_borders: bool,
     tabs_mode: bool,
     spinner_frame: &str,
+    view_mode: ViewMode,
 ) {
     if tabs_mode {
         draw_sidebar_tabs(
@@ -116,6 +117,7 @@ pub fn draw_sidebar(
             focused,
             spinner_frame,
             theme,
+            view_mode,
         );
     }
     draw_footer(
@@ -186,6 +188,7 @@ fn draw_sessions(
     focused: usize,
     spinner_frame: &str,
     theme: &Theme,
+    view_mode: ViewMode,
 ) {
     if sessions.is_empty() {
         frame.render_widget(
@@ -195,6 +198,181 @@ fn draw_sessions(
         return;
     }
 
+    match view_mode {
+        ViewMode::Expanded => {
+            let width = area.width as usize;
+            let mut lines: Vec<Line> = Vec::new();
+
+            for (i, session) in sessions.iter().enumerate() {
+                let is_focused = i == focused;
+                let is_current = session.is_current;
+                let is_emphasized = is_focused || is_current;
+
+                let accent_color = if is_current {
+                    theme.green
+                } else if is_focused {
+                    theme.accent
+                } else {
+                    theme.bg
+                };
+
+                let accent = if is_current || is_focused { "▌" } else { " " };
+                let name_style = if is_current && is_focused {
+                    Style::default()
+                        .fg(theme.green)
+                        .add_modifier(Modifier::BOLD)
+                } else if is_focused || is_current {
+                    Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.secondary)
+                };
+                let index_style = if is_focused {
+                    Style::default().fg(theme.secondary)
+                } else {
+                    Style::default().fg(theme.dim)
+                };
+                let bg = if is_focused { theme.surface } else { theme.bg };
+
+                // Row 1: accent + activity icon + index + name
+                let activity_icon = if session.idle_seconds < 3 {
+                    Span::styled(spinner_frame, Style::default().fg(theme.green).bg(bg))
+                } else {
+                    Span::styled(
+                        "󰒲",
+                        Style::default()
+                            .fg(if is_emphasized {
+                                theme.dim
+                            } else {
+                                theme.muted
+                            })
+                            .bg(bg),
+                    )
+                };
+                let idx_str = format!("{:>2}", i + 1);
+                let text_width = width.saturating_sub(6);
+                let name_display = truncate(session.name, text_width);
+                lines.push(pad_line(
+                    vec![
+                        Span::styled(accent, Style::default().fg(accent_color).bg(bg)),
+                        activity_icon,
+                        Span::styled(idx_str, index_style.bg(bg)),
+                        Span::styled("  ", Style::default().bg(bg)),
+                        Span::styled(name_display, name_style.bg(bg)),
+                    ],
+                    bg,
+                    width,
+                ));
+
+                // Row 2: idle badge + directory
+                let dir_display = truncate(&shorten_dir(session.dir), text_width.saturating_sub(2));
+                let dir_color = if is_focused {
+                    theme.teal
+                } else if is_current {
+                    theme.secondary
+                } else {
+                    theme.muted
+                };
+                let badge = format_idle_badge(session.idle_seconds)
+                    .map(|text| format!("{text:^6}"))
+                    .unwrap_or_else(|| " ".repeat(6));
+                lines.push(pad_line(
+                    vec![
+                        Span::styled(
+                            badge,
+                            Style::default()
+                                .fg(idle_color(theme, session.idle_seconds, is_emphasized))
+                                .bg(bg),
+                        ),
+                        Span::styled("", Style::default().fg(dir_color).bg(bg)),
+                        Span::styled(dir_display, Style::default().fg(dir_color).bg(bg)),
+                    ],
+                    bg,
+                    width,
+                ));
+
+                // Row 3: branch (always rendered to keep card height consistent)
+                if session.branch.is_empty() {
+                    lines.push(pad_line(
+                        vec![
+                            Span::styled("      ", Style::default().bg(bg)),
+                            Span::styled(
+                                "\u{e725}  no git",
+                                Style::default()
+                                    .fg(if is_emphasized {
+                                        theme.dim
+                                    } else {
+                                        theme.muted
+                                    })
+                                    .bg(bg),
+                            ),
+                        ],
+                        bg,
+                        width,
+                    ));
+                } else {
+                    let branch_color = if is_focused {
+                        theme.pink
+                    } else if is_current {
+                        theme.secondary
+                    } else {
+                        theme.muted
+                    };
+                    let branch_display = truncate(session.branch, text_width.saturating_sub(2));
+                    lines.push(pad_line(
+                        vec![
+                            Span::styled("      ", Style::default().bg(bg)),
+                            Span::styled("\u{e725} ", Style::default().fg(branch_color).bg(bg)),
+                            Span::styled(branch_display, Style::default().fg(branch_color).bg(bg)),
+                        ],
+                        bg,
+                        width,
+                    ));
+                }
+
+                // Row 4: status indicators (always rendered)
+                let status_spans = build_status_spans(session, is_emphasized, bg, theme, text_width);
+                let mut row4 = vec![Span::styled("      ", Style::default().bg(bg))];
+                if status_spans.is_empty() {
+                    row4.push(Span::styled(
+                        "—",
+                        Style::default()
+                            .fg(if is_emphasized {
+                                theme.dim
+                            } else {
+                                theme.muted
+                            })
+                            .bg(bg),
+                    ));
+                } else {
+                    row4.extend(status_spans);
+                }
+                lines.push(pad_line(row4, bg, width));
+
+                lines.push(Line::from(Span::styled(" ", Style::default().bg(theme.bg))));
+            }
+
+            let scroll = scroll_offset(focused, area.height, card_height(view_mode));
+            frame.render_widget(
+                Paragraph::new(lines)
+                    .style(Style::default().bg(theme.bg))
+                    .scroll((scroll as u16, 0)),
+                area,
+            );
+        }
+        ViewMode::Compact => {
+            draw_sessions_compact(frame, area, sessions, focused, spinner_frame, theme);
+        }
+    }
+}
+
+fn draw_sessions_compact(
+    frame: &mut Frame,
+    area: Rect,
+    sessions: &[SessionView],
+    focused: usize,
+    spinner_frame: &str,
+    theme: &Theme,
+) {
     let width = area.width as usize;
     let mut lines: Vec<Line> = Vec::new();
 
@@ -210,7 +388,6 @@ fn draw_sessions(
         } else {
             theme.bg
         };
-
         let accent = if is_current || is_focused { "▌" } else { " " };
         let name_style = if is_current && is_focused {
             Style::default()
@@ -228,83 +405,20 @@ fn draw_sessions(
         };
         let bg = if is_focused { theme.surface } else { theme.bg };
 
-        // Row 1: accent + activity icon + index + name
-        let activity_icon = if session.idle_seconds < 3 {
-            Span::styled(spinner_frame, Style::default().fg(theme.green).bg(bg))
-        } else {
-            Span::styled(
-                "󰒲",
-                Style::default()
-                    .fg(if is_emphasized {
-                        theme.dim
-                    } else {
-                        theme.muted
-                    })
-                    .bg(bg),
-            )
-        };
+        // Row 1: accent + activity + index + name + branch + git status
+        let activity_text = format_activity_compact(session.idle_seconds, spinner_frame);
+        let activity_color = idle_color(theme, session.idle_seconds, is_emphasized);
         let idx_str = format!("{:>2}", i + 1);
-        let text_width = width.saturating_sub(6);
-        let name_display = truncate(session.name, text_width);
-        lines.push(pad_line(
-            vec![
-                Span::styled(accent, Style::default().fg(accent_color).bg(bg)),
-                activity_icon,
-                Span::styled(idx_str, index_style.bg(bg)),
-                Span::styled("  ", Style::default().bg(bg)),
-                Span::styled(name_display, name_style.bg(bg)),
-            ],
-            bg,
-            width,
-        ));
 
-        // Row 2: idle badge + directory
-        let dir_display = truncate(&shorten_dir(session.dir), text_width.saturating_sub(2));
-        let dir_color = if is_focused {
-            theme.teal
-        } else if is_current {
-            theme.secondary
-        } else {
-            theme.muted
-        };
-        let badge = format_idle_badge(session.idle_seconds)
-            .map(|text| format!("{text:^6}"))
-            .unwrap_or_else(|| " ".repeat(6));
-        lines.push(pad_line(
-            vec![
-                Span::styled(
-                    badge,
-                    Style::default()
-                        .fg(idle_color(theme, session.idle_seconds, is_emphasized))
-                        .bg(bg),
-                ),
-                Span::styled("", Style::default().fg(dir_color).bg(bg)),
-                Span::styled(dir_display, Style::default().fg(dir_color).bg(bg)),
-            ],
-            bg,
-            width,
-        ));
+        let mut spans = vec![
+            Span::styled(accent, Style::default().fg(accent_color).bg(bg)),
+            Span::styled(activity_text, Style::default().fg(activity_color).bg(bg)),
+            Span::styled(idx_str, index_style.bg(bg)),
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(truncate(session.name, width.saturating_sub(6)), name_style.bg(bg)),
+        ];
 
-        // Row 3: branch (always rendered to keep card height consistent)
-        if session.branch.is_empty() {
-            lines.push(pad_line(
-                vec![
-                    Span::styled("      ", Style::default().bg(bg)),
-                    Span::styled(
-                        "\u{e725}  no git",
-                        Style::default()
-                            .fg(if is_emphasized {
-                                theme.dim
-                            } else {
-                                theme.muted
-                            })
-                            .bg(bg),
-                    ),
-                ],
-                bg,
-                width,
-            ));
-        } else {
+        if !session.branch.is_empty() {
             let branch_color = if is_focused {
                 theme.pink
             } else if is_current {
@@ -312,41 +426,49 @@ fn draw_sessions(
             } else {
                 theme.muted
             };
-            let branch_display = truncate(session.branch, text_width.saturating_sub(2));
-            lines.push(pad_line(
-                vec![
-                    Span::styled("      ", Style::default().bg(bg)),
-                    Span::styled("\u{e725} ", Style::default().fg(branch_color).bg(bg)),
-                    Span::styled(branch_display, Style::default().fg(branch_color).bg(bg)),
-                ],
-                bg,
-                width,
+            spans.push(Span::styled("  ", Style::default().bg(bg)));
+            spans.push(Span::styled(
+                truncate(session.branch, width.saturating_sub(20)),
+                Style::default().fg(branch_color).bg(bg),
             ));
+
+            let status = format_git_status(session, true);
+            if !status.is_empty() {
+                let status_color = if status == "✓" {
+                    if is_emphasized { theme.green } else { theme.muted }
+                } else if is_emphasized {
+                    theme.yellow
+                } else {
+                    theme.dim
+                };
+                spans.push(Span::styled(" ", Style::default().bg(bg)));
+                spans.push(Span::styled(status, Style::default().fg(status_color).bg(bg)));
+            }
         }
 
-        // Row 4: status indicators (always rendered)
-        let status_spans = build_status_spans(session, is_emphasized, bg, theme, text_width);
-        let mut row4 = vec![Span::styled("      ", Style::default().bg(bg))];
-        if status_spans.is_empty() {
-            row4.push(Span::styled(
-                "—",
-                Style::default()
-                    .fg(if is_emphasized {
-                        theme.dim
-                    } else {
-                        theme.muted
-                    })
-                    .bg(bg),
-            ));
+        lines.push(pad_line(spans, bg, width));
+
+        // Row 2: directory
+        let text_width = width.saturating_sub(6);
+        let dir_display = truncate(&shorten_dir(session.dir), text_width);
+        let dir_color = if is_focused {
+            theme.teal
+        } else if is_current {
+            theme.secondary
         } else {
-            row4.extend(status_spans);
-        }
-        lines.push(pad_line(row4, bg, width));
-
-        lines.push(Line::from(Span::styled(" ", Style::default().bg(theme.bg))));
+            theme.muted
+        };
+        lines.push(pad_line(
+            vec![
+                Span::styled("      ", Style::default().bg(bg)),
+                Span::styled(dir_display, Style::default().fg(dir_color).bg(bg)),
+            ],
+            bg,
+            width,
+        ));
     }
 
-    let scroll = scroll_offset(focused, area.height, card_height(ViewMode::Expanded));
+    let scroll = scroll_offset(focused, area.height, card_height(ViewMode::Compact));
     frame.render_widget(
         Paragraph::new(lines)
             .style(Style::default().bg(theme.bg))

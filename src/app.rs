@@ -379,6 +379,7 @@ impl App {
         let context_menu = s.context_menu.clone();
         let show_borders = s.show_borders;
         let layout_mode = s.layout_mode;
+        let view_mode = s.view_mode;
         let sidebar_width = s.sidebar_width;
         let main_view = s.main_view;
         let warning_state = self.warning_state.clone();
@@ -466,6 +467,7 @@ impl App {
                 show_borders,
                 layout_mode == LayoutMode::Vertical,
                 &spinner_frame,
+                view_mode,
             );
 
             if let Some(gap) = gap_area {
