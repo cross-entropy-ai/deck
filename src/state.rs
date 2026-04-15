@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use crate::config::ExcludePattern;
 use crate::ui::{self, SessionView, CARD_HEIGHT};
 
 // --- Constants ---
@@ -181,6 +182,7 @@ pub struct AppState {
 
     // Config
     pub exclude_patterns: Vec<String>,
+    pub compiled_patterns: Vec<ExcludePattern>,
 }
 
 impl AppState {
@@ -192,6 +194,7 @@ impl AppState {
         term_width: u16,
         term_height: u16,
         exclude_patterns: Vec<String>,
+        compiled_patterns: Vec<ExcludePattern>,
     ) -> Self {
         Self {
             sessions: Vec::new(),
@@ -220,6 +223,7 @@ impl AppState {
             term_height,
             last_scroll: Instant::now(),
             exclude_patterns,
+            compiled_patterns,
         }
     }
 

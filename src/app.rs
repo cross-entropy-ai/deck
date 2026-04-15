@@ -64,6 +64,9 @@ impl App {
         let show_borders = cfg.show_borders;
         let sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
 
+        let exclude_patterns = cfg.exclude_patterns.clone();
+        let compiled_patterns = crate::config::compile_patterns(&exclude_patterns);
+
         let state = AppState::new(
             theme_index,
             layout_mode,
@@ -71,7 +74,8 @@ impl App {
             sidebar_width,
             term_width,
             term_height,
-            cfg.exclude_patterns,
+            exclude_patterns,
+            compiled_patterns,
         );
         let nesting_guard = NestingGuard::new();
 
@@ -587,7 +591,7 @@ impl App {
 
         self.state.sessions = sessions
             .into_iter()
-            .filter(|s| !s.name.starts_with('_'))
+            .filter(|s| !crate::config::session_excluded(&s.name, &self.state.compiled_patterns))
             .map(|s| {
                 let git_info = git::get_git_info(&s.dir);
                 let idle_seconds = now.saturating_sub(s.activity);
