@@ -405,6 +405,7 @@ impl App {
             theme_names: THEMES.iter().map(|theme| theme.name).collect(),
             layout_mode: s.layout_mode,
             show_borders: s.show_borders,
+            view_mode: s.view_mode,
             exclude_count: s.exclude_patterns.len(),
             exclude_editor: s.exclude_editor.as_ref().map(|e| ui::ExcludeEditorView {
                 patterns: &s.exclude_patterns,

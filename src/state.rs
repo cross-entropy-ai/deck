@@ -73,7 +73,7 @@ pub enum ViewMode {
     Compact,
 }
 
-pub const SETTINGS_ITEM_COUNT: usize = 4;
+pub const SETTINGS_ITEM_COUNT: usize = 5;
 
 // --- Context menu ---
 

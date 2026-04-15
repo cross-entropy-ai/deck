@@ -42,6 +42,7 @@ pub struct SettingsView<'a> {
     pub theme_names: Vec<&'a str>,
     pub layout_mode: LayoutMode,
     pub show_borders: bool,
+    pub view_mode: ViewMode,
     pub exclude_count: usize,
     pub exclude_editor: Option<ExcludeEditorView<'a>>,
 }
@@ -911,6 +912,14 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
             "Borders",
             if settings.show_borders { "On" } else { "Off" }.to_string(),
             "Left/right toggles pane borders",
+        ),
+        (
+            "View",
+            match settings.view_mode {
+                ViewMode::Expanded => "Expanded".to_string(),
+                ViewMode::Compact => "Compact".to_string(),
+            },
+            "Left/right toggles compact mode",
         ),
         (
             "Exclude",

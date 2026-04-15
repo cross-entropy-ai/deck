@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 
 use crate::state::{
     AppState, ContextMenu, FilterMode, FocusMode, KillRequest, LayoutMode, MainView, MenuKind,
-    RenameRequest, RenameState, SideEffect, GLOBAL_MENU_ITEMS, SESSION_MENU_ITEMS,
+    RenameRequest, RenameState, SideEffect, ViewMode, GLOBAL_MENU_ITEMS, SESSION_MENU_ITEMS,
     SETTINGS_ITEM_COUNT,
 };
 use crate::theme::THEMES;
@@ -31,6 +31,7 @@ pub enum Action {
     // UI toggles
     ToggleLayout,
     ToggleBorders,
+    ToggleViewMode,
     OpenSettings,
     CloseSettings,
     SettingsNext,
@@ -271,6 +272,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.resize_pty = true;
             fx.save_config = true;
         }
+        Action::ToggleViewMode => {
+            state.view_mode = match state.view_mode {
+                ViewMode::Expanded => ViewMode::Compact,
+                ViewMode::Compact => ViewMode::Expanded,
+            };
+            fx.save_config = true;
+        }
         Action::OpenSettings => {
             state.main_view = MainView::Settings;
             state.focus_mode = FocusMode::Main;
@@ -306,6 +314,11 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 fx.save_config = inner.save_config;
             }
             3 => {
+                let _ = direction;
+                let inner = apply_action(state, Action::ToggleViewMode);
+                fx.save_config = inner.save_config;
+            }
+            4 => {
                 let _ = direction;
                 apply_action(state, Action::OpenExcludeEditor);
             }
@@ -736,6 +749,9 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 
         // Toggle layout
         KeyCode::Char('l') => Action::ToggleLayout,
+
+        // Toggle compact/expanded view
+        KeyCode::Char('c') => Action::ToggleViewMode,
 
         // Reorder: Alt+Up / Alt+Down
         KeyCode::Up if alt => Action::ReorderSession(-1),
@@ -1254,7 +1270,7 @@ mod tests {
     fn open_close_exclude_editor() {
         let mut state = make_test_state(1);
         state.main_view = MainView::Settings;
-        state.settings_selected = 3;
+        state.settings_selected = 4;
         apply_action(&mut state, Action::OpenExcludeEditor);
         assert!(state.exclude_editor.is_some());
         apply_action(&mut state, Action::CloseExcludeEditor);
@@ -1317,5 +1333,26 @@ mod tests {
         apply_action(&mut state, Action::ReorderSession(-1));
         let new_order: Vec<String> = state.sessions.iter().map(|s| s.name.clone()).collect();
         assert_eq!(original_order, new_order);
+    }
+
+    #[test]
+    fn toggle_view_mode_flips_and_saves() {
+        let mut state = make_test_state(1);
+        assert_eq!(state.view_mode, ViewMode::Expanded);
+        let fx = apply_action(&mut state, Action::ToggleViewMode);
+        assert_eq!(state.view_mode, ViewMode::Compact);
+        assert!(fx.save_config);
+        let fx = apply_action(&mut state, Action::ToggleViewMode);
+        assert_eq!(state.view_mode, ViewMode::Expanded);
+        assert!(fx.save_config);
+    }
+
+    #[test]
+    fn settings_adjust_view_mode_toggles() {
+        let mut state = make_test_state(1);
+        state.settings_selected = 3;
+        let fx = apply_action(&mut state, Action::SettingsAdjust(1));
+        assert_eq!(state.view_mode, ViewMode::Compact);
+        assert!(fx.save_config);
     }
 }
