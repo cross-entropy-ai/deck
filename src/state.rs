@@ -66,6 +66,13 @@ impl FilterMode {
 }
 
 pub const FILTER_TABS: [FilterMode; 3] = [FilterMode::All, FilterMode::Idle, FilterMode::Working];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    Expanded,
+    Compact,
+}
+
 pub const SETTINGS_ITEM_COUNT: usize = 4;
 
 // --- Context menu ---

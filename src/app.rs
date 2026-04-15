@@ -671,6 +671,7 @@ impl App {
             .to_string(),
             show_borders: self.state.show_borders,
             sidebar_width: self.state.sidebar_width,
+            view_mode: "expanded".to_string(),
             exclude_patterns: self.state.exclude_patterns.clone(),
         }
         .save();

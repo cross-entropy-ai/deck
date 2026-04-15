@@ -9,6 +9,7 @@ pub struct Config {
     pub layout: String,
     pub show_borders: bool,
     pub sidebar_width: u16,
+    pub view_mode: String,
     pub exclude_patterns: Vec<String>,
 }
 
@@ -19,6 +20,7 @@ impl Default for Config {
             layout: "horizontal".to_string(),
             show_borders: true,
             sidebar_width: 28,
+            view_mode: "expanded".to_string(),
             exclude_patterns: vec!["_*".to_string()],
         }
     }
@@ -65,11 +67,12 @@ impl Config {
             format!("[{}]", items.join(", "))
         };
         format!(
-            "{{\n  \"theme\": {},\n  \"layout\": {},\n  \"show_borders\": {},\n  \"sidebar_width\": {},\n  \"exclude_patterns\": {}\n}}\n",
+            "{{\n  \"theme\": {},\n  \"layout\": {},\n  \"show_borders\": {},\n  \"sidebar_width\": {},\n  \"view_mode\": {},\n  \"exclude_patterns\": {}\n}}\n",
             quote(&self.theme),
             quote(&self.layout),
             self.show_borders,
             self.sidebar_width,
+            quote(&self.view_mode),
             patterns_json,
         )
     }
@@ -198,6 +201,7 @@ fn parse_json(s: &str) -> Option<Config> {
                     config.sidebar_width = w;
                 }
             }
+            "view_mode" => config.view_mode = val.trim_matches('"').to_string(),
             _ => {}
         }
     }
@@ -312,5 +316,38 @@ mod tests {
         };
         let json = config.to_json();
         assert!(json.contains(r#""exclude_patterns": ["_*", "/^test/"]"#));
+    }
+
+    #[test]
+    fn parse_json_with_view_mode() {
+        let json = r#"{
+  "theme": "Catppuccin Mocha",
+  "layout": "horizontal",
+  "show_borders": true,
+  "sidebar_width": 28,
+  "view_mode": "compact"
+}"#;
+        let config = parse_json(json).unwrap();
+        assert_eq!(config.view_mode, "compact");
+    }
+
+    #[test]
+    fn parse_json_without_view_mode_uses_default() {
+        let json = r#"{
+  "theme": "Catppuccin Mocha",
+  "layout": "horizontal",
+  "show_borders": true,
+  "sidebar_width": 28
+}"#;
+        let config = parse_json(json).unwrap();
+        assert_eq!(config.view_mode, "expanded");
+    }
+
+    #[test]
+    fn config_to_json_includes_view_mode() {
+        let mut config = Config::default();
+        config.view_mode = "compact".to_string();
+        let json = config.to_json();
+        assert!(json.contains(r#""view_mode": "compact""#));
     }
 }
