@@ -23,6 +23,15 @@ pub struct SessionView<'a> {
     pub idle_seconds: u64,
 }
 
+pub struct ExcludeEditorView<'a> {
+    pub patterns: &'a [String],
+    pub selected: usize,
+    pub adding: bool,
+    pub input: &'a str,
+    pub cursor: usize,
+    pub error: Option<&'a str>,
+}
+
 pub struct SettingsView<'a> {
     pub selected: usize,
     pub focus_main: bool,
@@ -33,6 +42,7 @@ pub struct SettingsView<'a> {
     pub layout_mode: LayoutMode,
     pub show_borders: bool,
     pub exclude_count: usize,
+    pub exclude_editor: Option<ExcludeEditorView<'a>>,
 }
 
 /// Draw the sidebar into the given area.
@@ -847,6 +857,10 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
     if settings.theme_picker_open {
         draw_theme_picker(frame, area, settings, theme);
     }
+
+    if let Some(ref editor) = settings.exclude_editor {
+        draw_exclude_editor(frame, area, editor, theme);
+    }
 }
 
 fn draw_theme_picker(frame: &mut Frame, area: Rect, settings: &SettingsView, theme: &Theme) {
@@ -898,6 +912,106 @@ fn draw_theme_picker(frame: &mut Frame, area: Rect, settings: &SettingsView, the
         .collect();
 
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_exclude_editor(
+    frame: &mut Frame,
+    area: Rect,
+    editor: &ExcludeEditorView,
+    theme: &Theme,
+) {
+    let pattern_count = editor.patterns.len();
+    let max_pattern_width = editor
+        .patterns
+        .iter()
+        .map(|p| p.len())
+        .max()
+        .unwrap_or(0)
+        .max(20);
+
+    let content_lines = pattern_count
+        + if editor.adding { 1 } else { 0 }
+        + if editor.error.is_some() { 1 } else { 0 };
+    let height = (content_lines as u16 + 4).min(area.height.saturating_sub(2)).max(5);
+    let width = (max_pattern_width as u16 + 8)
+        .max(30)
+        .min(area.width.saturating_sub(4));
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(height) / 2;
+    let popup_area = Rect::new(x, y, width, height);
+
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(" Exclude Patterns ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent))
+        .style(Style::default().bg(theme.bg));
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    if pattern_count == 0 && !editor.adding {
+        lines.push(Line::from(Span::styled(
+            "  No patterns defined",
+            Style::default().fg(theme.dim),
+        )));
+    }
+
+    for (i, pattern) in editor.patterns.iter().enumerate() {
+        let selected = !editor.adding && i == editor.selected;
+        let row_bg = if selected { theme.surface } else { theme.bg };
+        let marker = if selected { "▌" } else { " " };
+        lines.push(Line::from(vec![
+            Span::styled(
+                marker,
+                Style::default()
+                    .fg(if selected { theme.accent } else { theme.bg })
+                    .bg(row_bg),
+            ),
+            Span::styled(format!(" {} ", pattern), Style::default().fg(theme.text).bg(row_bg)),
+        ]));
+    }
+
+    if editor.adding {
+        let display_input = if editor.input.is_empty() {
+            "│"
+        } else {
+            editor.input
+        };
+        lines.push(Line::from(vec![
+            Span::styled("▌", Style::default().fg(theme.green).bg(theme.surface)),
+            Span::styled(
+                format!(" {} ", display_input),
+                Style::default().fg(theme.text).bg(theme.surface),
+            ),
+        ]));
+    }
+
+    if let Some(err) = editor.error {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", err),
+            Style::default().fg(theme.pink),
+        )));
+    }
+
+    // Help line
+    lines.push(Line::raw(""));
+    let help = if editor.adding {
+        "  Enter: confirm  Esc: cancel"
+    } else {
+        "  a: add  d: delete  Esc: close"
+    };
+    lines.push(Line::from(Span::styled(
+        help,
+        Style::default().fg(theme.muted),
+    )));
+
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(theme.bg)),
+        inner,
+    );
 }
 
 fn truncate(s: &str, max_width: usize) -> String {

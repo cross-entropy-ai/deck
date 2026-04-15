@@ -400,6 +400,14 @@ impl App {
             layout_mode: s.layout_mode,
             show_borders: s.show_borders,
             exclude_count: s.exclude_patterns.len(),
+            exclude_editor: s.exclude_editor.as_ref().map(|e| ui::ExcludeEditorView {
+                patterns: &s.exclude_patterns,
+                selected: e.selected,
+                adding: e.adding,
+                input: &e.input,
+                cursor: e.cursor,
+                error: e.error.as_deref(),
+            }),
         };
         let hover_sep = s.hover_separator;
         let dragging_sep = s.dragging_separator;
