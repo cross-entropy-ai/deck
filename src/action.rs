@@ -108,9 +108,12 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         // --- Navigation (instant switch) ---
         Action::FocusNext => {
             if !state.filtered.is_empty() {
+                let old = state.focused;
                 state.focused = (state.focused + 1).min(state.filtered.len() - 1);
-                if let Some(&session_idx) = state.filtered.get(state.focused) {
-                    fx.switch_session = Some(state.sessions[session_idx].name.clone());
+                if state.focused != old {
+                    if let Some(&session_idx) = state.filtered.get(state.focused) {
+                        fx.switch_session = Some(state.sessions[session_idx].name.clone());
+                    }
                 }
             }
         }
@@ -134,9 +137,12 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::ScrollDown => {
             state.last_scroll = std::time::Instant::now();
             if !state.filtered.is_empty() {
+                let old = state.focused;
                 state.focused = (state.focused + 1).min(state.filtered.len() - 1);
-                if let Some(&session_idx) = state.filtered.get(state.focused) {
-                    fx.switch_session = Some(state.sessions[session_idx].name.clone());
+                if state.focused != old {
+                    if let Some(&session_idx) = state.filtered.get(state.focused) {
+                        fx.switch_session = Some(state.sessions[session_idx].name.clone());
+                    }
                 }
             }
         }
@@ -417,7 +423,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if let Some(ref mut editor) = state.exclude_editor {
                 if editor.adding {
                     editor.input.insert(editor.cursor, ch);
-                    editor.cursor += 1;
+                    editor.cursor += ch.len_utf8();
                     editor.error = None;
                 }
             }
@@ -425,7 +431,12 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::ExcludeEditorBackspace => {
             if let Some(ref mut editor) = state.exclude_editor {
                 if editor.adding && editor.cursor > 0 {
-                    editor.cursor -= 1;
+                    let prev = editor.input[..editor.cursor]
+                        .chars()
+                        .last()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(0);
+                    editor.cursor -= prev;
                     editor.input.remove(editor.cursor);
                     editor.error = None;
                 }
@@ -1012,7 +1023,7 @@ mod tests {
         state.focused = 4;
         let fx = apply_action(&mut state, Action::FocusNext);
         assert_eq!(state.focused, 4);
-        assert_eq!(fx.switch_session.as_deref(), Some("sess-4"));
+        assert!(fx.switch_session.is_none());
     }
 
     #[test]

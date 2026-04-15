@@ -287,7 +287,7 @@ impl AppState {
             LayoutMode::Vertical => self.effective_sidebar_height(),
         };
         let header_height = 3u16;
-        let footer_height = 2u16;
+        let footer_height = 3u16;
         let sessions_top = b + header_height;
         let sessions_bottom = sidebar_h.saturating_sub(b + footer_height);
         if row < sessions_top || row >= sessions_bottom {
@@ -425,7 +425,7 @@ impl AppState {
 
     /// Clamp and set sidebar width. Returns true if it changed.
     pub fn resize_sidebar(&mut self, new_width: u16) -> bool {
-        let clamped = new_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX.min(self.term_width - 10));
+        let clamped = new_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX.min(self.term_width.saturating_sub(10)));
         if clamped == self.sidebar_width {
             return false;
         }
@@ -437,7 +437,7 @@ impl AppState {
     pub fn resize_sidebar_height(&mut self, new_height: u16) -> bool {
         let clamped = new_height.clamp(
             SIDEBAR_HEIGHT_MIN,
-            SIDEBAR_HEIGHT_MAX.min(self.term_height - 6),
+            SIDEBAR_HEIGHT_MAX.min(self.term_height.saturating_sub(6)),
         );
         if clamped == self.sidebar_height {
             return false;

@@ -87,7 +87,23 @@ impl Config {
 }
 
 fn quote(s: &str) -> String {
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// A compiled exclude pattern — either a glob or a regex.
@@ -214,11 +230,37 @@ fn parse_json(s: &str) -> Option<Config> {
 }
 
 /// Parse a comma-separated list of quoted strings from inside `[...]`.
+/// Respects quote boundaries so commas inside quoted strings are preserved.
 fn parse_string_array(s: &str) -> Vec<String> {
-    s.split(',')
-        .map(|item| item.trim().trim_matches('"').to_string())
-        .filter(|item| !item.is_empty())
-        .collect()
+    let mut results = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut chars = s.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                in_quotes = !in_quotes;
+            }
+            ',' if !in_quotes => {
+                let trimmed = current.trim().to_string();
+                if !trimmed.is_empty() {
+                    results.push(trimmed);
+                }
+                current.clear();
+            }
+            _ => {
+                current.push(ch);
+            }
+        }
+    }
+
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() {
+        results.push(trimmed);
+    }
+
+    results
 }
 
 #[cfg(test)]
@@ -349,5 +391,12 @@ mod tests {
         config.view_mode = "compact".to_string();
         let json = config.to_json();
         assert!(json.contains(r#""view_mode": "compact""#));
+    }
+
+    #[test]
+    fn parse_string_array_handles_commas_in_patterns() {
+        let input = r#""_*", "/foo,bar/""#;
+        let result = parse_string_array(input);
+        assert_eq!(result, vec!["_*", "/foo,bar/"]);
     }
 }

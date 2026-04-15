@@ -677,7 +677,7 @@ pub fn tab_col_ranges(sessions: &[SessionView]) -> Vec<(u16, u16)> {
     let mut x: u16 = 1; // initial padding
     for (i, session) in sessions.iter().enumerate() {
         let idx_width = format!("{}", i + 1).len() as u16;
-        let name_width = session.name.len() as u16;
+        let name_width = UnicodeWidthStr::width(session.name) as u16;
         let tab_width = idx_width + 1 + name_width + 1; // "idx name "
         ranges.push((x, x + tab_width));
         x += tab_width;
@@ -748,18 +748,39 @@ fn draw_confirm_kill(frame: &mut Frame, area: Rect, theme: &Theme, name: &str) {
 }
 
 fn draw_rename_input(frame: &mut Frame, area: Rect, theme: &Theme, input: &str, cursor: usize) {
+    use unicode_width::UnicodeWidthStr;
+
     let max_w = area.width.saturating_sub(4) as usize;
-    let display = if input.len() > max_w {
-        &input[input.len() - max_w..]
+
+    // Find a display-width-safe prefix of the input to show
+    let (display, cursor_pos) = if input.width() > max_w {
+        // Scroll so cursor is visible: show the tail
+        let mut start = 0;
+        for (i, _ch) in input.char_indices() {
+            if input[i..].width() <= max_w {
+                start = i;
+                break;
+            }
+        }
+        let display = &input[start..];
+        let cursor_pos = if cursor >= start { cursor - start } else { 0 };
+        (display, cursor_pos)
     } else {
-        input
+        (input, cursor)
     };
-    let cursor_pos = if input.len() > max_w {
-        max_w
+
+    // Split at cursor using char boundary
+    let cursor_pos = cursor_pos.min(display.len());
+    let before = &display[..cursor_pos];
+    let after = &display[cursor_pos..];
+
+    // Get the character under cursor (first char of `after`), or space if at end
+    let (cursor_char, rest) = if let Some(ch) = after.chars().next() {
+        let len = ch.len_utf8();
+        (&after[..len], &after[len..])
     } else {
-        cursor
+        (" ", "")
     };
-    let (before, after) = display.split_at(cursor_pos.min(display.len()));
 
     let lines = vec![
         Line::raw(""),
@@ -772,13 +793,13 @@ fn draw_rename_input(frame: &mut Frame, area: Rect, theme: &Theme, input: &str, 
             Span::styled("  ", Style::default()),
             Span::styled(before, Style::default().fg(theme.accent)),
             Span::styled(
-                if after.is_empty() { " " } else { &after[..1] },
+                cursor_char,
                 Style::default()
                     .fg(theme.bg)
                     .bg(theme.accent),
             ),
             Span::styled(
-                if after.len() > 1 { &after[1..] } else { "" },
+                rest,
                 Style::default().fg(theme.accent),
             ),
         ]),
