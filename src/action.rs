@@ -105,27 +105,39 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
     let mut fx = SideEffect::default();
 
     match action {
-        // --- Navigation ---
+        // --- Navigation (instant switch) ---
         Action::FocusNext => {
             if !state.filtered.is_empty() {
                 state.focused = (state.focused + 1).min(state.filtered.len() - 1);
+                if let Some(&session_idx) = state.filtered.get(state.focused) {
+                    fx.switch_session = Some(state.sessions[session_idx].name.clone());
+                }
             }
         }
         Action::FocusPrev => {
             if state.focused > 0 {
                 state.focused -= 1;
+                if let Some(&session_idx) = state.filtered.get(state.focused) {
+                    fx.switch_session = Some(state.sessions[session_idx].name.clone());
+                }
             }
         }
         Action::ScrollUp => {
             state.last_scroll = std::time::Instant::now();
             if state.focused > 0 {
                 state.focused -= 1;
+                if let Some(&session_idx) = state.filtered.get(state.focused) {
+                    fx.switch_session = Some(state.sessions[session_idx].name.clone());
+                }
             }
         }
         Action::ScrollDown => {
             state.last_scroll = std::time::Instant::now();
             if !state.filtered.is_empty() {
                 state.focused = (state.focused + 1).min(state.filtered.len() - 1);
+                if let Some(&session_idx) = state.filtered.get(state.focused) {
+                    fx.switch_session = Some(state.sessions[session_idx].name.clone());
+                }
             }
         }
         Action::FocusIndex(idx) => {
@@ -155,7 +167,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             let Some(&session_idx) = state.filtered.get(state.focused) else {
                 return fx;
             };
-            let is_current = state.sessions[session_idx].is_current;
             let name = state.sessions[session_idx].name.clone();
 
             let next_focused = if state.focused + 1 < state.filtered.len() {
@@ -164,7 +175,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 state.focused.saturating_sub(1)
             };
 
-            let switch_to = if is_current {
+            // Focused session is always the current session (instant switch),
+            // so we always need to switch away before killing.
+            let switch_to = {
                 let alt_idx = if state.focused + 1 < state.filtered.len() {
                     state.focused + 1
                 } else if state.focused > 0 {
@@ -173,8 +186,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     return fx;
                 };
                 Some(state.sessions[state.filtered[alt_idx]].name.clone())
-            } else {
-                Option::None
             };
 
             state.session_order.retain(|n| n != &name);
@@ -987,35 +998,39 @@ mod tests {
     }
 
     #[test]
-    fn focus_next_advances() {
+    fn focus_next_advances_and_switches() {
         let mut state = make_test_state(5);
         state.focused = 0;
-        apply_action(&mut state, Action::FocusNext);
+        let fx = apply_action(&mut state, Action::FocusNext);
         assert_eq!(state.focused, 1);
+        assert_eq!(fx.switch_session.as_deref(), Some("sess-1"));
     }
 
     #[test]
     fn focus_next_stops_at_end() {
         let mut state = make_test_state(5);
         state.focused = 4;
-        apply_action(&mut state, Action::FocusNext);
+        let fx = apply_action(&mut state, Action::FocusNext);
         assert_eq!(state.focused, 4);
+        assert_eq!(fx.switch_session.as_deref(), Some("sess-4"));
     }
 
     #[test]
-    fn focus_prev_decrements() {
+    fn focus_prev_decrements_and_switches() {
         let mut state = make_test_state(5);
         state.focused = 3;
-        apply_action(&mut state, Action::FocusPrev);
+        let fx = apply_action(&mut state, Action::FocusPrev);
         assert_eq!(state.focused, 2);
+        assert_eq!(fx.switch_session.as_deref(), Some("sess-2"));
     }
 
     #[test]
     fn focus_prev_stops_at_zero() {
         let mut state = make_test_state(5);
         state.focused = 0;
-        apply_action(&mut state, Action::FocusPrev);
+        let fx = apply_action(&mut state, Action::FocusPrev);
         assert_eq!(state.focused, 0);
+        assert!(fx.switch_session.is_none());
     }
 
     #[test]
@@ -1050,7 +1065,7 @@ mod tests {
     }
 
     #[test]
-    fn confirm_kill_returns_side_effect() {
+    fn confirm_kill_returns_side_effect_with_switch_target() {
         let mut state = make_test_state(3);
         state.focused = 1;
         state.confirm_kill = true;
@@ -1059,19 +1074,7 @@ mod tests {
         assert!(fx.kill_session.is_some());
         let kill = fx.kill_session.unwrap();
         assert_eq!(kill.name, "sess-1");
-        assert!(kill.switch_to.is_none()); // not current session
-    }
-
-    #[test]
-    fn confirm_kill_current_session_provides_switch_target() {
-        let mut state = make_test_state(3);
-        state.sessions[1].is_current = true;
-        state.sessions[0].is_current = false;
-        state.focused = 1;
-        state.confirm_kill = true;
-        let fx = apply_action(&mut state, Action::ConfirmKill);
-        let kill = fx.kill_session.unwrap();
-        assert_eq!(kill.name, "sess-1");
+        // Focused session is always current (instant switch), so always provides switch target
         assert!(kill.switch_to.is_some());
     }
 

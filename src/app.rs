@@ -431,7 +431,6 @@ impl App {
                     staged: r.staged,
                     modified: r.modified,
                     untracked: r.untracked,
-                    is_current: r.is_current,
                     idle_seconds: r.idle_seconds,
                 })
                 .collect();

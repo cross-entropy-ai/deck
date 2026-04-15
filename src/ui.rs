@@ -19,7 +19,6 @@ pub struct SessionView<'a> {
     pub staged: u32,
     pub modified: u32,
     pub untracked: u32,
-    pub is_current: bool,
     pub idle_seconds: u64,
 }
 
@@ -206,23 +205,16 @@ fn draw_sessions(
 
             for (i, session) in sessions.iter().enumerate() {
                 let is_focused = i == focused;
-                let is_current = session.is_current;
-                let is_emphasized = is_focused || is_current;
+                let is_emphasized = is_focused;
 
-                let accent_color = if is_current {
+                let accent_color = if is_focused {
                     theme.green
-                } else if is_focused {
-                    theme.accent
                 } else {
                     theme.bg
                 };
 
-                let accent = if is_current || is_focused { "▌" } else { " " };
-                let name_style = if is_current && is_focused {
-                    Style::default()
-                        .fg(theme.green)
-                        .add_modifier(Modifier::BOLD)
-                } else if is_focused || is_current {
+                let accent = if is_focused { "▌" } else { " " };
+                let name_style = if is_focused {
                     Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(theme.secondary)
@@ -268,8 +260,6 @@ fn draw_sessions(
                 let dir_display = truncate(&shorten_dir(session.dir), text_width.saturating_sub(2));
                 let dir_color = if is_focused {
                     theme.teal
-                } else if is_current {
-                    theme.secondary
                 } else {
                     theme.muted
                 };
@@ -313,8 +303,6 @@ fn draw_sessions(
                 } else {
                     let branch_color = if is_focused {
                         theme.pink
-                    } else if is_current {
-                        theme.secondary
                     } else {
                         theme.muted
                     };
@@ -379,22 +367,15 @@ fn draw_sessions_compact(
 
     for (i, session) in sessions.iter().enumerate() {
         let is_focused = i == focused;
-        let is_current = session.is_current;
-        let is_emphasized = is_focused || is_current;
+        let is_emphasized = is_focused;
 
-        let accent_color = if is_current {
+        let accent_color = if is_focused {
             theme.green
-        } else if is_focused {
-            theme.accent
         } else {
             theme.bg
         };
-        let accent = if is_current || is_focused { "▌" } else { " " };
-        let name_style = if is_current && is_focused {
-            Style::default()
-                .fg(theme.green)
-                .add_modifier(Modifier::BOLD)
-        } else if is_focused || is_current {
+        let accent = if is_focused { "▌" } else { " " };
+        let name_style = if is_focused {
             Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.secondary)
@@ -422,8 +403,6 @@ fn draw_sessions_compact(
         if !session.branch.is_empty() {
             let branch_color = if is_focused {
                 theme.pink
-            } else if is_current {
-                theme.secondary
             } else {
                 theme.muted
             };
@@ -454,8 +433,6 @@ fn draw_sessions_compact(
         let dir_display = truncate(&shorten_dir(session.dir), text_width);
         let dir_color = if is_focused {
             theme.teal
-        } else if is_current {
-            theme.secondary
         } else {
             theme.muted
         };
@@ -577,13 +554,10 @@ fn draw_sidebar_tabs(
 
     for (i, session) in sessions.iter().enumerate() {
         let is_focused = i == focused;
-        let is_current = session.is_current;
 
         let bg = if is_focused { theme.surface } else { theme.bg };
-        let name_fg = if is_current {
+        let name_fg = if is_focused {
             theme.green
-        } else if is_focused {
-            theme.text
         } else {
             theme.secondary
         };
@@ -603,7 +577,7 @@ fn draw_sidebar_tabs(
             Style::default()
                 .fg(name_fg)
                 .bg(bg)
-                .add_modifier(if is_focused || is_current {
+                .add_modifier(if is_focused {
                     Modifier::BOLD
                 } else {
                     Modifier::empty()
@@ -1189,7 +1163,6 @@ mod tests {
             staged,
             modified,
             untracked,
-            is_current: false,
             idle_seconds: 0,
         }
     }

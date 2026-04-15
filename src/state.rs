@@ -352,7 +352,6 @@ impl AppState {
                     staged: s.staged,
                     modified: s.modified,
                     untracked: s.untracked,
-                    is_current: s.is_current,
                     idle_seconds: s.idle_seconds,
                 }
             })
