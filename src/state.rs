@@ -1,0 +1,400 @@
+use std::time::Instant;
+
+use crate::ui::{self, SessionView, CARD_HEIGHT};
+
+// --- Constants ---
+
+pub const SIDEBAR_MIN: u16 = 16;
+pub const SIDEBAR_MAX: u16 = 60;
+pub const SIDEBAR_HEIGHT: u16 = 4;
+pub const SIDEBAR_HEIGHT_MIN: u16 = 3;
+pub const SIDEBAR_HEIGHT_MAX: u16 = 4;
+
+pub const SESSION_MENU_ITEMS: &[&str] = &["Switch", "Kill", "Move up", "Move down"];
+pub const GLOBAL_MENU_ITEMS: &[&str] = &[
+    "New session",
+    "Toggle layout",
+    "Toggle borders",
+    "Settings",
+    "Quit",
+];
+
+// --- Enums ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutMode {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusMode {
+    Main,
+    Sidebar,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MainView {
+    Terminal,
+    Settings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterMode {
+    All,
+    Working,
+    Idle,
+}
+
+impl FilterMode {
+    pub fn next(self) -> Self {
+        match self {
+            FilterMode::All => FilterMode::Working,
+            FilterMode::Working => FilterMode::Idle,
+            FilterMode::Idle => FilterMode::All,
+        }
+    }
+
+    pub fn tab_label(self) -> &'static str {
+        match self {
+            FilterMode::All => "All",
+            FilterMode::Idle => "Idle",
+            FilterMode::Working => "Working",
+        }
+    }
+}
+
+pub const FILTER_TABS: [FilterMode; 3] = [FilterMode::All, FilterMode::Idle, FilterMode::Working];
+pub const SETTINGS_ITEM_COUNT: usize = 3;
+
+// --- Context menu ---
+
+#[derive(Debug, Clone)]
+pub enum MenuKind {
+    Session { filtered_idx: usize },
+    Global,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextMenu {
+    pub kind: MenuKind,
+    pub items: Vec<&'static str>,
+    pub x: u16,
+    pub y: u16,
+    pub selected: usize,
+}
+
+impl ContextMenu {
+    pub fn items(&self) -> &[&'static str] {
+        &self.items
+    }
+}
+
+// --- Session data ---
+
+#[derive(Debug, Clone)]
+pub struct SessionRow {
+    pub name: String,
+    pub dir: String,
+    pub branch: String,
+    pub ahead: u32,
+    pub behind: u32,
+    pub staged: u32,
+    pub modified: u32,
+    pub untracked: u32,
+    pub is_current: bool,
+    pub idle_seconds: u64,
+}
+
+// --- Side effects ---
+
+#[derive(Debug, Default)]
+pub struct SideEffect {
+    pub switch_session: Option<String>,
+    pub kill_session: Option<KillRequest>,
+    pub create_session: bool,
+    pub resize_pty: bool,
+    pub save_config: bool,
+    pub refresh_sessions: bool,
+    pub quit: bool,
+}
+
+/// Info needed to execute a kill: which session to kill, and optionally
+/// which session to switch to first (if killing the current session).
+#[derive(Debug)]
+pub struct KillRequest {
+    pub name: String,
+    pub switch_to: Option<String>,
+}
+
+// --- AppState ---
+
+pub struct AppState {
+    // Session data
+    pub sessions: Vec<SessionRow>,
+    pub filtered: Vec<usize>,
+    pub focused: usize,
+    pub current_session: String,
+    pub filter_mode: FilterMode,
+    pub session_order: Vec<String>,
+
+    // UI state
+    pub main_view: MainView,
+    pub focus_mode: FocusMode,
+    pub theme_index: usize,
+    pub settings_selected: usize,
+    pub theme_picker_open: bool,
+    pub theme_picker_selected: usize,
+    pub layout_mode: LayoutMode,
+    pub sidebar_width: u16,
+    pub sidebar_height: u16,
+    pub show_help: bool,
+    pub confirm_kill: bool,
+    pub show_borders: bool,
+    pub context_menu: Option<ContextMenu>,
+    pub hover_separator: bool,
+    pub dragging_separator: bool,
+
+    // Terminal dimensions
+    pub term_width: u16,
+    pub term_height: u16,
+
+    // Scroll throttle
+    pub last_scroll: Instant,
+}
+
+impl AppState {
+    pub fn new(
+        theme_index: usize,
+        layout_mode: LayoutMode,
+        show_borders: bool,
+        sidebar_width: u16,
+        term_width: u16,
+        term_height: u16,
+    ) -> Self {
+        Self {
+            sessions: Vec::new(),
+            filtered: Vec::new(),
+            focused: 0,
+            current_session: String::new(),
+            filter_mode: FilterMode::All,
+            session_order: Vec::new(),
+            main_view: MainView::Terminal,
+            focus_mode: FocusMode::Main,
+            theme_index,
+            settings_selected: 0,
+            theme_picker_open: false,
+            theme_picker_selected: theme_index,
+            layout_mode,
+            sidebar_width,
+            sidebar_height: SIDEBAR_HEIGHT,
+            show_help: false,
+            confirm_kill: false,
+            show_borders,
+            context_menu: None,
+            hover_separator: false,
+            dragging_separator: false,
+            term_width,
+            term_height,
+            last_scroll: Instant::now(),
+        }
+    }
+
+    pub fn effective_sidebar_height(&self) -> u16 {
+        if self.show_borders {
+            4
+        } else {
+            2
+        }
+    }
+
+    pub fn pty_size(&self) -> (u16, u16) {
+        let bo = if self.show_borders { 2u16 } else { 0 };
+        match self.layout_mode {
+            LayoutMode::Horizontal => {
+                let cols = self
+                    .term_width
+                    .saturating_sub(self.sidebar_width + 1 + bo)
+                    .max(1);
+                let rows = self.term_height.saturating_sub(bo).max(1);
+                (rows, cols)
+            }
+            LayoutMode::Vertical => {
+                let cols = self.term_width.saturating_sub(bo).max(1);
+                let rows = self
+                    .term_height
+                    .saturating_sub(self.effective_sidebar_height() + bo)
+                    .max(1);
+                (rows, cols)
+            }
+        }
+    }
+
+    /// Map a screen row to a filtered session index (horizontal/card mode).
+    pub fn session_at_row(&self, row: u16) -> Option<usize> {
+        let b = if self.show_borders { 1u16 } else { 0 };
+        let sidebar_h = match self.layout_mode {
+            LayoutMode::Horizontal => self.term_height,
+            LayoutMode::Vertical => self.effective_sidebar_height(),
+        };
+        let header_height = 3u16;
+        let footer_height = 2u16;
+        let sessions_top = b + header_height;
+        let sessions_bottom = sidebar_h.saturating_sub(b + footer_height);
+        if row < sessions_top || row >= sessions_bottom {
+            return None;
+        }
+        let visible_height = sessions_bottom - sessions_top;
+        let card_height = CARD_HEIGHT;
+        let focused_bottom = (self.focused + 1) * card_height;
+        let visible = visible_height as usize;
+        let scroll = if focused_bottom > visible {
+            focused_bottom - visible
+        } else {
+            0
+        };
+        let clicked_row = row as usize - sessions_top as usize + scroll;
+        let idx = clicked_row / card_height;
+        if idx < self.filtered.len() {
+            Some(idx)
+        } else {
+            None
+        }
+    }
+
+    pub fn filter_tab_at(&self, col: u16, row: u16) -> Option<FilterMode> {
+        if self.layout_mode != LayoutMode::Horizontal {
+            return None;
+        }
+
+        let b = if self.show_borders { 1u16 } else { 0 };
+        let tab_row = b + 1;
+        if row != tab_row {
+            return None;
+        }
+
+        let mut x = 2u16;
+        let local_col = col.saturating_sub(b);
+        for mode in FILTER_TABS {
+            let width = mode.tab_label().len() as u16 + 2;
+            if local_col >= x && local_col < x + width {
+                return Some(mode);
+            }
+            x += width + 1;
+        }
+
+        None
+    }
+
+    /// Map a screen column to a tab index in vertical/tabs mode.
+    pub fn session_at_col(&self, col: u16) -> Option<usize> {
+        let b = if self.show_borders { 1u16 } else { 0 };
+        let views: Vec<SessionView> = self
+            .filtered
+            .iter()
+            .map(|&i| {
+                let s = &self.sessions[i];
+                SessionView {
+                    name: s.name.as_str(),
+                    dir: s.dir.as_str(),
+                    branch: s.branch.as_str(),
+                    ahead: s.ahead,
+                    behind: s.behind,
+                    staged: s.staged,
+                    modified: s.modified,
+                    untracked: s.untracked,
+                    is_current: s.is_current,
+                    idle_seconds: s.idle_seconds,
+                }
+            })
+            .collect();
+        let ranges = ui::tab_col_ranges(&views);
+        let local_col = col.saturating_sub(b);
+        for (i, &(start, end)) in ranges.iter().enumerate() {
+            if local_col >= start && local_col < end {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// Map a screen position to a context menu item index.
+    pub fn menu_item_at(&self, col: u16, row: u16) -> Option<usize> {
+        let menu = self.context_menu.as_ref()?;
+        let items = menu.items();
+        let menu_width = ui::context_menu_width(items);
+        let menu_height = items.len() as u16 + 2;
+        let mx = menu.x.min(self.term_width.saturating_sub(menu_width));
+        let my = menu.y.min(self.term_height.saturating_sub(menu_height));
+        if col > mx && col < mx + menu_width - 1 && row > my && row < my + menu_height - 1 {
+            let idx = (row - my - 1) as usize;
+            if idx < items.len() {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    // --- Filtering and ordering ---
+
+    pub fn recompute_filter(&mut self) {
+        self.filtered = self
+            .sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| match self.filter_mode {
+                FilterMode::All => true,
+                FilterMode::Working => s.idle_seconds < 3,
+                FilterMode::Idle => s.idle_seconds >= 3,
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        if !self.filtered.is_empty() && self.focused >= self.filtered.len() {
+            self.focused = self.filtered.len() - 1;
+        }
+    }
+
+    pub fn sync_order(&mut self) {
+        let names: Vec<String> = self.sessions.iter().map(|s| s.name.clone()).collect();
+        self.session_order.retain(|n| names.contains(n));
+        for name in &names {
+            if !self.session_order.contains(name) {
+                self.session_order.push(name.clone());
+            }
+        }
+    }
+
+    pub fn apply_order(&mut self) {
+        let order = &self.session_order;
+        self.sessions.sort_by_key(|s| {
+            order
+                .iter()
+                .position(|n| n == &s.name)
+                .unwrap_or(usize::MAX)
+        });
+    }
+
+    /// Clamp and set sidebar width. Returns true if it changed.
+    pub fn resize_sidebar(&mut self, new_width: u16) -> bool {
+        let clamped = new_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX.min(self.term_width - 10));
+        if clamped == self.sidebar_width {
+            return false;
+        }
+        self.sidebar_width = clamped;
+        true
+    }
+
+    /// Clamp and set sidebar height. Returns true if it changed.
+    pub fn resize_sidebar_height(&mut self, new_height: u16) -> bool {
+        let clamped = new_height.clamp(
+            SIDEBAR_HEIGHT_MIN,
+            SIDEBAR_HEIGHT_MAX.min(self.term_height - 6),
+        );
+        if clamped == self.sidebar_height {
+            return false;
+        }
+        self.sidebar_height = clamped;
+        true
+    }
+}

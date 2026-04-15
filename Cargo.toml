@@ -1,0 +1,15 @@
+[package]
+name = "deck"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.29"
+portable-pty = "0.9"
+vt100 = "0.16"
+rattles = "0.3"
+unicode-width = "0.2"
+
+[patch.crates-io]
+vt100 = { path = "patches/vt100" }
