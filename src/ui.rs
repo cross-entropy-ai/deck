@@ -23,6 +23,7 @@ pub struct SessionView<'a> {
     pub idle_seconds: u64,
 }
 
+#[allow(dead_code)]
 pub struct ExcludeEditorView<'a> {
     pub patterns: &'a [String],
     pub selected: usize,
