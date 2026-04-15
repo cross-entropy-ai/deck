@@ -4,7 +4,7 @@
 
 | 文件 | 优先级 | 复杂度 | 状态 |
 |------|--------|--------|------|
-| [decouple-architecture.md](decouple-architecture.md) | 🔴 高 | 中 | 待开始 |
+| [decouple-architecture.md](decouple-architecture.md) | 🔴 高 | 中 | 已完成（state.rs + action.rs 已分离） |
 | [agent-token-usage-display.md](agent-token-usage-display.md) | 🔴 高 | 中 | 框架已写 |
 | [AGENT_METRICS_IMPLEMENTATION_GUIDE.md](AGENT_METRICS_IMPLEMENTATION_GUIDE.md) | — | — | 参考文档 |
 
