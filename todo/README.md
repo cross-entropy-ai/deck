@@ -19,21 +19,16 @@
 | 04 | [ui-04-idle-time-format.md](ui-04-idle-time-format.md) | idle 时长展示（左侧 badge，`1m / 2h / 3d`） | 2026-04-15 |
 | 05 | [ui-05-git-status-symbols.md](ui-05-git-status-symbols.md) | git status 符号化（`↑2 ↓1 +3 ~1 ?2` / `✓`） | 2026-04-15 |
 | 08 | [ui-08-separator-visual.md](ui-08-separator-visual.md) | 分隔线拖拽视觉增强 | 2026-04-15 |
+| 06 | [ui-06-session-rename.md](ui-06-session-rename.md) | 会话重命名（r 键 inline 编辑） | 2026-04-15 |
+| 02 | [ui-02-compact-mode.md](ui-02-compact-mode.md) | 紧凑模式（2行/card vs 5行/card，Settings + `c` 键切换） | 2026-04-16 |
 
 ### 下一批（中等成本，高价值）
 
 | # | 文件 | 内容 | 复杂度 |
 |---|------|------|--------|
 | 03 | [ui-03-scroll-indicator.md](ui-03-scroll-indicator.md) | 滚动指示器（▲ 2 more / 3/10） | 低 |
-| 02 | [ui-02-compact-mode.md](ui-02-compact-mode.md) | 紧凑模式（2行/card vs 6行/card） | 中 |
 | 01 | [ui-01-fuzzy-search.md](ui-01-fuzzy-search.md) | 模糊搜索（/ 键搜索 session） | 中 |
 | 07 | [ui-07-toast-notifications.md](ui-07-toast-notifications.md) | 操作反馈 toast 通知 | 低 |
-
-### 计划内（中等成本，中等价值）
-
-| # | 文件 | 内容 | 复杂度 |
-|---|------|------|--------|
-| 06 | [ui-06-session-rename.md](ui-06-session-rename.md) | 会话重命名（r 键 inline 编辑） | 中 |
 
 ### 可选（高成本或低价值）
 
@@ -53,13 +48,12 @@
 
 ```
 ui-04 (idle time) ──┐
-                    ├──→ ui-02 (compact mode) ──→ ui-09 (command palette)
-ui-05 (git symbols)─┘                              ↑
-                                                    │
-                           ui-06 (rename) ──────────┘
+                    ├──→ ui-02 (compact mode) ✅ ──→ ui-09 (command palette)
+ui-05 (git symbols)─┘                                  ↑
+                                                        │
+                           ui-06 (rename) ✅ ───────────┘
 ```
 
-- compact mode 依赖 idle time / badge 格式化和 git symbols 函数
-- ui-02 的两个前置项 `ui-04`、`ui-05` 已完成
-- command palette 依赖 compact mode 和 rename（作为可用命令）
+- ui-02 (compact mode) 和 ui-06 (rename) 均已完成
+- command palette 的两个前置项已满足，可以开始
 - 其他改进之间相互独立
