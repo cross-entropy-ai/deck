@@ -10,7 +10,7 @@ pub const SIDEBAR_HEIGHT: u16 = 4;
 pub const SIDEBAR_HEIGHT_MIN: u16 = 3;
 pub const SIDEBAR_HEIGHT_MAX: u16 = 4;
 
-pub const SESSION_MENU_ITEMS: &[&str] = &["Switch", "Kill", "Move up", "Move down"];
+pub const SESSION_MENU_ITEMS: &[&str] = &["Switch", "Rename", "Kill", "Move up", "Move down"];
 pub const GLOBAL_MENU_ITEMS: &[&str] = &[
     "New session",
     "Toggle layout",
@@ -112,6 +112,7 @@ pub struct SessionRow {
 pub struct SideEffect {
     pub switch_session: Option<String>,
     pub kill_session: Option<KillRequest>,
+    pub rename_session: Option<RenameRequest>,
     pub create_session: bool,
     pub resize_pty: bool,
     pub save_config: bool,
@@ -125,6 +126,21 @@ pub struct SideEffect {
 pub struct KillRequest {
     pub name: String,
     pub switch_to: Option<String>,
+}
+
+/// Info needed to execute a rename.
+#[derive(Debug)]
+pub struct RenameRequest {
+    pub old_name: String,
+    pub new_name: String,
+}
+
+/// UI state for an in-progress rename.
+#[derive(Debug, Clone)]
+pub struct RenameState {
+    pub original_name: String,
+    pub input: String,
+    pub cursor: usize,
 }
 
 // --- AppState ---
@@ -150,6 +166,7 @@ pub struct AppState {
     pub sidebar_height: u16,
     pub show_help: bool,
     pub confirm_kill: bool,
+    pub renaming: Option<RenameState>,
     pub show_borders: bool,
     pub context_menu: Option<ContextMenu>,
     pub hover_separator: bool,
@@ -190,6 +207,7 @@ impl AppState {
             sidebar_height: SIDEBAR_HEIGHT,
             show_help: false,
             confirm_kill: false,
+            renaming: None,
             show_borders,
             context_menu: None,
             hover_separator: false,

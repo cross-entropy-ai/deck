@@ -2,7 +2,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 
 use crate::state::{
     AppState, ContextMenu, FilterMode, FocusMode, KillRequest, LayoutMode, MainView, MenuKind,
-    SideEffect, GLOBAL_MENU_ITEMS, SESSION_MENU_ITEMS, SETTINGS_ITEM_COUNT,
+    RenameRequest, RenameState, SideEffect, GLOBAL_MENU_ITEMS, SESSION_MENU_ITEMS,
+    SETTINGS_ITEM_COUNT,
 };
 use crate::theme::THEMES;
 
@@ -21,6 +22,11 @@ pub enum Action {
     ConfirmKill,
     CancelKill,
     ReorderSession(i32),
+    StartRename,
+    RenameInput(char),
+    RenameBackspace,
+    RenameConfirm,
+    RenameCancel,
 
     // UI toggles
     ToggleLayout,
@@ -193,6 +199,51 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 }
             }
         }
+        Action::StartRename => {
+            if let Some(&session_idx) = state.filtered.get(state.focused) {
+                let name = state.sessions[session_idx].name.clone();
+                let len = name.len();
+                state.renaming = Some(RenameState {
+                    original_name: name.clone(),
+                    input: name,
+                    cursor: len,
+                });
+            }
+        }
+        Action::RenameInput(ch) => {
+            if let Some(ref mut r) = state.renaming {
+                r.input.insert(r.cursor, ch);
+                r.cursor += ch.len_utf8();
+            }
+        }
+        Action::RenameBackspace => {
+            if let Some(ref mut r) = state.renaming {
+                if r.cursor > 0 {
+                    let prev = r.input[..r.cursor]
+                        .chars()
+                        .last()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(0);
+                    r.cursor -= prev;
+                    r.input.remove(r.cursor);
+                }
+            }
+        }
+        Action::RenameConfirm => {
+            if let Some(r) = state.renaming.take() {
+                let new_name = r.input.trim().to_string();
+                if !new_name.is_empty() && new_name != r.original_name {
+                    fx.rename_session = Some(RenameRequest {
+                        old_name: r.original_name,
+                        new_name,
+                    });
+                    fx.refresh_sessions = true;
+                }
+            }
+        }
+        Action::RenameCancel => {
+            state.renaming = None;
+        }
 
         // --- UI toggles ---
         Action::ToggleLayout => {
@@ -354,6 +405,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                             fx.refresh_sessions = inner.refresh_sessions;
                             state.focus_mode = FocusMode::Main;
                         }
+                        Some("Rename") => {
+                            apply_action(state, Action::StartRename);
+                        }
                         Some("Kill") => {
                             apply_action(state, Action::KillSession);
                         }
@@ -447,6 +501,17 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
 }
 
 pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
+    // Rename input intercepts all keys
+    if state.renaming.is_some() {
+        return match key.code {
+            KeyCode::Enter => Action::RenameConfirm,
+            KeyCode::Esc => Action::RenameCancel,
+            KeyCode::Backspace => Action::RenameBackspace,
+            KeyCode::Char(ch) => Action::RenameInput(ch),
+            _ => Action::None,
+        };
+    }
+
     // Context menu intercepts all keys
     if state.context_menu.is_some() {
         return match key.code {

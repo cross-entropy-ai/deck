@@ -45,6 +45,7 @@ pub fn draw_sidebar(
     filter_mode: FilterMode,
     show_help: bool,
     confirm_kill: Option<&str>,
+    rename_input: Option<(&str, usize)>,
     show_borders: bool,
     tabs_mode: bool,
     spinner_frame: &str,
@@ -93,6 +94,8 @@ pub fn draw_sidebar(
         draw_help(frame, sessions_area, theme);
     } else if let Some(name) = confirm_kill {
         draw_confirm_kill(frame, sessions_area, theme, name);
+    } else if let Some((input, cursor)) = rename_input {
+        draw_rename_input(frame, sessions_area, theme, input, cursor);
     } else {
         draw_sessions(
             frame,
@@ -628,6 +631,53 @@ fn draw_confirm_kill(frame: &mut Frame, area: Rect, theme: &Theme, name: &str) {
         ]),
         Line::raw(""),
         Line::from(Span::styled("  y/n", Style::default().fg(theme.muted))),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(theme.bg)),
+        area,
+    );
+}
+
+fn draw_rename_input(frame: &mut Frame, area: Rect, theme: &Theme, input: &str, cursor: usize) {
+    let max_w = area.width.saturating_sub(4) as usize;
+    let display = if input.len() > max_w {
+        &input[input.len() - max_w..]
+    } else {
+        input
+    };
+    let cursor_pos = if input.len() > max_w {
+        max_w
+    } else {
+        cursor
+    };
+    let (before, after) = display.split_at(cursor_pos.min(display.len()));
+
+    let lines = vec![
+        Line::raw(""),
+        Line::from(Span::styled(
+            "  Rename session",
+            Style::default().fg(theme.text),
+        )),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(before, Style::default().fg(theme.accent)),
+            Span::styled(
+                if after.is_empty() { " " } else { &after[..1] },
+                Style::default()
+                    .fg(theme.bg)
+                    .bg(theme.accent),
+            ),
+            Span::styled(
+                if after.len() > 1 { &after[1..] } else { "" },
+                Style::default().fg(theme.accent),
+            ),
+        ]),
+        Line::raw(""),
+        Line::from(Span::styled(
+            "  Enter confirm / Esc cancel",
+            Style::default().fg(theme.muted),
+        )),
     ];
     frame.render_widget(
         Paragraph::new(lines).style(Style::default().bg(theme.bg)),

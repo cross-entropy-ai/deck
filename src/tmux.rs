@@ -95,6 +95,11 @@ pub fn kill_session(name: &str) {
     let _ = tmux(&["kill-session", "-t", name]);
 }
 
+/// Rename a tmux session.
+pub fn rename_session(old_name: &str, new_name: &str) {
+    let _ = tmux(&["rename-session", "-t", old_name, new_name]);
+}
+
 /// Create a new detached session with the given name and starting directory.
 /// Returns the session name on success.
 pub fn new_session(name: &str, dir: &str) -> Option<String> {
