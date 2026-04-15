@@ -71,6 +71,7 @@ impl App {
             sidebar_width,
             term_width,
             term_height,
+            cfg.exclude_patterns,
         );
         let nesting_guard = NestingGuard::new();
 
@@ -657,6 +658,7 @@ impl App {
             .to_string(),
             show_borders: self.state.show_borders,
             sidebar_width: self.state.sidebar_width,
+            exclude_patterns: self.state.exclude_patterns.clone(),
         }
         .save();
     }

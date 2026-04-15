@@ -9,6 +9,7 @@ pub struct Config {
     pub layout: String,
     pub show_borders: bool,
     pub sidebar_width: u16,
+    pub exclude_patterns: Vec<String>,
 }
 
 impl Default for Config {
@@ -18,6 +19,7 @@ impl Default for Config {
             layout: "horizontal".to_string(),
             show_borders: true,
             sidebar_width: 28,
+            exclude_patterns: vec!["_*".to_string()],
         }
     }
 }
@@ -55,19 +57,29 @@ impl Config {
         config
     }
 
+    pub fn to_json(&self) -> String {
+        let patterns_json = if self.exclude_patterns.is_empty() {
+            "[]".to_string()
+        } else {
+            let items: Vec<String> = self.exclude_patterns.iter().map(|p| quote(p)).collect();
+            format!("[{}]", items.join(", "))
+        };
+        format!(
+            "{{\n  \"theme\": {},\n  \"layout\": {},\n  \"show_borders\": {},\n  \"sidebar_width\": {},\n  \"exclude_patterns\": {}\n}}\n",
+            quote(&self.theme),
+            quote(&self.layout),
+            self.show_borders,
+            self.sidebar_width,
+            patterns_json,
+        )
+    }
+
     pub fn save(&self) {
         let path = config_path();
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let json = format!(
-            "{{\n  \"theme\": {},\n  \"layout\": {},\n  \"show_borders\": {},\n  \"sidebar_width\": {}\n}}\n",
-            quote(&self.theme),
-            quote(&self.layout),
-            self.show_borders,
-            self.sidebar_width,
-        );
-        let _ = fs::write(&path, json);
+        let _ = fs::write(&path, self.to_json());
     }
 }
 
@@ -132,15 +144,49 @@ fn glob_matches(pattern: &str, text: &str) -> bool {
 /// Minimal JSON parser — handles our flat config object only.
 fn parse_json(s: &str) -> Option<Config> {
     let mut config = Config::default();
+    let mut in_exclude = false;
+    let mut exclude_patterns: Vec<String> = Vec::new();
+    let mut found_exclude = false;
+
     let reader = io::BufReader::new(s.as_bytes());
     for line in reader.lines() {
         let line = line.ok()?;
-        let line = line.trim();
-        // Parse "key": value
-        if !line.starts_with('"') {
+        let trimmed = line.trim();
+
+        // Detect start of exclude_patterns array
+        if trimmed.starts_with("\"exclude_patterns\"") {
+            found_exclude = true;
+            // Could be single-line: "exclude_patterns": ["a", "b"]
+            if let Some(bracket_start) = trimmed.find('[') {
+                let rest = &trimmed[bracket_start..];
+                if let Some(bracket_end) = rest.find(']') {
+                    // Single-line array
+                    let inner = &rest[1..bracket_end];
+                    exclude_patterns = parse_string_array(inner);
+                } else {
+                    in_exclude = true;
+                }
+            }
             continue;
         }
-        let mut parts = line.splitn(2, ':');
+
+        if in_exclude {
+            if trimmed.starts_with(']') {
+                in_exclude = false;
+            } else {
+                let val = trimmed.trim_matches(|c: char| c == '"' || c == ',' || c.is_whitespace());
+                if !val.is_empty() {
+                    exclude_patterns.push(val.to_string());
+                }
+            }
+            continue;
+        }
+
+        // Parse "key": value
+        if !trimmed.starts_with('"') {
+            continue;
+        }
+        let mut parts = trimmed.splitn(2, ':');
         let key = parts.next()?.trim().trim_matches('"');
         let val = parts.next()?.trim().trim_end_matches(',');
         match key {
@@ -155,7 +201,20 @@ fn parse_json(s: &str) -> Option<Config> {
             _ => {}
         }
     }
+
+    if found_exclude {
+        config.exclude_patterns = exclude_patterns;
+    }
+
     Some(config)
+}
+
+/// Parse a comma-separated list of quoted strings from inside `[...]`.
+fn parse_string_array(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(|item| item.trim().trim_matches('"').to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
@@ -218,5 +277,40 @@ mod tests {
     fn empty_patterns_excludes_nothing() {
         let patterns = compile_patterns(&[]);
         assert!(!session_excluded("anything", &patterns));
+    }
+
+    #[test]
+    fn parse_json_with_exclude_patterns() {
+        let json = r#"{
+  "theme": "Catppuccin Mocha",
+  "layout": "horizontal",
+  "show_borders": true,
+  "sidebar_width": 28,
+  "exclude_patterns": ["_*", "/^test/"]
+}"#;
+        let config = parse_json(json).unwrap();
+        assert_eq!(config.exclude_patterns, vec!["_*", "/^test/"]);
+    }
+
+    #[test]
+    fn parse_json_without_exclude_patterns_uses_default() {
+        let json = r#"{
+  "theme": "Catppuccin Mocha",
+  "layout": "horizontal",
+  "show_borders": true,
+  "sidebar_width": 28
+}"#;
+        let config = parse_json(json).unwrap();
+        assert_eq!(config.exclude_patterns, vec!["_*"]);
+    }
+
+    #[test]
+    fn config_save_includes_exclude_patterns() {
+        let config = Config {
+            exclude_patterns: vec!["_*".to_string(), "/^test/".to_string()],
+            ..Config::default()
+        };
+        let json = config.to_json();
+        assert!(json.contains(r#""exclude_patterns": ["_*", "/^test/"]"#));
     }
 }

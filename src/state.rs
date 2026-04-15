@@ -178,6 +178,9 @@ pub struct AppState {
 
     // Scroll throttle
     pub last_scroll: Instant,
+
+    // Config
+    pub exclude_patterns: Vec<String>,
 }
 
 impl AppState {
@@ -188,6 +191,7 @@ impl AppState {
         sidebar_width: u16,
         term_width: u16,
         term_height: u16,
+        exclude_patterns: Vec<String>,
     ) -> Self {
         Self {
             sessions: Vec::new(),
@@ -215,6 +219,7 @@ impl AppState {
             term_width,
             term_height,
             last_scroll: Instant::now(),
+            exclude_patterns,
         }
     }
 

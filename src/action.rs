@@ -799,7 +799,7 @@ mod tests {
     }
 
     fn make_test_state(n: usize) -> AppState {
-        let mut state = AppState::new(0, LayoutMode::Horizontal, true, 28, 120, 40);
+        let mut state = AppState::new(0, LayoutMode::Horizontal, true, 28, 120, 40, vec!["_*".to_string()]);
         state.sessions = (0..n)
             .map(|i| make_session(&format!("sess-{}", i), 0))
             .collect();
