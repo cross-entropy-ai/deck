@@ -953,7 +953,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             let b = if state.show_borders { 1u16 } else { 0 };
             let (col_off, row_off) = match state.layout_mode {
                 LayoutMode::Horizontal => (state.sidebar_width + 1 + b, b),
-                LayoutMode::Vertical => (b, state.effective_sidebar_height()),
+                LayoutMode::Vertical => (b, state.effective_sidebar_height() + b),
             };
             let bytes = crate::pty::encode_mouse(mouse, col_off, row_off);
             if bytes.is_empty() {
@@ -964,7 +964,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         let b = if state.show_borders { 1u16 } else { 0 };
         let (col_off, row_off) = match state.layout_mode {
             LayoutMode::Horizontal => (state.sidebar_width + 1 + b, b),
-            LayoutMode::Vertical => (b, state.effective_sidebar_height()),
+            LayoutMode::Vertical => (b, state.effective_sidebar_height() + b),
         };
         let bytes = crate::pty::encode_mouse(mouse, col_off, row_off);
         if !bytes.is_empty() {
