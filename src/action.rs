@@ -41,6 +41,18 @@ pub enum Action {
     ThemePickerNext,
     ThemePickerPrev,
     ConfirmThemePicker,
+
+    // Exclude editor
+    OpenExcludeEditor,
+    CloseExcludeEditor,
+    ExcludeEditorNext,
+    ExcludeEditorPrev,
+    ExcludeEditorStartAdd,
+    ExcludeEditorDelete,
+    ExcludeEditorInput(char),
+    ExcludeEditorBackspace,
+    ExcludeEditorConfirm,
+
     ToggleHelp,
     DismissHelp,
 
@@ -293,6 +305,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 fx.resize_pty = inner.resize_pty;
                 fx.save_config = inner.save_config;
             }
+            3 => {
+                let _ = direction;
+                apply_action(state, Action::OpenExcludeEditor);
+            }
             _ => {}
         },
         Action::OpenThemePicker => {
@@ -320,6 +336,120 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::ConfirmThemePicker => {
             state.theme_picker_open = false;
         }
+
+        // --- Exclude editor ---
+        Action::OpenExcludeEditor => {
+            state.exclude_editor = Some(crate::state::ExcludeEditorState {
+                selected: 0,
+                adding: false,
+                input: String::new(),
+                cursor: 0,
+                error: None,
+            });
+        }
+        Action::CloseExcludeEditor => {
+            state.exclude_editor = None;
+        }
+        Action::ExcludeEditorNext => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                if !editor.adding && !state.exclude_patterns.is_empty() {
+                    editor.selected =
+                        (editor.selected + 1).min(state.exclude_patterns.len() - 1);
+                }
+            }
+        }
+        Action::ExcludeEditorPrev => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                if !editor.adding && editor.selected > 0 {
+                    editor.selected -= 1;
+                }
+            }
+        }
+        Action::ExcludeEditorStartAdd => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                editor.adding = true;
+                editor.input.clear();
+                editor.cursor = 0;
+                editor.error = None;
+            }
+        }
+        Action::ExcludeEditorDelete => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                if !editor.adding && !state.exclude_patterns.is_empty() {
+                    state.exclude_patterns.remove(editor.selected);
+                    state.compiled_patterns =
+                        crate::config::compile_patterns(&state.exclude_patterns);
+                    if editor.selected > 0
+                        && editor.selected >= state.exclude_patterns.len()
+                    {
+                        editor.selected = state.exclude_patterns.len().saturating_sub(1);
+                    }
+                    fx.save_config = true;
+                    fx.refresh_sessions = true;
+                }
+            }
+        }
+        Action::ExcludeEditorInput(ch) => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                if editor.adding {
+                    editor.input.insert(editor.cursor, ch);
+                    editor.cursor += 1;
+                    editor.error = None;
+                }
+            }
+        }
+        Action::ExcludeEditorBackspace => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                if editor.adding && editor.cursor > 0 {
+                    editor.cursor -= 1;
+                    editor.input.remove(editor.cursor);
+                    editor.error = None;
+                }
+            }
+        }
+        Action::ExcludeEditorConfirm => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                if editor.adding {
+                    let pattern = editor.input.trim().to_string();
+                    if pattern.is_empty() {
+                        editor.adding = false;
+                    } else if let Some(inner) =
+                        pattern.strip_prefix('/').and_then(|s| s.strip_suffix('/'))
+                    {
+                        match regex::Regex::new(inner) {
+                            Ok(_) => {
+                                state.exclude_patterns.push(pattern);
+                                state.compiled_patterns =
+                                    crate::config::compile_patterns(&state.exclude_patterns);
+                                editor.adding = false;
+                                editor.input.clear();
+                                editor.cursor = 0;
+                                editor.error = None;
+                                editor.selected =
+                                    state.exclude_patterns.len().saturating_sub(1);
+                                fx.save_config = true;
+                                fx.refresh_sessions = true;
+                            }
+                            Err(e) => {
+                                editor.error = Some(format!("Invalid regex: {}", e));
+                            }
+                        }
+                    } else {
+                        state.exclude_patterns.push(pattern);
+                        state.compiled_patterns =
+                            crate::config::compile_patterns(&state.exclude_patterns);
+                        editor.adding = false;
+                        editor.input.clear();
+                        editor.cursor = 0;
+                        editor.error = None;
+                        editor.selected = state.exclude_patterns.len().saturating_sub(1);
+                        fx.save_config = true;
+                        fx.refresh_sessions = true;
+                    }
+                }
+            }
+        }
+
         Action::ToggleHelp => {
             state.show_help = true;
         }
@@ -528,6 +658,9 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     }
 
     if state.main_view == MainView::Settings && state.focus_mode == FocusMode::Main {
+        if state.exclude_editor.is_some() {
+            return exclude_editor_key_to_action(key, state);
+        }
         if state.theme_picker_open {
             return theme_picker_key_to_action(key);
         }
@@ -621,6 +754,32 @@ fn settings_key_to_action(key: &KeyEvent) -> Action {
         KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
             Action::SettingsAdjust(1)
         }
+        _ => Action::None,
+    }
+}
+
+fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
+    let adding = state
+        .exclude_editor
+        .as_ref()
+        .is_some_and(|e| e.adding);
+
+    if adding {
+        return match key.code {
+            KeyCode::Esc => Action::CloseExcludeEditor,
+            KeyCode::Enter => Action::ExcludeEditorConfirm,
+            KeyCode::Backspace => Action::ExcludeEditorBackspace,
+            KeyCode::Char(ch) => Action::ExcludeEditorInput(ch),
+            _ => Action::None,
+        };
+    }
+
+    match key.code {
+        KeyCode::Esc => Action::CloseExcludeEditor,
+        KeyCode::Char('j') | KeyCode::Down => Action::ExcludeEditorNext,
+        KeyCode::Char('k') | KeyCode::Up => Action::ExcludeEditorPrev,
+        KeyCode::Char('a') => Action::ExcludeEditorStartAdd,
+        KeyCode::Char('d') | KeyCode::Char('x') => Action::ExcludeEditorDelete,
         _ => Action::None,
     }
 }
@@ -1089,6 +1248,64 @@ mod tests {
         assert_eq!(state.sessions[0].name, "sess-1");
         assert_eq!(state.sessions[1].name, "sess-0");
         assert_eq!(state.focused, 0);
+    }
+
+    #[test]
+    fn open_close_exclude_editor() {
+        let mut state = make_test_state(1);
+        state.main_view = MainView::Settings;
+        state.settings_selected = 3;
+        apply_action(&mut state, Action::OpenExcludeEditor);
+        assert!(state.exclude_editor.is_some());
+        apply_action(&mut state, Action::CloseExcludeEditor);
+        assert!(state.exclude_editor.is_none());
+    }
+
+    #[test]
+    fn exclude_editor_add_pattern() {
+        let mut state = make_test_state(1);
+        state.exclude_patterns = vec!["_*".to_string()];
+        state.compiled_patterns = crate::config::compile_patterns(&state.exclude_patterns);
+        apply_action(&mut state, Action::OpenExcludeEditor);
+        apply_action(&mut state, Action::ExcludeEditorStartAdd);
+        assert!(state.exclude_editor.as_ref().unwrap().adding);
+        apply_action(&mut state, Action::ExcludeEditorInput('t'));
+        apply_action(&mut state, Action::ExcludeEditorInput('*'));
+        let fx = apply_action(&mut state, Action::ExcludeEditorConfirm);
+        assert_eq!(state.exclude_patterns, vec!["_*", "t*"]);
+        assert!(fx.save_config);
+        assert!(fx.refresh_sessions);
+        assert!(!state.exclude_editor.as_ref().unwrap().adding);
+    }
+
+    #[test]
+    fn exclude_editor_delete_pattern() {
+        let mut state = make_test_state(1);
+        state.exclude_patterns = vec!["_*".to_string(), "scratch*".to_string()];
+        state.compiled_patterns = crate::config::compile_patterns(&state.exclude_patterns);
+        apply_action(&mut state, Action::OpenExcludeEditor);
+        state.exclude_editor.as_mut().unwrap().selected = 0;
+        let fx = apply_action(&mut state, Action::ExcludeEditorDelete);
+        assert_eq!(state.exclude_patterns, vec!["scratch*"]);
+        assert!(fx.save_config);
+        assert!(fx.refresh_sessions);
+    }
+
+    #[test]
+    fn exclude_editor_invalid_regex_shows_error() {
+        let mut state = make_test_state(1);
+        state.exclude_patterns = vec![];
+        state.compiled_patterns = vec![];
+        apply_action(&mut state, Action::OpenExcludeEditor);
+        apply_action(&mut state, Action::ExcludeEditorStartAdd);
+        for ch in "/[invalid/".chars() {
+            apply_action(&mut state, Action::ExcludeEditorInput(ch));
+        }
+        apply_action(&mut state, Action::ExcludeEditorConfirm);
+        let editor = state.exclude_editor.as_ref().unwrap();
+        assert!(editor.adding);
+        assert!(editor.error.is_some());
+        assert!(state.exclude_patterns.is_empty());
     }
 
     #[test]

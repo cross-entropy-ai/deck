@@ -399,6 +399,7 @@ impl App {
             theme_names: THEMES.iter().map(|theme| theme.name).collect(),
             layout_mode: s.layout_mode,
             show_borders: s.show_borders,
+            exclude_count: s.exclude_patterns.len(),
         };
         let hover_sep = s.hover_separator;
         let dragging_sep = s.dragging_separator;

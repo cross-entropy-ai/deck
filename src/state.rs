@@ -66,7 +66,7 @@ impl FilterMode {
 }
 
 pub const FILTER_TABS: [FilterMode; 3] = [FilterMode::All, FilterMode::Idle, FilterMode::Working];
-pub const SETTINGS_ITEM_COUNT: usize = 3;
+pub const SETTINGS_ITEM_COUNT: usize = 4;
 
 // --- Context menu ---
 
@@ -144,6 +144,16 @@ pub struct RenameState {
     pub cursor: usize,
 }
 
+/// UI state for the exclude pattern editor popup.
+#[derive(Debug, Clone)]
+pub struct ExcludeEditorState {
+    pub selected: usize,
+    pub adding: bool,
+    pub input: String,
+    pub cursor: usize,
+    pub error: Option<String>,
+}
+
 // --- AppState ---
 
 pub struct AppState {
@@ -170,6 +180,7 @@ pub struct AppState {
     pub renaming: Option<RenameState>,
     pub show_borders: bool,
     pub context_menu: Option<ContextMenu>,
+    pub exclude_editor: Option<ExcludeEditorState>,
     pub hover_separator: bool,
     pub dragging_separator: bool,
 
@@ -217,6 +228,7 @@ impl AppState {
             renaming: None,
             show_borders,
             context_menu: None,
+            exclude_editor: None,
             hover_separator: false,
             dragging_separator: false,
             term_width,
