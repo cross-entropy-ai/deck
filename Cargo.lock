@@ -246,6 +246,7 @@ dependencies = [
  "portable-pty",
  "ratatui",
  "rattles",
+ "regex",
  "unicode-width",
  "vt100",
 ]
