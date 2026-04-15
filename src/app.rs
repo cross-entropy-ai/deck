@@ -171,7 +171,9 @@ impl App {
                         if self.warning_state.is_some() && Self::warning_blocks_action(&action) {
                             continue;
                         }
-                        self.dispatch(action);
+                        if self.dispatch(action) {
+                            break;
+                        }
                     }
                     Event::Resize(w, h) => {
                         self.dispatch(Action::Resize(w, h));
@@ -296,6 +298,19 @@ impl App {
             self.switch_to_session_if_safe(name);
         }
 
+        if let Some(ref rename) = fx.rename_session {
+            tmux::rename_session(&rename.old_name, &rename.new_name);
+            // Update session order to track the new name
+            if let Some(pos) = self
+                .state
+                .session_order
+                .iter()
+                .position(|n| n == &rename.old_name)
+            {
+                self.state.session_order[pos] = rename.new_name.clone();
+            }
+        }
+
         if let Some(ref kill) = fx.kill_session {
             if let Some(ref alt_name) = kill.switch_to {
                 self.switch_to_session_if_safe(alt_name);
@@ -350,6 +365,7 @@ impl App {
         let filter_mode = s.filter_mode;
         let confirm_kill = s.confirm_kill;
         let show_help = s.show_help;
+        let rename_input = s.renaming.as_ref().map(|r| (r.input.clone(), r.cursor));
         let context_menu = s.context_menu.clone();
         let show_borders = s.show_borders;
         let layout_mode = s.layout_mode;
@@ -427,6 +443,7 @@ impl App {
                 filter_mode,
                 show_help,
                 confirm_name.as_deref(),
+                rename_input.as_ref().map(|(s, c)| (s.as_str(), *c)),
                 show_borders,
                 layout_mode == LayoutMode::Vertical,
                 &spinner_frame,
