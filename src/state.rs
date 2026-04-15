@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use crate::config::ExcludePattern;
-use crate::ui::{self, SessionView, CARD_HEIGHT};
+use crate::ui::{self, SessionView, card_height};
 
 // --- Constants ---
 
@@ -180,6 +180,7 @@ pub struct AppState {
     pub theme_picker_open: bool,
     pub theme_picker_selected: usize,
     pub layout_mode: LayoutMode,
+    pub view_mode: ViewMode,
     pub sidebar_width: u16,
     pub sidebar_height: u16,
     pub show_help: bool,
@@ -207,6 +208,7 @@ impl AppState {
     pub fn new(
         theme_index: usize,
         layout_mode: LayoutMode,
+        view_mode: ViewMode,
         show_borders: bool,
         sidebar_width: u16,
         term_width: u16,
@@ -228,6 +230,7 @@ impl AppState {
             theme_picker_open: false,
             theme_picker_selected: theme_index,
             layout_mode,
+            view_mode,
             sidebar_width,
             sidebar_height: SIDEBAR_HEIGHT,
             show_help: false,
@@ -291,8 +294,8 @@ impl AppState {
             return None;
         }
         let visible_height = sessions_bottom - sessions_top;
-        let card_height = CARD_HEIGHT;
-        let focused_bottom = (self.focused + 1) * card_height;
+        let ch = card_height(self.view_mode);
+        let focused_bottom = (self.focused + 1) * ch;
         let visible = visible_height as usize;
         let scroll = if focused_bottom > visible {
             focused_bottom - visible
@@ -300,7 +303,7 @@ impl AppState {
             0
         };
         let clicked_row = row as usize - sessions_top as usize + scroll;
-        let idx = clicked_row / card_height;
+        let idx = clicked_row / ch;
         if idx < self.filtered.len() {
             Some(idx)
         } else {

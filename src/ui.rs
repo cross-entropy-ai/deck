@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::state::{FilterMode, LayoutMode, FILTER_TABS};
+use crate::state::{FilterMode, LayoutMode, ViewMode, FILTER_TABS};
 use crate::theme::Theme;
 
 /// Minimal data needed to render one session row.
@@ -346,7 +346,7 @@ fn draw_sessions(
         lines.push(Line::from(Span::styled(" ", Style::default().bg(theme.bg))));
     }
 
-    let scroll = scroll_offset(focused, area.height);
+    let scroll = scroll_offset(focused, area.height, card_height(ViewMode::Expanded));
     frame.render_widget(
         Paragraph::new(lines)
             .style(Style::default().bg(theme.bg))
@@ -1108,10 +1108,15 @@ fn shorten_dir(dir: &str) -> String {
     }
 }
 
-pub const CARD_HEIGHT: usize = 5;
+pub fn card_height(view_mode: ViewMode) -> usize {
+    match view_mode {
+        ViewMode::Expanded => 5,
+        ViewMode::Compact => 2,
+    }
+}
 
-fn scroll_offset(focused: usize, visible_height: u16) -> usize {
-    let focused_bottom = (focused + 1) * CARD_HEIGHT;
+fn scroll_offset(focused: usize, visible_height: u16, ch: usize) -> usize {
+    let focused_bottom = (focused + 1) * ch;
     let visible = visible_height as usize;
     if focused_bottom > visible {
         focused_bottom - visible

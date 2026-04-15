@@ -940,7 +940,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{AppState, FilterMode, FocusMode, LayoutMode, MainView, SessionRow};
+    use crate::state::{AppState, FilterMode, FocusMode, LayoutMode, MainView, SessionRow, ViewMode};
 
     fn make_session(name: &str, idle: u64) -> SessionRow {
         SessionRow {
@@ -958,7 +958,7 @@ mod tests {
     }
 
     fn make_test_state(n: usize) -> AppState {
-        let mut state = AppState::new(0, LayoutMode::Horizontal, true, 28, 120, 40, vec![], vec![]);
+        let mut state = AppState::new(0, LayoutMode::Horizontal, ViewMode::Expanded, true, 28, 120, 40, vec![], vec![]);
         state.sessions = (0..n)
             .map(|i| make_session(&format!("sess-{}", i), 0))
             .collect();

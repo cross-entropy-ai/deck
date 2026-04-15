@@ -16,7 +16,7 @@ use crate::git;
 use crate::nesting_guard::{NestingGuard, WarningState};
 use crate::pty::{Pty, PtyEvent};
 use crate::state::{
-    AppState, FocusMode, LayoutMode, MainView, SessionRow, SIDEBAR_MAX, SIDEBAR_MIN,
+    AppState, FocusMode, LayoutMode, MainView, SessionRow, ViewMode, SIDEBAR_MAX, SIDEBAR_MIN,
 };
 use crate::theme::THEMES;
 use crate::tmux;
@@ -62,6 +62,10 @@ impl App {
             _ => LayoutMode::Horizontal,
         };
         let show_borders = cfg.show_borders;
+        let view_mode = match cfg.view_mode.as_str() {
+            "compact" => ViewMode::Compact,
+            _ => ViewMode::Expanded,
+        };
         let sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
 
         let exclude_patterns = cfg.exclude_patterns.clone();
@@ -70,6 +74,7 @@ impl App {
         let state = AppState::new(
             theme_index,
             layout_mode,
+            view_mode,
             show_borders,
             sidebar_width,
             term_width,
@@ -671,7 +676,11 @@ impl App {
             .to_string(),
             show_borders: self.state.show_borders,
             sidebar_width: self.state.sidebar_width,
-            view_mode: "expanded".to_string(),
+            view_mode: match self.state.view_mode {
+                ViewMode::Expanded => "expanded",
+                ViewMode::Compact => "compact",
+            }
+            .to_string(),
             exclude_patterns: self.state.exclude_patterns.clone(),
         }
         .save();
