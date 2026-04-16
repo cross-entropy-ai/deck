@@ -20,7 +20,7 @@ A terminal sidebar for browsing and switching tmux sessions. See your sessions, 
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cross-entropy-ai/deck/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/cross-entropy-ai/deck/main/install.sh | sh
 ```
 
 Or with Homebrew:

@@ -36,7 +36,7 @@ A patched `vt100` crate lives in `patches/vt100/` and is applied via `[patch.cra
 ## Workflow Rules
 
 - **Always create a new branch** for any feature or fix before making changes. Use `feature/<name>` or `fix/<name>` naming.
-- PR into `master`. Do not push directly to `master`.
+- PR into `main`. Do not push directly to `main`.
 - Follow existing commit message style: imperative mood, concise summary line, optional body explaining "why".
 
 ## Release
