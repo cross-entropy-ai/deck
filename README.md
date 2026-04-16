@@ -2,6 +2,8 @@
 
 Terminal sidebar for browsing and switching tmux sessions.
 
+![screenshot](docs/screenshot.png)
+
 ## Install
 
 ```bash

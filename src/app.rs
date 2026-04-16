@@ -16,7 +16,7 @@ use crate::git;
 use crate::nesting_guard::{NestingGuard, WarningState};
 use crate::pty::{Pty, PtyEvent};
 use crate::state::{
-    AppState, FocusMode, LayoutMode, MainView, SessionRow, SIDEBAR_MAX, SIDEBAR_MIN,
+    AppState, FocusMode, LayoutMode, MainView, SessionRow, ViewMode, SIDEBAR_MAX, SIDEBAR_MIN,
 };
 use crate::theme::THEMES;
 use crate::tmux;
@@ -62,15 +62,25 @@ impl App {
             _ => LayoutMode::Horizontal,
         };
         let show_borders = cfg.show_borders;
+        let view_mode = match cfg.view_mode.as_str() {
+            "compact" => ViewMode::Compact,
+            _ => ViewMode::Expanded,
+        };
         let sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+
+        let exclude_patterns = cfg.exclude_patterns.clone();
+        let compiled_patterns = crate::config::compile_patterns(&exclude_patterns);
 
         let state = AppState::new(
             theme_index,
             layout_mode,
+            view_mode,
             show_borders,
             sidebar_width,
             term_width,
             term_height,
+            exclude_patterns,
+            compiled_patterns,
         );
         let nesting_guard = NestingGuard::new();
 
@@ -374,6 +384,7 @@ impl App {
         let context_menu = s.context_menu.clone();
         let show_borders = s.show_borders;
         let layout_mode = s.layout_mode;
+        let view_mode = s.view_mode;
         let sidebar_width = s.sidebar_width;
         let main_view = s.main_view;
         let warning_state = self.warning_state.clone();
@@ -399,6 +410,16 @@ impl App {
             theme_names: THEMES.iter().map(|theme| theme.name).collect(),
             layout_mode: s.layout_mode,
             show_borders: s.show_borders,
+            view_mode: s.view_mode,
+            exclude_count: s.exclude_patterns.len(),
+            exclude_editor: s.exclude_editor.as_ref().map(|e| ui::ExcludeEditorView {
+                patterns: &s.exclude_patterns,
+                selected: e.selected,
+                adding: e.adding,
+                input: &e.input,
+                cursor: e.cursor,
+                error: e.error.as_deref(),
+            }),
         };
         let hover_sep = s.hover_separator;
         let dragging_sep = s.dragging_separator;
@@ -415,7 +436,6 @@ impl App {
                     staged: r.staged,
                     modified: r.modified,
                     untracked: r.untracked,
-                    is_current: r.is_current,
                     idle_seconds: r.idle_seconds,
                 })
                 .collect();
@@ -452,6 +472,7 @@ impl App {
                 show_borders,
                 layout_mode == LayoutMode::Vertical,
                 &spinner_frame,
+                view_mode,
             );
 
             if let Some(gap) = gap_area {
@@ -600,7 +621,7 @@ impl App {
 
         self.state.sessions = sessions
             .into_iter()
-            .filter(|s| !s.name.starts_with('_'))
+            .filter(|s| !crate::config::session_excluded(&s.name, &self.state.compiled_patterns))
             .map(|s| {
                 let git_info = git::get_git_info(&s.dir);
                 let idle_seconds = now.saturating_sub(s.activity);
@@ -671,6 +692,12 @@ impl App {
             .to_string(),
             show_borders: self.state.show_borders,
             sidebar_width: self.state.sidebar_width,
+            view_mode: match self.state.view_mode {
+                ViewMode::Expanded => "expanded",
+                ViewMode::Compact => "compact",
+            }
+            .to_string(),
+            exclude_patterns: self.state.exclude_patterns.clone(),
         }
         .save();
     }

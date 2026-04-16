@@ -1,6 +1,7 @@
 use std::time::Instant;
 
-use crate::ui::{self, SessionView, CARD_HEIGHT};
+use crate::config::ExcludePattern;
+use crate::ui::{self, SessionView, card_height};
 
 // --- Constants ---
 
@@ -65,7 +66,14 @@ impl FilterMode {
 }
 
 pub const FILTER_TABS: [FilterMode; 3] = [FilterMode::All, FilterMode::Idle, FilterMode::Working];
-pub const SETTINGS_ITEM_COUNT: usize = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    Expanded,
+    Compact,
+}
+
+pub const SETTINGS_ITEM_COUNT: usize = 5;
 
 // --- Context menu ---
 
@@ -144,6 +152,16 @@ pub struct RenameState {
     pub cursor: usize,
 }
 
+/// UI state for the exclude pattern editor popup.
+#[derive(Debug, Clone)]
+pub struct ExcludeEditorState {
+    pub selected: usize,
+    pub adding: bool,
+    pub input: String,
+    pub cursor: usize,
+    pub error: Option<String>,
+}
+
 // --- AppState ---
 
 pub struct AppState {
@@ -163,6 +181,7 @@ pub struct AppState {
     pub theme_picker_open: bool,
     pub theme_picker_selected: usize,
     pub layout_mode: LayoutMode,
+    pub view_mode: ViewMode,
     pub sidebar_width: u16,
     pub sidebar_height: u16,
     pub show_help: bool,
@@ -170,6 +189,7 @@ pub struct AppState {
     pub renaming: Option<RenameState>,
     pub show_borders: bool,
     pub context_menu: Option<ContextMenu>,
+    pub exclude_editor: Option<ExcludeEditorState>,
     pub hover_separator: bool,
     pub dragging_separator: bool,
 
@@ -179,16 +199,23 @@ pub struct AppState {
 
     // Scroll throttle
     pub last_scroll: Instant,
+
+    // Config
+    pub exclude_patterns: Vec<String>,
+    pub compiled_patterns: Vec<ExcludePattern>,
 }
 
 impl AppState {
     pub fn new(
         theme_index: usize,
         layout_mode: LayoutMode,
+        view_mode: ViewMode,
         show_borders: bool,
         sidebar_width: u16,
         term_width: u16,
         term_height: u16,
+        exclude_patterns: Vec<String>,
+        compiled_patterns: Vec<ExcludePattern>,
     ) -> Self {
         Self {
             sessions: Vec::new(),
@@ -204,6 +231,7 @@ impl AppState {
             theme_picker_open: false,
             theme_picker_selected: theme_index,
             layout_mode,
+            view_mode,
             sidebar_width,
             sidebar_height: SIDEBAR_HEIGHT,
             show_help: false,
@@ -211,11 +239,14 @@ impl AppState {
             renaming: None,
             show_borders,
             context_menu: None,
+            exclude_editor: None,
             hover_separator: false,
             dragging_separator: false,
             term_width,
             term_height,
             last_scroll: Instant::now(),
+            exclude_patterns,
+            compiled_patterns,
         }
     }
 
@@ -257,15 +288,15 @@ impl AppState {
             LayoutMode::Vertical => self.effective_sidebar_height(),
         };
         let header_height = 3u16;
-        let footer_height = 2u16;
+        let footer_height = 3u16;
         let sessions_top = b + header_height;
         let sessions_bottom = sidebar_h.saturating_sub(b + footer_height);
         if row < sessions_top || row >= sessions_bottom {
             return None;
         }
         let visible_height = sessions_bottom - sessions_top;
-        let card_height = CARD_HEIGHT;
-        let focused_bottom = (self.focused + 1) * card_height;
+        let ch = card_height(self.view_mode);
+        let focused_bottom = (self.focused + 1) * ch;
         let visible = visible_height as usize;
         let scroll = if focused_bottom > visible {
             focused_bottom - visible
@@ -273,7 +304,7 @@ impl AppState {
             0
         };
         let clicked_row = row as usize - sessions_top as usize + scroll;
-        let idx = clicked_row / card_height;
+        let idx = clicked_row / ch;
         if idx < self.filtered.len() {
             Some(idx)
         } else {
@@ -322,7 +353,6 @@ impl AppState {
                     staged: s.staged,
                     modified: s.modified,
                     untracked: s.untracked,
-                    is_current: s.is_current,
                     idle_seconds: s.idle_seconds,
                 }
             })
@@ -396,7 +426,7 @@ impl AppState {
 
     /// Clamp and set sidebar width. Returns true if it changed.
     pub fn resize_sidebar(&mut self, new_width: u16) -> bool {
-        let clamped = new_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX.min(self.term_width - 10));
+        let clamped = new_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX.min(self.term_width.saturating_sub(10)));
         if clamped == self.sidebar_width {
             return false;
         }
@@ -408,7 +438,7 @@ impl AppState {
     pub fn resize_sidebar_height(&mut self, new_height: u16) -> bool {
         let clamped = new_height.clamp(
             SIDEBAR_HEIGHT_MIN,
-            SIDEBAR_HEIGHT_MAX.min(self.term_height - 6),
+            SIDEBAR_HEIGHT_MAX.min(self.term_height.saturating_sub(6)),
         );
         if clamped == self.sidebar_height {
             return false;

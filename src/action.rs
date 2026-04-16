@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 
 use crate::state::{
     AppState, ContextMenu, FilterMode, FocusMode, KillRequest, LayoutMode, MainView, MenuKind,
-    RenameRequest, RenameState, SideEffect, GLOBAL_MENU_ITEMS, SESSION_MENU_ITEMS,
+    RenameRequest, RenameState, SideEffect, ViewMode, GLOBAL_MENU_ITEMS, SESSION_MENU_ITEMS,
     SETTINGS_ITEM_COUNT,
 };
 use crate::theme::THEMES;
@@ -31,6 +31,7 @@ pub enum Action {
     // UI toggles
     ToggleLayout,
     ToggleBorders,
+    ToggleViewMode,
     OpenSettings,
     CloseSettings,
     SettingsNext,
@@ -41,6 +42,19 @@ pub enum Action {
     ThemePickerNext,
     ThemePickerPrev,
     ConfirmThemePicker,
+
+    // Exclude editor
+    OpenExcludeEditor,
+    CloseExcludeEditor,
+    ExcludeEditorNext,
+    ExcludeEditorPrev,
+    ExcludeEditorStartAdd,
+    ExcludeEditorDelete,
+    ExcludeEditorInput(char),
+    ExcludeEditorBackspace,
+    ExcludeEditorConfirm,
+    ExcludeEditorCancelAdd,
+
     ToggleHelp,
     DismissHelp,
 
@@ -92,27 +106,45 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
     let mut fx = SideEffect::default();
 
     match action {
-        // --- Navigation ---
+        // --- Navigation (instant switch) ---
         Action::FocusNext => {
             if !state.filtered.is_empty() {
+                let old = state.focused;
                 state.focused = (state.focused + 1).min(state.filtered.len() - 1);
+                if state.focused != old {
+                    if let Some(&session_idx) = state.filtered.get(state.focused) {
+                        fx.switch_session = Some(state.sessions[session_idx].name.clone());
+                    }
+                }
             }
         }
         Action::FocusPrev => {
             if state.focused > 0 {
                 state.focused -= 1;
+                if let Some(&session_idx) = state.filtered.get(state.focused) {
+                    fx.switch_session = Some(state.sessions[session_idx].name.clone());
+                }
             }
         }
         Action::ScrollUp => {
             state.last_scroll = std::time::Instant::now();
             if state.focused > 0 {
                 state.focused -= 1;
+                if let Some(&session_idx) = state.filtered.get(state.focused) {
+                    fx.switch_session = Some(state.sessions[session_idx].name.clone());
+                }
             }
         }
         Action::ScrollDown => {
             state.last_scroll = std::time::Instant::now();
             if !state.filtered.is_empty() {
+                let old = state.focused;
                 state.focused = (state.focused + 1).min(state.filtered.len() - 1);
+                if state.focused != old {
+                    if let Some(&session_idx) = state.filtered.get(state.focused) {
+                        fx.switch_session = Some(state.sessions[session_idx].name.clone());
+                    }
+                }
             }
         }
         Action::FocusIndex(idx) => {
@@ -142,7 +174,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             let Some(&session_idx) = state.filtered.get(state.focused) else {
                 return fx;
             };
-            let is_current = state.sessions[session_idx].is_current;
             let name = state.sessions[session_idx].name.clone();
 
             let next_focused = if state.focused + 1 < state.filtered.len() {
@@ -151,7 +182,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 state.focused.saturating_sub(1)
             };
 
-            let switch_to = if is_current {
+            // Focused session is always the current session (instant switch),
+            // so we always need to switch away before killing.
+            let switch_to = {
                 let alt_idx = if state.focused + 1 < state.filtered.len() {
                     state.focused + 1
                 } else if state.focused > 0 {
@@ -160,8 +193,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     return fx;
                 };
                 Some(state.sessions[state.filtered[alt_idx]].name.clone())
-            } else {
-                Option::None
             };
 
             state.session_order.retain(|n| n != &name);
@@ -259,6 +290,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.resize_pty = true;
             fx.save_config = true;
         }
+        Action::ToggleViewMode => {
+            state.view_mode = match state.view_mode {
+                ViewMode::Expanded => ViewMode::Compact,
+                ViewMode::Compact => ViewMode::Expanded,
+            };
+            fx.save_config = true;
+        }
         Action::OpenSettings => {
             state.main_view = MainView::Settings;
             state.focus_mode = FocusMode::Main;
@@ -293,6 +331,15 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 fx.resize_pty = inner.resize_pty;
                 fx.save_config = inner.save_config;
             }
+            3 => {
+                let _ = direction;
+                let inner = apply_action(state, Action::ToggleViewMode);
+                fx.save_config = inner.save_config;
+            }
+            4 => {
+                let _ = direction;
+                apply_action(state, Action::OpenExcludeEditor);
+            }
             _ => {}
         },
         Action::OpenThemePicker => {
@@ -322,6 +369,133 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::ConfirmThemePicker => {
             state.theme_picker_open = false;
         }
+
+        // --- Exclude editor ---
+        Action::OpenExcludeEditor => {
+            state.exclude_editor = Some(crate::state::ExcludeEditorState {
+                selected: 0,
+                adding: false,
+                input: String::new(),
+                cursor: 0,
+                error: None,
+            });
+        }
+        Action::CloseExcludeEditor => {
+            state.exclude_editor = None;
+        }
+        Action::ExcludeEditorNext => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                if !editor.adding && !state.exclude_patterns.is_empty() {
+                    editor.selected =
+                        (editor.selected + 1).min(state.exclude_patterns.len() - 1);
+                }
+            }
+        }
+        Action::ExcludeEditorPrev => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                if !editor.adding && editor.selected > 0 {
+                    editor.selected -= 1;
+                }
+            }
+        }
+        Action::ExcludeEditorStartAdd => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                editor.adding = true;
+                editor.input.clear();
+                editor.cursor = 0;
+                editor.error = None;
+            }
+        }
+        Action::ExcludeEditorCancelAdd => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                editor.adding = false;
+                editor.input.clear();
+                editor.cursor = 0;
+                editor.error = None;
+            }
+        }
+        Action::ExcludeEditorDelete => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                if !editor.adding && !state.exclude_patterns.is_empty() {
+                    state.exclude_patterns.remove(editor.selected);
+                    state.compiled_patterns =
+                        crate::config::compile_patterns(&state.exclude_patterns);
+                    if editor.selected > 0
+                        && editor.selected >= state.exclude_patterns.len()
+                    {
+                        editor.selected = state.exclude_patterns.len().saturating_sub(1);
+                    }
+                    fx.save_config = true;
+                    fx.refresh_sessions = true;
+                }
+            }
+        }
+        Action::ExcludeEditorInput(ch) => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                if editor.adding {
+                    editor.input.insert(editor.cursor, ch);
+                    editor.cursor += ch.len_utf8();
+                    editor.error = None;
+                }
+            }
+        }
+        Action::ExcludeEditorBackspace => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                if editor.adding && editor.cursor > 0 {
+                    let prev = editor.input[..editor.cursor]
+                        .chars()
+                        .last()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(0);
+                    editor.cursor -= prev;
+                    editor.input.remove(editor.cursor);
+                    editor.error = None;
+                }
+            }
+        }
+        Action::ExcludeEditorConfirm => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                if editor.adding {
+                    let pattern = editor.input.trim().to_string();
+                    if pattern.is_empty() {
+                        editor.adding = false;
+                    } else if let Some(inner) =
+                        pattern.strip_prefix('/').and_then(|s| s.strip_suffix('/'))
+                    {
+                        match regex::Regex::new(inner) {
+                            Ok(_) => {
+                                state.exclude_patterns.push(pattern);
+                                state.compiled_patterns =
+                                    crate::config::compile_patterns(&state.exclude_patterns);
+                                editor.adding = false;
+                                editor.input.clear();
+                                editor.cursor = 0;
+                                editor.error = None;
+                                editor.selected =
+                                    state.exclude_patterns.len().saturating_sub(1);
+                                fx.save_config = true;
+                                fx.refresh_sessions = true;
+                            }
+                            Err(e) => {
+                                editor.error = Some(format!("Invalid regex: {}", e));
+                            }
+                        }
+                    } else {
+                        state.exclude_patterns.push(pattern);
+                        state.compiled_patterns =
+                            crate::config::compile_patterns(&state.exclude_patterns);
+                        editor.adding = false;
+                        editor.input.clear();
+                        editor.cursor = 0;
+                        editor.error = None;
+                        editor.selected = state.exclude_patterns.len().saturating_sub(1);
+                        fx.save_config = true;
+                        fx.refresh_sessions = true;
+                    }
+                }
+            }
+        }
+
         Action::ToggleHelp => {
             state.show_help = true;
         }
@@ -530,6 +704,9 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     }
 
     if state.main_view == MainView::Settings && state.focus_mode == FocusMode::Main {
+        if state.exclude_editor.is_some() {
+            return exclude_editor_key_to_action(key, state);
+        }
         if state.theme_picker_open {
             return theme_picker_key_to_action(key);
         }
@@ -606,6 +783,9 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         // Toggle layout
         KeyCode::Char('l') => Action::ToggleLayout,
 
+        // Toggle compact/expanded view
+        KeyCode::Char('c') => Action::ToggleViewMode,
+
         // Reorder: Alt+Up / Alt+Down
         KeyCode::Up if alt => Action::ReorderSession(-1),
         KeyCode::Down if alt => Action::ReorderSession(1),
@@ -623,6 +803,32 @@ fn settings_key_to_action(key: &KeyEvent) -> Action {
         KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
             Action::SettingsAdjust(1)
         }
+        _ => Action::None,
+    }
+}
+
+fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
+    let adding = state
+        .exclude_editor
+        .as_ref()
+        .is_some_and(|e| e.adding);
+
+    if adding {
+        return match key.code {
+            KeyCode::Esc => Action::ExcludeEditorCancelAdd,
+            KeyCode::Enter => Action::ExcludeEditorConfirm,
+            KeyCode::Backspace => Action::ExcludeEditorBackspace,
+            KeyCode::Char(ch) => Action::ExcludeEditorInput(ch),
+            _ => Action::None,
+        };
+    }
+
+    match key.code {
+        KeyCode::Esc => Action::CloseExcludeEditor,
+        KeyCode::Char('j') | KeyCode::Down => Action::ExcludeEditorNext,
+        KeyCode::Char('k') | KeyCode::Up => Action::ExcludeEditorPrev,
+        KeyCode::Char('a') => Action::ExcludeEditorStartAdd,
+        KeyCode::Char('d') | KeyCode::Char('x') => Action::ExcludeEditorDelete,
         _ => Action::None,
     }
 }
@@ -758,7 +964,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             let b = if state.show_borders { 1u16 } else { 0 };
             let (col_off, row_off) = match state.layout_mode {
                 LayoutMode::Horizontal => (state.sidebar_width + 1 + b, b),
-                LayoutMode::Vertical => (b, state.effective_sidebar_height()),
+                LayoutMode::Vertical => (b, state.effective_sidebar_height() + b),
             };
             let bytes = crate::pty::encode_mouse(mouse, col_off, row_off);
             if bytes.is_empty() {
@@ -769,7 +975,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         let b = if state.show_borders { 1u16 } else { 0 };
         let (col_off, row_off) = match state.layout_mode {
             LayoutMode::Horizontal => (state.sidebar_width + 1 + b, b),
-            LayoutMode::Vertical => (b, state.effective_sidebar_height()),
+            LayoutMode::Vertical => (b, state.effective_sidebar_height() + b),
         };
         let bytes = crate::pty::encode_mouse(mouse, col_off, row_off);
         if !bytes.is_empty() {
@@ -783,7 +989,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{AppState, FilterMode, FocusMode, LayoutMode, MainView, SessionRow};
+    use crate::state::{AppState, FilterMode, FocusMode, LayoutMode, MainView, SessionRow, ViewMode};
 
     fn make_session(name: &str, idle: u64) -> SessionRow {
         SessionRow {
@@ -801,7 +1007,7 @@ mod tests {
     }
 
     fn make_test_state(n: usize) -> AppState {
-        let mut state = AppState::new(0, LayoutMode::Horizontal, true, 28, 120, 40);
+        let mut state = AppState::new(0, LayoutMode::Horizontal, ViewMode::Expanded, true, 28, 120, 40, vec![], vec![]);
         state.sessions = (0..n)
             .map(|i| make_session(&format!("sess-{}", i), 0))
             .collect();
@@ -814,35 +1020,39 @@ mod tests {
     }
 
     #[test]
-    fn focus_next_advances() {
+    fn focus_next_advances_and_switches() {
         let mut state = make_test_state(5);
         state.focused = 0;
-        apply_action(&mut state, Action::FocusNext);
+        let fx = apply_action(&mut state, Action::FocusNext);
         assert_eq!(state.focused, 1);
+        assert_eq!(fx.switch_session.as_deref(), Some("sess-1"));
     }
 
     #[test]
     fn focus_next_stops_at_end() {
         let mut state = make_test_state(5);
         state.focused = 4;
-        apply_action(&mut state, Action::FocusNext);
+        let fx = apply_action(&mut state, Action::FocusNext);
         assert_eq!(state.focused, 4);
+        assert!(fx.switch_session.is_none());
     }
 
     #[test]
-    fn focus_prev_decrements() {
+    fn focus_prev_decrements_and_switches() {
         let mut state = make_test_state(5);
         state.focused = 3;
-        apply_action(&mut state, Action::FocusPrev);
+        let fx = apply_action(&mut state, Action::FocusPrev);
         assert_eq!(state.focused, 2);
+        assert_eq!(fx.switch_session.as_deref(), Some("sess-2"));
     }
 
     #[test]
     fn focus_prev_stops_at_zero() {
         let mut state = make_test_state(5);
         state.focused = 0;
-        apply_action(&mut state, Action::FocusPrev);
+        let fx = apply_action(&mut state, Action::FocusPrev);
         assert_eq!(state.focused, 0);
+        assert!(fx.switch_session.is_none());
     }
 
     #[test]
@@ -877,7 +1087,7 @@ mod tests {
     }
 
     #[test]
-    fn confirm_kill_returns_side_effect() {
+    fn confirm_kill_returns_side_effect_with_switch_target() {
         let mut state = make_test_state(3);
         state.focused = 1;
         state.confirm_kill = true;
@@ -886,19 +1096,7 @@ mod tests {
         assert!(fx.kill_session.is_some());
         let kill = fx.kill_session.unwrap();
         assert_eq!(kill.name, "sess-1");
-        assert!(kill.switch_to.is_none()); // not current session
-    }
-
-    #[test]
-    fn confirm_kill_current_session_provides_switch_target() {
-        let mut state = make_test_state(3);
-        state.sessions[1].is_current = true;
-        state.sessions[0].is_current = false;
-        state.focused = 1;
-        state.confirm_kill = true;
-        let fx = apply_action(&mut state, Action::ConfirmKill);
-        let kill = fx.kill_session.unwrap();
-        assert_eq!(kill.name, "sess-1");
+        // Focused session is always current (instant switch), so always provides switch target
         assert!(kill.switch_to.is_some());
     }
 
@@ -1094,6 +1292,64 @@ mod tests {
     }
 
     #[test]
+    fn open_close_exclude_editor() {
+        let mut state = make_test_state(1);
+        state.main_view = MainView::Settings;
+        state.settings_selected = 4;
+        apply_action(&mut state, Action::OpenExcludeEditor);
+        assert!(state.exclude_editor.is_some());
+        apply_action(&mut state, Action::CloseExcludeEditor);
+        assert!(state.exclude_editor.is_none());
+    }
+
+    #[test]
+    fn exclude_editor_add_pattern() {
+        let mut state = make_test_state(1);
+        state.exclude_patterns = vec!["_*".to_string()];
+        state.compiled_patterns = crate::config::compile_patterns(&state.exclude_patterns);
+        apply_action(&mut state, Action::OpenExcludeEditor);
+        apply_action(&mut state, Action::ExcludeEditorStartAdd);
+        assert!(state.exclude_editor.as_ref().unwrap().adding);
+        apply_action(&mut state, Action::ExcludeEditorInput('t'));
+        apply_action(&mut state, Action::ExcludeEditorInput('*'));
+        let fx = apply_action(&mut state, Action::ExcludeEditorConfirm);
+        assert_eq!(state.exclude_patterns, vec!["_*", "t*"]);
+        assert!(fx.save_config);
+        assert!(fx.refresh_sessions);
+        assert!(!state.exclude_editor.as_ref().unwrap().adding);
+    }
+
+    #[test]
+    fn exclude_editor_delete_pattern() {
+        let mut state = make_test_state(1);
+        state.exclude_patterns = vec!["_*".to_string(), "scratch*".to_string()];
+        state.compiled_patterns = crate::config::compile_patterns(&state.exclude_patterns);
+        apply_action(&mut state, Action::OpenExcludeEditor);
+        state.exclude_editor.as_mut().unwrap().selected = 0;
+        let fx = apply_action(&mut state, Action::ExcludeEditorDelete);
+        assert_eq!(state.exclude_patterns, vec!["scratch*"]);
+        assert!(fx.save_config);
+        assert!(fx.refresh_sessions);
+    }
+
+    #[test]
+    fn exclude_editor_invalid_regex_shows_error() {
+        let mut state = make_test_state(1);
+        state.exclude_patterns = vec![];
+        state.compiled_patterns = vec![];
+        apply_action(&mut state, Action::OpenExcludeEditor);
+        apply_action(&mut state, Action::ExcludeEditorStartAdd);
+        for ch in "/[invalid/".chars() {
+            apply_action(&mut state, Action::ExcludeEditorInput(ch));
+        }
+        apply_action(&mut state, Action::ExcludeEditorConfirm);
+        let editor = state.exclude_editor.as_ref().unwrap();
+        assert!(editor.adding);
+        assert!(editor.error.is_some());
+        assert!(state.exclude_patterns.is_empty());
+    }
+
+    #[test]
     fn reorder_only_in_all_filter() {
         let mut state = make_test_state(3);
         state.filter_mode = FilterMode::Working;
@@ -1102,5 +1358,26 @@ mod tests {
         apply_action(&mut state, Action::ReorderSession(-1));
         let new_order: Vec<String> = state.sessions.iter().map(|s| s.name.clone()).collect();
         assert_eq!(original_order, new_order);
+    }
+
+    #[test]
+    fn toggle_view_mode_flips_and_saves() {
+        let mut state = make_test_state(1);
+        assert_eq!(state.view_mode, ViewMode::Expanded);
+        let fx = apply_action(&mut state, Action::ToggleViewMode);
+        assert_eq!(state.view_mode, ViewMode::Compact);
+        assert!(fx.save_config);
+        let fx = apply_action(&mut state, Action::ToggleViewMode);
+        assert_eq!(state.view_mode, ViewMode::Expanded);
+        assert!(fx.save_config);
+    }
+
+    #[test]
+    fn settings_adjust_view_mode_toggles() {
+        let mut state = make_test_state(1);
+        state.settings_selected = 3;
+        let fx = apply_action(&mut state, Action::SettingsAdjust(1));
+        assert_eq!(state.view_mode, ViewMode::Compact);
+        assert!(fx.save_config);
     }
 }
