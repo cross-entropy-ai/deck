@@ -4,7 +4,7 @@
 
 Allow users to configure patterns that exclude matching tmux sessions from the sidebar. Patterns are persisted in `~/.config/deck/config.json`. Supports glob patterns and regex (wrapped in `//`).
 
-Replaces the current hardcoded `_` prefix filter (`app.rs:589`) with a user-configurable default pattern `_*`.
+Replaces the current hardcoded `_` prefix filter in the `App::refresh_sessions()` session filter logic with a user-configurable default pattern `_*`.
 
 ## Pattern Format
 
