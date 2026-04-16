@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use serde::{Deserialize, Serialize};
+
 use crate::config::{ExcludePattern, PluginConfig};
 use crate::ui::{self, SessionView, card_height};
 
@@ -26,8 +28,10 @@ pub const GLOBAL_MENU_ITEMS: &[&str] = &[
 
 // --- Enums ---
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub enum LayoutMode {
+    #[default]
     Horizontal,
     Vertical,
 }
@@ -72,8 +76,10 @@ impl FilterMode {
 
 pub const FILTER_TABS: [FilterMode; 3] = [FilterMode::All, FilterMode::Idle, FilterMode::Working];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub enum ViewMode {
+    #[default]
     Expanded,
     Compact,
 }
@@ -218,6 +224,7 @@ impl AppState {
         view_mode: ViewMode,
         show_borders: bool,
         sidebar_width: u16,
+        sidebar_height: u16,
         term_width: u16,
         term_height: u16,
         exclude_patterns: Vec<String>,
@@ -240,11 +247,7 @@ impl AppState {
             layout_mode,
             view_mode,
             sidebar_width,
-            sidebar_height: if show_borders {
-                SIDEBAR_HEIGHT
-            } else {
-                SIDEBAR_HEIGHT_MIN
-            },
+            sidebar_height,
             show_help: false,
             confirm_kill: false,
             renaming: None,
@@ -523,6 +526,7 @@ mod tests {
             ViewMode::Expanded,
             show_borders,
             28,
+            SIDEBAR_HEIGHT,
             term_width,
             term_height,
             vec![],

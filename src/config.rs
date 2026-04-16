@@ -1,8 +1,12 @@
 use std::fs;
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
+use crate::state::{LayoutMode, SIDEBAR_HEIGHT, ViewMode};
+
 /// A command-based plugin that runs in its own PTY.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginConfig {
     pub name: String,
     pub command: String,
@@ -10,13 +14,15 @@ pub struct PluginConfig {
 }
 
 /// Persisted user preferences.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     pub theme: String,
-    pub layout: String,
+    pub layout: LayoutMode,
     pub show_borders: bool,
     pub sidebar_width: u16,
-    pub view_mode: String,
+    pub sidebar_height: u16,
+    pub view_mode: ViewMode,
     pub exclude_patterns: Vec<String>,
     pub plugins: Vec<PluginConfig>,
 }
@@ -25,10 +31,11 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             theme: "Catppuccin Mocha".to_string(),
-            layout: "horizontal".to_string(),
+            layout: LayoutMode::Horizontal,
             show_borders: true,
             sidebar_width: 28,
-            view_mode: "expanded".to_string(),
+            sidebar_height: SIDEBAR_HEIGHT,
+            view_mode: ViewMode::Expanded,
             exclude_patterns: vec!["_*".to_string()],
             plugins: Vec::new(),
         }
@@ -55,7 +62,7 @@ impl Config {
     pub fn load() -> Self {
         let path = config_path();
         if let Ok(content) = fs::read_to_string(&path) {
-            return parse_json(&content).unwrap_or_default();
+            return serde_json::from_str(&content).unwrap_or_default();
         }
 
         let legacy_path = legacy_config_path();
@@ -63,45 +70,15 @@ impl Config {
             return Config::default();
         };
 
-        let config = parse_json(&content).unwrap_or_default();
+        let config: Config = serde_json::from_str(&content).unwrap_or_default();
         config.save();
         config
     }
 
     pub fn to_json(&self) -> String {
-        let patterns_json = if self.exclude_patterns.is_empty() {
-            "[]".to_string()
-        } else {
-            let items: Vec<String> = self.exclude_patterns.iter().map(|p| quote(p)).collect();
-            format!("[{}]", items.join(", "))
-        };
-        let plugins_json = if self.plugins.is_empty() {
-            "[]".to_string()
-        } else {
-            let items: Vec<String> = self
-                .plugins
-                .iter()
-                .map(|p| {
-                    format!(
-                        "{{ \"name\": {}, \"command\": {}, \"key\": {} }}",
-                        quote(&p.name),
-                        quote(&p.command),
-                        quote(&p.key.to_string())
-                    )
-                })
-                .collect();
-            format!("[{}]", items.join(", "))
-        };
-        format!(
-            "{{\n  \"theme\": {},\n  \"layout\": {},\n  \"show_borders\": {},\n  \"sidebar_width\": {},\n  \"view_mode\": {},\n  \"exclude_patterns\": {},\n  \"plugins\": {}\n}}\n",
-            quote(&self.theme),
-            quote(&self.layout),
-            self.show_borders,
-            self.sidebar_width,
-            quote(&self.view_mode),
-            patterns_json,
-            plugins_json,
-        )
+        let mut out = serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string());
+        out.push('\n');
+        out
     }
 
     pub fn save(&self) {
@@ -111,26 +88,6 @@ impl Config {
         }
         let _ = fs::write(&path, self.to_json());
     }
-}
-
-fn quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for ch in s.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if c.is_control() => {
-                out.push_str(&format!("\\u{:04x}", c as u32));
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }
 
 /// A compiled exclude pattern — either a glob or a regex.
@@ -187,54 +144,13 @@ fn glob_matches(pattern: &str, text: &str) -> bool {
     dp[plen][tlen]
 }
 
-/// Parse config JSON using serde_json::Value for robust nested parsing.
-fn parse_json(s: &str) -> Option<Config> {
-    let v: serde_json::Value = serde_json::from_str(s).ok()?;
-    let obj = v.as_object()?;
-
-    let mut config = Config::default();
-
-    if let Some(s) = obj.get("theme").and_then(|v| v.as_str()) {
-        config.theme = s.to_string();
-    }
-    if let Some(s) = obj.get("layout").and_then(|v| v.as_str()) {
-        config.layout = s.to_string();
-    }
-    if let Some(b) = obj.get("show_borders").and_then(|v| v.as_bool()) {
-        config.show_borders = b;
-    }
-    if let Some(n) = obj.get("sidebar_width").and_then(|v| v.as_u64()) {
-        config.sidebar_width = u16::try_from(n).unwrap_or(config.sidebar_width);
-    }
-    if let Some(s) = obj.get("view_mode").and_then(|v| v.as_str()) {
-        config.view_mode = s.to_string();
-    }
-    if let Some(arr) = obj.get("exclude_patterns").and_then(|v| v.as_array()) {
-        config.exclude_patterns = arr
-            .iter()
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect();
-    }
-    if let Some(arr) = obj.get("plugins").and_then(|v| v.as_array()) {
-        config.plugins = arr
-            .iter()
-            .filter_map(|v| {
-                let o = v.as_object()?;
-                Some(PluginConfig {
-                    name: o.get("name")?.as_str()?.to_string(),
-                    command: o.get("command")?.as_str()?.to_string(),
-                    key: o.get("key")?.as_str()?.chars().next()?,
-                })
-            })
-            .collect();
-    }
-
-    Some(config)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse(s: &str) -> Config {
+        serde_json::from_str(s).unwrap()
+    }
 
     #[test]
     fn glob_star_matches_prefix() {
@@ -303,7 +219,7 @@ mod tests {
   "sidebar_width": 28,
   "exclude_patterns": ["_*", "/^test/"]
 }"#;
-        let config = parse_json(json).unwrap();
+        let config = parse(json);
         assert_eq!(config.exclude_patterns, vec!["_*", "/^test/"]);
     }
 
@@ -315,7 +231,7 @@ mod tests {
   "show_borders": true,
   "sidebar_width": 28
 }"#;
-        let config = parse_json(json).unwrap();
+        let config = parse(json);
         assert_eq!(config.exclude_patterns, vec!["_*"]);
     }
 
@@ -325,8 +241,8 @@ mod tests {
             exclude_patterns: vec!["_*".to_string(), "/^test/".to_string()],
             ..Config::default()
         };
-        let json = config.to_json();
-        assert!(json.contains(r#""exclude_patterns": ["_*", "/^test/"]"#));
+        let roundtrip: Config = serde_json::from_str(&config.to_json()).unwrap();
+        assert_eq!(roundtrip.exclude_patterns, vec!["_*", "/^test/"]);
     }
 
     #[test]
@@ -338,8 +254,8 @@ mod tests {
   "sidebar_width": 28,
   "view_mode": "compact"
 }"#;
-        let config = parse_json(json).unwrap();
-        assert_eq!(config.view_mode, "compact");
+        let config = parse(json);
+        assert_eq!(config.view_mode, ViewMode::Compact);
     }
 
     #[test]
@@ -350,14 +266,16 @@ mod tests {
   "show_borders": true,
   "sidebar_width": 28
 }"#;
-        let config = parse_json(json).unwrap();
-        assert_eq!(config.view_mode, "expanded");
+        let config = parse(json);
+        assert_eq!(config.view_mode, ViewMode::Expanded);
     }
 
     #[test]
     fn config_to_json_includes_view_mode() {
-        let mut config = Config::default();
-        config.view_mode = "compact".to_string();
+        let config = Config {
+            view_mode: ViewMode::Compact,
+            ..Config::default()
+        };
         let json = config.to_json();
         assert!(json.contains(r#""view_mode": "compact""#));
     }
@@ -371,7 +289,7 @@ mod tests {
     { "name": "System", "command": "btop", "key": "m" }
   ]
 }"#;
-        let config = parse_json(json).unwrap();
+        let config = parse(json);
         assert_eq!(config.plugins.len(), 2);
         assert_eq!(config.plugins[0].name, "GPU Monitor");
         assert_eq!(config.plugins[0].command, "findgpu");
@@ -382,7 +300,31 @@ mod tests {
     #[test]
     fn parse_json_without_plugins_uses_empty() {
         let json = r#"{ "theme": "Nord" }"#;
-        let config = parse_json(json).unwrap();
+        let config = parse(json);
         assert!(config.plugins.is_empty());
+    }
+
+    #[test]
+    fn sidebar_height_round_trips() {
+        let config = Config {
+            sidebar_height: 5,
+            ..Config::default()
+        };
+        let roundtrip: Config = serde_json::from_str(&config.to_json()).unwrap();
+        assert_eq!(roundtrip.sidebar_height, 5);
+    }
+
+    #[test]
+    fn parse_json_without_sidebar_height_uses_default() {
+        let json = r#"{ "theme": "Nord" }"#;
+        let config = parse(json);
+        assert_eq!(config.sidebar_height, SIDEBAR_HEIGHT);
+    }
+
+    #[test]
+    fn parse_json_with_layout_enum() {
+        let json = r#"{ "layout": "vertical" }"#;
+        let config = parse(json);
+        assert_eq!(config.layout, LayoutMode::Vertical);
     }
 }

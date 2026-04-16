@@ -16,7 +16,7 @@ use crate::git;
 use crate::nesting_guard::{NestingGuard, WarningState};
 use crate::pty::{Pty, PtyEvent};
 use crate::state::{
-    AppState, FocusMode, LayoutMode, MainView, SessionRow, ViewMode, SIDEBAR_MAX, SIDEBAR_MIN,
+    AppState, FocusMode, LayoutMode, MainView, SessionRow, SIDEBAR_MAX, SIDEBAR_MIN,
 };
 use crate::theme::THEMES;
 use crate::tmux;
@@ -64,16 +64,11 @@ impl App {
         let cfg = Config::load();
 
         let theme_index = THEMES.iter().position(|t| t.name == cfg.theme).unwrap_or(0);
-        let layout_mode = match cfg.layout.as_str() {
-            "vertical" => LayoutMode::Vertical,
-            _ => LayoutMode::Horizontal,
-        };
+        let layout_mode = cfg.layout;
         let show_borders = cfg.show_borders;
-        let view_mode = match cfg.view_mode.as_str() {
-            "compact" => ViewMode::Compact,
-            _ => ViewMode::Expanded,
-        };
+        let view_mode = cfg.view_mode;
         let sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+        let sidebar_height = cfg.sidebar_height;
 
         let exclude_patterns = cfg.exclude_patterns.clone();
         let compiled_patterns = crate::config::compile_patterns(&exclude_patterns);
@@ -86,6 +81,7 @@ impl App {
             view_mode,
             show_borders,
             sidebar_width,
+            sidebar_height,
             term_width,
             term_height,
             exclude_patterns,
@@ -836,18 +832,11 @@ impl App {
     fn save_config(&self) {
         Config {
             theme: THEMES[self.state.theme_index].name.to_string(),
-            layout: match self.state.layout_mode {
-                LayoutMode::Horizontal => "horizontal",
-                LayoutMode::Vertical => "vertical",
-            }
-            .to_string(),
+            layout: self.state.layout_mode,
             show_borders: self.state.show_borders,
             sidebar_width: self.state.sidebar_width,
-            view_mode: match self.state.view_mode {
-                ViewMode::Expanded => "expanded",
-                ViewMode::Compact => "compact",
-            }
-            .to_string(),
+            sidebar_height: self.state.sidebar_height,
+            view_mode: self.state.view_mode,
             exclude_patterns: self.state.exclude_patterns.clone(),
             plugins: self.state.plugins.clone(),
         }
