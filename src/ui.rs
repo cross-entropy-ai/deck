@@ -6,6 +6,9 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::layout::{
+    card_height, context_menu_width, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR,
+};
 use crate::state::{FilterMode, LayoutMode, ViewMode, FILTER_TABS};
 use crate::theme::Theme;
 
@@ -207,11 +210,7 @@ fn draw_sessions(
                 let is_focused = i == focused;
                 let is_emphasized = is_focused;
 
-                let accent_color = if is_focused {
-                    theme.green
-                } else {
-                    theme.bg
-                };
+                let accent_color = if is_focused { theme.green } else { theme.bg };
 
                 let accent = if is_focused { "▌" } else { " " };
                 let name_style = if is_focused {
@@ -258,11 +257,7 @@ fn draw_sessions(
 
                 // Row 2: idle badge + directory
                 let dir_display = truncate(&shorten_dir(session.dir), text_width.saturating_sub(2));
-                let dir_color = if is_focused {
-                    theme.teal
-                } else {
-                    theme.muted
-                };
+                let dir_color = if is_focused { theme.teal } else { theme.muted };
                 let badge = format_idle_badge(session.idle_seconds)
                     .map(|text| format!("{text:^6}"))
                     .unwrap_or_else(|| " ".repeat(6));
@@ -301,11 +296,7 @@ fn draw_sessions(
                         width,
                     ));
                 } else {
-                    let branch_color = if is_focused {
-                        theme.pink
-                    } else {
-                        theme.muted
-                    };
+                    let branch_color = if is_focused { theme.pink } else { theme.muted };
                     let branch_display = truncate(session.branch, text_width.saturating_sub(2));
                     lines.push(pad_line(
                         vec![
@@ -319,7 +310,8 @@ fn draw_sessions(
                 }
 
                 // Row 4: status indicators (always rendered)
-                let status_spans = build_status_spans(session, is_emphasized, bg, theme, text_width);
+                let status_spans =
+                    build_status_spans(session, is_emphasized, bg, theme, text_width);
                 let mut row4 = vec![Span::styled("      ", Style::default().bg(bg))];
                 if status_spans.is_empty() {
                     row4.push(Span::styled(
@@ -369,11 +361,7 @@ fn draw_sessions_compact(
         let is_focused = i == focused;
         let is_emphasized = is_focused;
 
-        let accent_color = if is_focused {
-            theme.green
-        } else {
-            theme.bg
-        };
+        let accent_color = if is_focused { theme.green } else { theme.bg };
         let accent = if is_focused { "▌" } else { " " };
         let name_style = if is_focused {
             Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
@@ -397,15 +385,14 @@ fn draw_sessions_compact(
             Span::styled(activity_text, Style::default().fg(activity_color).bg(bg)),
             Span::styled(idx_str, index_style.bg(bg)),
             Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(truncate(session.name, width.saturating_sub(6)), name_style.bg(bg)),
+            Span::styled(
+                truncate(session.name, width.saturating_sub(6)),
+                name_style.bg(bg),
+            ),
         ];
 
         if !session.branch.is_empty() {
-            let branch_color = if is_focused {
-                theme.pink
-            } else {
-                theme.muted
-            };
+            let branch_color = if is_focused { theme.pink } else { theme.muted };
             spans.push(Span::styled("  ", Style::default().bg(bg)));
             spans.push(Span::styled(
                 truncate(session.branch, width.saturating_sub(20)),
@@ -415,14 +402,21 @@ fn draw_sessions_compact(
             let status = format_git_status(session, true);
             if !status.is_empty() {
                 let status_color = if status == "✓" {
-                    if is_emphasized { theme.green } else { theme.muted }
+                    if is_emphasized {
+                        theme.green
+                    } else {
+                        theme.muted
+                    }
                 } else if is_emphasized {
                     theme.yellow
                 } else {
                     theme.dim
                 };
                 spans.push(Span::styled(" ", Style::default().bg(bg)));
-                spans.push(Span::styled(status, Style::default().fg(status_color).bg(bg)));
+                spans.push(Span::styled(
+                    status,
+                    Style::default().fg(status_color).bg(bg),
+                ));
             }
         }
 
@@ -431,11 +425,7 @@ fn draw_sessions_compact(
         // Row 2: directory
         let text_width = width.saturating_sub(6);
         let dir_display = truncate(&shorten_dir(session.dir), text_width);
-        let dir_color = if is_focused {
-            theme.teal
-        } else {
-            theme.muted
-        };
+        let dir_color = if is_focused { theme.teal } else { theme.muted };
         lines.push(pad_line(
             vec![
                 Span::styled("      ", Style::default().bg(bg)),
@@ -562,8 +552,10 @@ fn draw_sidebar_tabs(
         height: 1,
         ..content
     };
+    let leading_pad: String = " ".repeat(TAB_LEADING_PAD as usize);
+    let inner_pad: String = " ".repeat(TAB_INNER_PAD as usize);
     let mut spans: Vec<Span> = Vec::new();
-    spans.push(Span::styled(" ", Style::default().bg(theme.bg)));
+    spans.push(Span::styled(leading_pad, Style::default().bg(theme.bg)));
 
     for (i, session) in sessions.iter().enumerate() {
         let is_focused = i == focused;
@@ -584,7 +576,7 @@ fn draw_sidebar_tabs(
             format!("{}", i + 1),
             Style::default().fg(idx_fg).bg(bg),
         ));
-        spans.push(Span::styled(" ", Style::default().bg(bg)));
+        spans.push(Span::styled(inner_pad.clone(), Style::default().bg(bg)));
         spans.push(Span::styled(
             session.name,
             Style::default()
@@ -596,12 +588,12 @@ fn draw_sidebar_tabs(
                     Modifier::empty()
                 }),
         ));
-        spans.push(Span::styled(" ", Style::default().bg(bg)));
+        spans.push(Span::styled(inner_pad.clone(), Style::default().bg(bg)));
 
         // Separator between tabs
         if i + 1 < sessions.len() {
             spans.push(Span::styled(
-                "│",
+                TAB_SEPARATOR,
                 Style::default().fg(theme.dim).bg(theme.bg),
             ));
         }
@@ -682,23 +674,6 @@ fn draw_sidebar_tabs(
 
 fn build_tab_status(session: &SessionView) -> String {
     format_git_status(session, false)
-}
-
-/// Compute the column ranges for each tab. Returns vec of (start_col, end_col) relative to content.
-pub fn tab_col_ranges(sessions: &[SessionView]) -> Vec<(u16, u16)> {
-    let mut ranges = Vec::new();
-    let mut x: u16 = 1; // initial padding
-    for (i, session) in sessions.iter().enumerate() {
-        let idx_width = format!("{}", i + 1).len() as u16;
-        let name_width = UnicodeWidthStr::width(session.name) as u16;
-        let tab_width = idx_width + 1 + name_width + 1; // "idx name "
-        ranges.push((x, x + tab_width));
-        x += tab_width;
-        if i + 1 < sessions.len() {
-            x += 1; // separator
-        }
-    }
-    ranges
 }
 
 fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
@@ -805,16 +780,8 @@ fn draw_rename_input(frame: &mut Frame, area: Rect, theme: &Theme, input: &str, 
         Line::from(vec![
             Span::styled("  ", Style::default()),
             Span::styled(before, Style::default().fg(theme.accent)),
-            Span::styled(
-                cursor_char,
-                Style::default()
-                    .fg(theme.bg)
-                    .bg(theme.accent),
-            ),
-            Span::styled(
-                rest,
-                Style::default().fg(theme.accent),
-            ),
+            Span::styled(cursor_char, Style::default().fg(theme.bg).bg(theme.accent)),
+            Span::styled(rest, Style::default().fg(theme.accent)),
         ]),
         Line::raw(""),
         Line::from(Span::styled(
@@ -826,11 +793,6 @@ fn draw_rename_input(frame: &mut Frame, area: Rect, theme: &Theme, input: &str, 
         Paragraph::new(lines).style(Style::default().bg(theme.bg)),
         area,
     );
-}
-
-pub fn context_menu_width(items: &[&str]) -> u16 {
-    let max_len = items.iter().map(|s| s.len()).max().unwrap_or(0);
-    (max_len as u16) + 4 // 1 border + 1 padding each side + 1 border
 }
 
 pub fn draw_context_menu(
@@ -1054,12 +1016,7 @@ fn draw_theme_picker(frame: &mut Frame, area: Rect, settings: &SettingsView, the
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn draw_exclude_editor(
-    frame: &mut Frame,
-    area: Rect,
-    editor: &ExcludeEditorView,
-    theme: &Theme,
-) {
+fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView, theme: &Theme) {
     let pattern_count = editor.patterns.len();
     let max_pattern_width = editor
         .patterns
@@ -1072,7 +1029,9 @@ fn draw_exclude_editor(
     let content_lines = pattern_count
         + if editor.adding { 1 } else { 0 }
         + if editor.error.is_some() { 1 } else { 0 };
-    let height = (content_lines as u16 + 4).min(area.height.saturating_sub(2)).max(5);
+    let height = (content_lines as u16 + 4)
+        .min(area.height.saturating_sub(2))
+        .max(5);
     let width = (max_pattern_width as u16 + 8)
         .max(30)
         .min(area.width.saturating_sub(4));
@@ -1110,7 +1069,10 @@ fn draw_exclude_editor(
                     .fg(if selected { theme.accent } else { theme.bg })
                     .bg(row_bg),
             ),
-            Span::styled(format!(" {} ", pattern), Style::default().fg(theme.text).bg(row_bg)),
+            Span::styled(
+                format!(" {} ", pattern),
+                Style::default().fg(theme.text).bg(row_bg),
+            ),
         ]));
     }
 
@@ -1203,10 +1165,7 @@ mod tests {
 
     #[test]
     fn truncate_handles_unicode_without_panic() {
-        assert_eq!(
-            truncate("🪆 Nested deck detected", 10),
-            "🪆 Nested…"
-        );
+        assert_eq!(truncate("🪆 Nested deck detected", 10), "🪆 Nested…");
     }
 
     #[test]
@@ -1243,13 +1202,6 @@ fn shorten_dir(dir: &str) -> String {
         format!("~{}", &dir[home.len()..])
     } else {
         dir.to_string()
-    }
-}
-
-pub fn card_height(view_mode: ViewMode) -> usize {
-    match view_mode {
-        ViewMode::Expanded => 5,
-        ViewMode::Compact => 2,
     }
 }
 

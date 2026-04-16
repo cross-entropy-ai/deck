@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::state::{LayoutMode, SIDEBAR_HEIGHT, ViewMode};
+use crate::state::{LayoutMode, ViewMode, SIDEBAR_HEIGHT};
 
 /// A command-based plugin that runs in its own PTY.
 #[derive(Debug, Clone, Serialize, Deserialize)]

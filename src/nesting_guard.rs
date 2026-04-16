@@ -15,8 +15,7 @@ const HOST_SESSION_WARNINGS: [&str; 8] = [
     "🪆 Infinite dolls are cute. Infinite sidebars are not.",
 ];
 static HOST_WARNING_COUNTER: AtomicU64 = AtomicU64::new(0);
-const DETECTED_UNSAFE_SESSION_WARNING: &str =
-    "Unsafe session detected. Please stop nesting deck.";
+const DETECTED_UNSAFE_SESSION_WARNING: &str = "Unsafe session detected. Please stop nesting deck.";
 
 #[derive(Clone)]
 pub enum WarningState {

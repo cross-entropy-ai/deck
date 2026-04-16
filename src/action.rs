@@ -320,32 +320,18 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 state.settings_selected -= 1;
             }
         }
-        Action::SettingsAdjust(direction) => match state.settings_selected {
-            0 => {
-                let _ = direction;
-                apply_action(state, Action::OpenThemePicker);
-            }
-            1 => {
-                let inner = apply_action(state, Action::ToggleLayout);
-                fx.resize_pty = inner.resize_pty;
-                fx.save_config = inner.save_config;
-            }
-            2 => {
-                let inner = apply_action(state, Action::ToggleBorders);
-                fx.resize_pty = inner.resize_pty;
-                fx.save_config = inner.save_config;
-            }
-            3 => {
-                let _ = direction;
-                let inner = apply_action(state, Action::ToggleViewMode);
-                fx.save_config = inner.save_config;
-            }
-            4 => {
-                let _ = direction;
-                apply_action(state, Action::OpenExcludeEditor);
-            }
-            _ => {}
-        },
+        Action::SettingsAdjust(direction) => {
+            let _ = direction;
+            let inner = match state.settings_selected {
+                0 => apply_action(state, Action::OpenThemePicker),
+                1 => apply_action(state, Action::ToggleLayout),
+                2 => apply_action(state, Action::ToggleBorders),
+                3 => apply_action(state, Action::ToggleViewMode),
+                4 => apply_action(state, Action::OpenExcludeEditor),
+                _ => SideEffect::default(),
+            };
+            fx.merge(inner);
+        }
         Action::OpenThemePicker => {
             state.theme_picker_open = true;
             state.theme_picker_selected = state.theme_index.min(THEMES.len().saturating_sub(1));
@@ -390,8 +376,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::ExcludeEditorNext => {
             if let Some(ref mut editor) = state.exclude_editor {
                 if !editor.adding && !state.exclude_patterns.is_empty() {
-                    editor.selected =
-                        (editor.selected + 1).min(state.exclude_patterns.len() - 1);
+                    editor.selected = (editor.selected + 1).min(state.exclude_patterns.len() - 1);
                 }
             }
         }
@@ -422,11 +407,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if let Some(ref mut editor) = state.exclude_editor {
                 if !editor.adding && !state.exclude_patterns.is_empty() {
                     state.exclude_patterns.remove(editor.selected);
-                    state.compiled_patterns =
-                        crate::config::compile_patterns(&state.exclude_patterns);
-                    if editor.selected > 0
-                        && editor.selected >= state.exclude_patterns.len()
-                    {
+                    if editor.selected > 0 && editor.selected >= state.exclude_patterns.len() {
                         editor.selected = state.exclude_patterns.len().saturating_sub(1);
                     }
                     fx.save_config = true;
@@ -469,14 +450,11 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                         match regex::Regex::new(inner) {
                             Ok(_) => {
                                 state.exclude_patterns.push(pattern);
-                                state.compiled_patterns =
-                                    crate::config::compile_patterns(&state.exclude_patterns);
                                 editor.adding = false;
                                 editor.input.clear();
                                 editor.cursor = 0;
                                 editor.error = None;
-                                editor.selected =
-                                    state.exclude_patterns.len().saturating_sub(1);
+                                editor.selected = state.exclude_patterns.len().saturating_sub(1);
                                 fx.save_config = true;
                                 fx.refresh_sessions = true;
                             }
@@ -486,8 +464,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                         }
                     } else {
                         state.exclude_patterns.push(pattern);
-                        state.compiled_patterns =
-                            crate::config::compile_patterns(&state.exclude_patterns);
                         editor.adding = false;
                         editor.input.clear();
                         editor.cursor = 0;
@@ -578,51 +554,38 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             match menu.kind {
                 MenuKind::Session { filtered_idx } => {
                     state.focused = filtered_idx;
-                    match selected_label {
+                    let inner = match selected_label {
                         Some("Switch") => {
                             let inner = apply_action(state, Action::SwitchProject);
-                            fx.switch_session = inner.switch_session;
-                            fx.refresh_sessions = inner.refresh_sessions;
                             state.focus_mode = FocusMode::Main;
+                            inner
                         }
-                        Some("Rename") => {
-                            apply_action(state, Action::StartRename);
-                        }
-                        Some("Kill") => {
-                            apply_action(state, Action::KillSession);
-                        }
-                        Some("Move up") => {
-                            apply_action(state, Action::ReorderSession(-1));
-                        }
-                        Some("Move down") => {
-                            apply_action(state, Action::ReorderSession(1));
-                        }
-                        _ => {}
-                    }
+                        Some("Rename") => apply_action(state, Action::StartRename),
+                        Some("Kill") => apply_action(state, Action::KillSession),
+                        Some("Move up") => apply_action(state, Action::ReorderSession(-1)),
+                        Some("Move down") => apply_action(state, Action::ReorderSession(1)),
+                        _ => SideEffect::default(),
+                    };
+                    fx.merge(inner);
                 }
-                MenuKind::Global => match selected_label {
-                    Some("New session") => {
-                        fx.create_session = true;
-                        fx.refresh_sessions = true;
-                    }
-                    Some("Toggle layout") => {
-                        let inner = apply_action(state, Action::ToggleLayout);
-                        fx.resize_pty = inner.resize_pty;
-                        fx.save_config = inner.save_config;
-                    }
-                    Some("Toggle borders") => {
-                        let inner = apply_action(state, Action::ToggleBorders);
-                        fx.resize_pty = inner.resize_pty;
-                        fx.save_config = inner.save_config;
-                    }
-                    Some("Settings") => {
-                        apply_action(state, Action::OpenSettings);
-                    }
-                    Some("Quit") => {
-                        fx.quit = true;
-                    }
-                    _ => {}
-                },
+                MenuKind::Global => {
+                    let inner = match selected_label {
+                        Some("New session") => SideEffect {
+                            create_session: true,
+                            refresh_sessions: true,
+                            ..SideEffect::default()
+                        },
+                        Some("Toggle layout") => apply_action(state, Action::ToggleLayout),
+                        Some("Toggle borders") => apply_action(state, Action::ToggleBorders),
+                        Some("Settings") => apply_action(state, Action::OpenSettings),
+                        Some("Quit") => SideEffect {
+                            quit: true,
+                            ..SideEffect::default()
+                        },
+                        _ => SideEffect::default(),
+                    };
+                    fx.merge(inner);
+                }
             }
         }
         Action::MenuDismiss => {
@@ -837,10 +800,7 @@ fn settings_key_to_action(key: &KeyEvent) -> Action {
 }
 
 fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
-    let adding = state
-        .exclude_editor
-        .as_ref()
-        .is_some_and(|e| e.adding);
+    let adding = state.exclude_editor.as_ref().is_some_and(|e| e.adding);
 
     if adding {
         return match key.code {
@@ -1020,7 +980,9 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{AppState, FilterMode, FocusMode, LayoutMode, MainView, SessionRow, ViewMode};
+    use crate::state::{
+        AppState, FilterMode, FocusMode, LayoutMode, MainView, SessionRow, ViewMode,
+    };
 
     fn make_session(name: &str, idle: u64) -> SessionRow {
         SessionRow {
@@ -1038,7 +1000,18 @@ mod tests {
     }
 
     fn make_test_state(n: usize) -> AppState {
-        let mut state = AppState::new(0, LayoutMode::Horizontal, ViewMode::Expanded, true, 28, crate::state::SIDEBAR_HEIGHT, 120, 40, vec![], vec![], vec![]);
+        let mut state = AppState::new(
+            0,
+            LayoutMode::Horizontal,
+            ViewMode::Expanded,
+            true,
+            28,
+            crate::state::SIDEBAR_HEIGHT,
+            120,
+            40,
+            vec![],
+            vec![],
+        );
         state.sessions = (0..n)
             .map(|i| make_session(&format!("sess-{}", i), 0))
             .collect();
@@ -1337,7 +1310,6 @@ mod tests {
     fn exclude_editor_add_pattern() {
         let mut state = make_test_state(1);
         state.exclude_patterns = vec!["_*".to_string()];
-        state.compiled_patterns = crate::config::compile_patterns(&state.exclude_patterns);
         apply_action(&mut state, Action::OpenExcludeEditor);
         apply_action(&mut state, Action::ExcludeEditorStartAdd);
         assert!(state.exclude_editor.as_ref().unwrap().adding);
@@ -1354,7 +1326,6 @@ mod tests {
     fn exclude_editor_delete_pattern() {
         let mut state = make_test_state(1);
         state.exclude_patterns = vec!["_*".to_string(), "scratch*".to_string()];
-        state.compiled_patterns = crate::config::compile_patterns(&state.exclude_patterns);
         apply_action(&mut state, Action::OpenExcludeEditor);
         state.exclude_editor.as_mut().unwrap().selected = 0;
         let fx = apply_action(&mut state, Action::ExcludeEditorDelete);
@@ -1367,7 +1338,6 @@ mod tests {
     fn exclude_editor_invalid_regex_shows_error() {
         let mut state = make_test_state(1);
         state.exclude_patterns = vec![];
-        state.compiled_patterns = vec![];
         apply_action(&mut state, Action::OpenExcludeEditor);
         apply_action(&mut state, Action::ExcludeEditorStartAdd);
         for ch in "/[invalid/".chars() {

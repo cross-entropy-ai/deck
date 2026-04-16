@@ -2,8 +2,8 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{ExcludePattern, PluginConfig};
-use crate::ui::{self, SessionView, card_height};
+use crate::config::PluginConfig;
+use crate::layout::{card_height, context_menu_width, tab_col_ranges};
 
 // --- Constants ---
 
@@ -140,6 +140,30 @@ pub struct SideEffect {
     pub quit: bool,
 }
 
+impl SideEffect {
+    /// Fold another SideEffect into this one. Option fields from `other`
+    /// overwrite Some values; bool fields are OR'd. Use this whenever a
+    /// compound action delegates to a sub-action — it keeps new fx
+    /// fields from silently being dropped.
+    pub fn merge(&mut self, other: SideEffect) {
+        if other.switch_session.is_some() {
+            self.switch_session = other.switch_session;
+        }
+        if other.kill_session.is_some() {
+            self.kill_session = other.kill_session;
+        }
+        if other.rename_session.is_some() {
+            self.rename_session = other.rename_session;
+        }
+        self.create_session |= other.create_session;
+        self.resize_pty |= other.resize_pty;
+        self.save_config |= other.save_config;
+        self.apply_tmux_theme |= other.apply_tmux_theme;
+        self.refresh_sessions |= other.refresh_sessions;
+        self.quit |= other.quit;
+    }
+}
+
 /// Info needed to execute a kill: which session to kill, and optionally
 /// which session to switch to first (if killing the current session).
 #[derive(Debug)]
@@ -213,7 +237,6 @@ pub struct AppState {
 
     // Config
     pub exclude_patterns: Vec<String>,
-    pub compiled_patterns: Vec<ExcludePattern>,
     pub plugins: Vec<PluginConfig>,
 }
 
@@ -228,7 +251,6 @@ impl AppState {
         term_width: u16,
         term_height: u16,
         exclude_patterns: Vec<String>,
-        compiled_patterns: Vec<ExcludePattern>,
         plugins: Vec<PluginConfig>,
     ) -> Self {
         Self {
@@ -260,7 +282,6 @@ impl AppState {
             term_height,
             last_scroll: Instant::now(),
             exclude_patterns,
-            compiled_patterns,
             plugins,
         }
     }
@@ -387,25 +408,12 @@ impl AppState {
         if row != b {
             return None;
         }
-        let views: Vec<SessionView> = self
+        let names: Vec<&str> = self
             .filtered
             .iter()
-            .map(|&i| {
-                let s = &self.sessions[i];
-                SessionView {
-                    name: s.name.as_str(),
-                    dir: s.dir.as_str(),
-                    branch: s.branch.as_str(),
-                    ahead: s.ahead,
-                    behind: s.behind,
-                    staged: s.staged,
-                    modified: s.modified,
-                    untracked: s.untracked,
-                    idle_seconds: s.idle_seconds,
-                }
-            })
+            .map(|&i| self.sessions[i].name.as_str())
             .collect();
-        let ranges = ui::tab_col_ranges(&views);
+        let ranges = tab_col_ranges(&names);
         let local_col = col.saturating_sub(b);
         for (i, &(start, end)) in ranges.iter().enumerate() {
             if local_col >= start && local_col < end {
@@ -419,7 +427,7 @@ impl AppState {
     pub fn menu_item_at(&self, col: u16, row: u16) -> Option<usize> {
         let menu = self.context_menu.as_ref()?;
         let items = menu.items();
-        let menu_width = ui::context_menu_width(items);
+        let menu_width = context_menu_width(items);
         let menu_height = items.len() as u16 + 2;
         let mx = menu.x.min(self.term_width.saturating_sub(menu_width));
         let my = menu.y.min(self.term_height.saturating_sub(menu_height));
@@ -529,7 +537,6 @@ mod tests {
             SIDEBAR_HEIGHT,
             term_width,
             term_height,
-            vec![],
             vec![],
             vec![],
         );

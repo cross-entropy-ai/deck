@@ -43,8 +43,7 @@ impl InstanceGuard {
                 Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
                     let existing_pid = Self::read_lock_pid(&lock_path);
                     match existing_pid {
-                        Some(pid) if pid != current_pid && tmux::pid_looks_like_deck(pid) =>
-                        {
+                        Some(pid) if pid != current_pid && tmux::pid_looks_like_deck(pid) => {
                             return Err(AcquireError::AlreadyRunning { pid: Some(pid) });
                         }
                         Some(pid) if pid == current_pid => {
@@ -158,10 +157,7 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     fn test_lock_path(name: &str) -> PathBuf {
-        PathBuf::from(format!(
-            "/tmp/deck-test-{name}-{}.lock",
-            std::process::id()
-        ))
+        PathBuf::from(format!("/tmp/deck-test-{name}-{}.lock", std::process::id()))
     }
 
     fn never_kill(_pid: u32) -> Result<(), KillError> {

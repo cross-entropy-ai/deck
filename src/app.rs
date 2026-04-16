@@ -16,7 +16,7 @@ use crate::nesting_guard::{NestingGuard, WarningState};
 use crate::pty::{Pty, PtyEvent};
 use crate::refresh::{RefreshRequest, RefreshWorker, SessionSnapshot};
 use crate::state::{
-    AppState, FocusMode, LayoutMode, MainView, SessionRow, SIDEBAR_MAX, SIDEBAR_MIN,
+    AppState, FocusMode, LayoutMode, MainView, SessionRow, SideEffect, SIDEBAR_MAX, SIDEBAR_MIN,
 };
 use crate::theme::THEMES;
 use crate::tmux;
@@ -72,7 +72,6 @@ impl App {
         let sidebar_height = cfg.sidebar_height;
 
         let exclude_patterns = cfg.exclude_patterns.clone();
-        let compiled_patterns = crate::config::compile_patterns(&exclude_patterns);
         let plugins = cfg.plugins.clone();
         let plugin_count = plugins.len();
 
@@ -86,7 +85,6 @@ impl App {
             term_width,
             term_height,
             exclude_patterns,
-            compiled_patterns,
             plugins,
         );
         let nesting_guard = NestingGuard::new();
@@ -222,7 +220,9 @@ impl App {
                                     let _ = self.pty.write(&bytes);
                                 }
                                 MainView::Plugin(idx) => {
-                                    if let Some(ref mut inst) = self.plugin_instances.get_mut(idx).and_then(|o| o.as_mut()) {
+                                    if let Some(ref mut inst) =
+                                        self.plugin_instances.get_mut(idx).and_then(|o| o.as_mut())
+                                    {
                                         let _ = inst.pty.write(&bytes);
                                     }
                                 }
@@ -300,17 +300,28 @@ impl App {
 
             // Compound: sidebar click → focus sidebar + select + switch
             Action::SidebarClickSession(idx) => {
-                action::apply_action(&mut self.state, Action::SetFocusSidebar);
-                action::apply_action(&mut self.state, Action::FocusIndex(idx));
-                let fx = action::apply_action(&mut self.state, Action::SwitchProject);
+                let mut fx = SideEffect::default();
+                fx.merge(action::apply_action(
+                    &mut self.state,
+                    Action::SetFocusSidebar,
+                ));
+                fx.merge(action::apply_action(
+                    &mut self.state,
+                    Action::FocusIndex(idx),
+                ));
+                fx.merge(action::apply_action(&mut self.state, Action::SwitchProject));
                 self.execute_side_effects(&fx);
                 return false;
             }
 
             // Compound: number key → focus + switch + go to main
             Action::NumberKeyJump(idx) => {
-                action::apply_action(&mut self.state, Action::FocusIndex(idx));
-                let fx = action::apply_action(&mut self.state, Action::SwitchProject);
+                let mut fx = SideEffect::default();
+                fx.merge(action::apply_action(
+                    &mut self.state,
+                    Action::FocusIndex(idx),
+                ));
+                fx.merge(action::apply_action(&mut self.state, Action::SwitchProject));
                 self.execute_side_effects(&fx);
                 if self.warning_state.is_none() {
                     self.state.focus_mode = FocusMode::Main;
@@ -332,8 +343,12 @@ impl App {
 
             // Compound: context menu click → select item + confirm
             Action::MenuClickItem(idx) => {
-                action::apply_action(&mut self.state, Action::MenuHover(idx));
-                let fx = action::apply_action(&mut self.state, Action::MenuConfirm);
+                let mut fx = SideEffect::default();
+                fx.merge(action::apply_action(
+                    &mut self.state,
+                    Action::MenuHover(idx),
+                ));
+                fx.merge(action::apply_action(&mut self.state, Action::MenuConfirm));
                 self.execute_side_effects(&fx);
                 if self.warning_state.is_some() {
                     self.state.focus_mode = FocusMode::Sidebar;
@@ -619,19 +634,28 @@ impl App {
                 let main_inner = main_block.inner(main_area);
                 frame.render_widget(main_block, main_area);
                 if let Some(screen) = background_screen {
-                    bridge::render_screen(screen, main_inner, frame.buffer_mut(), theme.text, theme.bg);
+                    bridge::render_screen(
+                        screen,
+                        main_inner,
+                        frame.buffer_mut(),
+                        theme.text,
+                        theme.bg,
+                    );
                     if !sidebar_active && warning_state.is_none() {
                         bridge::set_cursor(frame, screen, main_inner);
                     }
                 }
                 main_inner
             } else {
-                frame.render_widget(
-                    Block::default().style(main_base),
-                    main_area,
-                );
+                frame.render_widget(Block::default().style(main_base), main_area);
                 if let Some(screen) = background_screen {
-                    bridge::render_screen(screen, main_area, frame.buffer_mut(), theme.text, theme.bg);
+                    bridge::render_screen(
+                        screen,
+                        main_area,
+                        frame.buffer_mut(),
+                        theme.text,
+                        theme.bg,
+                    );
                     if !sidebar_active && warning_state.is_none() {
                         bridge::set_cursor(frame, screen, main_area);
                     }
@@ -742,7 +766,11 @@ impl App {
         self.state.apply_order();
         self.state.recompute_filter();
 
-        if self.state.focus_mode != FocusMode::Sidebar || self.state.current_session != current {
+        // Snap focus to the current session only when current actually
+        // changed — at boot current_session is empty so the first
+        // snapshot lands correctly, and afterwards we preserve the
+        // user's selection regardless of where their focus is.
+        if self.state.current_session != current {
             if let Some(pos) = self
                 .state
                 .filtered
@@ -754,10 +782,6 @@ impl App {
         }
 
         self.state.current_session = current;
-
-        if !self.state.filtered.is_empty() && self.state.focused >= self.state.filtered.len() {
-            self.state.focused = self.state.filtered.len() - 1;
-        }
     }
 
     fn resize_pty(&mut self) {
@@ -840,8 +864,6 @@ impl App {
         let plugin = &self.state.plugins[idx];
         let (rows, cols) = self.state.pty_size();
 
-
-
         let parts: Vec<&str> = plugin.command.split_whitespace().collect();
         let (program, args) = parts
             .split_first()
@@ -856,10 +878,7 @@ impl App {
                 pixel_width: 0,
                 pixel_height: 0,
             },
-            &[
-                ("COLUMNS", &cols.to_string()),
-                ("LINES", &rows.to_string()),
-            ],
+            &[("COLUMNS", &cols.to_string()), ("LINES", &rows.to_string())],
         )?;
         let parser = vt100::Parser::new(rows, cols, 0);
 

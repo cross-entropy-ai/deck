@@ -4,6 +4,7 @@ mod bridge;
 mod config;
 mod git;
 mod instance_guard;
+mod layout;
 mod nesting_guard;
 mod pty;
 mod refresh;

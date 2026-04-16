@@ -123,10 +123,7 @@ pub fn apply_theme(theme: &crate::theme::Theme) {
     let accent = color_hex(theme.accent);
 
     let commands = [
-        (
-            "status-style",
-            format!("bg={surface},fg={secondary}"),
-        ),
+        ("status-style", format!("bg={surface},fg={secondary}")),
         (
             "window-status-current-style",
             format!("bg={accent},fg={bg},bold"),
