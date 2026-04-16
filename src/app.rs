@@ -186,6 +186,17 @@ impl App {
                             break;
                         }
                     }
+                    Event::Paste(text) => {
+                        if self.state.focus_mode == FocusMode::Main
+                            && self.state.main_view == MainView::Terminal
+                        {
+                            // Forward paste to PTY wrapped in bracketed paste sequences
+                            let mut bytes = b"\x1b[200~".to_vec();
+                            bytes.extend_from_slice(text.as_bytes());
+                            bytes.extend_from_slice(b"\x1b[201~");
+                            let _ = self.pty.write(&bytes);
+                        }
+                    }
                     Event::Resize(w, h) => {
                         self.dispatch(Action::Resize(w, h));
                     }

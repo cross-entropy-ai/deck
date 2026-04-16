@@ -14,7 +14,10 @@ mod ui;
 use std::io;
 use std::process::Command;
 
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::event::{
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::execute;
 use instance_guard::{AcquireError, InstanceGuard};
 
@@ -51,11 +54,21 @@ fn main() -> io::Result<()> {
     }
 
     ratatui::run(|terminal| {
-        execute!(io::stdout(), EnableMouseCapture)?;
+        execute!(
+            io::stdout(),
+            EnableMouseCapture,
+            EnableBracketedPaste,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )?;
         let size = terminal.size()?;
         let mut app = app::App::new(size.width, size.height)?;
         let result = app.run(terminal);
-        execute!(io::stdout(), DisableMouseCapture)?;
+        execute!(
+            io::stdout(),
+            DisableMouseCapture,
+            DisableBracketedPaste,
+            PopKeyboardEnhancementFlags
+        )?;
         result
     })?;
 

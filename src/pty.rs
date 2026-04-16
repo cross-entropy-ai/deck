@@ -108,13 +108,37 @@ impl Drop for Pty {
 
 /// Encode a crossterm key event as the byte sequence a real terminal would send.
 pub fn encode_key(key: &KeyEvent) -> Vec<u8> {
-    if key.modifiers.contains(KeyModifiers::CONTROL) {
+    let mods = key.modifiers;
+
+    // Ctrl+<letter> = ASCII control code, with optional ESC prefix for Alt
+    if mods.contains(KeyModifiers::CONTROL) {
         if let KeyCode::Char(c) = key.code {
-            // Ctrl+<letter> = ASCII 1..=26
-            return vec![c.to_ascii_lowercase() as u8 & 0x1f];
+            let ctrl_byte = c.to_ascii_lowercase() as u8 & 0x1f;
+            if mods.contains(KeyModifiers::ALT) {
+                return vec![0x1b, ctrl_byte];
+            }
+            return vec![ctrl_byte];
         }
     }
 
+    // Alt+<char> = ESC prefix + character (when Ctrl is not also held)
+    if mods.contains(KeyModifiers::ALT) && !mods.contains(KeyModifiers::CONTROL) {
+        if let KeyCode::Char(c) = key.code {
+            let mut bytes = vec![0x1b];
+            let mut buf = [0u8; 4];
+            bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            return bytes;
+        }
+    }
+
+    // Modified special keys (Shift+Enter, Ctrl+Arrow, etc.)
+    if mods != KeyModifiers::NONE {
+        if let Some(bytes) = encode_modified_special(key.code, mods) {
+            return bytes;
+        }
+    }
+
+    // Unmodified keys
     match key.code {
         KeyCode::Char(c) => {
             let mut buf = [0u8; 4];
@@ -123,6 +147,7 @@ pub fn encode_key(key: &KeyEvent) -> Vec<u8> {
         KeyCode::Enter => vec![b'\r'],
         KeyCode::Backspace => vec![0x7f],
         KeyCode::Tab => vec![b'\t'],
+        KeyCode::BackTab => b"\x1b[Z".to_vec(),
         KeyCode::Esc => vec![0x1b],
         KeyCode::Up => b"\x1b[A".to_vec(),
         KeyCode::Down => b"\x1b[B".to_vec(),
@@ -168,6 +193,66 @@ pub fn encode_mouse(mouse: &MouseEvent, col_offset: u16, row_offset: u16) -> Vec
 
     // SGR extended mouse: \x1b[<button;col+1;row+1M  (or 'm' for release)
     format!("\x1b[<{};{};{}{}", button_code, x + 1, y + 1, suffix).into_bytes()
+}
+
+/// Compute the xterm/CSI u modifier parameter: 1 + bitmask(shift|alt|ctrl).
+fn csi_modifier(mods: KeyModifiers) -> u8 {
+    let mut m: u8 = 1;
+    if mods.contains(KeyModifiers::SHIFT) {
+        m += 1;
+    }
+    if mods.contains(KeyModifiers::ALT) {
+        m += 2;
+    }
+    if mods.contains(KeyModifiers::CONTROL) {
+        m += 4;
+    }
+    m
+}
+
+/// Encode a special key with modifiers using xterm modified-key / CSI u format.
+fn encode_modified_special(code: KeyCode, mods: KeyModifiers) -> Option<Vec<u8>> {
+    let m = csi_modifier(mods);
+    let bytes = match code {
+        // CSI u format for keys without a standard xterm modified encoding
+        KeyCode::Enter => format!("\x1b[13;{m}u").into_bytes(),
+        KeyCode::Tab => format!("\x1b[9;{m}u").into_bytes(),
+        KeyCode::Backspace => format!("\x1b[127;{m}u").into_bytes(),
+        // xterm modified arrow/nav keys
+        KeyCode::Up => format!("\x1b[1;{m}A").into_bytes(),
+        KeyCode::Down => format!("\x1b[1;{m}B").into_bytes(),
+        KeyCode::Right => format!("\x1b[1;{m}C").into_bytes(),
+        KeyCode::Left => format!("\x1b[1;{m}D").into_bytes(),
+        KeyCode::Home => format!("\x1b[1;{m}H").into_bytes(),
+        KeyCode::End => format!("\x1b[1;{m}F").into_bytes(),
+        KeyCode::PageUp => format!("\x1b[5;{m}~").into_bytes(),
+        KeyCode::PageDown => format!("\x1b[6;{m}~").into_bytes(),
+        KeyCode::Delete => format!("\x1b[3;{m}~").into_bytes(),
+        KeyCode::Insert => format!("\x1b[2;{m}~").into_bytes(),
+        KeyCode::F(n) => return Some(encode_modified_f_key(n, m)),
+        _ => return None,
+    };
+    Some(bytes)
+}
+
+fn encode_modified_f_key(n: u8, m: u8) -> Vec<u8> {
+    match n {
+        // F1-F4: SS3 becomes CSI 1;mod + letter
+        1 => format!("\x1b[1;{m}P").into_bytes(),
+        2 => format!("\x1b[1;{m}Q").into_bytes(),
+        3 => format!("\x1b[1;{m}R").into_bytes(),
+        4 => format!("\x1b[1;{m}S").into_bytes(),
+        // F5+: CSI code;mod ~
+        5 => format!("\x1b[15;{m}~").into_bytes(),
+        6 => format!("\x1b[17;{m}~").into_bytes(),
+        7 => format!("\x1b[18;{m}~").into_bytes(),
+        8 => format!("\x1b[19;{m}~").into_bytes(),
+        9 => format!("\x1b[20;{m}~").into_bytes(),
+        10 => format!("\x1b[21;{m}~").into_bytes(),
+        11 => format!("\x1b[23;{m}~").into_bytes(),
+        12 => format!("\x1b[24;{m}~").into_bytes(),
+        _ => vec![],
+    }
 }
 
 fn encode_f_key(n: u8) -> Vec<u8> {
