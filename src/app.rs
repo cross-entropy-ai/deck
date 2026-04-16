@@ -12,9 +12,9 @@ use ratatui::DefaultTerminal;
 use crate::action::{self, Action};
 use crate::bridge;
 use crate::config::Config;
-use crate::git;
 use crate::nesting_guard::{NestingGuard, WarningState};
 use crate::pty::{Pty, PtyEvent};
+use crate::refresh::{RefreshRequest, RefreshWorker, SessionSnapshot};
 use crate::state::{
     AppState, FocusMode, LayoutMode, MainView, SessionRow, SIDEBAR_MAX, SIDEBAR_MIN,
 };
@@ -39,6 +39,7 @@ pub struct App {
     nesting_guard: NestingGuard,
     warning_state: Option<WarningState>,
     plugin_instances: Vec<Option<PluginInstance>>,
+    refresh_worker: RefreshWorker,
 }
 
 impl App {
@@ -102,18 +103,11 @@ impl App {
             nesting_guard,
             warning_state: None,
             plugin_instances: (0..plugin_count).map(|_| None).collect(),
+            refresh_worker: RefreshWorker::spawn(),
         };
 
         tmux::apply_theme(&THEMES[theme_index]);
-        app.refresh_sessions();
-        if let Some(pos) = app
-            .state
-            .filtered
-            .iter()
-            .position(|&i| app.state.sessions[i].is_current)
-        {
-            app.state.focused = pos;
-        }
+        app.request_refresh();
 
         Ok(app)
     }
@@ -243,13 +237,18 @@ impl App {
                 }
             }
 
-            // 4. Periodic refresh
+            // 4. Apply any snapshots produced by the refresh worker
+            while let Some(snap) = self.refresh_worker.try_recv() {
+                self.apply_snapshot(snap);
+            }
+
+            // 5. Periodic refresh request (non-blocking)
             if last_refresh.elapsed() >= REFRESH_INTERVAL {
-                self.refresh_sessions();
+                self.request_refresh();
                 last_refresh = Instant::now();
             }
 
-            // 5. If PTY died, try to reattach
+            // 6. If PTY died, try to reattach
             if !pty_alive {
                 if tmux::list_sessions().is_empty() {
                     break;
@@ -257,7 +256,7 @@ impl App {
                 match self.respawn_pty() {
                     Ok(()) => {
                         pty_alive = true;
-                        self.refresh_sessions();
+                        self.request_refresh();
                     }
                     Err(_) => break,
                 }
@@ -433,7 +432,7 @@ impl App {
         }
 
         if fx.refresh_sessions {
-            self.refresh_sessions();
+            self.request_refresh();
         }
     }
 
@@ -698,14 +697,20 @@ impl App {
         Ok(())
     }
 
-    fn refresh_sessions(&mut self) {
-        self.nesting_guard.refresh();
-        let current = if self.pty.slave_tty.is_empty() {
-            tmux::current_session()
-        } else {
-            tmux::current_session_for_tty(&self.pty.slave_tty)
+    fn build_refresh_request(&self) -> RefreshRequest {
+        RefreshRequest {
+            slave_tty: self.pty.slave_tty.clone(),
+            exclude_patterns: self.state.exclude_patterns.clone(),
         }
-        .unwrap_or_default();
+    }
+
+    fn request_refresh(&mut self) {
+        self.nesting_guard.refresh();
+        self.refresh_worker.request(self.build_refresh_request());
+    }
+
+    fn apply_snapshot(&mut self, snap: SessionSnapshot) {
+        let current = snap.current_session;
 
         if let Some(warning) = self
             .nesting_guard
@@ -716,32 +721,20 @@ impl App {
             self.warning_state = None;
         }
 
-        let sessions = tmux::list_sessions();
-
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        self.state.sessions = sessions
+        self.state.sessions = snap
+            .rows
             .into_iter()
-            .filter(|s| !crate::config::session_excluded(&s.name, &self.state.compiled_patterns))
-            .map(|s| {
-                let git_info = git::get_git_info(&s.dir);
-                let idle_seconds = now.saturating_sub(s.activity);
-
-                SessionRow {
-                    is_current: s.name == current,
-                    name: s.name,
-                    dir: s.dir,
-                    branch: git_info.branch,
-                    ahead: git_info.ahead,
-                    behind: git_info.behind,
-                    staged: git_info.staged,
-                    modified: git_info.modified,
-                    untracked: git_info.untracked,
-                    idle_seconds,
-                }
+            .map(|r| SessionRow {
+                is_current: r.name == current,
+                name: r.name,
+                dir: r.dir,
+                branch: r.branch,
+                ahead: r.ahead,
+                behind: r.behind,
+                staged: r.staged,
+                modified: r.modified,
+                untracked: r.untracked,
+                idle_seconds: r.idle_seconds,
             })
             .collect();
 
