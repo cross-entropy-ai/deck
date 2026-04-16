@@ -6,6 +6,7 @@ mod git;
 mod instance_guard;
 mod nesting_guard;
 mod pty;
+mod refresh;
 mod state;
 mod theme;
 mod tmux;
