@@ -247,6 +247,7 @@ dependencies = [
  "ratatui",
  "rattles",
  "regex",
+ "serde_json",
  "unicode-width",
  "vt100",
 ]

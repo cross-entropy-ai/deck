@@ -417,7 +417,6 @@ impl App {
                 selected: e.selected,
                 adding: e.adding,
                 input: &e.input,
-                cursor: e.cursor,
                 error: e.error.as_deref(),
             }),
         };

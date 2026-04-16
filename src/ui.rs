@@ -27,7 +27,6 @@ pub struct ExcludeEditorView<'a> {
     pub selected: usize,
     pub adding: bool,
     pub input: &'a str,
-    pub cursor: usize,
     pub error: Option<&'a str>,
 }
 
