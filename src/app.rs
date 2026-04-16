@@ -386,6 +386,7 @@ impl App {
         let layout_mode = s.layout_mode;
         let view_mode = s.view_mode;
         let sidebar_width = s.sidebar_width;
+        let sidebar_height = s.effective_sidebar_height();
         let main_view = s.main_view;
         let warning_state = self.warning_state.clone();
 
@@ -450,9 +451,9 @@ impl App {
                     (s, Some(g), m)
                 }
                 LayoutMode::Vertical => {
-                    let tab_h = if show_borders { 4u16 } else { 2u16 };
-                    let [s, m] = Layout::vertical([Constraint::Length(tab_h), Constraint::Min(1)])
-                        .areas(frame.area());
+                    let [s, m] =
+                        Layout::vertical([Constraint::Length(sidebar_height), Constraint::Min(1)])
+                            .areas(frame.area());
                     (s, None, m)
                 }
             };

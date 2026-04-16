@@ -8,8 +8,12 @@ use crate::ui::{self, SessionView, card_height};
 pub const SIDEBAR_MIN: u16 = 16;
 pub const SIDEBAR_MAX: u16 = 60;
 pub const SIDEBAR_HEIGHT: u16 = 4;
-pub const SIDEBAR_HEIGHT_MIN: u16 = 3;
+pub const SIDEBAR_HEIGHT_MIN: u16 = 2;
 pub const SIDEBAR_HEIGHT_MAX: u16 = 4;
+const SIDEBAR_HEIGHT_MIN_BORDERED: u16 = 4;
+const SIDEBAR_HEIGHT_MAX_BORDERED: u16 = 6;
+const MIN_MAIN_WIDTH: u16 = 10;
+const MIN_MAIN_HEIGHT: u16 = 1;
 
 pub const SESSION_MENU_ITEMS: &[&str] = &["Switch", "Rename", "Kill", "Move up", "Move down"];
 pub const GLOBAL_MENU_ITEMS: &[&str] = &[
@@ -233,7 +237,11 @@ impl AppState {
             layout_mode,
             view_mode,
             sidebar_width,
-            sidebar_height: SIDEBAR_HEIGHT,
+            sidebar_height: if show_borders {
+                SIDEBAR_HEIGHT
+            } else {
+                SIDEBAR_HEIGHT_MIN
+            },
             show_help: false,
             confirm_kill: false,
             renaming: None,
@@ -251,10 +259,40 @@ impl AppState {
     }
 
     pub fn effective_sidebar_height(&self) -> u16 {
-        if self.show_borders {
-            4
+        let (min_height, max_height) = self.sidebar_height_bounds();
+        self.sidebar_height.clamp(min_height, max_height)
+    }
+
+    fn sidebar_width_bounds(&self) -> (u16, u16) {
+        let max_width = SIDEBAR_MAX.min(self.term_width.saturating_sub(MIN_MAIN_WIDTH));
+        if max_width < SIDEBAR_MIN {
+            let fallback = max_width.max(1);
+            (fallback, fallback)
         } else {
-            2
+            (SIDEBAR_MIN, max_width)
+        }
+    }
+
+    fn sidebar_height_bounds(&self) -> (u16, u16) {
+        let (min_height, max_height, available_height) = if self.show_borders {
+            (
+                SIDEBAR_HEIGHT_MIN_BORDERED,
+                SIDEBAR_HEIGHT_MAX_BORDERED,
+                self.term_height.saturating_sub(2 + MIN_MAIN_HEIGHT),
+            )
+        } else {
+            (
+                SIDEBAR_HEIGHT_MIN,
+                SIDEBAR_HEIGHT_MAX,
+                self.term_height.saturating_sub(MIN_MAIN_HEIGHT),
+            )
+        };
+        let max_height = max_height.min(available_height);
+        if max_height < min_height {
+            let fallback = max_height.max(1);
+            (fallback, fallback)
+        } else {
+            (min_height, max_height)
         }
     }
 
@@ -337,8 +375,11 @@ impl AppState {
     }
 
     /// Map a screen column to a tab index in vertical/tabs mode.
-    pub fn session_at_col(&self, col: u16) -> Option<usize> {
+    pub fn session_at_col(&self, col: u16, row: u16) -> Option<usize> {
         let b = if self.show_borders { 1u16 } else { 0 };
+        if row != b {
+            return None;
+        }
         let views: Vec<SessionView> = self
             .filtered
             .iter()
@@ -426,7 +467,8 @@ impl AppState {
 
     /// Clamp and set sidebar width. Returns true if it changed.
     pub fn resize_sidebar(&mut self, new_width: u16) -> bool {
-        let clamped = new_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX.min(self.term_width.saturating_sub(10)));
+        let (min_width, max_width) = self.sidebar_width_bounds();
+        let clamped = new_width.clamp(min_width, max_width);
         if clamped == self.sidebar_width {
             return false;
         }
@@ -436,14 +478,80 @@ impl AppState {
 
     /// Clamp and set sidebar height. Returns true if it changed.
     pub fn resize_sidebar_height(&mut self, new_height: u16) -> bool {
-        let clamped = new_height.clamp(
-            SIDEBAR_HEIGHT_MIN,
-            SIDEBAR_HEIGHT_MAX.min(self.term_height.saturating_sub(6)),
-        );
+        let (min_height, max_height) = self.sidebar_height_bounds();
+        let clamped = new_height.clamp(min_height, max_height);
         if clamped == self.sidebar_height {
             return false;
         }
         self.sidebar_height = clamped;
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_session(name: &str) -> SessionRow {
+        SessionRow {
+            name: name.to_string(),
+            dir: format!("/tmp/{name}"),
+            branch: "main".to_string(),
+            ahead: 0,
+            behind: 0,
+            staged: 0,
+            modified: 0,
+            untracked: 0,
+            is_current: false,
+            idle_seconds: 0,
+        }
+    }
+
+    fn make_state(
+        layout_mode: LayoutMode,
+        show_borders: bool,
+        term_width: u16,
+        term_height: u16,
+    ) -> AppState {
+        let mut state = AppState::new(
+            0,
+            layout_mode,
+            ViewMode::Expanded,
+            show_borders,
+            28,
+            term_width,
+            term_height,
+            vec![],
+            vec![],
+        );
+        state.sessions = vec![make_session("alpha"), make_session("beta")];
+        state.session_order = state.sessions.iter().map(|s| s.name.clone()).collect();
+        state.recompute_filter();
+        state
+    }
+
+    #[test]
+    fn resize_sidebar_handles_small_terminals() {
+        let mut state = make_state(LayoutMode::Horizontal, true, 20, 40);
+        assert!(state.resize_sidebar(30));
+        assert_eq!(state.sidebar_width, 10);
+    }
+
+    #[test]
+    fn vertical_sidebar_height_affects_layout() {
+        let mut state = make_state(LayoutMode::Vertical, true, 120, 40);
+        assert_eq!(state.effective_sidebar_height(), 4);
+
+        assert!(state.resize_sidebar_height(6));
+        assert_eq!(state.effective_sidebar_height(), 6);
+        assert_eq!(state.pty_size(), (32, 118));
+    }
+
+    #[test]
+    fn vertical_tab_hit_testing_only_uses_tab_row() {
+        let state = make_state(LayoutMode::Vertical, true, 120, 40);
+
+        assert_eq!(state.session_at_col(2, 1), Some(0));
+        assert_eq!(state.session_at_col(2, 2), None);
     }
 }

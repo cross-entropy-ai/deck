@@ -875,8 +875,10 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             (on_sep, in_sb)
         }
         LayoutMode::Vertical => {
-            let in_sb = mouse.row < state.effective_sidebar_height();
-            (false, in_sb)
+            let sidebar_height = state.effective_sidebar_height();
+            let on_sep = mouse.row == sidebar_height.saturating_sub(1);
+            let in_sb = mouse.row < sidebar_height;
+            (on_sep, in_sb)
         }
     };
 
@@ -923,7 +925,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
 
         let idx = match state.layout_mode {
             LayoutMode::Horizontal => state.session_at_row(mouse.row),
-            LayoutMode::Vertical => state.session_at_col(mouse.column),
+            LayoutMode::Vertical => state.session_at_col(mouse.column, mouse.row),
         };
         if let Some(idx) = idx {
             return Action::SidebarClickSession(idx);
@@ -935,7 +937,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     if mouse.kind == MouseEventKind::Down(MouseButton::Right) && in_sidebar {
         let idx = match state.layout_mode {
             LayoutMode::Horizontal => state.session_at_row(mouse.row),
-            LayoutMode::Vertical => state.session_at_col(mouse.column),
+            LayoutMode::Vertical => state.session_at_col(mouse.column, mouse.row),
         };
         return if let Some(idx) = idx {
             Action::OpenSessionMenu {
