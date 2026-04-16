@@ -466,7 +466,7 @@ impl App {
                 for y in gap.y..gap.bottom() {
                     if let Some(cell) = frame.buffer_mut().cell_mut((gap.x, y)) {
                         cell.set_char(sep_char);
-                        cell.set_style(ratatui::style::Style::default().fg(sep_fg));
+                        cell.set_style(ratatui::style::Style::default().fg(sep_fg).bg(theme.bg));
                     }
                 }
             }
