@@ -112,6 +112,39 @@ pub fn switch_client_for_tty(client_tty: &str, session: &str) {
     let _ = tmux(&["switch-client", "-c", client_tty, "-t", session]);
 }
 
+/// Apply a deck theme to tmux's global options (status bar, pane borders, etc.).
+pub fn apply_theme(theme: &crate::theme::Theme) {
+    let bg = color_hex(theme.bg);
+    let surface = color_hex(theme.surface);
+    let dim = color_hex(theme.dim);
+    let muted = color_hex(theme.muted);
+    let secondary = color_hex(theme.secondary);
+    let text = color_hex(theme.text);
+    let accent = color_hex(theme.accent);
+
+    let set = |opt: &str, val: &str| {
+        let _ = tmux(&["set-option", "-g", opt, val]);
+    };
+
+    set("status-style", &format!("bg={surface},fg={secondary}"));
+    set(
+        "window-status-current-style",
+        &format!("bg={accent},fg={bg},bold"),
+    );
+    set("window-status-style", &format!("fg={muted}"));
+    set("pane-border-style", &format!("fg={dim}"));
+    set("pane-active-border-style", &format!("fg={accent}"));
+    set("message-style", &format!("bg={surface},fg={text}"));
+    set("mode-style", &format!("bg={accent},fg={bg}"));
+}
+
+fn color_hex(c: ratatui::style::Color) -> String {
+    match c {
+        ratatui::style::Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+        _ => "#000000".to_string(),
+    }
+}
+
 pub fn pid_looks_like_deck(pid: u32) -> bool {
     let pid = pid.to_string();
     let output = Command::new("ps")

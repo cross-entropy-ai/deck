@@ -3,7 +3,15 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
 /// Render a vt100 virtual screen into a ratatui buffer region.
-pub fn render_screen(screen: &vt100::Screen, area: Rect, buf: &mut Buffer) {
+/// `default_fg`/`default_bg` are used for cells with no explicit color
+/// (vt100::Color::Default), so the terminal content follows the deck theme.
+pub fn render_screen(
+    screen: &vt100::Screen,
+    area: Rect,
+    buf: &mut Buffer,
+    default_fg: Color,
+    default_bg: Color,
+) {
     for row in 0..area.height.min(screen.size().0) {
         for col in 0..area.width.min(screen.size().1) {
             let Some(cell) = screen.cell(row, col) else {
@@ -26,8 +34,8 @@ pub fn render_screen(screen: &vt100::Screen, area: Rect, buf: &mut Buffer) {
                 target.set_symbol(contents);
             }
 
-            let fg = convert_color(cell.fgcolor());
-            let bg = convert_color(cell.bgcolor());
+            let fg = convert_color(cell.fgcolor(), default_fg);
+            let bg = convert_color(cell.bgcolor(), default_bg);
             let mut modifier = Modifier::empty();
             if cell.bold() {
                 modifier |= Modifier::BOLD;
@@ -49,9 +57,9 @@ pub fn render_screen(screen: &vt100::Screen, area: Rect, buf: &mut Buffer) {
     }
 }
 
-fn convert_color(c: vt100::Color) -> Color {
+fn convert_color(c: vt100::Color, default: Color) -> Color {
     match c {
-        vt100::Color::Default => Color::Reset,
+        vt100::Color::Default => default,
         vt100::Color::Idx(i) => Color::Indexed(i),
         vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
     }
