@@ -104,50 +104,32 @@ pub enum Action {
     None,
 }
 
+fn navigate(state: &mut AppState, direction: i32) -> Option<String> {
+    let new = if direction > 0 {
+        (state.focused + 1).min(state.filtered.len().saturating_sub(1))
+    } else {
+        state.focused.saturating_sub(1)
+    };
+    if new == state.focused {
+        return None;
+    }
+    state.focused = new;
+    state.filtered.get(new).map(|&i| state.sessions[i].name.clone())
+}
+
 pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
     let mut fx = SideEffect::default();
 
     match action {
         // --- Navigation (instant switch) ---
-        Action::FocusNext => {
-            if !state.filtered.is_empty() {
-                let old = state.focused;
-                state.focused = (state.focused + 1).min(state.filtered.len() - 1);
-                if state.focused != old {
-                    if let Some(&session_idx) = state.filtered.get(state.focused) {
-                        fx.switch_session = Some(state.sessions[session_idx].name.clone());
-                    }
-                }
+        Action::FocusNext | Action::FocusPrev | Action::ScrollUp | Action::ScrollDown => {
+            if matches!(action, Action::ScrollUp | Action::ScrollDown) {
+                state.last_scroll = std::time::Instant::now();
             }
-        }
-        Action::FocusPrev => {
-            if state.focused > 0 {
-                state.focused -= 1;
-                if let Some(&session_idx) = state.filtered.get(state.focused) {
-                    fx.switch_session = Some(state.sessions[session_idx].name.clone());
-                }
-            }
-        }
-        Action::ScrollUp => {
-            state.last_scroll = std::time::Instant::now();
-            if state.focused > 0 {
-                state.focused -= 1;
-                if let Some(&session_idx) = state.filtered.get(state.focused) {
-                    fx.switch_session = Some(state.sessions[session_idx].name.clone());
-                }
-            }
-        }
-        Action::ScrollDown => {
-            state.last_scroll = std::time::Instant::now();
-            if !state.filtered.is_empty() {
-                let old = state.focused;
-                state.focused = (state.focused + 1).min(state.filtered.len() - 1);
-                if state.focused != old {
-                    if let Some(&session_idx) = state.filtered.get(state.focused) {
-                        fx.switch_session = Some(state.sessions[session_idx].name.clone());
-                    }
-                }
-            }
+            fx.switch_session = navigate(
+                state,
+                if matches!(action, Action::FocusNext | Action::ScrollDown) { 1 } else { -1 },
+            );
         }
         Action::FocusIndex(idx) => {
             if idx < state.filtered.len() {
@@ -321,26 +303,21 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::SettingsAdjust(direction) => match state.settings_selected {
             0 => {
                 let _ = direction;
-                apply_action(state, Action::OpenThemePicker);
+                fx.merge(apply_action(state, Action::OpenThemePicker));
             }
             1 => {
-                let inner = apply_action(state, Action::ToggleLayout);
-                fx.resize_pty = inner.resize_pty;
-                fx.save_config = inner.save_config;
+                fx.merge(apply_action(state, Action::ToggleLayout));
             }
             2 => {
-                let inner = apply_action(state, Action::ToggleBorders);
-                fx.resize_pty = inner.resize_pty;
-                fx.save_config = inner.save_config;
+                fx.merge(apply_action(state, Action::ToggleBorders));
             }
             3 => {
                 let _ = direction;
-                let inner = apply_action(state, Action::ToggleViewMode);
-                fx.save_config = inner.save_config;
+                fx.merge(apply_action(state, Action::ToggleViewMode));
             }
             4 => {
                 let _ = direction;
-                apply_action(state, Action::OpenExcludeEditor);
+                fx.merge(apply_action(state, Action::OpenExcludeEditor));
             }
             _ => {}
         },
@@ -461,28 +438,17 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     let pattern = editor.input.trim().to_string();
                     if pattern.is_empty() {
                         editor.adding = false;
-                    } else if let Some(inner) =
-                        pattern.strip_prefix('/').and_then(|s| s.strip_suffix('/'))
-                    {
-                        match regex::Regex::new(inner) {
-                            Ok(_) => {
-                                state.exclude_patterns.push(pattern);
-                                state.compiled_patterns =
-                                    crate::config::compile_patterns(&state.exclude_patterns);
-                                editor.adding = false;
-                                editor.input.clear();
-                                editor.cursor = 0;
-                                editor.error = None;
-                                editor.selected =
-                                    state.exclude_patterns.len().saturating_sub(1);
-                                fx.save_config = true;
-                                fx.refresh_sessions = true;
-                            }
-                            Err(e) => {
+                    } else {
+                        // Validate regex patterns (wrapped in /.../)
+                        if let Some(inner) =
+                            pattern.strip_prefix('/').and_then(|s| s.strip_suffix('/'))
+                        {
+                            if let Err(e) = regex::Regex::new(inner) {
                                 editor.error = Some(format!("Invalid regex: {}", e));
+                                return fx;
                             }
                         }
-                    } else {
+                        // Add pattern (both regex and plain text reach here)
                         state.exclude_patterns.push(pattern);
                         state.compiled_patterns =
                             crate::config::compile_patterns(&state.exclude_patterns);
@@ -578,22 +544,20 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     state.focused = filtered_idx;
                     match selected_action {
                         Some(MenuAction::Switch) => {
-                            let inner = apply_action(state, Action::SwitchProject);
-                            fx.switch_session = inner.switch_session;
-                            fx.refresh_sessions = inner.refresh_sessions;
+                            fx.merge(apply_action(state, Action::SwitchProject));
                             state.focus_mode = FocusMode::Main;
                         }
                         Some(MenuAction::Rename) => {
-                            apply_action(state, Action::StartRename);
+                            fx.merge(apply_action(state, Action::StartRename));
                         }
                         Some(MenuAction::Kill) => {
-                            apply_action(state, Action::KillSession);
+                            fx.merge(apply_action(state, Action::KillSession));
                         }
                         Some(MenuAction::MoveUp) => {
-                            apply_action(state, Action::ReorderSession(-1));
+                            fx.merge(apply_action(state, Action::ReorderSession(-1)));
                         }
                         Some(MenuAction::MoveDown) => {
-                            apply_action(state, Action::ReorderSession(1));
+                            fx.merge(apply_action(state, Action::ReorderSession(1)));
                         }
                         _ => {}
                     }
@@ -604,17 +568,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                         fx.refresh_sessions = true;
                     }
                     Some(MenuAction::ToggleLayout) => {
-                        let inner = apply_action(state, Action::ToggleLayout);
-                        fx.resize_pty = inner.resize_pty;
-                        fx.save_config = inner.save_config;
+                        fx.merge(apply_action(state, Action::ToggleLayout));
                     }
                     Some(MenuAction::ToggleBorders) => {
-                        let inner = apply_action(state, Action::ToggleBorders);
-                        fx.resize_pty = inner.resize_pty;
-                        fx.save_config = inner.save_config;
+                        fx.merge(apply_action(state, Action::ToggleBorders));
                     }
                     Some(MenuAction::OpenSettings) => {
-                        apply_action(state, Action::OpenSettings);
+                        fx.merge(apply_action(state, Action::OpenSettings));
                     }
                     Some(MenuAction::Quit) => {
                         fx.quit = true;

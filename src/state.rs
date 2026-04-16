@@ -160,6 +160,26 @@ pub struct SideEffect {
     pub quit: bool,
 }
 
+impl SideEffect {
+    pub fn merge(&mut self, other: SideEffect) {
+        if other.switch_session.is_some() {
+            self.switch_session = other.switch_session;
+        }
+        if other.kill_session.is_some() {
+            self.kill_session = other.kill_session;
+        }
+        if other.rename_session.is_some() {
+            self.rename_session = other.rename_session;
+        }
+        self.create_session |= other.create_session;
+        self.resize_pty |= other.resize_pty;
+        self.save_config |= other.save_config;
+        self.apply_tmux_theme |= other.apply_tmux_theme;
+        self.refresh_sessions |= other.refresh_sessions;
+        self.quit |= other.quit;
+    }
+}
+
 /// Info needed to execute a kill: which session to kill, and optionally
 /// which session to switch to first (if killing the current session).
 #[derive(Debug)]
