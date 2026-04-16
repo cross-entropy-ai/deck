@@ -30,6 +30,21 @@ pub struct ExcludeEditorView<'a> {
     pub error: Option<&'a str>,
 }
 
+pub struct SidebarView<'a> {
+    pub sessions: &'a [SessionView<'a>],
+    pub focused: usize,
+    pub sidebar_active: bool,
+    pub filter_mode: FilterMode,
+    pub show_help: bool,
+    pub confirm_kill: Option<&'a str>,
+    pub rename_input: Option<(&'a str, usize)>,
+    pub show_borders: bool,
+    pub tabs_mode: bool,
+    pub spinner_frame: &'a str,
+    pub view_mode: ViewMode,
+    pub plugins: &'a [(char, &'a str)],
+}
+
 pub struct SettingsView<'a> {
     pub selected: usize,
     pub focus_main: bool,
@@ -45,38 +60,22 @@ pub struct SettingsView<'a> {
 }
 
 /// Draw the sidebar into the given area.
-pub fn draw_sidebar(
-    frame: &mut Frame,
-    area: Rect,
-    sessions: &[SessionView],
-    focused: usize,
-    sidebar_active: bool,
-    theme: &Theme,
-    filter_mode: FilterMode,
-    show_help: bool,
-    confirm_kill: Option<&str>,
-    rename_input: Option<(&str, usize)>,
-    show_borders: bool,
-    tabs_mode: bool,
-    spinner_frame: &str,
-    view_mode: ViewMode,
-    plugins: &[(char, &str)],
-) {
-    if tabs_mode {
+pub fn draw_sidebar(frame: &mut Frame, area: Rect, view: &SidebarView, theme: &Theme) {
+    if view.tabs_mode {
         draw_sidebar_tabs(
             frame,
             area,
-            sessions,
-            focused,
-            sidebar_active,
+            view.sessions,
+            view.focused,
+            view.sidebar_active,
             theme,
-            show_borders,
-            spinner_frame,
+            view.show_borders,
+            view.spinner_frame,
         );
         return;
     }
-    let content = if show_borders {
-        let border_color = if sidebar_active {
+    let content = if view.show_borders {
+        let border_color = if view.sidebar_active {
             theme.accent
         } else {
             theme.bg
@@ -101,32 +100,32 @@ pub fn draw_sidebar(
     ])
     .areas(content);
 
-    draw_header(frame, header_area, sessions.len(), theme, filter_mode);
-    if show_help {
+    draw_header(frame, header_area, view.sessions.len(), theme, view.filter_mode);
+    if view.show_help {
         draw_help(frame, sessions_area, theme);
-    } else if let Some(name) = confirm_kill {
+    } else if let Some(name) = view.confirm_kill {
         draw_confirm_kill(frame, sessions_area, theme, name);
-    } else if let Some((input, cursor)) = rename_input {
+    } else if let Some((input, cursor)) = view.rename_input {
         draw_rename_input(frame, sessions_area, theme, input, cursor);
     } else {
         draw_sessions(
             frame,
             sessions_area,
-            sessions,
-            focused,
-            spinner_frame,
+            view.sessions,
+            view.focused,
+            view.spinner_frame,
             theme,
-            view_mode,
+            view.view_mode,
         );
     }
     draw_footer(
         frame,
         footer_area,
-        sidebar_active,
+        view.sidebar_active,
         theme,
         footer_area.width,
-        show_help,
-        plugins,
+        view.show_help,
+        view.plugins,
     );
 }
 

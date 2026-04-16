@@ -3,6 +3,7 @@ mod app;
 mod bridge;
 mod config;
 mod git;
+mod input;
 mod instance_guard;
 mod nesting_guard;
 mod pty;

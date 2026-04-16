@@ -11,6 +11,7 @@ use ratatui::DefaultTerminal;
 
 use crate::action::{self, Action};
 use crate::bridge;
+use crate::input;
 use crate::config::Config;
 use crate::git;
 use crate::nesting_guard::{NestingGuard, WarningState};
@@ -20,7 +21,7 @@ use crate::state::{
 };
 use crate::theme::THEMES;
 use crate::tmux;
-use crate::ui::{self, SessionView, SettingsView};
+use crate::ui::{self, SessionView, SettingsView, SidebarView};
 
 const POLL_MS: u64 = 16;
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
@@ -204,7 +205,7 @@ impl App {
             if event::poll(Duration::from_millis(POLL_MS))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        let action = action::key_to_action(&key, &self.state);
+                        let action = input::key_to_action(&key, &self.state);
                         if self.warning_state.is_some() && Self::warning_blocks_action(&action) {
                             self.state.focus_mode = FocusMode::Sidebar;
                             continue;
@@ -214,7 +215,7 @@ impl App {
                         }
                     }
                     Event::Mouse(mouse) => {
-                        let action = action::mouse_to_action(&mouse, &self.state);
+                        let action = input::mouse_to_action(&mouse, &self.state);
                         if self.warning_state.is_some() && Self::warning_blocks_action(&action) {
                             continue;
                         }
@@ -556,38 +557,24 @@ impl App {
                 .map(|p| (p.key, p.name.as_str()))
                 .collect();
 
-            ui::draw_sidebar(
-                frame,
-                sidebar_area,
-                &views,
+            let sidebar_view = SidebarView {
+                sessions: &views,
                 focused,
                 sidebar_active,
-                theme,
                 filter_mode,
                 show_help,
-                confirm_name.as_deref(),
-                rename_input.as_ref().map(|(s, c)| (s.as_str(), *c)),
+                confirm_kill: confirm_name.as_deref(),
+                rename_input: rename_input.as_ref().map(|(s, c)| (s.as_str(), *c)),
                 show_borders,
-                layout_mode == LayoutMode::Vertical,
-                &spinner_frame,
+                tabs_mode: layout_mode == LayoutMode::Vertical,
+                spinner_frame: &spinner_frame,
                 view_mode,
-                &plugin_hints,
-            );
+                plugins: &plugin_hints,
+            };
+            ui::draw_sidebar(frame, sidebar_area, &sidebar_view, theme);
 
             if let Some(gap) = gap_area {
-                let (sep_char, sep_fg) = if dragging_sep {
-                    ('┃', theme.green)
-                } else if hover_sep {
-                    ('┃', theme.accent)
-                } else {
-                    ('│', theme.dim)
-                };
-                for y in gap.y..gap.bottom() {
-                    if let Some(cell) = frame.buffer_mut().cell_mut((gap.x, y)) {
-                        cell.set_char(sep_char);
-                        cell.set_style(ratatui::style::Style::default().fg(sep_fg).bg(theme.bg));
-                    }
-                }
+                Self::render_separator(frame, gap, hover_sep, dragging_sep, theme);
             }
 
             let screen = self.parser.screen();
@@ -649,57 +636,89 @@ impl App {
             }
 
             if let Some(warning_state) = warning_state {
-                let (title, border_color, main_style, sub_style, warning_text, detail_text) =
-                    match warning_state {
-                        WarningState::Proactive { text, detail } => (
-                            " Heads up ",
-                            theme.yellow,
-                            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
-                            Style::default().fg(theme.dim),
-                            text.to_string(),
-                            detail,
-                        ),
-                        WarningState::Detected(text) => (
-                            " Warning ",
-                            theme.pink,
-                            Style::default().fg(theme.pink).add_modifier(Modifier::BOLD),
-                            Style::default().fg(theme.dim),
-                            text.to_string(),
-                            "This session now contains deck.\nSwitch away from it in the sidebar."
-                                .to_string(),
-                        ),
-                    };
-
-                let warning = Paragraph::new(vec![
-                    Line::from(Span::styled(warning_text, main_style)),
-                    Line::raw(""),
-                    Line::from(Span::styled(detail_text, sub_style)),
-                ])
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_set(ratatui::symbols::border::ROUNDED)
-                        .title(title)
-                        .border_style(Style::default().fg(border_color)),
-                )
-                .alignment(Alignment::Center)
-                .wrap(Wrap { trim: true });
-
-                frame.render_widget(
-                    Block::default().style(Style::default().bg(theme.bg)),
-                    main_inner,
-                );
-                let popup_area = Self::centered_rect(main_inner, 56, 8);
-                frame.render_widget(Clear, popup_area);
-                frame.render_widget(warning, popup_area);
+                Self::render_warning(frame, main_inner, &warning_state, theme);
             }
 
             if let Some(ref menu) = context_menu {
-                ui::draw_context_menu(frame, menu.x, menu.y, menu.selected, menu.items(), theme);
+                let labels = menu.labels();
+                ui::draw_context_menu(frame, menu.x, menu.y, menu.selected, &labels, theme);
             }
         })?;
 
         Ok(())
+    }
+
+    fn render_separator(
+        frame: &mut ratatui::Frame,
+        gap: Rect,
+        hover: bool,
+        dragging: bool,
+        theme: &crate::theme::Theme,
+    ) {
+        let (sep_char, sep_fg) = if dragging {
+            ('┃', theme.green)
+        } else if hover {
+            ('┃', theme.accent)
+        } else {
+            ('│', theme.dim)
+        };
+        for y in gap.y..gap.bottom() {
+            if let Some(cell) = frame.buffer_mut().cell_mut((gap.x, y)) {
+                cell.set_char(sep_char);
+                cell.set_style(ratatui::style::Style::default().fg(sep_fg).bg(theme.bg));
+            }
+        }
+    }
+
+    fn render_warning(
+        frame: &mut ratatui::Frame,
+        area: Rect,
+        warning_state: &WarningState,
+        theme: &crate::theme::Theme,
+    ) {
+        let (title, border_color, main_style, sub_style, warning_text, detail_text) =
+            match warning_state {
+                WarningState::Proactive { text, detail } => (
+                    " Heads up ",
+                    theme.yellow,
+                    Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.dim),
+                    text.to_string(),
+                    detail.clone(),
+                ),
+                WarningState::Detected(text) => (
+                    " Warning ",
+                    theme.pink,
+                    Style::default().fg(theme.pink).add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.dim),
+                    text.to_string(),
+                    "This session now contains deck.\nSwitch away from it in the sidebar."
+                        .to_string(),
+                ),
+            };
+
+        let warning = Paragraph::new(vec![
+            Line::from(Span::styled(warning_text, main_style)),
+            Line::raw(""),
+            Line::from(Span::styled(detail_text, sub_style)),
+        ])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_set(ratatui::symbols::border::ROUNDED)
+                .title(title)
+                .border_style(Style::default().fg(border_color)),
+        )
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true });
+
+        frame.render_widget(
+            Block::default().style(Style::default().bg(theme.bg)),
+            area,
+        );
+        let popup_area = Self::centered_rect(area, 56, 8);
+        frame.render_widget(Clear, popup_area);
+        frame.render_widget(warning, popup_area);
     }
 
     fn refresh_sessions(&mut self) {

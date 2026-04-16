@@ -15,13 +15,39 @@ const SIDEBAR_HEIGHT_MAX_BORDERED: u16 = 6;
 const MIN_MAIN_WIDTH: u16 = 10;
 const MIN_MAIN_HEIGHT: u16 = 1;
 
-pub const SESSION_MENU_ITEMS: &[&str] = &["Switch", "Rename", "Kill", "Move up", "Move down"];
-pub const GLOBAL_MENU_ITEMS: &[&str] = &[
-    "New session",
-    "Toggle layout",
-    "Toggle borders",
-    "Settings",
-    "Quit",
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuAction {
+    Switch,
+    Rename,
+    Kill,
+    MoveUp,
+    MoveDown,
+    NewSession,
+    ToggleLayout,
+    ToggleBorders,
+    OpenSettings,
+    Quit,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MenuItem {
+    pub label: &'static str,
+    pub action: MenuAction,
+}
+
+pub const SESSION_MENU_ITEMS: &[MenuItem] = &[
+    MenuItem { label: "Switch", action: MenuAction::Switch },
+    MenuItem { label: "Rename", action: MenuAction::Rename },
+    MenuItem { label: "Kill", action: MenuAction::Kill },
+    MenuItem { label: "Move up", action: MenuAction::MoveUp },
+    MenuItem { label: "Move down", action: MenuAction::MoveDown },
+];
+pub const GLOBAL_MENU_ITEMS: &[MenuItem] = &[
+    MenuItem { label: "New session", action: MenuAction::NewSession },
+    MenuItem { label: "Toggle layout", action: MenuAction::ToggleLayout },
+    MenuItem { label: "Toggle borders", action: MenuAction::ToggleBorders },
+    MenuItem { label: "Settings", action: MenuAction::OpenSettings },
+    MenuItem { label: "Quit", action: MenuAction::Quit },
 ];
 
 // --- Enums ---
@@ -91,15 +117,15 @@ pub enum MenuKind {
 #[derive(Debug, Clone)]
 pub struct ContextMenu {
     pub kind: MenuKind,
-    pub items: Vec<&'static str>,
+    pub items: &'static [MenuItem],
     pub x: u16,
     pub y: u16,
     pub selected: usize,
 }
 
 impl ContextMenu {
-    pub fn items(&self) -> &[&'static str] {
-        &self.items
+    pub fn labels(&self) -> Vec<&'static str> {
+        self.items.iter().map(|item| item.label).collect()
     }
 }
 
@@ -415,14 +441,14 @@ impl AppState {
     /// Map a screen position to a context menu item index.
     pub fn menu_item_at(&self, col: u16, row: u16) -> Option<usize> {
         let menu = self.context_menu.as_ref()?;
-        let items = menu.items();
-        let menu_width = ui::context_menu_width(items);
-        let menu_height = items.len() as u16 + 2;
+        let labels = menu.labels();
+        let menu_width = ui::context_menu_width(&labels);
+        let menu_height = labels.len() as u16 + 2;
         let mx = menu.x.min(self.term_width.saturating_sub(menu_width));
         let my = menu.y.min(self.term_height.saturating_sub(menu_height));
         if col > mx && col < mx + menu_width - 1 && row > my && row < my + menu_height - 1 {
             let idx = (row - my - 1) as usize;
-            if idx < items.len() {
+            if idx < labels.len() {
                 return Some(idx);
             }
         }
