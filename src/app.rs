@@ -25,6 +25,12 @@ use crate::ui::{self, SessionView, SettingsView};
 const POLL_MS: u64 = 16;
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
+struct PluginInstance {
+    pty: Pty,
+    parser: vt100::Parser,
+    alive: bool,
+}
+
 pub struct App {
     state: AppState,
     pty: Pty,
@@ -32,6 +38,7 @@ pub struct App {
     spinner: rattles::Rattler<rattles::presets::braille::Dots>,
     nesting_guard: NestingGuard,
     warning_state: Option<WarningState>,
+    plugin_instances: Vec<Option<PluginInstance>>,
 }
 
 impl App {
@@ -70,6 +77,8 @@ impl App {
 
         let exclude_patterns = cfg.exclude_patterns.clone();
         let compiled_patterns = crate::config::compile_patterns(&exclude_patterns);
+        let plugins = cfg.plugins.clone();
+        let plugin_count = plugins.len();
 
         let state = AppState::new(
             theme_index,
@@ -81,6 +90,7 @@ impl App {
             term_height,
             exclude_patterns,
             compiled_patterns,
+            plugins,
         );
         let nesting_guard = NestingGuard::new();
 
@@ -95,6 +105,7 @@ impl App {
             spinner: rattles::presets::braille::dots(),
             nesting_guard,
             warning_state: None,
+            plugin_instances: (0..plugin_count).map(|_| None).collect(),
         };
 
         tmux::apply_theme(&THEMES[theme_index]);
@@ -153,11 +164,33 @@ impl App {
         let mut pty_alive = true;
 
         loop {
-            // 1. Drain PTY output
+            // 1. Drain PTY output (tmux + plugins)
             for event in self.pty.drain() {
                 match event {
                     PtyEvent::Output(data) => self.parser.process(&data),
                     PtyEvent::Exited => pty_alive = false,
+                }
+            }
+            for inst in self.plugin_instances.iter_mut().flatten() {
+                for event in inst.pty.drain() {
+                    match event {
+                        PtyEvent::Output(data) => inst.parser.process(&data),
+                        PtyEvent::Exited => inst.alive = false,
+                    }
+                }
+            }
+
+            // If the active plugin exited, return to terminal and clean up
+            if let MainView::Plugin(idx) = self.state.main_view {
+                if self
+                    .plugin_instances
+                    .get(idx)
+                    .and_then(|o| o.as_ref())
+                    .is_some_and(|inst| !inst.alive)
+                {
+                    self.plugin_instances[idx] = None;
+                    self.state.main_view = MainView::Terminal;
+                    self.state.focus_mode = FocusMode::Main;
                 }
             }
 
@@ -187,14 +220,21 @@ impl App {
                         }
                     }
                     Event::Paste(text) => {
-                        if self.state.focus_mode == FocusMode::Main
-                            && self.state.main_view == MainView::Terminal
-                        {
-                            // Forward paste to PTY wrapped in bracketed paste sequences
+                        if self.state.focus_mode == FocusMode::Main {
                             let mut bytes = b"\x1b[200~".to_vec();
                             bytes.extend_from_slice(text.as_bytes());
                             bytes.extend_from_slice(b"\x1b[201~");
-                            let _ = self.pty.write(&bytes);
+                            match self.state.main_view {
+                                MainView::Terminal => {
+                                    let _ = self.pty.write(&bytes);
+                                }
+                                MainView::Plugin(idx) => {
+                                    if let Some(ref mut inst) = self.plugin_instances.get_mut(idx).and_then(|o| o.as_mut()) {
+                                        let _ = inst.pty.write(&bytes);
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
                     }
                     Event::Resize(w, h) => {
@@ -231,13 +271,31 @@ impl App {
     /// Dispatch an action through the pipeline. Returns true if the app should exit.
     fn dispatch(&mut self, action: Action) -> bool {
         match action {
-            // PTY passthrough — no state change
+            // PTY passthrough — route to tmux or active plugin
             Action::ForwardKey(ref bytes) => {
-                let _ = self.pty.write(bytes);
+                match self.state.main_view {
+                    MainView::Plugin(idx) => {
+                        if let Some(Some(ref mut inst)) = self.plugin_instances.get_mut(idx) {
+                            let _ = inst.pty.write(bytes);
+                        }
+                    }
+                    _ => {
+                        let _ = self.pty.write(bytes);
+                    }
+                }
                 return false;
             }
             Action::ForwardMouse(ref bytes) => {
-                let _ = self.pty.write(bytes);
+                match self.state.main_view {
+                    MainView::Plugin(idx) => {
+                        if let Some(Some(ref mut inst)) = self.plugin_instances.get_mut(idx) {
+                            let _ = inst.pty.write(bytes);
+                        }
+                    }
+                    _ => {
+                        let _ = self.pty.write(bytes);
+                    }
+                }
                 self.state.focus_mode = FocusMode::Main;
                 return false;
             }
@@ -282,6 +340,25 @@ impl App {
                 if self.warning_state.is_some() {
                     self.state.focus_mode = FocusMode::Sidebar;
                 }
+                return fx.quit;
+            }
+
+            // Plugin activation: lazy-spawn PTY then switch view
+            Action::ActivatePlugin(idx) => {
+                // Respawn if dead
+                if let Some(Some(ref inst)) = self.plugin_instances.get(idx) {
+                    if !inst.alive {
+                        self.plugin_instances[idx] = None;
+                    }
+                }
+                // Lazy spawn — only switch view if spawn succeeds
+                if idx < self.plugin_instances.len() && self.plugin_instances[idx].is_none() {
+                    if self.spawn_plugin_pty(idx).is_err() {
+                        return false;
+                    }
+                }
+                let fx = action::apply_action(&mut self.state, action);
+                self.execute_side_effects(&fx);
                 return fx.quit;
             }
 
@@ -469,6 +546,13 @@ impl App {
                 }
             };
 
+            let plugin_hints: Vec<(char, &str)> = self
+                .state
+                .plugins
+                .iter()
+                .map(|p| (p.key, p.name.as_str()))
+                .collect();
+
             ui::draw_sidebar(
                 frame,
                 sidebar_area,
@@ -484,6 +568,7 @@ impl App {
                 layout_mode == LayoutMode::Vertical,
                 &spinner_frame,
                 view_mode,
+                &plugin_hints,
             );
 
             if let Some(gap) = gap_area {
@@ -503,9 +588,18 @@ impl App {
             }
 
             let screen = self.parser.screen();
+            let plugin_screen = match main_view {
+                MainView::Plugin(idx) => self
+                    .plugin_instances
+                    .get(idx)
+                    .and_then(|o| o.as_ref())
+                    .map(|inst| inst.parser.screen()),
+                _ => None,
+            };
             let background_screen = match (warning_state.as_ref(), main_view) {
                 (Some(WarningState::Proactive { .. } | WarningState::Detected(_)), _) => None,
                 (None, MainView::Terminal) => Some(screen),
+                (None, MainView::Plugin(_)) => plugin_screen,
                 (None, MainView::Settings) => None,
             };
 
@@ -683,6 +777,16 @@ impl App {
             pixel_width: 0,
             pixel_height: 0,
         });
+        // Resize all active plugin PTYs
+        for inst in self.plugin_instances.iter_mut().flatten() {
+            inst.parser.screen_mut().set_size(pty_rows, pty_cols);
+            let _ = inst.pty.resize(PtySize {
+                rows: pty_rows,
+                cols: pty_cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            });
+        }
     }
 
     fn respawn_pty(&mut self) -> io::Result<()> {
@@ -709,8 +813,44 @@ impl App {
             }
             .to_string(),
             exclude_patterns: self.state.exclude_patterns.clone(),
+            plugins: self.state.plugins.clone(),
         }
         .save();
+    }
+
+    fn spawn_plugin_pty(&mut self, idx: usize) -> io::Result<()> {
+        let plugin = &self.state.plugins[idx];
+        let (rows, cols) = self.state.pty_size();
+
+
+
+        let parts: Vec<&str> = plugin.command.split_whitespace().collect();
+        let (program, args) = parts
+            .split_first()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty plugin command"))?;
+
+        let pty = Pty::spawn_with_env(
+            program,
+            args,
+            PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            },
+            &[
+                ("COLUMNS", &cols.to_string()),
+                ("LINES", &rows.to_string()),
+            ],
+        )?;
+        let parser = vt100::Parser::new(rows, cols, 0);
+
+        self.plugin_instances[idx] = Some(PluginInstance {
+            pty,
+            parser,
+            alive: true,
+        });
+        Ok(())
     }
 }
 

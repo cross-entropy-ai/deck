@@ -60,6 +60,7 @@ pub fn draw_sidebar(
     tabs_mode: bool,
     spinner_frame: &str,
     view_mode: ViewMode,
+    plugins: &[(char, &str)],
 ) {
     if tabs_mode {
         draw_sidebar_tabs(
@@ -125,6 +126,7 @@ pub fn draw_sidebar(
         theme,
         footer_area.width,
         show_help,
+        plugins,
     );
 }
 
@@ -460,12 +462,13 @@ fn draw_footer(
     theme: &Theme,
     width: u16,
     show_help: bool,
+    plugins: &[(char, &str)],
 ) {
     let w = width as usize;
     let sep = Line::from(Span::styled("─".repeat(w), Style::default().fg(theme.dim)));
 
     let hints = if sidebar_active {
-        Line::from(vec![
+        let mut spans = vec![
             Span::styled(" j/k", Style::default().fg(theme.muted)),
             Span::styled(" nav  ", Style::default().fg(theme.subtle)),
             Span::styled("t", Style::default().fg(theme.muted)),
@@ -474,7 +477,19 @@ fn draw_footer(
             Span::styled(" help  ", Style::default().fg(theme.subtle)),
             Span::styled("q", Style::default().fg(theme.muted)),
             Span::styled(" quit", Style::default().fg(theme.subtle)),
-        ])
+        ];
+        for &(key, name) in plugins {
+            spans.push(Span::styled("  ", Style::default()));
+            spans.push(Span::styled(
+                key.to_string(),
+                Style::default().fg(theme.muted),
+            ));
+            spans.push(Span::styled(
+                format!(" {}", name),
+                Style::default().fg(theme.subtle),
+            ));
+        }
+        Line::from(spans)
     } else {
         Line::from(vec![
             Span::styled(" Ctrl+s", Style::default().fg(theme.muted)),

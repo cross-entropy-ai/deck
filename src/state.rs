@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use crate::config::ExcludePattern;
+use crate::config::{ExcludePattern, PluginConfig};
 use crate::ui::{self, SessionView, card_height};
 
 // --- Constants ---
@@ -42,6 +42,7 @@ pub enum FocusMode {
 pub enum MainView {
     Terminal,
     Settings,
+    Plugin(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,6 +208,7 @@ pub struct AppState {
     // Config
     pub exclude_patterns: Vec<String>,
     pub compiled_patterns: Vec<ExcludePattern>,
+    pub plugins: Vec<PluginConfig>,
 }
 
 impl AppState {
@@ -220,6 +222,7 @@ impl AppState {
         term_height: u16,
         exclude_patterns: Vec<String>,
         compiled_patterns: Vec<ExcludePattern>,
+        plugins: Vec<PluginConfig>,
     ) -> Self {
         Self {
             sessions: Vec::new(),
@@ -255,6 +258,7 @@ impl AppState {
             last_scroll: Instant::now(),
             exclude_patterns,
             compiled_patterns,
+            plugins,
         }
     }
 
@@ -521,6 +525,7 @@ mod tests {
             28,
             term_width,
             term_height,
+            vec![],
             vec![],
             vec![],
         );

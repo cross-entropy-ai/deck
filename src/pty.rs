@@ -25,8 +25,13 @@ fn pty_err(e: impl std::fmt::Display) -> io::Error {
 }
 
 impl Pty {
-    /// Spawn a command in a new PTY.
-    pub fn spawn(program: &str, args: &[&str], size: PtySize) -> io::Result<Self> {
+    /// Spawn a command in a new PTY with additional environment variables.
+    pub fn spawn_with_env(
+        program: &str,
+        args: &[&str],
+        size: PtySize,
+        extra_env: &[(&str, &str)],
+    ) -> io::Result<Self> {
         let system = native_pty_system();
         let pair = system.openpty(size).map_err(pty_err)?;
 
@@ -40,18 +45,29 @@ impl Pty {
         for arg in args {
             cmd.arg(*arg);
         }
-        // Force a well-supported TERM so the inner tmux client uses
-        // standard escape sequences the vt100 parser handles correctly.
-        // Without this, inheriting e.g. TERM=tmux-256color from an outer
-        // tmux can cause rendering corruption (scroll region leaks between
-        // tmux panes/windows) because the vt100 parser doesn't support all
-        // tmux-256color-specific capabilities.
         cmd.env("TERM", "xterm-256color");
+        for &(key, val) in extra_env {
+            cmd.env(key, val);
+        }
         let child = pair.slave.spawn_command(cmd).map_err(pty_err)?;
         drop(pair.slave);
 
-        let writer = pair.master.take_writer().map_err(pty_err)?;
-        let mut reader = pair.master.try_clone_reader().map_err(pty_err)?;
+        Self::from_parts(pair.master, child, slave_tty, size)
+    }
+
+    /// Spawn a command in a new PTY.
+    pub fn spawn(program: &str, args: &[&str], size: PtySize) -> io::Result<Self> {
+        Self::spawn_with_env(program, args, size, &[])
+    }
+
+    fn from_parts(
+        master: Box<dyn MasterPty + Send>,
+        child: Box<dyn portable_pty::Child + Send + Sync>,
+        slave_tty: String,
+        _size: PtySize,
+    ) -> io::Result<Self> {
+        let writer = master.take_writer().map_err(pty_err)?;
+        let mut reader = master.try_clone_reader().map_err(pty_err)?;
 
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
@@ -72,7 +88,7 @@ impl Pty {
         });
 
         Ok(Pty {
-            master: pair.master,
+            master,
             writer,
             rx,
             child,
