@@ -1,4 +1,4 @@
-use std::io;
+use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEventKind};
@@ -167,7 +167,10 @@ impl App {
             // 1. Drain PTY output (tmux + plugins)
             for event in self.pty.drain() {
                 match event {
-                    PtyEvent::Output(data) => self.parser.process(&data),
+                    PtyEvent::Output(data) => {
+                        Self::forward_osc52(&data);
+                        self.parser.process(&data);
+                    }
                     PtyEvent::Exited => pty_alive = false,
                 }
             }
@@ -786,6 +789,39 @@ impl App {
                 pixel_width: 0,
                 pixel_height: 0,
             });
+        }
+    }
+
+    /// Forward OSC 52 (clipboard) sequences directly to the real terminal.
+    /// The vt100 parser discards these as unhandled, so programs running in
+    /// the PTY (via tmux) can't set the clipboard without this passthrough.
+    fn forward_osc52(data: &[u8]) {
+        // OSC 52 starts with ESC ] 52 ; and ends with BEL (0x07) or ST (ESC \)
+        let marker = b"\x1b]52;";
+        let mut i = 0;
+        while i + marker.len() <= data.len() {
+            if data[i..].starts_with(marker) {
+                let start = i;
+                i += marker.len();
+                // Scan for terminator
+                while i < data.len() {
+                    if data[i] == 0x07 {
+                        // BEL terminated
+                        let _ = io::stdout().write_all(&data[start..=i]);
+                        let _ = io::stdout().flush();
+                        break;
+                    }
+                    if data[i] == 0x1b && i + 1 < data.len() && data[i + 1] == b'\\' {
+                        // ST terminated
+                        let _ = io::stdout().write_all(&data[start..=i + 1]);
+                        let _ = io::stdout().flush();
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            i += 1;
         }
     }
 
