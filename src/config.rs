@@ -204,7 +204,7 @@ fn parse_json(s: &str) -> Option<Config> {
         config.show_borders = b;
     }
     if let Some(n) = obj.get("sidebar_width").and_then(|v| v.as_u64()) {
-        config.sidebar_width = n as u16;
+        config.sidebar_width = u16::try_from(n).unwrap_or(config.sidebar_width);
     }
     if let Some(s) = obj.get("view_mode").and_then(|v| v.as_str()) {
         config.view_mode = s.to_string();

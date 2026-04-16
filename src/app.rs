@@ -351,9 +351,11 @@ impl App {
                         self.plugin_instances[idx] = None;
                     }
                 }
-                // Lazy spawn
+                // Lazy spawn — only switch view if spawn succeeds
                 if idx < self.plugin_instances.len() && self.plugin_instances[idx].is_none() {
-                    let _ = self.spawn_plugin_pty(idx);
+                    if self.spawn_plugin_pty(idx).is_err() {
+                        return false;
+                    }
                 }
                 let fx = action::apply_action(&mut self.state, action);
                 self.execute_side_effects(&fx);
