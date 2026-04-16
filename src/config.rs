@@ -1,6 +1,13 @@
 use std::fs;
-use std::io::{self, BufRead};
 use std::path::PathBuf;
+
+/// A command-based plugin that runs in its own PTY.
+#[derive(Debug, Clone)]
+pub struct PluginConfig {
+    pub name: String,
+    pub command: String,
+    pub key: char,
+}
 
 /// Persisted user preferences.
 #[derive(Debug, Clone)]
@@ -11,6 +18,7 @@ pub struct Config {
     pub sidebar_width: u16,
     pub view_mode: String,
     pub exclude_patterns: Vec<String>,
+    pub plugins: Vec<PluginConfig>,
 }
 
 impl Default for Config {
@@ -22,6 +30,7 @@ impl Default for Config {
             sidebar_width: 28,
             view_mode: "expanded".to_string(),
             exclude_patterns: vec!["_*".to_string()],
+            plugins: Vec::new(),
         }
     }
 }
@@ -66,14 +75,32 @@ impl Config {
             let items: Vec<String> = self.exclude_patterns.iter().map(|p| quote(p)).collect();
             format!("[{}]", items.join(", "))
         };
+        let plugins_json = if self.plugins.is_empty() {
+            "[]".to_string()
+        } else {
+            let items: Vec<String> = self
+                .plugins
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{{ \"name\": {}, \"command\": {}, \"key\": {} }}",
+                        quote(&p.name),
+                        quote(&p.command),
+                        quote(&p.key.to_string())
+                    )
+                })
+                .collect();
+            format!("[{}]", items.join(", "))
+        };
         format!(
-            "{{\n  \"theme\": {},\n  \"layout\": {},\n  \"show_borders\": {},\n  \"sidebar_width\": {},\n  \"view_mode\": {},\n  \"exclude_patterns\": {}\n}}\n",
+            "{{\n  \"theme\": {},\n  \"layout\": {},\n  \"show_borders\": {},\n  \"sidebar_width\": {},\n  \"view_mode\": {},\n  \"exclude_patterns\": {},\n  \"plugins\": {}\n}}\n",
             quote(&self.theme),
             quote(&self.layout),
             self.show_borders,
             self.sidebar_width,
             quote(&self.view_mode),
             patterns_json,
+            plugins_json,
         )
     }
 
@@ -160,124 +187,49 @@ fn glob_matches(pattern: &str, text: &str) -> bool {
     dp[plen][tlen]
 }
 
-/// Minimal JSON parser — handles our flat config object only.
+/// Parse config JSON using serde_json::Value for robust nested parsing.
 fn parse_json(s: &str) -> Option<Config> {
+    let v: serde_json::Value = serde_json::from_str(s).ok()?;
+    let obj = v.as_object()?;
+
     let mut config = Config::default();
-    let mut in_exclude = false;
-    let mut exclude_patterns: Vec<String> = Vec::new();
-    let mut found_exclude = false;
 
-    let reader = io::BufReader::new(s.as_bytes());
-    for line in reader.lines() {
-        let line = line.ok()?;
-        let trimmed = line.trim();
-
-        // Detect start of exclude_patterns array
-        if trimmed.starts_with("\"exclude_patterns\"") {
-            found_exclude = true;
-            // Could be single-line: "exclude_patterns": ["a", "b"]
-            if let Some(bracket_start) = trimmed.find('[') {
-                let rest = &trimmed[bracket_start..];
-                if let Some(bracket_end) = rest.find(']') {
-                    // Single-line array
-                    let inner = &rest[1..bracket_end];
-                    exclude_patterns = parse_string_array(inner);
-                } else {
-                    in_exclude = true;
-                }
-            }
-            continue;
-        }
-
-        if in_exclude {
-            if trimmed.starts_with(']') {
-                in_exclude = false;
-            } else {
-                let val = trimmed.trim_matches(|c: char| c == '"' || c == ',' || c.is_whitespace());
-                if !val.is_empty() {
-                    exclude_patterns.push(val.to_string());
-                }
-            }
-            continue;
-        }
-
-        // Parse "key": value
-        if !trimmed.starts_with('"') {
-            continue;
-        }
-        let mut parts = trimmed.splitn(2, ':');
-        let key = parts.next()?.trim().trim_matches('"');
-        let val = parts.next()?.trim().trim_end_matches(',');
-        match key {
-            "theme" => config.theme = val.trim_matches('"').to_string(),
-            "layout" => config.layout = val.trim_matches('"').to_string(),
-            "show_borders" => config.show_borders = val == "true",
-            "sidebar_width" => {
-                if let Ok(w) = val.parse::<u16>() {
-                    config.sidebar_width = w;
-                }
-            }
-            "view_mode" => config.view_mode = val.trim_matches('"').to_string(),
-            _ => {}
-        }
+    if let Some(s) = obj.get("theme").and_then(|v| v.as_str()) {
+        config.theme = s.to_string();
     }
-
-    if found_exclude {
-        config.exclude_patterns = exclude_patterns;
+    if let Some(s) = obj.get("layout").and_then(|v| v.as_str()) {
+        config.layout = s.to_string();
+    }
+    if let Some(b) = obj.get("show_borders").and_then(|v| v.as_bool()) {
+        config.show_borders = b;
+    }
+    if let Some(n) = obj.get("sidebar_width").and_then(|v| v.as_u64()) {
+        config.sidebar_width = n as u16;
+    }
+    if let Some(s) = obj.get("view_mode").and_then(|v| v.as_str()) {
+        config.view_mode = s.to_string();
+    }
+    if let Some(arr) = obj.get("exclude_patterns").and_then(|v| v.as_array()) {
+        config.exclude_patterns = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+    }
+    if let Some(arr) = obj.get("plugins").and_then(|v| v.as_array()) {
+        config.plugins = arr
+            .iter()
+            .filter_map(|v| {
+                let o = v.as_object()?;
+                Some(PluginConfig {
+                    name: o.get("name")?.as_str()?.to_string(),
+                    command: o.get("command")?.as_str()?.to_string(),
+                    key: o.get("key")?.as_str()?.chars().next()?,
+                })
+            })
+            .collect();
     }
 
     Some(config)
-}
-
-/// Parse a comma-separated list of quoted strings from inside `[...]`.
-/// Respects quote boundaries so commas inside quoted strings are preserved.
-fn parse_string_array(s: &str) -> Vec<String> {
-    fn decode_item(item: &str) -> String {
-        let trimmed = item.trim();
-        if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
-            serde_json::from_str::<String>(trimmed)
-                .unwrap_or_else(|_| trimmed.trim_matches('"').to_string())
-        } else {
-            trimmed.to_string()
-        }
-    }
-
-    let mut results = Vec::new();
-    let mut current = String::new();
-    let mut in_quotes = false;
-    let mut escaped = false;
-
-    for ch in s.chars() {
-        match ch {
-            '"' if !escaped => {
-                in_quotes = !in_quotes;
-                current.push(ch);
-            }
-            '\\' if in_quotes => {
-                escaped = !escaped;
-                current.push(ch);
-            }
-            ',' if !in_quotes => {
-                let trimmed = current.trim();
-                if !trimmed.is_empty() {
-                    results.push(decode_item(trimmed));
-                }
-                current.clear();
-                escaped = false;
-            }
-            _ => {
-                escaped = false;
-                current.push(ch);
-            }
-        }
-    }
-
-    let trimmed = current.trim();
-    if !trimmed.is_empty() {
-        results.push(decode_item(trimmed));
-    }
-
-    results
 }
 
 #[cfg(test)]
@@ -411,9 +363,26 @@ mod tests {
     }
 
     #[test]
-    fn parse_string_array_handles_commas_in_patterns() {
-        let input = r#""_*", "/foo,bar/""#;
-        let result = parse_string_array(input);
-        assert_eq!(result, vec!["_*", "/foo,bar/"]);
+    fn parse_json_with_plugins() {
+        let json = r#"{
+  "theme": "Catppuccin Mocha",
+  "plugins": [
+    { "name": "GPU Monitor", "command": "findgpu", "key": "g" },
+    { "name": "System", "command": "btop", "key": "m" }
+  ]
+}"#;
+        let config = parse_json(json).unwrap();
+        assert_eq!(config.plugins.len(), 2);
+        assert_eq!(config.plugins[0].name, "GPU Monitor");
+        assert_eq!(config.plugins[0].command, "findgpu");
+        assert_eq!(config.plugins[0].key, 'g');
+        assert_eq!(config.plugins[1].key, 'm');
+    }
+
+    #[test]
+    fn parse_json_without_plugins_uses_empty() {
+        let json = r#"{ "theme": "Nord" }"#;
+        let config = parse_json(json).unwrap();
+        assert!(config.plugins.is_empty());
     }
 }

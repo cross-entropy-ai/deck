@@ -95,6 +95,10 @@ pub enum Action {
     ForwardKey(Vec<u8>),
     ForwardMouse(Vec<u8>),
 
+    // Plugin
+    ActivatePlugin(usize),
+    DeactivatePlugin,
+
     // Lifecycle
     Quit,
 
@@ -659,6 +663,18 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.resize_pty = true;
         }
 
+        // --- Plugin ---
+        Action::ActivatePlugin(idx) => {
+            if idx < state.plugins.len() {
+                state.main_view = MainView::Plugin(idx);
+                state.focus_mode = FocusMode::Main;
+            }
+        }
+        Action::DeactivatePlugin => {
+            state.main_view = MainView::Terminal;
+            state.focus_mode = FocusMode::Main;
+        }
+
         // --- Passthrough (handled by App directly, not here) ---
         Action::ForwardKey(_) | Action::ForwardMouse(_) => {}
 
@@ -715,6 +731,10 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 
     match state.focus_mode {
         FocusMode::Main => {
+            // In plugin view, Esc returns to terminal; other keys forwarded to plugin PTY
+            if matches!(state.main_view, MainView::Plugin(_)) && key.code == KeyCode::Esc {
+                return Action::DeactivatePlugin;
+            }
             let bytes = crate::pty::encode_key(key);
             if bytes.is_empty() {
                 Action::None
@@ -789,6 +809,15 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         // Reorder: Alt+Up / Alt+Down
         KeyCode::Up if alt => Action::ReorderSession(-1),
         KeyCode::Down if alt => Action::ReorderSession(1),
+
+        // Plugin shortcut keys (dynamic lookup from config)
+        KeyCode::Char(ch) => {
+            if let Some(idx) = state.plugins.iter().position(|p| p.key == ch) {
+                Action::ActivatePlugin(idx)
+            } else {
+                Action::None
+            }
+        }
 
         _ => Action::None,
     }
@@ -1009,7 +1038,7 @@ mod tests {
     }
 
     fn make_test_state(n: usize) -> AppState {
-        let mut state = AppState::new(0, LayoutMode::Horizontal, ViewMode::Expanded, true, 28, 120, 40, vec![], vec![]);
+        let mut state = AppState::new(0, LayoutMode::Horizontal, ViewMode::Expanded, true, 28, 120, 40, vec![], vec![], vec![]);
         state.sessions = (0..n)
             .map(|i| make_session(&format!("sess-{}", i), 0))
             .collect();
