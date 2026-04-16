@@ -232,32 +232,49 @@ fn parse_json(s: &str) -> Option<Config> {
 /// Parse a comma-separated list of quoted strings from inside `[...]`.
 /// Respects quote boundaries so commas inside quoted strings are preserved.
 fn parse_string_array(s: &str) -> Vec<String> {
+    fn decode_item(item: &str) -> String {
+        let trimmed = item.trim();
+        if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
+            serde_json::from_str::<String>(trimmed)
+                .unwrap_or_else(|_| trimmed.trim_matches('"').to_string())
+        } else {
+            trimmed.to_string()
+        }
+    }
+
     let mut results = Vec::new();
     let mut current = String::new();
     let mut in_quotes = false;
-    let mut chars = s.chars().peekable();
+    let mut escaped = false;
 
-    while let Some(ch) = chars.next() {
+    for ch in s.chars() {
         match ch {
-            '"' => {
+            '"' if !escaped => {
                 in_quotes = !in_quotes;
+                current.push(ch);
+            }
+            '\\' if in_quotes => {
+                escaped = !escaped;
+                current.push(ch);
             }
             ',' if !in_quotes => {
-                let trimmed = current.trim().to_string();
+                let trimmed = current.trim();
                 if !trimmed.is_empty() {
-                    results.push(trimmed);
+                    results.push(decode_item(trimmed));
                 }
                 current.clear();
+                escaped = false;
             }
             _ => {
+                escaped = false;
                 current.push(ch);
             }
         }
     }
 
-    let trimmed = current.trim().to_string();
+    let trimmed = current.trim();
     if !trimmed.is_empty() {
-        results.push(trimmed);
+        results.push(decode_item(trimmed));
     }
 
     results
