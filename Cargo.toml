@@ -12,6 +12,7 @@ rattles = "0.3"
 unicode-width = "0.2"
 regex = "1"
 serde_json = "1"
+libc = "0.2"
 
 [patch.crates-io]
 vt100 = { path = "patches/vt100" }
