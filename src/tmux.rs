@@ -154,8 +154,25 @@ pub fn apply_theme(theme: &crate::theme::Theme) {
 
 fn color_hex(c: ratatui::style::Color) -> String {
     match c {
+        ratatui::style::Color::Reset => "default".to_string(),
+        ratatui::style::Color::Black => "black".to_string(),
+        ratatui::style::Color::Red => "red".to_string(),
+        ratatui::style::Color::Green => "green".to_string(),
+        ratatui::style::Color::Yellow => "yellow".to_string(),
+        ratatui::style::Color::Blue => "blue".to_string(),
+        ratatui::style::Color::Magenta => "magenta".to_string(),
+        ratatui::style::Color::Cyan => "cyan".to_string(),
+        ratatui::style::Color::Gray => "white".to_string(),
+        ratatui::style::Color::DarkGray => "brightblack".to_string(),
+        ratatui::style::Color::LightRed => "brightred".to_string(),
+        ratatui::style::Color::LightGreen => "brightgreen".to_string(),
+        ratatui::style::Color::LightYellow => "brightyellow".to_string(),
+        ratatui::style::Color::LightBlue => "brightblue".to_string(),
+        ratatui::style::Color::LightMagenta => "brightmagenta".to_string(),
+        ratatui::style::Color::LightCyan => "brightcyan".to_string(),
+        ratatui::style::Color::White => "brightwhite".to_string(),
+        ratatui::style::Color::Indexed(i) => format!("colour{i}"),
         ratatui::style::Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
-        _ => "#000000".to_string(),
     }
 }
 
