@@ -65,7 +65,7 @@ impl FilterMode {
 }
 
 pub const FILTER_TABS: [FilterMode; 3] = [FilterMode::All, FilterMode::Idle, FilterMode::Working];
-pub const SETTINGS_ITEM_COUNT: usize = 4;
+pub const SETTINGS_ITEM_COUNT: usize = 3;
 
 // --- Context menu ---
 
@@ -168,7 +168,6 @@ pub struct AppState {
     pub confirm_kill: bool,
     pub renaming: Option<RenameState>,
     pub show_borders: bool,
-    pub sync_tmux_theme: bool,
     pub context_menu: Option<ContextMenu>,
     pub hover_separator: bool,
     pub dragging_separator: bool,
@@ -186,7 +185,6 @@ impl AppState {
         theme_index: usize,
         layout_mode: LayoutMode,
         show_borders: bool,
-        sync_tmux_theme: bool,
         sidebar_width: u16,
         term_width: u16,
         term_height: u16,
@@ -211,7 +209,6 @@ impl AppState {
             confirm_kill: false,
             renaming: None,
             show_borders,
-            sync_tmux_theme,
             context_menu: None,
             hover_separator: false,
             dragging_separator: false,

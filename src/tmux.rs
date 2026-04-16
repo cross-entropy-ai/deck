@@ -138,21 +138,6 @@ pub fn apply_theme(theme: &crate::theme::Theme) {
     set("mode-style", &format!("bg={accent},fg={bg}"));
 }
 
-/// Remove deck-applied theme options, reverting to tmux defaults / user's tmux.conf.
-pub fn reset_theme() {
-    let unset = |opt: &str| {
-        let _ = tmux(&["set-option", "-gu", opt]);
-    };
-
-    unset("status-style");
-    unset("window-status-current-style");
-    unset("window-status-style");
-    unset("pane-border-style");
-    unset("pane-active-border-style");
-    unset("message-style");
-    unset("mode-style");
-}
-
 fn color_hex(c: ratatui::style::Color) -> String {
     match c {
         ratatui::style::Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
