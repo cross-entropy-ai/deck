@@ -331,6 +331,10 @@ impl App {
             self.save_config();
         }
 
+        if fx.apply_tmux_theme {
+            tmux::apply_theme(&THEMES[self.state.theme_index]);
+        }
+
         if fx.refresh_sessions {
             self.refresh_sessions();
         }
@@ -658,9 +662,8 @@ impl App {
     }
 
     fn save_config(&self) {
-        let theme = &THEMES[self.state.theme_index];
         Config {
-            theme: theme.name.to_string(),
+            theme: THEMES[self.state.theme_index].name.to_string(),
             layout: match self.state.layout_mode {
                 LayoutMode::Horizontal => "horizontal",
                 LayoutMode::Vertical => "vertical",
@@ -670,7 +673,6 @@ impl App {
             sidebar_width: self.state.sidebar_width,
         }
         .save();
-        tmux::apply_theme(theme);
     }
 }
 

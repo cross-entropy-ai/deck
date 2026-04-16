@@ -308,6 +308,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     (state.theme_picker_selected + 1).min(THEMES.len() - 1);
                 state.theme_index = state.theme_picker_selected;
                 fx.save_config = true;
+                fx.apply_tmux_theme = true;
             }
         }
         Action::ThemePickerPrev => {
@@ -315,6 +316,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 state.theme_picker_selected -= 1;
                 state.theme_index = state.theme_picker_selected;
                 fx.save_config = true;
+                fx.apply_tmux_theme = true;
             }
         }
         Action::ConfirmThemePicker => {
