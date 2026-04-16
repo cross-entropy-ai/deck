@@ -87,6 +87,7 @@ impl App {
             warning_state: None,
         };
 
+        tmux::apply_theme(&THEMES[theme_index]);
         app.refresh_sessions();
         if let Some(pos) = app
             .state
@@ -330,6 +331,10 @@ impl App {
             self.save_config();
         }
 
+        if fx.apply_tmux_theme {
+            tmux::apply_theme(&THEMES[self.state.theme_index]);
+        }
+
         if fx.refresh_sessions {
             self.refresh_sessions();
         }
@@ -460,7 +465,7 @@ impl App {
                 for y in gap.y..gap.bottom() {
                     if let Some(cell) = frame.buffer_mut().cell_mut((gap.x, y)) {
                         cell.set_char(sep_char);
-                        cell.set_style(ratatui::style::Style::default().fg(sep_fg));
+                        cell.set_style(ratatui::style::Style::default().fg(sep_fg).bg(theme.bg));
                     }
                 }
             }
@@ -472,6 +477,10 @@ impl App {
                 (None, MainView::Settings) => None,
             };
 
+            // Base style for the main pane — Color::Default cells inherit this,
+            // so the terminal background/foreground follows the deck theme.
+            let main_base = Style::default().fg(theme.text).bg(theme.bg);
+
             let main_inner = if show_borders {
                 let main_border_color = if sidebar_active {
                     theme.dim
@@ -481,19 +490,24 @@ impl App {
                 let main_block = Block::default()
                     .borders(Borders::ALL)
                     .border_set(ratatui::symbols::border::ROUNDED)
-                    .border_style(Style::default().fg(main_border_color));
+                    .border_style(Style::default().fg(main_border_color))
+                    .style(main_base);
                 let main_inner = main_block.inner(main_area);
                 frame.render_widget(main_block, main_area);
                 if let Some(screen) = background_screen {
-                    bridge::render_screen(screen, main_inner, frame.buffer_mut());
+                    bridge::render_screen(screen, main_inner, frame.buffer_mut(), theme.text, theme.bg);
                     if !sidebar_active && warning_state.is_none() {
                         bridge::set_cursor(frame, screen, main_inner);
                     }
                 }
                 main_inner
             } else {
+                frame.render_widget(
+                    Block::default().style(main_base),
+                    main_area,
+                );
                 if let Some(screen) = background_screen {
-                    bridge::render_screen(screen, main_area, frame.buffer_mut());
+                    bridge::render_screen(screen, main_area, frame.buffer_mut(), theme.text, theme.bg);
                     if !sidebar_active && warning_state.is_none() {
                         bridge::set_cursor(frame, screen, main_area);
                     }

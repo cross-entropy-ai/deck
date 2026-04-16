@@ -112,6 +112,70 @@ pub fn switch_client_for_tty(client_tty: &str, session: &str) {
     let _ = tmux(&["switch-client", "-c", client_tty, "-t", session]);
 }
 
+/// Apply a deck theme to tmux's global options (status bar, pane borders, etc.).
+pub fn apply_theme(theme: &crate::theme::Theme) {
+    let bg = color_hex(theme.bg);
+    let surface = color_hex(theme.surface);
+    let dim = color_hex(theme.dim);
+    let muted = color_hex(theme.muted);
+    let secondary = color_hex(theme.secondary);
+    let text = color_hex(theme.text);
+    let accent = color_hex(theme.accent);
+
+    let commands = [
+        (
+            "status-style",
+            format!("bg={surface},fg={secondary}"),
+        ),
+        (
+            "window-status-current-style",
+            format!("bg={accent},fg={bg},bold"),
+        ),
+        ("window-status-style", format!("fg={muted}")),
+        ("pane-border-style", format!("fg={dim}")),
+        ("pane-active-border-style", format!("fg={accent}")),
+        ("message-style", format!("bg={surface},fg={text}")),
+        ("mode-style", format!("bg={accent},fg={bg}")),
+    ];
+
+    let mut args = Vec::with_capacity(commands.len() * 5 - 1);
+    for (i, (opt, val)) in commands.iter().enumerate() {
+        if i > 0 {
+            args.push(";".to_string());
+        }
+        args.push("set-option".to_string());
+        args.push("-g".to_string());
+        args.push((*opt).to_string());
+        args.push(val.clone());
+    }
+
+    let _ = Command::new("tmux").args(&args).output();
+}
+
+fn color_hex(c: ratatui::style::Color) -> String {
+    match c {
+        ratatui::style::Color::Reset => "default".to_string(),
+        ratatui::style::Color::Black => "black".to_string(),
+        ratatui::style::Color::Red => "red".to_string(),
+        ratatui::style::Color::Green => "green".to_string(),
+        ratatui::style::Color::Yellow => "yellow".to_string(),
+        ratatui::style::Color::Blue => "blue".to_string(),
+        ratatui::style::Color::Magenta => "magenta".to_string(),
+        ratatui::style::Color::Cyan => "cyan".to_string(),
+        ratatui::style::Color::Gray => "white".to_string(),
+        ratatui::style::Color::DarkGray => "brightblack".to_string(),
+        ratatui::style::Color::LightRed => "brightred".to_string(),
+        ratatui::style::Color::LightGreen => "brightgreen".to_string(),
+        ratatui::style::Color::LightYellow => "brightyellow".to_string(),
+        ratatui::style::Color::LightBlue => "brightblue".to_string(),
+        ratatui::style::Color::LightMagenta => "brightmagenta".to_string(),
+        ratatui::style::Color::LightCyan => "brightcyan".to_string(),
+        ratatui::style::Color::White => "brightwhite".to_string(),
+        ratatui::style::Color::Indexed(i) => format!("colour{i}"),
+        ratatui::style::Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+    }
+}
+
 pub fn pid_looks_like_deck(pid: u32) -> bool {
     let pid = pid.to_string();
     let output = Command::new("ps")

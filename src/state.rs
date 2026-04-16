@@ -116,6 +116,7 @@ pub struct SideEffect {
     pub create_session: bool,
     pub resize_pty: bool,
     pub save_config: bool,
+    pub apply_tmux_theme: bool,
     pub refresh_sessions: bool,
     pub quit: bool,
 }
