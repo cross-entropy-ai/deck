@@ -9,6 +9,7 @@ pub struct Config {
     pub layout: String,
     pub show_borders: bool,
     pub sidebar_width: u16,
+    pub sync_tmux_theme: bool,
 }
 
 impl Default for Config {
@@ -18,6 +19,7 @@ impl Default for Config {
             layout: "horizontal".to_string(),
             show_borders: true,
             sidebar_width: 28,
+            sync_tmux_theme: false,
         }
     }
 }
@@ -61,11 +63,12 @@ impl Config {
             let _ = fs::create_dir_all(parent);
         }
         let json = format!(
-            "{{\n  \"theme\": {},\n  \"layout\": {},\n  \"show_borders\": {},\n  \"sidebar_width\": {}\n}}\n",
+            "{{\n  \"theme\": {},\n  \"layout\": {},\n  \"show_borders\": {},\n  \"sidebar_width\": {},\n  \"sync_tmux_theme\": {}\n}}\n",
             quote(&self.theme),
             quote(&self.layout),
             self.show_borders,
             self.sidebar_width,
+            self.sync_tmux_theme,
         );
         let _ = fs::write(&path, json);
     }
@@ -98,6 +101,7 @@ fn parse_json(s: &str) -> Option<Config> {
                     config.sidebar_width = w;
                 }
             }
+            "sync_tmux_theme" => config.sync_tmux_theme = val == "true",
             _ => {}
         }
     }

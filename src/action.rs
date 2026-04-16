@@ -31,6 +31,7 @@ pub enum Action {
     // UI toggles
     ToggleLayout,
     ToggleBorders,
+    ToggleTmuxSync,
     OpenSettings,
     CloseSettings,
     SettingsNext,
@@ -259,6 +260,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.resize_pty = true;
             fx.save_config = true;
         }
+        Action::ToggleTmuxSync => {
+            state.sync_tmux_theme = !state.sync_tmux_theme;
+            fx.save_config = true;
+        }
         Action::OpenSettings => {
             state.main_view = MainView::Settings;
             state.focus_mode = FocusMode::Main;
@@ -291,6 +296,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             2 => {
                 let inner = apply_action(state, Action::ToggleBorders);
                 fx.resize_pty = inner.resize_pty;
+                fx.save_config = inner.save_config;
+            }
+            3 => {
+                let inner = apply_action(state, Action::ToggleTmuxSync);
                 fx.save_config = inner.save_config;
             }
             _ => {}
@@ -799,7 +808,7 @@ mod tests {
     }
 
     fn make_test_state(n: usize) -> AppState {
-        let mut state = AppState::new(0, LayoutMode::Horizontal, true, 28, 120, 40);
+        let mut state = AppState::new(0, LayoutMode::Horizontal, true, false, 28, 120, 40);
         state.sessions = (0..n)
             .map(|i| make_session(&format!("sess-{}", i), 0))
             .collect();

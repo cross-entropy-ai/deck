@@ -62,12 +62,14 @@ impl App {
             _ => LayoutMode::Horizontal,
         };
         let show_borders = cfg.show_borders;
+        let sync_tmux_theme = cfg.sync_tmux_theme;
         let sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
 
         let state = AppState::new(
             theme_index,
             layout_mode,
             show_borders,
+            sync_tmux_theme,
             sidebar_width,
             term_width,
             term_height,
@@ -87,7 +89,9 @@ impl App {
             warning_state: None,
         };
 
-        tmux::apply_theme(&THEMES[theme_index]);
+        if sync_tmux_theme {
+            tmux::apply_theme(&THEMES[theme_index]);
+        }
         app.refresh_sessions();
         if let Some(pos) = app
             .state
@@ -395,6 +399,7 @@ impl App {
             theme_names: THEMES.iter().map(|theme| theme.name).collect(),
             layout_mode: s.layout_mode,
             show_borders: s.show_borders,
+            sync_tmux_theme: s.sync_tmux_theme,
         };
         let hover_sep = s.hover_separator;
         let dragging_sep = s.dragging_separator;
@@ -668,9 +673,14 @@ impl App {
             .to_string(),
             show_borders: self.state.show_borders,
             sidebar_width: self.state.sidebar_width,
+            sync_tmux_theme: self.state.sync_tmux_theme,
         }
         .save();
-        tmux::apply_theme(theme);
+        if self.state.sync_tmux_theme {
+            tmux::apply_theme(theme);
+        } else {
+            tmux::reset_theme();
+        }
     }
 }
 

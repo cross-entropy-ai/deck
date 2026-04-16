@@ -32,6 +32,7 @@ pub struct SettingsView<'a> {
     pub theme_names: Vec<&'a str>,
     pub layout_mode: LayoutMode,
     pub show_borders: bool,
+    pub sync_tmux_theme: bool,
 }
 
 /// Draw the sidebar into the given area.
@@ -777,6 +778,11 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
             "Borders",
             if settings.show_borders { "On" } else { "Off" }.to_string(),
             "Left/right toggles pane borders",
+        ),
+        (
+            "Tmux theme",
+            if settings.sync_tmux_theme { "Follow deck" } else { "Default" }.to_string(),
+            "Sync tmux colors with deck theme",
         ),
     ];
 
