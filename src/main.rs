@@ -21,19 +21,37 @@ use crossterm::event::{
 use crossterm::execute;
 use instance_guard::{AcquireError, InstanceGuard};
 
-fn main() -> io::Result<()> {
-    if let Some(code) = handle_meta_args() {
-        std::process::exit(code);
-    }
+struct ParsedArgs {
+    force: bool,
+}
 
-    let _instance_guard = match InstanceGuard::acquire(std::process::id()) {
+fn main() -> io::Result<()> {
+    let args = match parse_args() {
+        Ok(Some(args)) => args,
+        Ok(None) => return Ok(()),
+        Err(code) => std::process::exit(code),
+    };
+
+    let acquire_result = if args.force {
+        InstanceGuard::acquire_forcing(std::process::id())
+    } else {
+        InstanceGuard::acquire(std::process::id())
+    };
+
+    let _instance_guard = match acquire_result {
         Ok(guard) => guard,
         Err(AcquireError::AlreadyRunning { pid: Some(pid) }) => {
             eprintln!("deck: another instance is already running (pid {pid})");
+            eprintln!("Retry with `deck --force` or kill the previous instance.");
             std::process::exit(1);
         }
         Err(AcquireError::AlreadyRunning { pid: None }) => {
             eprintln!("deck: another instance is already running");
+            eprintln!("Retry with `deck --force` or kill the previous instance.");
+            std::process::exit(1);
+        }
+        Err(AcquireError::ForceKillDenied { pid }) => {
+            eprintln!("deck: cannot terminate pid {pid}: permission denied");
             std::process::exit(1);
         }
         Err(AcquireError::Io(err)) => return Err(err),
@@ -75,29 +93,37 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn handle_meta_args() -> Option<i32> {
-    let mut args = std::env::args().skip(1);
-    let arg = args.next()?;
-    if args.next().is_some() {
-        return None;
+fn parse_args() -> Result<Option<ParsedArgs>, i32> {
+    let mut force = false;
+
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--version" | "-V" => {
+                println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+                return Ok(None);
+            }
+            "--help" | "-h" => {
+                print_help();
+                return Ok(None);
+            }
+            "--force" | "-f" => {
+                force = true;
+            }
+            _ => {
+                eprintln!("deck: unknown argument '{arg}'");
+                eprintln!("Run `deck --help` for usage.");
+                return Err(2);
+            }
+        }
     }
 
-    match arg.as_str() {
-        "--version" | "-V" => {
-            println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-            Some(0)
-        }
-        "--help" | "-h" => {
-            println!(
-                "{} {}\n\nUsage:\n  {}            Launch the sidebar UI\n  {} --version  Print version\n  {} --help     Show this help",
-                env!("CARGO_PKG_NAME"),
-                env!("CARGO_PKG_VERSION"),
-                env!("CARGO_PKG_NAME"),
-                env!("CARGO_PKG_NAME"),
-                env!("CARGO_PKG_NAME"),
-            );
-            Some(0)
-        }
-        _ => None,
-    }
+    Ok(Some(ParsedArgs { force }))
+}
+
+fn print_help() {
+    println!(
+        "{name} {version}\n\nUsage:\n  {name}              Launch the sidebar UI\n  {name} --force      Terminate an existing deck instance and take over\n  {name} --version    Print version\n  {name} --help       Show this help",
+        name = env!("CARGO_PKG_NAME"),
+        version = env!("CARGO_PKG_VERSION"),
+    );
 }
