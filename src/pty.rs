@@ -40,6 +40,13 @@ impl Pty {
         for arg in args {
             cmd.arg(*arg);
         }
+        // Force a well-supported TERM so the inner tmux client uses
+        // standard escape sequences the vt100 parser handles correctly.
+        // Without this, inheriting e.g. TERM=tmux-256color from an outer
+        // tmux can cause rendering corruption (scroll region leaks between
+        // tmux panes/windows) because the vt100 parser doesn't support all
+        // tmux-256color-specific capabilities.
+        cmd.env("TERM", "xterm-256color");
         let child = pair.slave.spawn_command(cmd).map_err(pty_err)?;
         drop(pair.slave);
 
