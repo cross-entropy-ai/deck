@@ -122,20 +122,34 @@ pub fn apply_theme(theme: &crate::theme::Theme) {
     let text = color_hex(theme.text);
     let accent = color_hex(theme.accent);
 
-    let set = |opt: &str, val: &str| {
-        let _ = tmux(&["set-option", "-g", opt, val]);
-    };
+    let commands = [
+        (
+            "status-style",
+            format!("bg={surface},fg={secondary}"),
+        ),
+        (
+            "window-status-current-style",
+            format!("bg={accent},fg={bg},bold"),
+        ),
+        ("window-status-style", format!("fg={muted}")),
+        ("pane-border-style", format!("fg={dim}")),
+        ("pane-active-border-style", format!("fg={accent}")),
+        ("message-style", format!("bg={surface},fg={text}")),
+        ("mode-style", format!("bg={accent},fg={bg}")),
+    ];
 
-    set("status-style", &format!("bg={surface},fg={secondary}"));
-    set(
-        "window-status-current-style",
-        &format!("bg={accent},fg={bg},bold"),
-    );
-    set("window-status-style", &format!("fg={muted}"));
-    set("pane-border-style", &format!("fg={dim}"));
-    set("pane-active-border-style", &format!("fg={accent}"));
-    set("message-style", &format!("bg={surface},fg={text}"));
-    set("mode-style", &format!("bg={accent},fg={bg}"));
+    let mut args = Vec::with_capacity(commands.len() * 5 - 1);
+    for (i, (opt, val)) in commands.iter().enumerate() {
+        if i > 0 {
+            args.push(";".to_string());
+        }
+        args.push("set-option".to_string());
+        args.push("-g".to_string());
+        args.push((*opt).to_string());
+        args.push(val.clone());
+    }
+
+    let _ = Command::new("tmux").args(&args).output();
 }
 
 fn color_hex(c: ratatui::style::Color) -> String {
