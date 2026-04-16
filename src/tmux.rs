@@ -112,6 +112,11 @@ pub fn switch_client_for_tty(client_tty: &str, session: &str) {
     let _ = tmux(&["switch-client", "-c", client_tty, "-t", session]);
 }
 
+/// Force a specific tmux client to redraw its screen.
+pub fn refresh_client_for_tty(client_tty: &str) {
+    let _ = tmux(&["refresh-client", "-t", client_tty]);
+}
+
 /// Apply a deck theme to tmux's global options (status bar, pane borders, etc.).
 pub fn apply_theme(theme: &crate::theme::Theme) {
     let bg = color_hex(theme.bg);

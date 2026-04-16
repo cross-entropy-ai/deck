@@ -288,6 +288,10 @@ impl App {
             tmux::switch_session(session);
         } else {
             tmux::switch_client_for_tty(&self.pty.slave_tty, session);
+            // Force tmux to redraw the client screen after switching sessions.
+            // Without this, the vt100 parser retains stale content from the
+            // previous session until tmux happens to send a full redraw.
+            tmux::refresh_client_for_tty(&self.pty.slave_tty);
         }
     }
 
