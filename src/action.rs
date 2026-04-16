@@ -53,6 +53,7 @@ pub enum Action {
     ExcludeEditorInput(char),
     ExcludeEditorBackspace,
     ExcludeEditorConfirm,
+    ExcludeEditorCancelAdd,
 
     ToggleHelp,
     DismissHelp,
@@ -398,6 +399,14 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::ExcludeEditorStartAdd => {
             if let Some(ref mut editor) = state.exclude_editor {
                 editor.adding = true;
+                editor.input.clear();
+                editor.cursor = 0;
+                editor.error = None;
+            }
+        }
+        Action::ExcludeEditorCancelAdd => {
+            if let Some(ref mut editor) = state.exclude_editor {
+                editor.adding = false;
                 editor.input.clear();
                 editor.cursor = 0;
                 editor.error = None;
@@ -804,7 +813,7 @@ fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 
     if adding {
         return match key.code {
-            KeyCode::Esc => Action::CloseExcludeEditor,
+            KeyCode::Esc => Action::ExcludeEditorCancelAdd,
             KeyCode::Enter => Action::ExcludeEditorConfirm,
             KeyCode::Backspace => Action::ExcludeEditorBackspace,
             KeyCode::Char(ch) => Action::ExcludeEditorInput(ch),
