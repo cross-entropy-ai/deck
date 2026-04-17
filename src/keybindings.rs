@@ -166,7 +166,9 @@ impl Command {
             ],
             Command::FocusMain => vec![KeyBinding::new(KeyCode::Esc, KeyModifiers::NONE)],
             Command::Quit => vec![KeyBinding::new(KeyCode::Char('q'), KeyModifiers::NONE)],
-            Command::ToggleFocus => vec![KeyBinding::new(KeyCode::Char('s'), KeyModifiers::CONTROL)],
+            Command::ToggleFocus => {
+                vec![KeyBinding::new(KeyCode::Char('s'), KeyModifiers::CONTROL)]
+            }
             Command::TriggerUpgrade => {
                 vec![KeyBinding::new(KeyCode::Char('u'), KeyModifiers::NONE)]
             }
@@ -309,10 +311,7 @@ impl Keybindings {
     }
 
     pub fn keys_for(&self, cmd: Command) -> &[KeyBinding] {
-        self.reverse
-            .get(&cmd)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+        self.reverse.get(&cmd).map(|v| v.as_slice()).unwrap_or(&[])
     }
 }
 
@@ -449,8 +448,7 @@ pub fn format_key(kb: &KeyBinding) -> String {
 
     // SHIFT is encoded in letter case when the key is an ASCII letter;
     // emit "S-" only for keys where case doesn't carry shift.
-    let shift_in_case =
-        matches!(kb.code, KeyCode::Char(c) if c.is_ascii_alphabetic());
+    let shift_in_case = matches!(kb.code, KeyCode::Char(c) if c.is_ascii_alphabetic());
     if mods.contains(KeyModifiers::SHIFT) && !shift_in_case {
         out.push_str("S-");
     }
@@ -490,9 +488,18 @@ mod tests {
 
     #[test]
     fn parse_plain_char() {
-        assert_eq!(parse_key("j").unwrap(), kb(KeyCode::Char('j'), KeyModifiers::NONE));
-        assert_eq!(parse_key("1").unwrap(), kb(KeyCode::Char('1'), KeyModifiers::NONE));
-        assert_eq!(parse_key("?").unwrap(), kb(KeyCode::Char('?'), KeyModifiers::NONE));
+        assert_eq!(
+            parse_key("j").unwrap(),
+            kb(KeyCode::Char('j'), KeyModifiers::NONE)
+        );
+        assert_eq!(
+            parse_key("1").unwrap(),
+            kb(KeyCode::Char('1'), KeyModifiers::NONE)
+        );
+        assert_eq!(
+            parse_key("?").unwrap(),
+            kb(KeyCode::Char('?'), KeyModifiers::NONE)
+        );
     }
 
     #[test]
@@ -527,7 +534,10 @@ mod tests {
         );
         assert_eq!(
             parse_key("C-A-x").unwrap(),
-            kb(KeyCode::Char('x'), KeyModifiers::CONTROL | KeyModifiers::ALT)
+            kb(
+                KeyCode::Char('x'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT
+            )
         );
     }
 
@@ -789,11 +799,7 @@ mod tests {
 
         // Every command present.
         for &cmd in Command::ALL {
-            assert!(
-                map.contains_key(cmd.name()),
-                "missing {}",
-                cmd.name()
-            );
+            assert!(map.contains_key(cmd.name()), "missing {}", cmd.name());
         }
 
         // Multi-key default round-trips.

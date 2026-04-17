@@ -21,7 +21,7 @@ pub struct Pty {
 }
 
 fn pty_err(e: impl std::fmt::Display) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, e.to_string())
+    io::Error::other(e.to_string())
 }
 
 impl Pty {

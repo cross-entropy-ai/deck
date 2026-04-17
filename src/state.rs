@@ -398,11 +398,7 @@ impl AppState {
         let ch = card_height(self.view_mode);
         let focused_bottom = (self.focused + 1) * ch;
         let visible = visible_height as usize;
-        let scroll = if focused_bottom > visible {
-            focused_bottom - visible
-        } else {
-            0
-        };
+        let scroll = focused_bottom.saturating_sub(visible);
         let clicked_row = row as usize - sessions_top as usize + scroll;
         let idx = clicked_row / ch;
         if idx < self.filtered.len() {

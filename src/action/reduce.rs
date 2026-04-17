@@ -1,6 +1,3 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-
-use crate::keybindings::Command;
 use crate::state::{
     AppState, ContextMenu, FilterMode, FocusMode, KillRequest, LayoutMode, MainView, MenuKind,
     RenameRequest, RenameState, SideEffect, ViewMode, GLOBAL_MENU_ITEMS, SESSION_MENU_ITEMS,
@@ -8,121 +5,12 @@ use crate::state::{
 };
 use crate::theme::THEMES;
 
-#[derive(Debug)]
-pub enum Action {
-    // Navigation
-    FocusNext,
-    FocusPrev,
-    FocusIndex(usize),
-    ScrollUp,
-    ScrollDown,
-
-    // Session operations
-    SwitchProject,
-    KillSession,
-    ConfirmKill,
-    CancelKill,
-    ReorderSession(i32),
-    StartRename,
-    RenameInput(char),
-    RenameBackspace,
-    RenameConfirm,
-    RenameCancel,
-
-    // UI toggles
-    ToggleLayout,
-    ToggleBorders,
-    ToggleViewMode,
-    OpenSettings,
-    CloseSettings,
-    SettingsNext,
-    SettingsPrev,
-    SettingsAdjust(i32),
-    OpenThemePicker,
-    CloseThemePicker,
-    ThemePickerNext,
-    ThemePickerPrev,
-    ConfirmThemePicker,
-
-    // Keybindings view
-    OpenKeybindingsView,
-    CloseKeybindingsView,
-    KeybindingsViewScrollUp,
-    KeybindingsViewScrollDown,
-
-    // Update check
-    ToggleUpdateCheck,
-    TriggerUpgrade,
-    AbortUpgrade,
-
-    // Exclude editor
-    OpenExcludeEditor,
-    CloseExcludeEditor,
-    ExcludeEditorNext,
-    ExcludeEditorPrev,
-    ExcludeEditorStartAdd,
-    ExcludeEditorDelete,
-    ExcludeEditorInput(char),
-    ExcludeEditorBackspace,
-    ExcludeEditorConfirm,
-    ExcludeEditorCancelAdd,
-
-    ToggleHelp,
-    DismissHelp,
-
-    // Filter
-    CycleFilter,
-    SetFilter(FilterMode),
-
-    // Focus mode
-    SetFocusMain,
-    SetFocusSidebar,
-    ToggleFocus,
-
-    // Context menu
-    OpenSessionMenu { filtered_idx: usize, x: u16, y: u16 },
-    OpenGlobalMenu { x: u16, y: u16 },
-    MenuNext,
-    MenuPrev,
-    MenuConfirm,
-    MenuDismiss,
-    MenuHover(usize),
-    MenuClickItem(usize),
-
-    // Compound actions (dispatched by App, not handled in apply_action)
-    SidebarClickSession(usize),
-    NumberKeyJump(usize),
-
-    // Resize
-    ResizeSidebar(u16),
-    ResizeSidebarHeight(u16),
-    StartDrag,
-    StopDrag,
-    SetHoverSeparator(bool),
-
-    // Terminal
-    Resize(u16, u16),
-
-    // PTY passthrough (handled by App directly, not apply_action)
-    ForwardKey(Vec<u8>),
-    ForwardMouse(Vec<u8>),
-
-    // Plugin
-    ActivatePlugin(usize),
-    DeactivatePlugin,
-
-    // Lifecycle
-    Quit,
-
-    // No-op
-    None,
-}
+use super::Action;
 
 pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
     let mut fx = SideEffect::default();
 
     match action {
-        // --- Navigation (instant switch) ---
         Action::FocusNext => {
             if !state.filtered.is_empty() {
                 let old = state.focused;
@@ -169,7 +57,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
 
-        // --- Session operations ---
         Action::SwitchProject => {
             if let Some(&session_idx) = state.filtered.get(state.focused) {
                 let name = state.sessions[session_idx].name.clone();
@@ -198,8 +85,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 state.focused.saturating_sub(1)
             };
 
-            // Focused session is always the current session (instant switch),
-            // so we always need to switch away before killing.
             let switch_to = {
                 let alt_idx = if state.focused + 1 < state.filtered.len() {
                     state.focused + 1
@@ -292,7 +177,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.renaming = None;
         }
 
-        // --- UI toggles ---
         Action::ToggleLayout => {
             state.layout_mode = match state.layout_mode {
                 LayoutMode::Horizontal => LayoutMode::Vertical,
@@ -347,8 +231,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.merge(inner);
         }
         Action::OpenThemePicker => {
-            // Ensure the Settings pane is showing so the picker overlay
-            // renders correctly when triggered via a sidebar shortcut.
             state.main_view = MainView::Settings;
             state.focus_mode = FocusMode::Main;
             state.theme_picker_open = true;
@@ -378,7 +260,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.theme_picker_open = false;
         }
 
-        // --- Keybindings view ---
         Action::OpenKeybindingsView => {
             state.keybindings_view_open = true;
             state.keybindings_view_scroll = 0;
@@ -393,29 +274,18 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.keybindings_view_scroll = state.keybindings_view_scroll.saturating_add(1);
         }
 
-        // --- Update check ---
         Action::ToggleUpdateCheck => {
             state.update_check_mode = match state.update_check_mode {
-                crate::update::UpdateCheckMode::Enabled => {
-                    crate::update::UpdateCheckMode::Disabled
-                }
-                crate::update::UpdateCheckMode::Disabled => {
-                    crate::update::UpdateCheckMode::Enabled
-                }
+                crate::update::UpdateCheckMode::Enabled => crate::update::UpdateCheckMode::Disabled,
+                crate::update::UpdateCheckMode::Disabled => crate::update::UpdateCheckMode::Enabled,
             };
-            // Dropping to Disabled must hide any visible banner immediately;
-            // re-enabling doesn't fabricate one — App will fetch/restore on
-            // the next tick.
             if state.update_check_mode == crate::update::UpdateCheckMode::Disabled {
                 state.update_available = None;
             }
             fx.save_config = true;
         }
-        // TriggerUpgrade and AbortUpgrade are dispatched by App directly (they
-        // spawn/kill PTYs, which apply_action mustn't do).
         Action::TriggerUpgrade | Action::AbortUpgrade => {}
 
-        // --- Exclude editor ---
         Action::OpenExcludeEditor => {
             state.exclude_editor = Some(crate::state::ExcludeEditorState {
                 selected: 0,
@@ -538,7 +408,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.show_help = false;
         }
 
-        // --- Filter ---
         Action::CycleFilter => {
             state.filter_mode = state.filter_mode.next();
             state.recompute_filter();
@@ -549,7 +418,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.recompute_filter();
         }
 
-        // --- Focus mode ---
         Action::SetFocusMain => {
             state.focus_mode = FocusMode::Main;
         }
@@ -567,7 +435,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
 
-        // --- Context menu ---
         Action::OpenSessionMenu { filtered_idx, x, y } => {
             state.focused = filtered_idx;
             state.context_menu = Some(ContextMenu {
@@ -652,7 +519,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
 
-        // --- Resize ---
         Action::ResizeSidebar(width) => {
             if state.resize_sidebar(width) {
                 fx.resize_pty = true;
@@ -674,14 +540,12 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.hover_separator = hover;
         }
 
-        // --- Terminal resize ---
         Action::Resize(w, h) => {
             state.term_width = w;
             state.term_height = h;
             fx.resize_pty = true;
         }
 
-        // --- Plugin ---
         Action::ActivatePlugin(idx) => {
             if idx < state.plugins.len() {
                 state.main_view = MainView::Plugin(idx);
@@ -693,13 +557,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.focus_mode = FocusMode::Main;
         }
 
-        // --- Passthrough (handled by App directly, not here) ---
         Action::ForwardKey(_) | Action::ForwardMouse(_) => {}
-
-        // --- Compound actions (dispatched by App, not handled here) ---
         Action::SidebarClickSession(_) | Action::NumberKeyJump(_) | Action::MenuClickItem(_) => {}
 
-        // --- Lifecycle ---
         Action::Quit => {
             fx.quit = true;
         }
@@ -710,344 +570,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
     fx
 }
 
-pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
-    // Rename input intercepts all keys
-    if state.renaming.is_some() {
-        return match key.code {
-            KeyCode::Enter => Action::RenameConfirm,
-            KeyCode::Esc => Action::RenameCancel,
-            KeyCode::Backspace => Action::RenameBackspace,
-            KeyCode::Char(ch) => Action::RenameInput(ch),
-            _ => Action::None,
-        };
-    }
-
-    // Context menu intercepts all keys
-    if state.context_menu.is_some() {
-        return match key.code {
-            KeyCode::Char('j') | KeyCode::Down => Action::MenuNext,
-            KeyCode::Char('k') | KeyCode::Up => Action::MenuPrev,
-            KeyCode::Enter => Action::MenuConfirm,
-            _ => Action::MenuDismiss,
-        };
-    }
-
-    // Global commands (fire regardless of focus mode). Today only ToggleFocus.
-    if let Some(cmd) = state.keybindings.lookup(key) {
-        if cmd.is_global() {
-            return command_to_action(cmd);
-        }
-    }
-
-    if state.main_view == MainView::Settings && state.focus_mode == FocusMode::Main {
-        if state.keybindings_view_open {
-            return keybindings_view_key_to_action(key);
-        }
-        if state.exclude_editor.is_some() {
-            return exclude_editor_key_to_action(key, state);
-        }
-        if state.theme_picker_open {
-            return theme_picker_key_to_action(key);
-        }
-        return settings_key_to_action(key);
-    }
-
-    match state.focus_mode {
-        FocusMode::Main => {
-            // In plugin view, Esc returns to terminal; other keys forwarded to plugin PTY
-            if matches!(state.main_view, MainView::Plugin(_)) && key.code == KeyCode::Esc {
-                return Action::DeactivatePlugin;
-            }
-            // In upgrade view, Esc aborts the running brew process; other keys
-            // are forwarded to the upgrade PTY so the user can scroll / dismiss.
-            if state.main_view == MainView::Upgrade && key.code == KeyCode::Esc {
-                return Action::AbortUpgrade;
-            }
-            let bytes = crate::pty::encode_key(key);
-            if bytes.is_empty() {
-                Action::None
-            } else {
-                Action::ForwardKey(bytes)
-            }
-        }
-        FocusMode::Sidebar => sidebar_key_to_action(key, state),
-    }
-}
-
-fn command_to_action(cmd: Command) -> Action {
-    match cmd {
-        Command::FocusNext => Action::FocusNext,
-        Command::FocusPrev => Action::FocusPrev,
-        Command::SwitchProject => Action::SwitchProject,
-        Command::KillSession => Action::KillSession,
-        Command::ReorderUp => Action::ReorderSession(-1),
-        Command::ReorderDown => Action::ReorderSession(1),
-        Command::CycleFilter => Action::CycleFilter,
-        Command::OpenSettings => Action::OpenSettings,
-        Command::OpenThemePicker => Action::OpenThemePicker,
-        Command::ToggleBorders => Action::ToggleBorders,
-        Command::ToggleLayout => Action::ToggleLayout,
-        Command::ToggleViewMode => Action::ToggleViewMode,
-        Command::ToggleHelp => Action::ToggleHelp,
-        Command::FocusMain => Action::SetFocusMain,
-        Command::Quit => Action::Quit,
-        Command::ToggleFocus => Action::ToggleFocus,
-        Command::TriggerUpgrade => Action::TriggerUpgrade,
-    }
-}
-
-fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
-    // Help showing: any key dismisses
-    if state.show_help {
-        return Action::DismissHelp;
-    }
-
-    // Kill confirmation
-    if state.confirm_kill {
-        return if key.code == KeyCode::Char('y') {
-            Action::ConfirmKill
-        } else {
-            Action::CancelKill
-        };
-    }
-
-    // Number keys 1-9 quick jump — hardcoded (range-based, not a single binding)
-    if let KeyCode::Char(c @ '1'..='9') = key.code {
-        if !key.modifiers.contains(KeyModifiers::ALT) {
-            let idx = (c as usize) - ('1' as usize);
-            if idx < state.filtered.len() {
-                return Action::NumberKeyJump(idx);
-            }
-            return Action::None;
-        }
-    }
-
-    // User-configurable commands
-    if let Some(cmd) = state.keybindings.lookup(key) {
-        return command_to_action(cmd);
-    }
-
-    // Plugin shortcut keys (dynamic lookup from config)
-    if let KeyCode::Char(ch) = key.code {
-        if let Some(idx) = state.plugins.iter().position(|p| p.key == ch) {
-            return Action::ActivatePlugin(idx);
-        }
-    }
-
-    Action::None
-}
-
-fn settings_key_to_action(key: &KeyEvent) -> Action {
-    match key.code {
-        KeyCode::Esc => Action::CloseSettings,
-        KeyCode::Char('j') | KeyCode::Down => Action::SettingsNext,
-        KeyCode::Char('k') | KeyCode::Up => Action::SettingsPrev,
-        KeyCode::Char('h') | KeyCode::Left => Action::SettingsAdjust(-1),
-        KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
-            Action::SettingsAdjust(1)
-        }
-        _ => Action::None,
-    }
-}
-
-fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
-    let adding = state.exclude_editor.as_ref().is_some_and(|e| e.adding);
-
-    if adding {
-        return match key.code {
-            KeyCode::Esc => Action::ExcludeEditorCancelAdd,
-            KeyCode::Enter => Action::ExcludeEditorConfirm,
-            KeyCode::Backspace => Action::ExcludeEditorBackspace,
-            KeyCode::Char(ch) => Action::ExcludeEditorInput(ch),
-            _ => Action::None,
-        };
-    }
-
-    match key.code {
-        KeyCode::Esc => Action::CloseExcludeEditor,
-        KeyCode::Char('j') | KeyCode::Down => Action::ExcludeEditorNext,
-        KeyCode::Char('k') | KeyCode::Up => Action::ExcludeEditorPrev,
-        KeyCode::Char('a') => Action::ExcludeEditorStartAdd,
-        KeyCode::Char('d') | KeyCode::Char('x') => Action::ExcludeEditorDelete,
-        _ => Action::None,
-    }
-}
-
-fn keybindings_view_key_to_action(key: &KeyEvent) -> Action {
-    match key.code {
-        KeyCode::Esc => Action::CloseKeybindingsView,
-        KeyCode::Char('j') | KeyCode::Down => Action::KeybindingsViewScrollDown,
-        KeyCode::Char('k') | KeyCode::Up => Action::KeybindingsViewScrollUp,
-        _ => Action::None,
-    }
-}
-
-fn theme_picker_key_to_action(key: &KeyEvent) -> Action {
-    match key.code {
-        KeyCode::Esc => Action::CloseThemePicker,
-        KeyCode::Char('j') | KeyCode::Down => Action::ThemePickerNext,
-        KeyCode::Char('k') | KeyCode::Up => Action::ThemePickerPrev,
-        KeyCode::Char('h') | KeyCode::Left => Action::ThemePickerPrev,
-        KeyCode::Char('l') | KeyCode::Right => Action::ThemePickerNext,
-        KeyCode::Enter | KeyCode::Char(' ') => Action::ConfirmThemePicker,
-        _ => Action::None,
-    }
-}
-
-pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
-    // Upgrade banner click — check before anything else so it wins even if
-    // the click also happens to land in the sidebar footer area.
-    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-        && state.banner_upgrade_at(mouse.column, mouse.row)
-    {
-        return Action::TriggerUpgrade;
-    }
-
-    // Context menu intercepts all mouse events
-    if state.context_menu.is_some() {
-        return match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(idx) = state.menu_item_at(mouse.column, mouse.row) {
-                    return Action::MenuClickItem(idx);
-                }
-                Action::MenuDismiss
-            }
-            MouseEventKind::Down(MouseButton::Right) => Action::MenuDismiss,
-            MouseEventKind::Moved => {
-                if let Some(idx) = state.menu_item_at(mouse.column, mouse.row) {
-                    Action::MenuHover(idx)
-                } else {
-                    Action::None
-                }
-            }
-            _ => Action::None,
-        };
-    }
-
-    let (on_separator, in_sidebar) = match state.layout_mode {
-        LayoutMode::Horizontal => {
-            let gap_col = state.sidebar_width;
-            let on_sep = mouse.column >= gap_col.saturating_sub(1) && mouse.column <= gap_col + 1;
-            let in_sb = mouse.column < state.sidebar_width;
-            (on_sep, in_sb)
-        }
-        LayoutMode::Vertical => {
-            let sidebar_height = state.effective_sidebar_height();
-            let on_sep = mouse.row == sidebar_height.saturating_sub(1);
-            let in_sb = mouse.row < sidebar_height;
-            (on_sep, in_sb)
-        }
-    };
-
-    match mouse.kind {
-        MouseEventKind::Moved => {
-            return Action::SetHoverSeparator(on_separator);
-        }
-        MouseEventKind::Down(MouseButton::Left) if on_separator => {
-            return Action::StartDrag;
-        }
-        MouseEventKind::Drag(MouseButton::Left) if state.dragging_separator => {
-            return match state.layout_mode {
-                LayoutMode::Horizontal => Action::ResizeSidebar(mouse.column + 1),
-                LayoutMode::Vertical => Action::ResizeSidebarHeight(mouse.row + 1),
-            };
-        }
-        MouseEventKind::Up(MouseButton::Left) if state.dragging_separator => {
-            return Action::StopDrag;
-        }
-        _ => {}
-    }
-
-    // Scroll in sidebar area (throttled)
-    if in_sidebar {
-        match mouse.kind {
-            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                if state.last_scroll.elapsed().as_millis() < 80 {
-                    return Action::None;
-                }
-                return match mouse.kind {
-                    MouseEventKind::ScrollUp => Action::ScrollUp,
-                    _ => Action::ScrollDown,
-                };
-            }
-            _ => {}
-        }
-    }
-
-    // Click in sidebar area (compound: focus sidebar + select + switch)
-    if mouse.kind == MouseEventKind::Down(MouseButton::Left) && in_sidebar {
-        if let Some(mode) = state.filter_tab_at(mouse.column, mouse.row) {
-            return Action::SetFilter(mode);
-        }
-
-        let idx = match state.layout_mode {
-            LayoutMode::Horizontal => state.session_at_row(mouse.row),
-            LayoutMode::Vertical => state.session_at_col(mouse.column, mouse.row),
-        };
-        if let Some(idx) = idx {
-            return Action::SidebarClickSession(idx);
-        }
-        return Action::SetFocusSidebar;
-    }
-
-    // Right-click in sidebar area → open context menu
-    if mouse.kind == MouseEventKind::Down(MouseButton::Right) && in_sidebar {
-        let idx = match state.layout_mode {
-            LayoutMode::Horizontal => state.session_at_row(mouse.row),
-            LayoutMode::Vertical => state.session_at_col(mouse.column, mouse.row),
-        };
-        return if let Some(idx) = idx {
-            Action::OpenSessionMenu {
-                filtered_idx: idx,
-                x: mouse.column,
-                y: mouse.row,
-            }
-        } else {
-            Action::OpenGlobalMenu {
-                x: mouse.column,
-                y: mouse.row,
-            }
-        };
-    }
-
-    // Click/interact in main pane area → forward to PTY
-    if !in_sidebar && !on_separator && !state.dragging_separator {
-        if state.main_view == MainView::Settings {
-            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-                return Action::SetFocusMain;
-            }
-            return Action::None;
-        }
-        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-            // Left-click in main also sets focus to main (handled by App on ForwardMouse)
-            let b = if state.show_borders { 1u16 } else { 0 };
-            let (col_off, row_off) = match state.layout_mode {
-                LayoutMode::Horizontal => (state.sidebar_width + 1 + b, b),
-                LayoutMode::Vertical => (b, state.effective_sidebar_height() + b),
-            };
-            let bytes = crate::pty::encode_mouse(mouse, col_off, row_off);
-            if bytes.is_empty() {
-                return Action::SetFocusMain;
-            }
-            return Action::ForwardMouse(bytes);
-        }
-        let b = if state.show_borders { 1u16 } else { 0 };
-        let (col_off, row_off) = match state.layout_mode {
-            LayoutMode::Horizontal => (state.sidebar_width + 1 + b, b),
-            LayoutMode::Vertical => (b, state.effective_sidebar_height() + b),
-        };
-        let bytes = crate::pty::encode_mouse(mouse, col_off, row_off);
-        if !bytes.is_empty() {
-            return Action::ForwardMouse(bytes);
-        }
-    }
-
-    Action::None
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{apply_action, Action};
     use crate::state::{
         AppState, FilterMode, FocusMode, LayoutMode, MainView, SessionRow, ViewMode,
     };
@@ -1170,7 +695,6 @@ mod tests {
         assert!(fx.kill_session.is_some());
         let kill = fx.kill_session.unwrap();
         assert_eq!(kill.name, "sess-1");
-        // Focused session is always current (instant switch), so always provides switch target
         assert!(kill.switch_to.is_some());
     }
 
@@ -1359,7 +883,6 @@ mod tests {
         let mut state = make_test_state(3);
         state.focused = 1;
         apply_action(&mut state, Action::ReorderSession(-1));
-        // sess-1 should now be at position 0
         assert_eq!(state.sessions[0].name, "sess-1");
         assert_eq!(state.sessions[1].name, "sess-0");
         assert_eq!(state.focused, 0);

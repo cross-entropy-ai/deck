@@ -424,10 +424,7 @@ mod tests {
             "toggle_help".to_string(),
             KeyBindingValue::Multi(vec!["h".into(), "F1".into()]),
         );
-        kb.insert(
-            "toggle_borders".to_string(),
-            KeyBindingValue::Unbind,
-        );
+        kb.insert("toggle_borders".to_string(), KeyBindingValue::Unbind);
         let config = Config {
             keybindings: kb.clone(),
             ..Config::default()
