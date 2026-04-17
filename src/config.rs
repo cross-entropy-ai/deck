@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::state::{LayoutMode, ViewMode, SIDEBAR_HEIGHT};
+use crate::update::UpdateCheckMode;
 
 /// A command-based plugin that runs in its own PTY.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +66,7 @@ pub struct Config {
     pub exclude_patterns: Vec<String>,
     pub plugins: Vec<PluginConfig>,
     pub keybindings: BTreeMap<String, KeyBindingValue>,
+    pub update_check: UpdateCheckMode,
 }
 
 impl Default for Config {
@@ -79,6 +81,7 @@ impl Default for Config {
             exclude_patterns: vec!["_*".to_string()],
             plugins: Vec::new(),
             keybindings: BTreeMap::new(),
+            update_check: UpdateCheckMode::Enabled,
         }
     }
 }
@@ -431,6 +434,37 @@ mod tests {
         };
         let roundtrip: Config = serde_json::from_str(&config.to_json()).unwrap();
         assert_eq!(roundtrip.keybindings, kb);
+    }
+
+    #[test]
+    fn parse_json_with_update_check_disabled() {
+        let json = r#"{ "update_check": "disabled" }"#;
+        let config = parse(json);
+        assert_eq!(config.update_check, UpdateCheckMode::Disabled);
+    }
+
+    #[test]
+    fn parse_json_with_update_check_enabled() {
+        let json = r#"{ "update_check": "enabled" }"#;
+        let config = parse(json);
+        assert_eq!(config.update_check, UpdateCheckMode::Enabled);
+    }
+
+    #[test]
+    fn parse_json_without_update_check_defaults_to_enabled() {
+        let json = r#"{ "theme": "Nord" }"#;
+        let config = parse(json);
+        assert_eq!(config.update_check, UpdateCheckMode::Enabled);
+    }
+
+    #[test]
+    fn update_check_round_trip() {
+        let config = Config {
+            update_check: UpdateCheckMode::Disabled,
+            ..Config::default()
+        };
+        let roundtrip: Config = serde_json::from_str(&config.to_json()).unwrap();
+        assert_eq!(roundtrip.update_check, UpdateCheckMode::Disabled);
     }
 
     #[test]

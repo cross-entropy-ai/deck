@@ -12,6 +12,9 @@ use crate::layout::{
 };
 use crate::state::{FilterMode, LayoutMode, ViewMode, FILTER_TABS};
 use crate::theme::Theme;
+use crate::update::UpdateStatus;
+
+const BANNER_MIN_WIDTH: u16 = 30;
 
 /// Minimal data needed to render one session row.
 pub struct SessionView<'a> {
@@ -49,9 +52,13 @@ pub struct SettingsView<'a> {
     pub keybindings: &'a Keybindings,
     pub keybindings_view_open: bool,
     pub keybindings_view_scroll: u16,
+    pub update_check_enabled: bool,
+    pub update_check_help: String,
 }
 
-/// Draw the sidebar into the given area.
+/// Draw the sidebar into the given area. Returns the column range (as a Rect)
+/// occupied by the clickable "upgrade" banner span if one was drawn — used by
+/// the caller to record the hit-test region on AppState for mouse routing.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_sidebar(
     frame: &mut Frame,
@@ -70,9 +77,10 @@ pub fn draw_sidebar(
     view_mode: ViewMode,
     plugins: &[(char, &str)],
     keybindings: &Keybindings,
-) {
+    update_available: Option<&UpdateStatus>,
+) -> Option<Rect> {
     if tabs_mode {
-        draw_sidebar_tabs(
+        return draw_sidebar_tabs(
             frame,
             area,
             sessions,
@@ -82,8 +90,8 @@ pub fn draw_sidebar(
             show_borders,
             spinner_frame,
             keybindings,
+            update_available,
         );
-        return;
     }
     let content = if show_borders {
         let border_color = if sidebar_active {
@@ -104,10 +112,14 @@ pub fn draw_sidebar(
         area
     };
 
+    let banner_visible =
+        sidebar_active && update_available.is_some() && content.width >= BANNER_MIN_WIDTH;
+    let footer_height: u16 = if banner_visible { 4 } else { 3 };
+
     let [header_area, sessions_area, footer_area] = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(1),
-        Constraint::Length(3),
+        Constraint::Length(footer_height),
     ])
     .areas(content);
 
@@ -138,7 +150,8 @@ pub fn draw_sidebar(
         show_help,
         plugins,
         keybindings,
-    );
+        if banner_visible { update_available } else { None },
+    )
 }
 
 fn draw_header(
@@ -463,7 +476,8 @@ fn draw_footer(
     show_help: bool,
     plugins: &[(char, &str)],
     keybindings: &Keybindings,
-) {
+    update_available: Option<&UpdateStatus>,
+) -> Option<Rect> {
     let w = width as usize;
     let sep = Line::from(Span::styled("─".repeat(w), Style::default().fg(theme.dim)));
 
@@ -503,11 +517,57 @@ fn draw_footer(
         )])]
     };
 
-    // Footer area is 3 lines: sep + up to 2 content rows. If hints fit in one
-    // row, row 2 shows About (when help is visible) or stays blank. If hints
-    // need two rows, they fill both content rows and About is dropped.
-    let mut rows: Vec<Line> = Vec::with_capacity(3);
+    // Row layout inside the footer area:
+    //   row 0: separator
+    //   row 1: banner (if update available)
+    //   rows 1-2 (no banner) or 2-3 (banner): hints line 1, then hints line 2 OR About
+    let mut rows: Vec<Line> = Vec::with_capacity(4);
     rows.push(sep);
+
+    // Banner row (optional). Tracks the "upgrade" span bounds for hit-testing.
+    let mut upgrade_bounds: Option<Rect> = None;
+    if let Some(status) = update_available {
+        let banner_text = format!(
+            "v{} available (current v{})",
+            status.latest_version, status.current_version
+        );
+        let upgrade_label = "upgrade";
+        let banner_row_index = rows.len() as u16;
+        let banner_row_y = area.y + banner_row_index;
+        let leading_spaces = 1u16;
+        // Banner total visual width; clip banner if too narrow.
+        let text_width = banner_text.width() as u16;
+        let gap = 3u16;
+        let upgrade_width = upgrade_label.width() as u16;
+        let total = leading_spaces + text_width + gap + upgrade_width;
+        if total <= area.width {
+            let upgrade_x = area.x + leading_spaces + text_width + gap;
+            upgrade_bounds = Some(Rect {
+                x: upgrade_x,
+                y: banner_row_y,
+                width: upgrade_width,
+                height: 1,
+            });
+            rows.push(Line::from(vec![
+                Span::raw(" "),
+                Span::styled(banner_text, Style::default().fg(theme.dim)),
+                Span::raw("   "),
+                Span::styled(
+                    upgrade_label.to_string(),
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                ),
+            ]));
+        } else {
+            // Too narrow for the full banner — drop it entirely rather than
+            // truncate mid-word. The caller's BANNER_MIN_WIDTH guard already
+            // mostly prevents this but we stay defensive.
+            rows.push(Line::default());
+        }
+    }
+
+    // Hints line 1
     let overflow = hint_lines.len() > 1;
     let mut iter = hint_lines.into_iter();
     if let Some(first) = iter.next() {
@@ -515,6 +575,8 @@ fn draw_footer(
     } else {
         rows.push(Line::default());
     }
+
+    // Final row: hints line 2, About, or blank — priority in that order.
     if overflow {
         rows.push(iter.next().unwrap_or_default());
     } else if show_help {
@@ -537,6 +599,8 @@ fn draw_footer(
         Paragraph::new(rows).style(Style::default().bg(theme.bg)),
         area,
     );
+
+    upgrade_bounds
 }
 
 fn pack_hint_lines(entries: &[(String, String)], width: usize, theme: &Theme) -> Vec<Line<'static>> {
@@ -592,7 +656,11 @@ fn draw_sidebar_tabs(
     show_borders: bool,
     spinner_frame: &str,
     keybindings: &Keybindings,
-) {
+    _update_available: Option<&UpdateStatus>,
+) -> Option<Rect> {
+    // Vertical/tabs mode intentionally skips the update banner — the layout
+    // is too compact to carry it. Users in vertical mode see updates via
+    // the Settings "Update check" row or by switching to horizontal.
     let content = if show_borders {
         let border_color = if sidebar_active {
             theme.accent
@@ -613,7 +681,7 @@ fn draw_sidebar_tabs(
     };
 
     if content.height == 0 {
-        return;
+        return None;
     }
 
     // Row 1: tab bar
@@ -744,6 +812,8 @@ fn draw_sidebar_tabs(
             );
         }
     }
+
+    None
 }
 
 fn build_tab_status(session: &SessionView) -> String {
@@ -997,6 +1067,16 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
             "Keybindings",
             "View".to_string(),
             "Enter shows current key bindings",
+        ),
+        (
+            "Update check",
+            if settings.update_check_enabled {
+                "Enabled"
+            } else {
+                "Disabled"
+            }
+            .to_string(),
+            settings.update_check_help.as_str(),
         ),
     ];
 

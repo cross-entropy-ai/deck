@@ -1,10 +1,12 @@
 use std::time::Instant;
 
+use ratatui::layout::Rect;
 use serde::{Deserialize, Serialize};
 
 use crate::config::PluginConfig;
 use crate::keybindings::Keybindings;
 use crate::layout::{card_height, context_menu_width, tab_col_ranges};
+use crate::update::{UpdateCheckMode, UpdateStatus};
 
 // --- Constants ---
 
@@ -48,6 +50,7 @@ pub enum MainView {
     Terminal,
     Settings,
     Plugin(usize),
+    Upgrade,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,7 +88,7 @@ pub enum ViewMode {
     Compact,
 }
 
-pub const SETTINGS_ITEM_COUNT: usize = 6;
+pub const SETTINGS_ITEM_COUNT: usize = 7;
 
 // --- Context menu ---
 
@@ -244,6 +247,14 @@ pub struct AppState {
     // Keybindings viewer (read-only settings page)
     pub keybindings_view_open: bool,
     pub keybindings_view_scroll: u16,
+
+    // Update check
+    pub update_check_mode: UpdateCheckMode,
+    pub update_available: Option<UpdateStatus>,
+    pub update_last_checked_secs: Option<u64>,
+    /// Column range of the clickable "upgrade" span in the footer banner,
+    /// captured during render for mouse hit-testing. (y, x_start, x_end).
+    pub banner_upgrade_bounds: Option<Rect>,
 }
 
 impl AppState {
@@ -260,6 +271,7 @@ impl AppState {
         exclude_patterns: Vec<String>,
         plugins: Vec<PluginConfig>,
         keybindings: Keybindings,
+        update_check_mode: UpdateCheckMode,
     ) -> Self {
         Self {
             sessions: Vec::new(),
@@ -294,6 +306,17 @@ impl AppState {
             keybindings,
             keybindings_view_open: false,
             keybindings_view_scroll: 0,
+            update_check_mode,
+            update_available: None,
+            update_last_checked_secs: None,
+            banner_upgrade_bounds: None,
+        }
+    }
+
+    pub fn banner_upgrade_at(&self, col: u16, row: u16) -> bool {
+        match self.banner_upgrade_bounds {
+            Some(r) => col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height,
+            None => false,
         }
     }
 
@@ -551,6 +574,7 @@ mod tests {
             vec![],
             vec![],
             Keybindings::default(),
+            UpdateCheckMode::Enabled,
         );
         state.sessions = vec![make_session("alpha"), make_session("beta")];
         state.session_order = state.sessions.iter().map(|s| s.name.clone()).collect();

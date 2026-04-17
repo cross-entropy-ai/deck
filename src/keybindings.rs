@@ -58,6 +58,7 @@ pub enum Command {
     FocusMain,
     Quit,
     ToggleFocus,
+    TriggerUpgrade,
 }
 
 impl Command {
@@ -78,6 +79,7 @@ impl Command {
         Command::FocusMain,
         Command::Quit,
         Command::ToggleFocus,
+        Command::TriggerUpgrade,
     ];
 
     pub fn name(self) -> &'static str {
@@ -98,6 +100,7 @@ impl Command {
             Command::FocusMain => "focus_main",
             Command::Quit => "quit",
             Command::ToggleFocus => "toggle_focus",
+            Command::TriggerUpgrade => "trigger_upgrade",
         }
     }
 
@@ -119,6 +122,7 @@ impl Command {
             Command::FocusMain => "back to main",
             Command::Quit => "quit",
             Command::ToggleFocus => "toggle focus",
+            Command::TriggerUpgrade => "install update",
         }
     }
 
@@ -163,6 +167,9 @@ impl Command {
             Command::FocusMain => vec![KeyBinding::new(KeyCode::Esc, KeyModifiers::NONE)],
             Command::Quit => vec![KeyBinding::new(KeyCode::Char('q'), KeyModifiers::NONE)],
             Command::ToggleFocus => vec![KeyBinding::new(KeyCode::Char('s'), KeyModifiers::CONTROL)],
+            Command::TriggerUpgrade => {
+                vec![KeyBinding::new(KeyCode::Char('u'), KeyModifiers::NONE)]
+            }
         }
     }
 }
@@ -740,6 +747,24 @@ mod tests {
         assert_eq!(
             kb.lookup(&KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT)),
             Some(Command::KillSession)
+        );
+    }
+
+    #[test]
+    fn trigger_upgrade_default_key_is_u() {
+        let kb = Keybindings::default();
+        assert_eq!(
+            kb.lookup(&KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE)),
+            Some(Command::TriggerUpgrade)
+        );
+    }
+
+    #[test]
+    fn trigger_upgrade_appears_in_all() {
+        assert!(Command::ALL.contains(&Command::TriggerUpgrade));
+        assert_eq!(
+            Command::from_name("trigger_upgrade"),
+            Some(Command::TriggerUpgrade)
         );
     }
 

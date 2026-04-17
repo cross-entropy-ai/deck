@@ -24,9 +24,13 @@ use crate::state::{
 use crate::theme::THEMES;
 use crate::tmux;
 use crate::ui::{self, SessionView, SettingsView};
+use crate::update::{
+    self, UpdateCache, UpdateCheckMode, UpdateChecker, UpdateRequest, UpdateResult, CACHE_TTL_SECS,
+};
 
 const POLL_MS: u64 = 16;
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 3600);
 
 struct PluginInstance {
     pty: Pty,
@@ -44,6 +48,9 @@ pub struct App {
     plugin_instances: Vec<Option<PluginInstance>>,
     refresh_worker: RefreshWorker,
     raw_keybindings: BTreeMap<String, KeyBindingValue>,
+    update_checker: Option<UpdateChecker>,
+    upgrade_instance: Option<PluginInstance>,
+    last_update_request: Option<Instant>,
 }
 
 impl App {
@@ -93,7 +100,7 @@ impl App {
             eprintln!("deck: {}", warning);
         }
 
-        let state = AppState::new(
+        let mut state = AppState::new(
             theme_index,
             layout_mode,
             view_mode,
@@ -105,7 +112,18 @@ impl App {
             exclude_patterns,
             plugins,
             keybindings,
+            cfg.update_check,
         );
+
+        // Update check bootstrap: honor cache when fresh, otherwise spawn the
+        // background checker. Only runs when the feature is enabled.
+        let (update_checker, last_update_request) = if cfg.update_check == UpdateCheckMode::Enabled
+        {
+            bootstrap_update_check(&mut state)
+        } else {
+            (None, None)
+        };
+
         let nesting_guard = NestingGuard::new();
 
         let (pty_rows, pty_cols) = state.pty_size();
@@ -122,6 +140,9 @@ impl App {
             plugin_instances: (0..plugin_count).map(|_| None).collect(),
             refresh_worker: RefreshWorker::spawn(),
             raw_keybindings: cfg.keybindings.clone(),
+            update_checker,
+            upgrade_instance: None,
+            last_update_request,
         };
 
         tmux::apply_theme(&THEMES[theme_index]);
@@ -190,6 +211,14 @@ impl App {
                     }
                 }
             }
+            if let Some(ref mut inst) = self.upgrade_instance {
+                for event in inst.pty.drain() {
+                    match event {
+                        PtyEvent::Output(data) => inst.parser.process(&data),
+                        PtyEvent::Exited => inst.alive = false,
+                    }
+                }
+            }
 
             // If the active plugin exited, return to terminal and clean up
             if let MainView::Plugin(idx) = self.state.main_view {
@@ -203,6 +232,22 @@ impl App {
                     self.state.main_view = MainView::Terminal;
                     self.state.focus_mode = FocusMode::Main;
                 }
+            }
+
+            // Upgrade exit: clear the instance, return to terminal, clear the
+            // banner. If brew actually upgraded, the new binary is only picked
+            // up on the next deck launch — users will naturally see the
+            // banner gone via the version check when they relaunch.
+            if self.state.main_view == MainView::Upgrade
+                && self
+                    .upgrade_instance
+                    .as_ref()
+                    .is_some_and(|inst| !inst.alive)
+            {
+                self.upgrade_instance = None;
+                self.state.main_view = MainView::Terminal;
+                self.state.focus_mode = FocusMode::Main;
+                self.state.update_available = None;
             }
 
             // 2. Render
@@ -246,6 +291,11 @@ impl App {
                                         let _ = inst.pty.write(&bytes);
                                     }
                                 }
+                                MainView::Upgrade => {
+                                    if let Some(ref mut inst) = self.upgrade_instance {
+                                        let _ = inst.pty.write(&bytes);
+                                    }
+                                }
                                 _ => {}
                             }
                         }
@@ -268,7 +318,11 @@ impl App {
                 last_refresh = Instant::now();
             }
 
-            // 6. If PTY died, try to reattach
+            // 6. Update check plumbing: handle mode transitions, recv results,
+            //    schedule the 24h retry.
+            self.tick_update_check();
+
+            // 7. If PTY died, try to reattach
             if !pty_alive {
                 if tmux::list_sessions().is_empty() {
                     break;
@@ -297,6 +351,11 @@ impl App {
                             let _ = inst.pty.write(bytes);
                         }
                     }
+                    MainView::Upgrade => {
+                        if let Some(ref mut inst) = self.upgrade_instance {
+                            let _ = inst.pty.write(bytes);
+                        }
+                    }
                     _ => {
                         let _ = self.pty.write(bytes);
                     }
@@ -307,6 +366,11 @@ impl App {
                 match self.state.main_view {
                     MainView::Plugin(idx) => {
                         if let Some(Some(ref mut inst)) = self.plugin_instances.get_mut(idx) {
+                            let _ = inst.pty.write(bytes);
+                        }
+                    }
+                    MainView::Upgrade => {
+                        if let Some(ref mut inst) = self.upgrade_instance {
                             let _ = inst.pty.write(bytes);
                         }
                     }
@@ -393,6 +457,37 @@ impl App {
                 let fx = action::apply_action(&mut self.state, action);
                 self.execute_side_effects(&fx);
                 return fx.quit;
+            }
+
+            Action::TriggerUpgrade => {
+                if self.state.update_available.is_none() {
+                    return false;
+                }
+                if !update::has_brew() {
+                    self.warning_state = Some(WarningState::Proactive {
+                        text: "Homebrew not found",
+                        detail: "Install from https://brew.sh, then retry.\n\
+                                 Alternatively: cargo install --git https://github.com/cross-entropy-ai/deck"
+                            .to_string(),
+                    });
+                    return false;
+                }
+                if let Err(e) = self.spawn_upgrade_pty() {
+                    eprintln!("deck: failed to spawn upgrade: {}", e);
+                    return false;
+                }
+                self.state.main_view = MainView::Upgrade;
+                self.state.focus_mode = FocusMode::Main;
+                return false;
+            }
+
+            Action::AbortUpgrade => {
+                // Dropping the upgrade instance runs Pty::drop which kills
+                // the child. No explicit signal needed.
+                self.upgrade_instance = None;
+                self.state.main_view = MainView::Terminal;
+                self.state.focus_mode = FocusMode::Main;
+                return false;
             }
 
             // All simple actions
@@ -523,6 +618,8 @@ impl App {
             s.filtered.iter().map(|&i| s.sessions[i].clone()).collect();
 
         let spinner_frame = self.spinner.current_frame().to_string();
+        let update_check_help = format_update_check_help(s.update_last_checked_secs);
+        let update_check_mode = s.update_check_mode;
         let settings_view = SettingsView {
             selected: s.settings_selected,
             focus_main: s.focus_mode == FocusMode::Main,
@@ -544,10 +641,14 @@ impl App {
             keybindings: &s.keybindings,
             keybindings_view_open: s.keybindings_view_open,
             keybindings_view_scroll: s.keybindings_view_scroll,
+            update_check_enabled: update_check_mode == UpdateCheckMode::Enabled,
+            update_check_help,
         };
+        let update_available = s.update_available.clone();
         let hover_sep = s.hover_separator;
         let dragging_sep = s.dragging_separator;
 
+        let mut captured_banner_bounds: Option<Rect> = None;
         terminal.draw(|frame| {
             let views: Vec<SessionView> = views_owned
                 .iter()
@@ -589,7 +690,7 @@ impl App {
                 .map(|p| (p.key, p.name.as_str()))
                 .collect();
 
-            ui::draw_sidebar(
+            captured_banner_bounds = ui::draw_sidebar(
                 frame,
                 sidebar_area,
                 &views,
@@ -606,6 +707,7 @@ impl App {
                 view_mode,
                 &plugin_hints,
                 &self.state.keybindings,
+                update_available.as_ref(),
             );
 
             if let Some(gap) = gap_area {
@@ -633,10 +735,15 @@ impl App {
                     .map(|inst| inst.parser.screen()),
                 _ => None,
             };
+            let upgrade_screen = match main_view {
+                MainView::Upgrade => self.upgrade_instance.as_ref().map(|inst| inst.parser.screen()),
+                _ => None,
+            };
             let background_screen = match (warning_state.as_ref(), main_view) {
                 (Some(WarningState::Proactive { .. } | WarningState::Detected(_)), _) => None,
                 (None, MainView::Terminal) => Some(screen),
                 (None, MainView::Plugin(_)) => plugin_screen,
+                (None, MainView::Upgrade) => upgrade_screen,
                 (None, MainView::Settings) => None,
             };
 
@@ -741,6 +848,9 @@ impl App {
                 ui::draw_context_menu(frame, menu.x, menu.y, menu.selected, menu.items(), theme);
             }
         })?;
+
+        // Stash the banner-click hit-test region for the next mouse event.
+        self.state.banner_upgrade_bounds = captured_banner_bounds;
 
         Ok(())
     }
@@ -881,8 +991,85 @@ impl App {
             exclude_patterns: self.state.exclude_patterns.clone(),
             plugins: self.state.plugins.clone(),
             keybindings: self.raw_keybindings.clone(),
+            update_check: self.state.update_check_mode,
         }
         .save();
+    }
+
+    fn tick_update_check(&mut self) {
+        // React to Settings toggling the mode at runtime.
+        match self.state.update_check_mode {
+            UpdateCheckMode::Disabled => {
+                if self.update_checker.is_some() {
+                    // Dropping the checker sends Shutdown and joins the thread.
+                    self.update_checker = None;
+                    self.last_update_request = None;
+                }
+                return;
+            }
+            UpdateCheckMode::Enabled => {
+                if self.update_checker.is_none() {
+                    // Was disabled; reboot the checker (no cache peek — the
+                    // user just asked for a fresh check).
+                    let checker = UpdateChecker::spawn();
+                    checker.request(UpdateRequest::Check);
+                    self.update_checker = Some(checker);
+                    self.last_update_request = Some(Instant::now());
+                }
+            }
+        }
+
+        // Drain results.
+        if let Some(ref checker) = self.update_checker {
+            while let Some(result) = checker.try_recv() {
+                match result {
+                    UpdateResult::Ok {
+                        status,
+                        newer_than_current,
+                    } => {
+                        UpdateCache::save(&status);
+                        self.state.update_last_checked_secs = Some(status.checked_at);
+                        self.state.update_available =
+                            if newer_than_current { Some(status) } else { None };
+                    }
+                    UpdateResult::Err(msg) => {
+                        eprintln!("deck: update check failed: {}", msg);
+                    }
+                }
+            }
+        }
+
+        // 24h retry.
+        if let Some(last) = self.last_update_request {
+            if last.elapsed() >= UPDATE_CHECK_INTERVAL {
+                if let Some(ref checker) = self.update_checker {
+                    checker.request(UpdateRequest::Check);
+                    self.last_update_request = Some(Instant::now());
+                }
+            }
+        }
+    }
+
+    fn spawn_upgrade_pty(&mut self) -> io::Result<()> {
+        let (rows, cols) = self.state.pty_size();
+        let pty = Pty::spawn_with_env(
+            "brew",
+            &["upgrade", "cross-entropy-ai/tap/deck"],
+            PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            },
+            &[("COLUMNS", &cols.to_string()), ("LINES", &rows.to_string())],
+        )?;
+        let parser = vt100::Parser::new(rows, cols, 0);
+        self.upgrade_instance = Some(PluginInstance {
+            pty,
+            parser,
+            alive: true,
+        });
+        Ok(())
     }
 
     fn spawn_plugin_pty(&mut self, idx: usize) -> io::Result<()> {
@@ -914,6 +1101,72 @@ impl App {
         });
         Ok(())
     }
+}
+
+/// Render the help text shown under the Update check settings row.
+/// Appends `· last checked Nh ago` when a cache timestamp is known.
+fn format_update_check_help(last_checked_secs: Option<u64>) -> String {
+    let base = "Left/right toggles auto update check";
+    let Some(ts) = last_checked_secs else {
+        return base.to_string();
+    };
+    let now = update::now_secs();
+    let elapsed = now.saturating_sub(ts);
+    let suffix = if elapsed < 60 {
+        "just now".to_string()
+    } else if elapsed < 3600 {
+        format!("{}m ago", elapsed / 60)
+    } else if elapsed < 86_400 {
+        format!("{}h ago", elapsed / 3600)
+    } else {
+        format!("{}d ago", elapsed / 86_400)
+    };
+    format!("{} · last checked {}", base, suffix)
+}
+
+/// Set up update checking at startup. When the local cache is fresh
+/// (<24h old), reuse its result and skip the network call. Otherwise
+/// spawn the background checker and send an initial `Check`.
+fn bootstrap_update_check(state: &mut AppState) -> (Option<UpdateChecker>, Option<Instant>) {
+    let cached = UpdateCache::load();
+    let now = update::now_secs();
+    if let Some(ref status) = cached {
+        state.update_last_checked_secs = Some(status.checked_at);
+        if UpdateCache::is_fresh(status, now, CACHE_TTL_SECS) {
+            // Cache is fresh — use it without hitting the network.
+            match update::compare(&status.current_version, &status.latest_version) {
+                Some(true) => {
+                    // Update known to be available. Refresh current_version
+                    // in case we've since upgraded and cache is stale by a
+                    // point release.
+                    if status.current_version == env!("CARGO_PKG_VERSION") {
+                        state.update_available = Some(status.clone());
+                    } else {
+                        // Binary version shifted since cache was written.
+                        // Drop cache and recheck.
+                        return spawn_and_request_check();
+                    }
+                }
+                _ => {
+                    state.update_available = None;
+                }
+            }
+            // Schedule the next 24h retry relative to when the cache was
+            // written — not relative to now — so polling stays on cadence.
+            let elapsed = now.saturating_sub(status.checked_at);
+            let last_request = Instant::now()
+                .checked_sub(Duration::from_secs(elapsed))
+                .unwrap_or_else(Instant::now);
+            return (None, Some(last_request));
+        }
+    }
+    spawn_and_request_check()
+}
+
+fn spawn_and_request_check() -> (Option<UpdateChecker>, Option<Instant>) {
+    let checker = UpdateChecker::spawn();
+    checker.request(UpdateRequest::Check);
+    (Some(checker), Some(Instant::now()))
 }
 
 #[cfg(test)]

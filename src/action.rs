@@ -50,6 +50,11 @@ pub enum Action {
     KeybindingsViewScrollUp,
     KeybindingsViewScrollDown,
 
+    // Update check
+    ToggleUpdateCheck,
+    TriggerUpgrade,
+    AbortUpgrade,
+
     // Exclude editor
     OpenExcludeEditor,
     CloseExcludeEditor,
@@ -336,6 +341,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 3 => apply_action(state, Action::ToggleViewMode),
                 4 => apply_action(state, Action::OpenExcludeEditor),
                 5 => apply_action(state, Action::OpenKeybindingsView),
+                6 => apply_action(state, Action::ToggleUpdateCheck),
                 _ => SideEffect::default(),
             };
             fx.merge(inner);
@@ -386,6 +392,28 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::KeybindingsViewScrollDown => {
             state.keybindings_view_scroll = state.keybindings_view_scroll.saturating_add(1);
         }
+
+        // --- Update check ---
+        Action::ToggleUpdateCheck => {
+            state.update_check_mode = match state.update_check_mode {
+                crate::update::UpdateCheckMode::Enabled => {
+                    crate::update::UpdateCheckMode::Disabled
+                }
+                crate::update::UpdateCheckMode::Disabled => {
+                    crate::update::UpdateCheckMode::Enabled
+                }
+            };
+            // Dropping to Disabled must hide any visible banner immediately;
+            // re-enabling doesn't fabricate one — App will fetch/restore on
+            // the next tick.
+            if state.update_check_mode == crate::update::UpdateCheckMode::Disabled {
+                state.update_available = None;
+            }
+            fx.save_config = true;
+        }
+        // TriggerUpgrade and AbortUpgrade are dispatched by App directly (they
+        // spawn/kill PTYs, which apply_action mustn't do).
+        Action::TriggerUpgrade | Action::AbortUpgrade => {}
 
         // --- Exclude editor ---
         Action::OpenExcludeEditor => {
@@ -730,6 +758,11 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
             if matches!(state.main_view, MainView::Plugin(_)) && key.code == KeyCode::Esc {
                 return Action::DeactivatePlugin;
             }
+            // In upgrade view, Esc aborts the running brew process; other keys
+            // are forwarded to the upgrade PTY so the user can scroll / dismiss.
+            if state.main_view == MainView::Upgrade && key.code == KeyCode::Esc {
+                return Action::AbortUpgrade;
+            }
             let bytes = crate::pty::encode_key(key);
             if bytes.is_empty() {
                 Action::None
@@ -759,6 +792,7 @@ fn command_to_action(cmd: Command) -> Action {
         Command::FocusMain => Action::SetFocusMain,
         Command::Quit => Action::Quit,
         Command::ToggleFocus => Action::ToggleFocus,
+        Command::TriggerUpgrade => Action::TriggerUpgrade,
     }
 }
 
@@ -861,6 +895,14 @@ fn theme_picker_key_to_action(key: &KeyEvent) -> Action {
 }
 
 pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
+    // Upgrade banner click — check before anything else so it wins even if
+    // the click also happens to land in the sidebar footer area.
+    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        && state.banner_upgrade_at(mouse.column, mouse.row)
+    {
+        return Action::TriggerUpgrade;
+    }
+
     // Context menu intercepts all mouse events
     if state.context_menu.is_some() {
         return match mouse.kind {
@@ -1038,6 +1080,7 @@ mod tests {
             vec![],
             vec![],
             crate::keybindings::Keybindings::default(),
+            crate::update::UpdateCheckMode::Enabled,
         );
         state.sessions = (0..n)
             .map(|i| make_session(&format!("sess-{}", i), 0))

@@ -13,6 +13,7 @@ mod state;
 mod theme;
 mod tmux;
 mod ui;
+mod update;
 
 use std::io;
 use std::process::Command;
