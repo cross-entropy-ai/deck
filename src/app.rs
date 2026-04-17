@@ -1133,23 +1133,19 @@ fn bootstrap_update_check(state: &mut AppState) -> (Option<UpdateChecker>, Optio
     if let Some(ref status) = cached {
         state.update_last_checked_secs = Some(status.checked_at);
         if UpdateCache::is_fresh(status, now, CACHE_TTL_SECS) {
-            // Cache is fresh — use it without hitting the network.
-            match update::compare(&status.current_version, &status.latest_version) {
-                Some(true) => {
-                    // Update known to be available. Refresh current_version
-                    // in case we've since upgraded and cache is stale by a
-                    // point release.
-                    if status.current_version == env!("CARGO_PKG_VERSION") {
-                        state.update_available = Some(status.clone());
-                    } else {
-                        // Binary version shifted since cache was written.
-                        // Drop cache and recheck.
-                        return spawn_and_request_check();
-                    }
-                }
-                _ => {
-                    state.update_available = None;
-                }
+            // Compare the running binary (not whatever the cache claims the
+            // previous current_version was) against the cached latest. If the
+            // user reinstalled / reverted / upgraded since the cache was
+            // written, this still gives the right answer.
+            let running = env!("CARGO_PKG_VERSION");
+            if matches!(update::compare(running, &status.latest_version), Some(true)) {
+                // Refresh current_version in the displayed banner — the cache
+                // may have been written by a previous binary version.
+                let mut display = status.clone();
+                display.current_version = running.to_string();
+                state.update_available = Some(display);
+            } else {
+                state.update_available = None;
             }
             // Schedule the next 24h retry relative to when the cache was
             // written — not relative to now — so polling stays on cadence.

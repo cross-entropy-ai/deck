@@ -14,7 +14,9 @@ use crate::state::{FilterMode, LayoutMode, ViewMode, FILTER_TABS};
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
 
-const BANNER_MIN_WIDTH: u16 = 30;
+/// Minimum content width to allocate a banner row at all. The very last
+/// fallback just shows " upgrade" (8 cols).
+const BANNER_MIN_WIDTH: u16 = 8;
 
 /// Minimal data needed to render one session row.
 pub struct SessionView<'a> {
@@ -112,8 +114,10 @@ pub fn draw_sidebar(
         area
     };
 
-    let banner_visible =
-        sidebar_active && update_available.is_some() && content.width >= BANNER_MIN_WIDTH;
+    // Banner is information, not a hint — surface it regardless of focus so
+    // users working in the main pane still see it. Narrow sidebars skip the
+    // banner (we don't want to truncate a critical message mid-word).
+    let banner_visible = update_available.is_some() && content.width >= BANNER_MIN_WIDTH;
     let footer_height: u16 = if banner_visible { 4 } else { 3 };
 
     let [header_area, sessions_area, footer_area] = Layout::vertical([
@@ -527,21 +531,28 @@ fn draw_footer(
     // Banner row (optional). Tracks the "upgrade" span bounds for hit-testing.
     let mut upgrade_bounds: Option<Rect> = None;
     if let Some(status) = update_available {
-        let banner_text = format!(
+        let upgrade_label = "upgrade";
+        let leading = 1u16;
+        let gap = 3u16;
+        let upgrade_width = upgrade_label.width() as u16;
+        // Prefer the most informative banner text that still fits. Fall back
+        // through progressively shorter forms so even a narrow sidebar shows
+        // something — the "upgrade" button is the critical element.
+        let full = format!(
             "v{} available (current v{})",
             status.latest_version, status.current_version
         );
-        let upgrade_label = "upgrade";
-        let banner_row_index = rows.len() as u16;
-        let banner_row_y = area.y + banner_row_index;
-        let leading_spaces = 1u16;
-        // Banner total visual width; clip banner if too narrow.
-        let text_width = banner_text.width() as u16;
-        let gap = 3u16;
-        let upgrade_width = upgrade_label.width() as u16;
-        let total = leading_spaces + text_width + gap + upgrade_width;
-        if total <= area.width {
-            let upgrade_x = area.x + leading_spaces + text_width + gap;
+        let short = format!("v{} available", status.latest_version);
+        let tiny = "update available".to_string();
+        let chosen = [full, short, tiny].into_iter().find(|text| {
+            leading + text.width() as u16 + gap + upgrade_width <= area.width
+        });
+
+        let banner_row_y = area.y + rows.len() as u16;
+
+        if let Some(banner_text) = chosen {
+            let text_width = banner_text.width() as u16;
+            let upgrade_x = area.x + leading + text_width + gap;
             upgrade_bounds = Some(Rect {
                 x: upgrade_x,
                 y: banner_row_y,
@@ -559,10 +570,27 @@ fn draw_footer(
                         .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
                 ),
             ]));
+        } else if leading + upgrade_width <= area.width {
+            // Last resort: drop the text, keep only the clickable button so
+            // the user still has a way to trigger the upgrade in a tiny
+            // sidebar.
+            upgrade_bounds = Some(Rect {
+                x: area.x + leading,
+                y: banner_row_y,
+                width: upgrade_width,
+                height: 1,
+            });
+            rows.push(Line::from(vec![
+                Span::raw(" "),
+                Span::styled(
+                    upgrade_label.to_string(),
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                ),
+            ]));
         } else {
-            // Too narrow for the full banner — drop it entirely rather than
-            // truncate mid-word. The caller's BANNER_MIN_WIDTH guard already
-            // mostly prevents this but we stay defensive.
+            // Even `upgrade` alone won't fit — give up, render blank.
             rows.push(Line::default());
         }
     }
