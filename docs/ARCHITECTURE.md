@@ -128,4 +128,4 @@
 ## 相关文档
 
 - `docs/release.md`
-- `todo/decouple-architecture.md`
+- `docs/todo/decouple-architecture.md`
