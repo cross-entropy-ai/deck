@@ -1,19 +1,35 @@
 mod action;
 mod app;
-mod bridge;
-mod config;
-mod git;
-mod instance_guard;
-mod keybindings;
-mod layout;
-mod nesting_guard;
-mod pty;
-mod refresh;
-mod state;
-mod theme;
-mod tmux;
 mod ui;
-mod update;
+
+mod core {
+    pub mod config;
+    pub mod keybindings;
+    pub mod state;
+}
+pub(crate) use core::{config, keybindings, state};
+
+mod platform {
+    pub mod git;
+    pub mod pty;
+    pub mod tmux;
+}
+pub(crate) use platform::{git, pty, tmux};
+
+mod runtime {
+    pub mod instance_guard;
+    pub mod nesting_guard;
+    pub mod refresh;
+    pub mod update;
+}
+pub(crate) use runtime::{instance_guard, nesting_guard, refresh, update};
+
+mod render {
+    pub mod bridge;
+    pub mod layout;
+    pub mod theme;
+}
+pub(crate) use render::{bridge, layout, theme};
 
 use std::io;
 use std::process::Command;
