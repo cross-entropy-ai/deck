@@ -1,8 +1,11 @@
+pub mod bridge;
+pub mod layout;
 mod menu;
 mod overlays;
 mod settings;
 mod sidebar;
 mod text;
+pub mod theme;
 
 use crate::keybindings::Keybindings;
 use crate::state::{LayoutMode, ViewMode};

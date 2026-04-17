@@ -1,3 +1,5 @@
+pub mod action;
+
 mod dispatch;
 mod lifecycle;
 mod pty;
@@ -12,7 +14,7 @@ use std::time::{Duration, Instant};
 use crossterm::event::{self, Event, KeyEventKind};
 use ratatui::DefaultTerminal;
 
-use crate::action::{self, Action};
+use crate::action::Action;
 use crate::config::{Config, KeyBindingValue};
 use crate::keybindings::Keybindings;
 use crate::nesting_guard::{NestingGuard, WarningState};
