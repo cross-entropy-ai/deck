@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -182,7 +182,7 @@ impl Default for Keybindings {
 
 impl Keybindings {
     pub fn from_config(
-        raw: &HashMap<String, KeyBindingValue>,
+        raw: &BTreeMap<String, KeyBindingValue>,
         plugins: &[PluginConfig],
     ) -> (Self, Vec<String>) {
         let mut warnings = Vec::new();
@@ -402,6 +402,26 @@ pub fn parse_key(s: &str) -> Result<KeyBinding, ParseError> {
     Ok(KeyBinding::new(code, modifiers))
 }
 
+/// Fill the raw keybindings map with defaults for every command that the
+/// user hasn't explicitly listed. `null` (Unbind) entries are preserved.
+/// Returns true if any entry was inserted.
+pub fn ensure_complete(raw: &mut BTreeMap<String, KeyBindingValue>) -> bool {
+    let mut inserted = false;
+    for &cmd in Command::ALL {
+        if raw.contains_key(cmd.name()) {
+            continue;
+        }
+        let keys = cmd.default_keys();
+        let value = match keys.as_slice() {
+            [one] => KeyBindingValue::Single(format_key(one)),
+            many => KeyBindingValue::Multi(many.iter().map(format_key).collect()),
+        };
+        raw.insert(cmd.name().to_string(), value);
+        inserted = true;
+    }
+    inserted
+}
+
 pub fn format_key(kb: &KeyBinding) -> String {
     let mut out = String::new();
     let mods = kb.modifiers;
@@ -576,7 +596,7 @@ mod tests {
 
     // --- Keybindings::from_config ---
 
-    fn cfg(entries: &[(&str, KeyBindingValue)]) -> HashMap<String, KeyBindingValue> {
+    fn cfg(entries: &[(&str, KeyBindingValue)]) -> BTreeMap<String, KeyBindingValue> {
         entries
             .iter()
             .map(|(k, v)| ((*k).to_string(), v.clone()))
@@ -585,7 +605,7 @@ mod tests {
 
     #[test]
     fn from_empty_config_equals_defaults() {
-        let (kb, warnings) = Keybindings::from_config(&HashMap::new(), &[]);
+        let (kb, warnings) = Keybindings::from_config(&BTreeMap::new(), &[]);
         assert!(warnings.is_empty());
         assert_eq!(
             kb.lookup(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)),
@@ -689,7 +709,7 @@ mod tests {
             command: "findgpu".into(),
             key: 'l',
         }];
-        let (kb, warnings) = Keybindings::from_config(&HashMap::new(), &plugins);
+        let (kb, warnings) = Keybindings::from_config(&BTreeMap::new(), &plugins);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("plugin"));
         // 'l' no longer maps to toggle_layout.
@@ -714,6 +734,55 @@ mod tests {
             kb.lookup(&KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT)),
             Some(Command::KillSession)
         );
+    }
+
+    #[test]
+    fn ensure_complete_fills_missing_commands() {
+        let mut map: BTreeMap<String, KeyBindingValue> = BTreeMap::new();
+        map.insert(
+            "kill_session".to_string(),
+            KeyBindingValue::Single("X".into()),
+        );
+        map.insert("toggle_borders".to_string(), KeyBindingValue::Unbind);
+
+        let changed = ensure_complete(&mut map);
+        assert!(changed);
+
+        // User-set values preserved.
+        assert_eq!(
+            map.get("kill_session"),
+            Some(&KeyBindingValue::Single("X".into()))
+        );
+        assert_eq!(map.get("toggle_borders"), Some(&KeyBindingValue::Unbind));
+
+        // Every command present.
+        for &cmd in Command::ALL {
+            assert!(
+                map.contains_key(cmd.name()),
+                "missing {}",
+                cmd.name()
+            );
+        }
+
+        // Multi-key default round-trips.
+        match map.get("focus_next").unwrap() {
+            KeyBindingValue::Multi(v) => assert_eq!(v, &vec!["j".to_string(), "Down".to_string()]),
+            other => panic!("expected Multi, got {:?}", other),
+        }
+
+        // Single-key default round-trips.
+        match map.get("quit").unwrap() {
+            KeyBindingValue::Single(s) => assert_eq!(s, "q"),
+            other => panic!("expected Single, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn ensure_complete_is_idempotent() {
+        let mut map: BTreeMap<String, KeyBindingValue> = BTreeMap::new();
+        ensure_complete(&mut map);
+        let changed_again = ensure_complete(&mut map);
+        assert!(!changed_again);
     }
 
     #[test]

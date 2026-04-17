@@ -1070,10 +1070,10 @@ fn draw_keybindings_view(
     let popup_width = (name_width as u16 + keys_width as u16 + 16)
         .min(area.width.saturating_sub(4))
         .max(30);
-    let content_height = rows.len() as u16 + 5;
+    let content_height = rows.len() as u16 + 6;
     let popup_height = content_height
         .min(area.height.saturating_sub(2))
-        .max(6);
+        .max(7);
     let x = area.x + area.width.saturating_sub(popup_width) / 2;
     let y = area.y + area.height.saturating_sub(popup_height) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -1089,8 +1089,8 @@ fn draw_keybindings_view(
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    // Reserve last 2 rows for footer (blank + hint).
-    let list_rows = inner.height.saturating_sub(2) as usize;
+    // Reserve last 3 rows for footer (blank + 2 hint lines).
+    let list_rows = inner.height.saturating_sub(3) as usize;
     let total = rows.len();
     let max_scroll = total.saturating_sub(list_rows) as u16;
     let scroll = scroll.min(max_scroll) as usize;
@@ -1128,8 +1128,12 @@ fn draw_keybindings_view(
     }
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
-        "  Esc close  j/k scroll · edit ~/.config/deck/config.json to change",
+        "  Esc close  j/k scroll",
         Style::default().fg(theme.muted),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  edit ~/.config/deck/config.json to change",
+        Style::default().fg(theme.dim),
     )));
 
     frame.render_widget(

@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::DefaultTerminal;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::action::{self, Action};
 use crate::bridge;
@@ -43,7 +43,7 @@ pub struct App {
     warning_state: Option<WarningState>,
     plugin_instances: Vec<Option<PluginInstance>>,
     refresh_worker: RefreshWorker,
-    raw_keybindings: HashMap<String, KeyBindingValue>,
+    raw_keybindings: BTreeMap<String, KeyBindingValue>,
 }
 
 impl App {
@@ -66,7 +66,16 @@ impl App {
     }
 
     pub fn new(term_width: u16, term_height: u16) -> io::Result<Self> {
-        let cfg = Config::load();
+        let mut cfg = Config::load();
+
+        // Backfill defaults for any config entries the user hasn't listed.
+        // This makes ~/.config/deck/config.json self-documenting: after first
+        // launch the file shows every option and its current value.
+        let before = cfg.to_json();
+        crate::keybindings::ensure_complete(&mut cfg.keybindings);
+        if cfg.to_json() != before {
+            cfg.save();
+        }
 
         let theme_index = THEMES.iter().position(|t| t.name == cfg.theme).unwrap_or(0);
         let layout_mode = cfg.layout;

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -64,8 +64,7 @@ pub struct Config {
     pub view_mode: ViewMode,
     pub exclude_patterns: Vec<String>,
     pub plugins: Vec<PluginConfig>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub keybindings: HashMap<String, KeyBindingValue>,
+    pub keybindings: BTreeMap<String, KeyBindingValue>,
 }
 
 impl Default for Config {
@@ -79,7 +78,7 @@ impl Default for Config {
             view_mode: ViewMode::Expanded,
             exclude_patterns: vec!["_*".to_string()],
             plugins: Vec::new(),
-            keybindings: HashMap::new(),
+            keybindings: BTreeMap::new(),
         }
     }
 }
@@ -413,7 +412,7 @@ mod tests {
 
     #[test]
     fn keybindings_roundtrip() {
-        let mut kb = HashMap::new();
+        let mut kb = BTreeMap::new();
         kb.insert(
             "kill_session".to_string(),
             KeyBindingValue::Single("X".into()),
@@ -435,9 +434,11 @@ mod tests {
     }
 
     #[test]
-    fn empty_keybindings_omitted_from_json() {
+    fn empty_keybindings_still_serialize() {
+        // Default config has an empty keybindings map. We always emit it so
+        // the config file stays self-documenting after backfill runs.
         let config = Config::default();
         let json = config.to_json();
-        assert!(!json.contains("keybindings"));
+        assert!(json.contains("\"keybindings\""));
     }
 }
