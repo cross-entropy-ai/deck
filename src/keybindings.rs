@@ -50,6 +50,7 @@ pub enum Command {
     ReorderDown,
     CycleFilter,
     OpenSettings,
+    OpenThemePicker,
     ToggleBorders,
     ToggleLayout,
     ToggleViewMode,
@@ -69,6 +70,7 @@ impl Command {
         Command::ReorderDown,
         Command::CycleFilter,
         Command::OpenSettings,
+        Command::OpenThemePicker,
         Command::ToggleBorders,
         Command::ToggleLayout,
         Command::ToggleViewMode,
@@ -88,6 +90,7 @@ impl Command {
             Command::ReorderDown => "reorder_down",
             Command::CycleFilter => "cycle_filter",
             Command::OpenSettings => "open_settings",
+            Command::OpenThemePicker => "open_theme_picker",
             Command::ToggleBorders => "toggle_borders",
             Command::ToggleLayout => "toggle_layout",
             Command::ToggleViewMode => "toggle_view_mode",
@@ -108,6 +111,7 @@ impl Command {
             Command::ReorderDown => "move session down",
             Command::CycleFilter => "cycle filter",
             Command::OpenSettings => "open settings",
+            Command::OpenThemePicker => "open theme picker",
             Command::ToggleBorders => "toggle borders",
             Command::ToggleLayout => "toggle layout",
             Command::ToggleViewMode => "toggle compact/expanded",
@@ -141,7 +145,10 @@ impl Command {
             Command::ReorderUp => vec![KeyBinding::new(KeyCode::Up, KeyModifiers::ALT)],
             Command::ReorderDown => vec![KeyBinding::new(KeyCode::Down, KeyModifiers::ALT)],
             Command::CycleFilter => vec![KeyBinding::new(KeyCode::Char('f'), KeyModifiers::NONE)],
-            Command::OpenSettings => vec![KeyBinding::new(KeyCode::Char('t'), KeyModifiers::NONE)],
+            Command::OpenSettings => vec![KeyBinding::new(KeyCode::Char('s'), KeyModifiers::NONE)],
+            Command::OpenThemePicker => {
+                vec![KeyBinding::new(KeyCode::Char('t'), KeyModifiers::NONE)]
+            }
             Command::ToggleBorders => {
                 vec![KeyBinding::new(KeyCode::Char('b'), KeyModifiers::NONE)]
             }

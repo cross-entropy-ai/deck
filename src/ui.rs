@@ -89,7 +89,7 @@ pub fn draw_sidebar(
         let border_color = if sidebar_active {
             theme.accent
         } else {
-            theme.bg
+            theme.dim
         };
         let block = Block::default()
             .borders(Borders::ALL)
@@ -467,42 +467,29 @@ fn draw_footer(
     let w = width as usize;
     let sep = Line::from(Span::styled("─".repeat(w), Style::default().fg(theme.dim)));
 
-    let hints = if sidebar_active {
-        let hint_entries: &[(Command, &str)] = &[
-            (Command::FocusNext, "nav"),
-            (Command::OpenSettings, "settings"),
-            (Command::ToggleHelp, "help"),
-            (Command::Quit, "quit"),
+    let hint_lines: Vec<Line> = if sidebar_active {
+        let nav_key = {
+            let next = primary_key_string(keybindings, Command::FocusNext);
+            let prev = primary_key_string(keybindings, Command::FocusPrev);
+            match (prev.is_empty(), next.is_empty()) {
+                (false, false) => format!("{}/{}", next, prev),
+                (false, true) => prev,
+                (true, false) => next,
+                (true, true) => String::new(),
+            }
+        };
+        let mut entries: Vec<(String, String)> = vec![
+            (nav_key, "nav".into()),
+            (primary_key_string(keybindings, Command::OpenSettings), "settings".into()),
+            (primary_key_string(keybindings, Command::OpenThemePicker), "theme".into()),
+            (primary_key_string(keybindings, Command::ToggleHelp), "help".into()),
+            (primary_key_string(keybindings, Command::Quit), "quit".into()),
         ];
-        let mut spans: Vec<Span> = vec![Span::raw(" ")];
-        let mut first = true;
-        for &(cmd, label) in hint_entries {
-            let key_str = primary_key_string(keybindings, cmd);
-            if key_str.is_empty() {
-                continue;
-            }
-            if !first {
-                spans.push(Span::styled("  ", Style::default()));
-            }
-            first = false;
-            spans.push(Span::styled(key_str, Style::default().fg(theme.muted)));
-            spans.push(Span::styled(
-                format!(" {}", label),
-                Style::default().fg(theme.subtle),
-            ));
-        }
         for &(key, name) in plugins {
-            spans.push(Span::styled("  ", Style::default()));
-            spans.push(Span::styled(
-                key.to_string(),
-                Style::default().fg(theme.muted),
-            ));
-            spans.push(Span::styled(
-                format!(" {}", name),
-                Style::default().fg(theme.subtle),
-            ));
+            entries.push((key.to_string(), name.to_string()));
         }
-        Line::from(spans)
+        entries.retain(|(k, _)| !k.is_empty());
+        pack_hint_lines(&entries, w, theme)
     } else {
         let toggle_key = primary_key_string(keybindings, Command::ToggleFocus);
         let label = if toggle_key.is_empty() {
@@ -510,14 +497,28 @@ fn draw_footer(
         } else {
             format!(" {} sidebar", toggle_key)
         };
-        Line::from(vec![Span::styled(
+        vec![Line::from(vec![Span::styled(
             label,
             Style::default().fg(theme.subtle),
-        )])
+        )])]
     };
 
-    let info = if show_help {
-        Line::from(vec![
+    // Footer area is 3 lines: sep + up to 2 content rows. If hints fit in one
+    // row, row 2 shows About (when help is visible) or stays blank. If hints
+    // need two rows, they fill both content rows and About is dropped.
+    let mut rows: Vec<Line> = Vec::with_capacity(3);
+    rows.push(sep);
+    let overflow = hint_lines.len() > 1;
+    let mut iter = hint_lines.into_iter();
+    if let Some(first) = iter.next() {
+        rows.push(first);
+    } else {
+        rows.push(Line::default());
+    }
+    if overflow {
+        rows.push(iter.next().unwrap_or_default());
+    } else if show_help {
+        rows.push(Line::from(vec![
             Span::styled(" ", Style::default()),
             Span::styled(
                 format!(
@@ -527,20 +528,57 @@ fn draw_footer(
                 ),
                 Style::default().fg(theme.dim),
             ),
-        ])
-    } else if sidebar_active {
-        Line::from(vec![
-            Span::styled(" ", Style::default()),
-            Span::styled(theme.name, Style::default().fg(theme.dim)),
-        ])
+        ]));
     } else {
-        Line::default()
-    };
+        rows.push(Line::default());
+    }
 
     frame.render_widget(
-        Paragraph::new(vec![sep, hints, info]).style(Style::default().bg(theme.bg)),
+        Paragraph::new(rows).style(Style::default().bg(theme.bg)),
         area,
     );
+}
+
+fn pack_hint_lines(entries: &[(String, String)], width: usize, theme: &Theme) -> Vec<Line<'static>> {
+    let sep_width = 2;
+    let leading = 1;
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
+    let mut cur_width = leading;
+
+    for (key, label) in entries {
+        let entry_width = key.width() + 1 + label.width();
+        let has_content = spans.len() > 1;
+        let needed = if has_content { sep_width + entry_width } else { entry_width };
+
+        // Wrap to a new line if this entry won't fit (and the current line has
+        // at least one entry already — a single entry that's wider than width
+        // still gets placed rather than dropped).
+        if has_content && cur_width + needed > width {
+            lines.push(Line::from(std::mem::replace(
+                &mut spans,
+                vec![Span::raw(" ")],
+            )));
+            cur_width = leading;
+        }
+
+        if spans.len() > 1 {
+            spans.push(Span::raw("  "));
+            cur_width += sep_width;
+        }
+        spans.push(Span::styled(key.clone(), Style::default().fg(theme.muted)));
+        spans.push(Span::styled(
+            format!(" {}", label),
+            Style::default().fg(theme.subtle),
+        ));
+        cur_width += entry_width;
+    }
+
+    if spans.len() > 1 {
+        lines.push(Line::from(spans));
+    }
+
+    lines
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -559,7 +597,7 @@ fn draw_sidebar_tabs(
         let border_color = if sidebar_active {
             theme.accent
         } else {
-            theme.bg
+            theme.dim
         };
         let block = Block::default()
             .borders(Borders::ALL)

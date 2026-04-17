@@ -341,6 +341,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.merge(inner);
         }
         Action::OpenThemePicker => {
+            // Ensure the Settings pane is showing so the picker overlay
+            // renders correctly when triggered via a sidebar shortcut.
+            state.main_view = MainView::Settings;
+            state.focus_mode = FocusMode::Main;
             state.theme_picker_open = true;
             state.theme_picker_selected = state.theme_index.min(THEMES.len().saturating_sub(1));
         }
@@ -747,6 +751,7 @@ fn command_to_action(cmd: Command) -> Action {
         Command::ReorderDown => Action::ReorderSession(1),
         Command::CycleFilter => Action::CycleFilter,
         Command::OpenSettings => Action::OpenSettings,
+        Command::OpenThemePicker => Action::OpenThemePicker,
         Command::ToggleBorders => Action::ToggleBorders,
         Command::ToggleLayout => Action::ToggleLayout,
         Command::ToggleViewMode => Action::ToggleViewMode,
