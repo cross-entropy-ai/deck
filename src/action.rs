@@ -1,5 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
+use crate::keybindings::Command;
 use crate::state::{
     AppState, ContextMenu, FilterMode, FocusMode, KillRequest, LayoutMode, MainView, MenuKind,
     RenameRequest, RenameState, SideEffect, ViewMode, GLOBAL_MENU_ITEMS, SESSION_MENU_ITEMS,
@@ -42,6 +43,12 @@ pub enum Action {
     ThemePickerNext,
     ThemePickerPrev,
     ConfirmThemePicker,
+
+    // Keybindings view
+    OpenKeybindingsView,
+    CloseKeybindingsView,
+    KeybindingsViewScrollUp,
+    KeybindingsViewScrollDown,
 
     // Exclude editor
     OpenExcludeEditor,
@@ -328,6 +335,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 2 => apply_action(state, Action::ToggleBorders),
                 3 => apply_action(state, Action::ToggleViewMode),
                 4 => apply_action(state, Action::OpenExcludeEditor),
+                5 => apply_action(state, Action::OpenKeybindingsView),
                 _ => SideEffect::default(),
             };
             fx.merge(inner);
@@ -358,6 +366,21 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::ConfirmThemePicker => {
             state.theme_picker_open = false;
+        }
+
+        // --- Keybindings view ---
+        Action::OpenKeybindingsView => {
+            state.keybindings_view_open = true;
+            state.keybindings_view_scroll = 0;
+        }
+        Action::CloseKeybindingsView => {
+            state.keybindings_view_open = false;
+        }
+        Action::KeybindingsViewScrollUp => {
+            state.keybindings_view_scroll = state.keybindings_view_scroll.saturating_sub(1);
+        }
+        Action::KeybindingsViewScrollDown => {
+            state.keybindings_view_scroll = state.keybindings_view_scroll.saturating_add(1);
         }
 
         // --- Exclude editor ---
@@ -677,12 +700,17 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         };
     }
 
-    // Ctrl+S always toggles focus mode
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
-        return Action::ToggleFocus;
+    // Global commands (fire regardless of focus mode). Today only ToggleFocus.
+    if let Some(cmd) = state.keybindings.lookup(key) {
+        if cmd.is_global() {
+            return command_to_action(cmd);
+        }
     }
 
     if state.main_view == MainView::Settings && state.focus_mode == FocusMode::Main {
+        if state.keybindings_view_open {
+            return keybindings_view_key_to_action(key);
+        }
         if state.exclude_editor.is_some() {
             return exclude_editor_key_to_action(key, state);
         }
@@ -709,6 +737,26 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     }
 }
 
+fn command_to_action(cmd: Command) -> Action {
+    match cmd {
+        Command::FocusNext => Action::FocusNext,
+        Command::FocusPrev => Action::FocusPrev,
+        Command::SwitchProject => Action::SwitchProject,
+        Command::KillSession => Action::KillSession,
+        Command::ReorderUp => Action::ReorderSession(-1),
+        Command::ReorderDown => Action::ReorderSession(1),
+        Command::CycleFilter => Action::CycleFilter,
+        Command::OpenSettings => Action::OpenSettings,
+        Command::ToggleBorders => Action::ToggleBorders,
+        Command::ToggleLayout => Action::ToggleLayout,
+        Command::ToggleViewMode => Action::ToggleViewMode,
+        Command::ToggleHelp => Action::ToggleHelp,
+        Command::FocusMain => Action::SetFocusMain,
+        Command::Quit => Action::Quit,
+        Command::ToggleFocus => Action::ToggleFocus,
+    }
+}
+
 fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     // Help showing: any key dismisses
     if state.show_help {
@@ -724,66 +772,30 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         };
     }
 
-    let code = key.code;
-    let alt = key.modifiers.contains(KeyModifiers::ALT);
-
-    match code {
-        KeyCode::Char('q') => Action::Quit,
-        KeyCode::Esc => Action::SetFocusMain,
-
-        // Help
-        KeyCode::Char('h') | KeyCode::Char('?') => Action::ToggleHelp,
-
-        // Navigation
-        KeyCode::Char('j') | KeyCode::Down if !alt => Action::FocusNext,
-        KeyCode::Char('k') | KeyCode::Up if !alt => Action::FocusPrev,
-
-        // Switch project (Enter triggers switch + focus main, handled as compound in App)
-        KeyCode::Enter => Action::SwitchProject,
-
-        // Number keys 1-9 quick jump (compound: focus + switch + focus main)
-        KeyCode::Char(c @ '1'..='9') if !alt => {
+    // Number keys 1-9 quick jump — hardcoded (range-based, not a single binding)
+    if let KeyCode::Char(c @ '1'..='9') = key.code {
+        if !key.modifiers.contains(KeyModifiers::ALT) {
             let idx = (c as usize) - ('1' as usize);
             if idx < state.filtered.len() {
-                Action::NumberKeyJump(idx)
-            } else {
-                Action::None
+                return Action::NumberKeyJump(idx);
             }
+            return Action::None;
         }
-
-        // Kill session
-        KeyCode::Char('x') => Action::KillSession,
-
-        // Hidden fallback for layouts without visible filter tabs
-        KeyCode::Char('f') => Action::CycleFilter,
-
-        // Settings
-        KeyCode::Char('t') => Action::OpenSettings,
-
-        // Toggle borders
-        KeyCode::Char('b') => Action::ToggleBorders,
-
-        // Toggle layout
-        KeyCode::Char('l') => Action::ToggleLayout,
-
-        // Toggle compact/expanded view
-        KeyCode::Char('c') => Action::ToggleViewMode,
-
-        // Reorder: Alt+Up / Alt+Down
-        KeyCode::Up if alt => Action::ReorderSession(-1),
-        KeyCode::Down if alt => Action::ReorderSession(1),
-
-        // Plugin shortcut keys (dynamic lookup from config)
-        KeyCode::Char(ch) => {
-            if let Some(idx) = state.plugins.iter().position(|p| p.key == ch) {
-                Action::ActivatePlugin(idx)
-            } else {
-                Action::None
-            }
-        }
-
-        _ => Action::None,
     }
+
+    // User-configurable commands
+    if let Some(cmd) = state.keybindings.lookup(key) {
+        return command_to_action(cmd);
+    }
+
+    // Plugin shortcut keys (dynamic lookup from config)
+    if let KeyCode::Char(ch) = key.code {
+        if let Some(idx) = state.plugins.iter().position(|p| p.key == ch) {
+            return Action::ActivatePlugin(idx);
+        }
+    }
+
+    Action::None
 }
 
 fn settings_key_to_action(key: &KeyEvent) -> Action {
@@ -818,6 +830,15 @@ fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         KeyCode::Char('k') | KeyCode::Up => Action::ExcludeEditorPrev,
         KeyCode::Char('a') => Action::ExcludeEditorStartAdd,
         KeyCode::Char('d') | KeyCode::Char('x') => Action::ExcludeEditorDelete,
+        _ => Action::None,
+    }
+}
+
+fn keybindings_view_key_to_action(key: &KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Esc => Action::CloseKeybindingsView,
+        KeyCode::Char('j') | KeyCode::Down => Action::KeybindingsViewScrollDown,
+        KeyCode::Char('k') | KeyCode::Up => Action::KeybindingsViewScrollUp,
         _ => Action::None,
     }
 }
@@ -1011,6 +1032,7 @@ mod tests {
             40,
             vec![],
             vec![],
+            crate::keybindings::Keybindings::default(),
         );
         state.sessions = (0..n)
             .map(|i| make_session(&format!("sess-{}", i), 0))

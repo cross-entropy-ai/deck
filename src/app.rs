@@ -9,9 +9,12 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::DefaultTerminal;
 
+use std::collections::HashMap;
+
 use crate::action::{self, Action};
 use crate::bridge;
-use crate::config::Config;
+use crate::config::{Config, KeyBindingValue};
+use crate::keybindings::Keybindings;
 use crate::nesting_guard::{NestingGuard, WarningState};
 use crate::pty::{Pty, PtyEvent};
 use crate::refresh::{RefreshRequest, RefreshWorker, SessionSnapshot};
@@ -40,6 +43,7 @@ pub struct App {
     warning_state: Option<WarningState>,
     plugin_instances: Vec<Option<PluginInstance>>,
     refresh_worker: RefreshWorker,
+    raw_keybindings: HashMap<String, KeyBindingValue>,
 }
 
 impl App {
@@ -75,6 +79,11 @@ impl App {
         let plugins = cfg.plugins.clone();
         let plugin_count = plugins.len();
 
+        let (keybindings, kb_warnings) = Keybindings::from_config(&cfg.keybindings, &plugins);
+        for warning in &kb_warnings {
+            eprintln!("deck: {}", warning);
+        }
+
         let state = AppState::new(
             theme_index,
             layout_mode,
@@ -86,6 +95,7 @@ impl App {
             term_height,
             exclude_patterns,
             plugins,
+            keybindings,
         );
         let nesting_guard = NestingGuard::new();
 
@@ -102,6 +112,7 @@ impl App {
             warning_state: None,
             plugin_instances: (0..plugin_count).map(|_| None).collect(),
             refresh_worker: RefreshWorker::spawn(),
+            raw_keybindings: cfg.keybindings.clone(),
         };
 
         tmux::apply_theme(&THEMES[theme_index]);
@@ -521,6 +532,9 @@ impl App {
                 input: &e.input,
                 error: e.error.as_deref(),
             }),
+            keybindings: &s.keybindings,
+            keybindings_view_open: s.keybindings_view_open,
+            keybindings_view_scroll: s.keybindings_view_scroll,
         };
         let hover_sep = s.hover_separator;
         let dragging_sep = s.dragging_separator;
@@ -582,6 +596,7 @@ impl App {
                 &spinner_frame,
                 view_mode,
                 &plugin_hints,
+                &self.state.keybindings,
             );
 
             if let Some(gap) = gap_area {
@@ -856,6 +871,7 @@ impl App {
             view_mode: self.state.view_mode,
             exclude_patterns: self.state.exclude_patterns.clone(),
             plugins: self.state.plugins.clone(),
+            keybindings: self.raw_keybindings.clone(),
         }
         .save();
     }

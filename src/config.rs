@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -13,6 +14,44 @@ pub struct PluginConfig {
     pub key: char,
 }
 
+/// User-configurable binding value for a single command.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum KeyBindingValueInner {
+    Single(String),
+    Multi(Vec<String>),
+}
+
+/// Wrapper that also accepts `null` (→ unbind). We use `Option` on the
+/// outside and model the non-null variants as `KeyBindingValueInner`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyBindingValue {
+    Single(String),
+    Multi(Vec<String>),
+    Unbind,
+}
+
+impl Serialize for KeyBindingValue {
+    fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        match self {
+            KeyBindingValue::Unbind => ser.serialize_none(),
+            KeyBindingValue::Single(s) => ser.serialize_str(s),
+            KeyBindingValue::Multi(v) => v.serialize(ser),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for KeyBindingValue {
+    fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        let opt: Option<KeyBindingValueInner> = Option::deserialize(de)?;
+        Ok(match opt {
+            None => KeyBindingValue::Unbind,
+            Some(KeyBindingValueInner::Single(s)) => KeyBindingValue::Single(s),
+            Some(KeyBindingValueInner::Multi(v)) => KeyBindingValue::Multi(v),
+        })
+    }
+}
+
 /// Persisted user preferences.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -25,6 +64,8 @@ pub struct Config {
     pub view_mode: ViewMode,
     pub exclude_patterns: Vec<String>,
     pub plugins: Vec<PluginConfig>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub keybindings: HashMap<String, KeyBindingValue>,
 }
 
 impl Default for Config {
@@ -38,6 +79,7 @@ impl Default for Config {
             view_mode: ViewMode::Expanded,
             exclude_patterns: vec!["_*".to_string()],
             plugins: Vec::new(),
+            keybindings: HashMap::new(),
         }
     }
 }
@@ -326,5 +368,76 @@ mod tests {
         let json = r#"{ "layout": "vertical" }"#;
         let config = parse(json);
         assert_eq!(config.layout, LayoutMode::Vertical);
+    }
+
+    #[test]
+    fn parse_json_with_keybindings_string() {
+        let json = r#"{ "keybindings": { "kill_session": "X" } }"#;
+        let config = parse(json);
+        assert_eq!(
+            config.keybindings.get("kill_session"),
+            Some(&KeyBindingValue::Single("X".into()))
+        );
+    }
+
+    #[test]
+    fn parse_json_with_keybindings_array() {
+        let json = r#"{ "keybindings": { "toggle_help": ["h", "?", "F1"] } }"#;
+        let config = parse(json);
+        assert_eq!(
+            config.keybindings.get("toggle_help"),
+            Some(&KeyBindingValue::Multi(vec![
+                "h".into(),
+                "?".into(),
+                "F1".into()
+            ]))
+        );
+    }
+
+    #[test]
+    fn parse_json_with_keybindings_null() {
+        let json = r#"{ "keybindings": { "toggle_borders": null } }"#;
+        let config = parse(json);
+        assert_eq!(
+            config.keybindings.get("toggle_borders"),
+            Some(&KeyBindingValue::Unbind)
+        );
+    }
+
+    #[test]
+    fn parse_json_without_keybindings_uses_empty() {
+        let json = r#"{ "theme": "Nord" }"#;
+        let config = parse(json);
+        assert!(config.keybindings.is_empty());
+    }
+
+    #[test]
+    fn keybindings_roundtrip() {
+        let mut kb = HashMap::new();
+        kb.insert(
+            "kill_session".to_string(),
+            KeyBindingValue::Single("X".into()),
+        );
+        kb.insert(
+            "toggle_help".to_string(),
+            KeyBindingValue::Multi(vec!["h".into(), "F1".into()]),
+        );
+        kb.insert(
+            "toggle_borders".to_string(),
+            KeyBindingValue::Unbind,
+        );
+        let config = Config {
+            keybindings: kb.clone(),
+            ..Config::default()
+        };
+        let roundtrip: Config = serde_json::from_str(&config.to_json()).unwrap();
+        assert_eq!(roundtrip.keybindings, kb);
+    }
+
+    #[test]
+    fn empty_keybindings_omitted_from_json() {
+        let config = Config::default();
+        let json = config.to_json();
+        assert!(!json.contains("keybindings"));
     }
 }

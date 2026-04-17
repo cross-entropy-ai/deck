@@ -6,6 +6,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::keybindings::{format_key, Command, Keybindings};
 use crate::layout::{
     card_height, context_menu_width, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR,
 };
@@ -45,9 +46,13 @@ pub struct SettingsView<'a> {
     pub view_mode: ViewMode,
     pub exclude_count: usize,
     pub exclude_editor: Option<ExcludeEditorView<'a>>,
+    pub keybindings: &'a Keybindings,
+    pub keybindings_view_open: bool,
+    pub keybindings_view_scroll: u16,
 }
 
 /// Draw the sidebar into the given area.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_sidebar(
     frame: &mut Frame,
     area: Rect,
@@ -64,6 +69,7 @@ pub fn draw_sidebar(
     spinner_frame: &str,
     view_mode: ViewMode,
     plugins: &[(char, &str)],
+    keybindings: &Keybindings,
 ) {
     if tabs_mode {
         draw_sidebar_tabs(
@@ -75,6 +81,7 @@ pub fn draw_sidebar(
             theme,
             show_borders,
             spinner_frame,
+            keybindings,
         );
         return;
     }
@@ -106,7 +113,7 @@ pub fn draw_sidebar(
 
     draw_header(frame, header_area, sessions.len(), theme, filter_mode);
     if show_help {
-        draw_help(frame, sessions_area, theme);
+        draw_help(frame, sessions_area, theme, keybindings);
     } else if let Some(name) = confirm_kill {
         draw_confirm_kill(frame, sessions_area, theme, name);
     } else if let Some((input, cursor)) = rename_input {
@@ -130,6 +137,7 @@ pub fn draw_sidebar(
         footer_area.width,
         show_help,
         plugins,
+        keybindings,
     );
 }
 
@@ -445,6 +453,7 @@ fn draw_sessions_compact(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_footer(
     frame: &mut Frame,
     area: Rect,
@@ -453,21 +462,35 @@ fn draw_footer(
     width: u16,
     show_help: bool,
     plugins: &[(char, &str)],
+    keybindings: &Keybindings,
 ) {
     let w = width as usize;
     let sep = Line::from(Span::styled("─".repeat(w), Style::default().fg(theme.dim)));
 
     let hints = if sidebar_active {
-        let mut spans = vec![
-            Span::styled(" j/k", Style::default().fg(theme.muted)),
-            Span::styled(" nav  ", Style::default().fg(theme.subtle)),
-            Span::styled("t", Style::default().fg(theme.muted)),
-            Span::styled(" settings  ", Style::default().fg(theme.subtle)),
-            Span::styled("h/?", Style::default().fg(theme.muted)),
-            Span::styled(" help  ", Style::default().fg(theme.subtle)),
-            Span::styled("q", Style::default().fg(theme.muted)),
-            Span::styled(" quit", Style::default().fg(theme.subtle)),
+        let hint_entries: &[(Command, &str)] = &[
+            (Command::FocusNext, "nav"),
+            (Command::OpenSettings, "settings"),
+            (Command::ToggleHelp, "help"),
+            (Command::Quit, "quit"),
         ];
+        let mut spans: Vec<Span> = vec![Span::raw(" ")];
+        let mut first = true;
+        for &(cmd, label) in hint_entries {
+            let key_str = primary_key_string(keybindings, cmd);
+            if key_str.is_empty() {
+                continue;
+            }
+            if !first {
+                spans.push(Span::styled("  ", Style::default()));
+            }
+            first = false;
+            spans.push(Span::styled(key_str, Style::default().fg(theme.muted)));
+            spans.push(Span::styled(
+                format!(" {}", label),
+                Style::default().fg(theme.subtle),
+            ));
+        }
         for &(key, name) in plugins {
             spans.push(Span::styled("  ", Style::default()));
             spans.push(Span::styled(
@@ -481,10 +504,16 @@ fn draw_footer(
         }
         Line::from(spans)
     } else {
-        Line::from(vec![
-            Span::styled(" Ctrl+s", Style::default().fg(theme.muted)),
-            Span::styled(" sidebar", Style::default().fg(theme.subtle)),
-        ])
+        let toggle_key = primary_key_string(keybindings, Command::ToggleFocus);
+        let label = if toggle_key.is_empty() {
+            " sidebar".to_string()
+        } else {
+            format!(" {} sidebar", toggle_key)
+        };
+        Line::from(vec![Span::styled(
+            label,
+            Style::default().fg(theme.subtle),
+        )])
     };
 
     let info = if show_help {
@@ -514,6 +543,7 @@ fn draw_footer(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_sidebar_tabs(
     frame: &mut Frame,
     area: Rect,
@@ -523,6 +553,7 @@ fn draw_sidebar_tabs(
     theme: &Theme,
     show_borders: bool,
     spinner_frame: &str,
+    keybindings: &Keybindings,
 ) {
     let content = if show_borders {
         let border_color = if sidebar_active {
@@ -602,16 +633,21 @@ fn draw_sidebar_tabs(
     // Right-align hints in the tab bar
     let tabs_width: usize = spans.iter().map(|s| s.width()).sum();
     let width = content.width as usize;
-    let hint_spans: Vec<(&str, &str)> = if sidebar_active {
-        vec![("h", " help  "), ("q", " quit")]
+    let hint_pairs: Vec<(String, String)> = if sidebar_active {
+        vec![
+            (primary_key_string(keybindings, Command::ToggleHelp), " help  ".into()),
+            (primary_key_string(keybindings, Command::Quit), " quit".into()),
+        ]
     } else {
-        vec![("Ctrl+s", " sidebar")]
+        vec![(primary_key_string(keybindings, Command::ToggleFocus), " sidebar".into())]
     };
-    let hint_width: usize = hint_spans.iter().map(|(k, v)| k.len() + v.len()).sum();
+    let hint_pairs: Vec<(String, String)> =
+        hint_pairs.into_iter().filter(|(k, _)| !k.is_empty()).collect();
+    let hint_width: usize = hint_pairs.iter().map(|(k, v)| k.len() + v.len()).sum();
     if tabs_width + hint_width + 2 < width {
         let gap = width - tabs_width - hint_width;
         spans.push(Span::styled(" ".repeat(gap), Style::default().bg(theme.bg)));
-        for (k, v) in hint_spans {
+        for (k, v) in hint_pairs {
             spans.push(Span::styled(
                 k,
                 Style::default().fg(theme.muted).bg(theme.bg),
@@ -676,36 +712,59 @@ fn build_tab_status(session: &SessionView) -> String {
     format_git_status(session, false)
 }
 
-fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
-    let key =
-        |k: &'static str| Span::styled(format!("  {k:<10}"), Style::default().fg(theme.accent));
-    let desc = |d: &'static str| Span::styled(d, Style::default().fg(theme.secondary));
+fn format_keys_for(keybindings: &Keybindings, cmd: Command) -> String {
+    let keys = keybindings.keys_for(cmd);
+    keys.iter()
+        .map(format_key)
+        .collect::<Vec<_>>()
+        .join("/")
+}
 
-    let lines = vec![
+fn primary_key_string(keybindings: &Keybindings, cmd: Command) -> String {
+    keybindings
+        .keys_for(cmd)
+        .first()
+        .map(format_key)
+        .unwrap_or_default()
+}
+
+fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme, keybindings: &Keybindings) {
+    let key_span = |k: String| -> Span<'static> {
+        Span::styled(format!("  {k:<10}"), Style::default().fg(theme.accent))
+    };
+    let desc_span = |d: &'static str| Span::styled(d, Style::default().fg(theme.secondary));
+
+    let mut lines: Vec<Line<'static>> = vec![
         Line::raw(""),
         Line::from(Span::styled(
             "  Keybindings",
             Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
         )),
         Line::raw(""),
-        Line::from(vec![key("j/k"), desc("navigate")]),
-        Line::from(vec![key("Enter"), desc("switch session")]),
-        Line::from(vec![key("1-9"), desc("quick jump")]),
-        Line::from(vec![key("x"), desc("kill session")]),
-        Line::from(vec![key("t"), desc("open settings")]),
-        Line::from(vec![key("b"), desc("toggle borders")]),
-        Line::from(vec![key("l"), desc("toggle layout")]),
-        Line::from(vec![key("Alt+↑↓"), desc("reorder")]),
-        Line::from(vec![key("Mouse"), desc("click All / Idle / Working tabs")]),
-        Line::from(vec![key("Ctrl+s"), desc("toggle sidebar")]),
-        Line::from(vec![key("Esc"), desc("back to main")]),
-        Line::from(vec![key("q"), desc("quit")]),
-        Line::raw(""),
-        Line::from(Span::styled(
-            "  press any key to close",
-            Style::default().fg(theme.dim),
-        )),
     ];
+
+    for &cmd in Command::ALL {
+        let keys = format_keys_for(keybindings, cmd);
+        if keys.is_empty() {
+            continue;
+        }
+        lines.push(Line::from(vec![key_span(keys), desc_span(cmd.description())]));
+    }
+
+    lines.push(Line::from(vec![
+        key_span("1-9".to_string()),
+        desc_span("quick jump"),
+    ]));
+    lines.push(Line::from(vec![
+        key_span("Mouse".to_string()),
+        desc_span("click All / Idle / Working tabs"),
+    ]));
+
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(
+        "  press any key to close",
+        Style::default().fg(theme.dim),
+    )));
 
     frame.render_widget(
         Paragraph::new(lines).style(Style::default().bg(theme.bg)),
@@ -896,6 +955,11 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
             format!("{} patterns", settings.exclude_count),
             "Enter opens the pattern editor",
         ),
+        (
+            "Keybindings",
+            "View".to_string(),
+            "Enter shows current key bindings",
+        ),
     ];
 
     for (idx, (label, value, help)) in entries.iter().enumerate() {
@@ -963,6 +1027,115 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
     if let Some(ref editor) = settings.exclude_editor {
         draw_exclude_editor(frame, area, editor, theme);
     }
+
+    if settings.keybindings_view_open {
+        draw_keybindings_view(
+            frame,
+            area,
+            settings.keybindings,
+            settings.keybindings_view_scroll,
+            theme,
+        );
+    }
+}
+
+fn draw_keybindings_view(
+    frame: &mut Frame,
+    area: Rect,
+    keybindings: &Keybindings,
+    scroll: u16,
+    theme: &Theme,
+) {
+    let rows: Vec<(&'static str, String, bool)> = Command::ALL
+        .iter()
+        .map(|&cmd| {
+            let keys = format_keys_for(keybindings, cmd);
+            (cmd.name(), keys, cmd.is_global())
+        })
+        .collect();
+
+    let name_width = rows
+        .iter()
+        .map(|(n, _, _)| n.len())
+        .max()
+        .unwrap_or(16)
+        .max(16);
+    let keys_width = rows
+        .iter()
+        .map(|(_, k, _)| k.len())
+        .max()
+        .unwrap_or(8)
+        .max(8);
+
+    let popup_width = (name_width as u16 + keys_width as u16 + 16)
+        .min(area.width.saturating_sub(4))
+        .max(30);
+    let content_height = rows.len() as u16 + 5;
+    let popup_height = content_height
+        .min(area.height.saturating_sub(2))
+        .max(6);
+    let x = area.x + area.width.saturating_sub(popup_width) / 2;
+    let y = area.y + area.height.saturating_sub(popup_height) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(" Keybindings ")
+        .borders(Borders::ALL)
+        .border_set(border::ROUNDED)
+        .border_style(Style::default().fg(theme.accent))
+        .style(Style::default().bg(theme.bg));
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    // Reserve last 2 rows for footer (blank + hint).
+    let list_rows = inner.height.saturating_sub(2) as usize;
+    let total = rows.len();
+    let max_scroll = total.saturating_sub(list_rows) as u16;
+    let scroll = scroll.min(max_scroll) as usize;
+    let end = (scroll + list_rows).min(total);
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    for (name, keys, is_global) in &rows[scroll..end] {
+        let display_keys = if keys.is_empty() {
+            "<unbound>".to_string()
+        } else {
+            keys.clone()
+        };
+        let key_style = if keys.is_empty() {
+            Style::default().fg(theme.dim)
+        } else {
+            Style::default().fg(theme.accent)
+        };
+        let name_cell = format!("  {:<width$}  ", name, width = name_width);
+        let keys_cell = format!("{:<width$}", display_keys, width = keys_width);
+        let mut spans = vec![
+            Span::styled(name_cell, Style::default().fg(theme.secondary)),
+            Span::styled(keys_cell, key_style),
+        ];
+        if *is_global {
+            spans.push(Span::styled(
+                "  (global)".to_string(),
+                Style::default().fg(theme.dim),
+            ));
+        }
+        lines.push(Line::from(spans));
+    }
+
+    while lines.len() < list_rows {
+        lines.push(Line::raw(""));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(
+        "  Esc close  j/k scroll · edit ~/.config/deck/config.json to change",
+        Style::default().fg(theme.muted),
+    )));
+
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(theme.bg)),
+        inner,
+    );
 }
 
 fn draw_theme_picker(frame: &mut Frame, area: Rect, settings: &SettingsView, theme: &Theme) {

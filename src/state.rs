@@ -3,6 +3,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 use crate::config::PluginConfig;
+use crate::keybindings::Keybindings;
 use crate::layout::{card_height, context_menu_width, tab_col_ranges};
 
 // --- Constants ---
@@ -84,7 +85,7 @@ pub enum ViewMode {
     Compact,
 }
 
-pub const SETTINGS_ITEM_COUNT: usize = 5;
+pub const SETTINGS_ITEM_COUNT: usize = 6;
 
 // --- Context menu ---
 
@@ -238,9 +239,15 @@ pub struct AppState {
     // Config
     pub exclude_patterns: Vec<String>,
     pub plugins: Vec<PluginConfig>,
+    pub keybindings: Keybindings,
+
+    // Keybindings viewer (read-only settings page)
+    pub keybindings_view_open: bool,
+    pub keybindings_view_scroll: u16,
 }
 
 impl AppState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         theme_index: usize,
         layout_mode: LayoutMode,
@@ -252,6 +259,7 @@ impl AppState {
         term_height: u16,
         exclude_patterns: Vec<String>,
         plugins: Vec<PluginConfig>,
+        keybindings: Keybindings,
     ) -> Self {
         Self {
             sessions: Vec::new(),
@@ -283,6 +291,9 @@ impl AppState {
             last_scroll: Instant::now(),
             exclude_patterns,
             plugins,
+            keybindings,
+            keybindings_view_open: false,
+            keybindings_view_scroll: 0,
         }
     }
 
@@ -539,6 +550,7 @@ mod tests {
             term_height,
             vec![],
             vec![],
+            Keybindings::default(),
         );
         state.sessions = vec![make_session("alpha"), make_session("beta")];
         state.session_order = state.sessions.iter().map(|s| s.name.clone()).collect();
