@@ -153,8 +153,21 @@ fn real_kill(pid: u32) -> Result<(), KillError> {
 mod tests {
     use super::{AcquireError, InstanceGuard, KillError};
     use std::fs;
+    use std::os::unix::process::CommandExt;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// Spawn a long-running child whose argv[0] matches our "looks like deck"
+    /// heuristic (anything containing "deck"). Using `CommandExt::arg0`
+    /// sets argv[0] atomically at exec time, so there's no shell-version or
+    /// race-with-exec flakiness the way `sh -c 'exec -a ... sleep'` had.
+    fn spawn_deck_named(name: &str) -> std::process::Child {
+        std::process::Command::new("sleep")
+            .arg0(name)
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep")
+    }
 
     fn test_lock_path(name: &str) -> PathBuf {
         PathBuf::from(format!("/tmp/deck-test-{name}-{}.lock", std::process::id()))
@@ -255,13 +268,8 @@ mod tests {
     #[test]
     fn force_kills_and_acquires_when_lock_holds_deck_pid() {
         let path = test_lock_path("force-kill-deck");
-        let mut child = std::process::Command::new("sh")
-            .arg("-c")
-            .arg("exec -a deck-test-victim sleep 30")
-            .spawn()
-            .unwrap();
+        let mut child = spawn_deck_named("deck-test-victim");
         let victim_pid = child.id();
-        std::thread::sleep(std::time::Duration::from_millis(100));
 
         fs::write(&path, format!("{victim_pid}\n")).unwrap();
         KILL_CALLS.store(0, Ordering::SeqCst);
@@ -282,13 +290,8 @@ mod tests {
     #[test]
     fn force_surfaces_permission_denied() {
         let path = test_lock_path("force-eperm");
-        let mut child = std::process::Command::new("sh")
-            .arg("-c")
-            .arg("exec -a deck-test-eperm sleep 30")
-            .spawn()
-            .unwrap();
+        let mut child = spawn_deck_named("deck-test-eperm");
         let victim_pid = child.id();
-        std::thread::sleep(std::time::Duration::from_millis(100));
 
         fs::write(&path, format!("{victim_pid}\n")).unwrap();
 
