@@ -14,6 +14,21 @@ pub use menu::draw_context_menu;
 pub use settings::draw_settings_page;
 pub use sidebar::draw_sidebar;
 
+/// Runtime state of a configured plugin, used by the sidebar footer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginStatus {
+    Inactive,
+    Background,
+    Foreground,
+}
+
+/// Minimal data needed to render one plugin row in the sidebar footer.
+pub struct PluginView<'a> {
+    pub key: char,
+    pub name: &'a str,
+    pub status: PluginStatus,
+}
+
 /// Minimal data needed to render one session row.
 pub struct SessionView<'a> {
     pub name: &'a str,

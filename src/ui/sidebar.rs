@@ -18,7 +18,7 @@ use super::text::{
     format_idle_badge, idle_color, pack_hint_lines, pad_line, primary_key_string, scroll_offset,
     shorten_dir, truncate,
 };
-use super::SessionView;
+use super::{PluginStatus, PluginView, SessionView};
 
 /// Minimum content width to allocate a banner row at all. The very last
 /// fallback just shows " upgrade" (8 cols).
@@ -81,6 +81,16 @@ fn reload_row_count(status: Option<&ReloadStatus>, width: u16) -> u16 {
     }
 }
 
+/// Rows the plugin status block takes in the footer: title + one row
+/// per plugin + trailing separator. Zero when no plugins are configured
+/// so the sidebar keeps its original layout for users without any extensions.
+fn plugin_block_rows(plugins: &[PluginView]) -> u16 {
+    if plugins.is_empty() {
+        return 0;
+    }
+    plugins.len() as u16 + 2
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn draw_sidebar(
     frame: &mut Frame,
@@ -97,7 +107,8 @@ pub fn draw_sidebar(
     tabs_mode: bool,
     spinner_frame: &str,
     view_mode: ViewMode,
-    plugins: &[(char, &str)],
+    plugins: &[PluginView],
+    blink_on: bool,
     keybindings: &Keybindings,
     update_available: Option<&UpdateStatus>,
     reload_status: Option<&ReloadStatus>,
@@ -137,7 +148,8 @@ pub fn draw_sidebar(
 
     let banner_visible = update_available.is_some() && content.width >= BANNER_MIN_WIDTH;
     let status_rows = reload_row_count(reload_status, content.width);
-    let footer_height: u16 = 3 + banner_visible as u16 + status_rows;
+    let plugin_rows = plugin_block_rows(plugins);
+    let footer_height: u16 = 3 + banner_visible as u16 + status_rows + plugin_rows;
 
     let [header_area, sessions_area, footer_area] = Layout::vertical([
         Constraint::Length(3),
@@ -172,6 +184,7 @@ pub fn draw_sidebar(
         footer_area.width,
         show_help,
         plugins,
+        blink_on,
         keybindings,
         if banner_visible {
             update_available
@@ -475,6 +488,76 @@ fn draw_sessions_compact(
     );
 }
 
+fn plugin_dot_color(status: PluginStatus, blink_on: bool, theme: &Theme) -> ratatui::style::Color {
+    match status {
+        PluginStatus::Foreground => theme.green,
+        // Alternates at 1 Hz between yellow and subtle so the pulse is
+        // visible against the sidebar bg without changing the glyph.
+        PluginStatus::Background => {
+            if blink_on {
+                theme.yellow
+            } else {
+                theme.subtle
+            }
+        }
+        PluginStatus::Inactive => theme.dim,
+    }
+}
+
+fn plugin_dot_glyph(status: PluginStatus) -> &'static str {
+    match status {
+        PluginStatus::Inactive => "○",
+        _ => "●",
+    }
+}
+
+fn append_plugin_rows(
+    rows: &mut Vec<Line<'static>>,
+    plugins: &[PluginView],
+    blink_on: bool,
+    width: usize,
+    theme: &Theme,
+) {
+    if plugins.is_empty() {
+        return;
+    }
+
+    rows.push(Line::from(vec![Span::styled(
+        " plugins",
+        Style::default().fg(theme.muted).add_modifier(Modifier::BOLD),
+    )]));
+
+    for p in plugins {
+        let dot_color = plugin_dot_color(p.status, blink_on, theme);
+        let key_color = match p.status {
+            PluginStatus::Inactive => theme.dim,
+            _ => theme.muted,
+        };
+        let name_color = match p.status {
+            PluginStatus::Foreground => theme.text,
+            PluginStatus::Background => theme.secondary,
+            PluginStatus::Inactive => theme.muted,
+        };
+        let name_style = match p.status {
+            PluginStatus::Foreground => Style::default().fg(name_color).add_modifier(Modifier::BOLD),
+            _ => Style::default().fg(name_color),
+        };
+        rows.push(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(plugin_dot_glyph(p.status), Style::default().fg(dot_color)),
+            Span::raw(" "),
+            Span::styled(p.key.to_string(), Style::default().fg(key_color)),
+            Span::raw("  "),
+            Span::styled(p.name.to_string(), name_style),
+        ]));
+    }
+
+    rows.push(Line::from(Span::styled(
+        "─".repeat(width),
+        Style::default().fg(theme.dim),
+    )));
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_footer(
     frame: &mut Frame,
@@ -483,7 +566,8 @@ fn draw_footer(
     theme: &Theme,
     width: u16,
     show_help: bool,
-    plugins: &[(char, &str)],
+    plugins: &[PluginView],
+    blink_on: bool,
     keybindings: &Keybindings,
     update_available: Option<&UpdateStatus>,
     reload_status: Option<&ReloadStatus>,
@@ -525,9 +609,6 @@ fn draw_footer(
                 "quit".into(),
             ),
         ];
-        for &(key, name) in plugins {
-            entries.push((key.to_string(), name.to_string()));
-        }
         entries.retain(|(k, _)| !k.is_empty());
         pack_hint_lines(&entries, w, theme)
     } else {
@@ -545,6 +626,8 @@ fn draw_footer(
 
     let mut rows: Vec<Line> = Vec::with_capacity(5);
     rows.push(sep);
+
+    append_plugin_rows(&mut rows, plugins, blink_on, w, theme);
 
     if let Some(status) = reload_status {
         let (color, body) = match status {
@@ -886,6 +969,26 @@ mod tests {
     #[test]
     fn reload_row_count_none_is_zero_rows() {
         assert_eq!(reload_row_count(None, 20), 0);
+    }
+
+    fn plugin_view(key: char, name: &str, status: PluginStatus) -> PluginView<'_> {
+        PluginView { key, name, status }
+    }
+
+    #[test]
+    fn plugin_block_rows_is_zero_without_plugins() {
+        assert_eq!(plugin_block_rows(&[]), 0);
+    }
+
+    #[test]
+    fn plugin_block_rows_counts_title_and_separator() {
+        // N plugins render as: title + N rows + trailing separator = N + 2.
+        let plugins = [
+            plugin_view('g', "GPU", PluginStatus::Inactive),
+            plugin_view('m', "System", PluginStatus::Background),
+            plugin_view('h', "Hello", PluginStatus::Foreground),
+        ];
+        assert_eq!(plugin_block_rows(&plugins), 5);
     }
 
     #[test]

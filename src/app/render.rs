@@ -1,4 +1,5 @@
 use std::io;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -9,7 +10,7 @@ use ratatui::DefaultTerminal;
 use crate::bridge;
 use crate::state::{FocusMode, LayoutMode, MainView, SessionRow};
 use crate::theme::THEMES;
-use crate::ui::{self, SessionView, SettingsView};
+use crate::ui::{self, PluginStatus, PluginView, SessionView, SettingsView};
 use crate::update::UpdateCheckMode;
 
 use super::update::format_update_check_help;
@@ -112,12 +113,37 @@ impl App {
                 }
             };
 
-            let plugin_hints: Vec<(char, &str)> = self
+            let plugin_views: Vec<PluginView> = self
                 .state
                 .plugins
                 .iter()
-                .map(|p| (p.key, p.name.as_str()))
+                .enumerate()
+                .map(|(i, p)| {
+                    let alive = self
+                        .plugin_instances
+                        .get(i)
+                        .and_then(|slot| slot.as_ref())
+                        .map(|inst| inst.alive)
+                        .unwrap_or(false);
+                    let status = match (alive, main_view == MainView::Plugin(i)) {
+                        (true, true) => PluginStatus::Foreground,
+                        (true, false) => PluginStatus::Background,
+                        (false, _) => PluginStatus::Inactive,
+                    };
+                    PluginView {
+                        key: p.key,
+                        name: p.name.as_str(),
+                        status,
+                    }
+                })
                 .collect();
+
+            // 1 Hz pulse for plugins running in the background — the main
+            // loop already redraws every ~16 ms so we don't need a tick.
+            let blink_on = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| (d.as_millis() / 500) % 2 == 0)
+                .unwrap_or(true);
 
             captured_banner_bounds = ui::draw_sidebar(
                 frame,
@@ -134,7 +160,8 @@ impl App {
                 layout_mode == LayoutMode::Vertical,
                 &spinner_frame,
                 view_mode,
-                &plugin_hints,
+                &plugin_views,
+                blink_on,
                 &self.state.keybindings,
                 update_available.as_ref(),
                 reload_status.as_ref(),
