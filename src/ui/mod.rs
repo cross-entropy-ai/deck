@@ -2,6 +2,7 @@ pub mod bridge;
 pub mod layout;
 mod menu;
 mod overlays;
+mod reload;
 mod settings;
 mod sidebar;
 mod text;
@@ -11,6 +12,7 @@ use crate::keybindings::Keybindings;
 use crate::state::{LayoutMode, ViewMode};
 
 pub use menu::draw_context_menu;
+pub use reload::{draw_reload_bar, reload_row_count};
 pub use settings::draw_settings_page;
 pub use sidebar::draw_sidebar;
 

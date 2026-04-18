@@ -95,6 +95,12 @@ impl App {
                 })
                 .collect();
 
+            let full = frame.area();
+            let reload_height = ui::reload_row_count(reload_status.as_ref(), full.width);
+            let [content_area, reload_area] =
+                Layout::vertical([Constraint::Min(1), Constraint::Length(reload_height)])
+                    .areas(full);
+
             let (sidebar_area, gap_area, main_area) = match layout_mode {
                 LayoutMode::Horizontal => {
                     let [s, g, m] = Layout::horizontal([
@@ -102,13 +108,13 @@ impl App {
                         Constraint::Length(1),
                         Constraint::Min(1),
                     ])
-                    .areas(frame.area());
+                    .areas(content_area);
                     (s, Some(g), m)
                 }
                 LayoutMode::Vertical => {
                     let [s, m] =
                         Layout::vertical([Constraint::Length(sidebar_height), Constraint::Min(1)])
-                            .areas(frame.area());
+                            .areas(content_area);
                     (s, None, m)
                 }
             };
@@ -164,8 +170,13 @@ impl App {
                 blink_on,
                 &self.state.keybindings,
                 update_available.as_ref(),
-                reload_status.as_ref(),
             );
+
+            if let Some(status) = reload_status.as_ref() {
+                if reload_area.height > 0 {
+                    ui::draw_reload_bar(frame, reload_area, status, theme);
+                }
+            }
 
             if let Some(gap) = gap_area {
                 let (sep_char, sep_fg) = if dragging_sep {
