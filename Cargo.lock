@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "deck"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "crossterm",
  "libc",
