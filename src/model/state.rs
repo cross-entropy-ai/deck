@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::PluginConfig;
 use crate::keybindings::Keybindings;
-use crate::layout::{card_height, context_menu_width, tab_col_ranges};
+use crate::layout::{card_height, context_menu_width, plugin_block_rows, tab_col_ranges, BANNER_MIN_WIDTH};
 use crate::update::{UpdateCheckMode, UpdateStatus};
 
 // --- Constants ---
@@ -419,6 +419,20 @@ impl AppState {
         }
     }
 
+    /// Height of the sidebar footer in rows, mirroring what `draw_sidebar`
+    /// allocates. Kept on AppState so mouse hit-testing doesn't drift
+    /// from the renderer when plugins or the update banner change it.
+    pub fn sidebar_footer_height(&self) -> u16 {
+        let b = if self.show_borders { 2u16 } else { 0 };
+        let content_width = match self.layout_mode {
+            LayoutMode::Horizontal => self.sidebar_width.saturating_sub(b),
+            LayoutMode::Vertical => self.term_width.saturating_sub(b),
+        };
+        let banner_visible =
+            self.update_available.is_some() && content_width >= BANNER_MIN_WIDTH;
+        3 + banner_visible as u16 + plugin_block_rows(self.plugins.len())
+    }
+
     /// Map a screen row to a filtered session index (horizontal/card mode).
     pub fn session_at_row(&self, row: u16) -> Option<usize> {
         let b = if self.show_borders { 1u16 } else { 0 };
@@ -427,7 +441,7 @@ impl AppState {
             LayoutMode::Vertical => self.effective_sidebar_height(),
         };
         let header_height = 3u16;
-        let footer_height = 3u16;
+        let footer_height = self.sidebar_footer_height();
         let sessions_top = b + header_height;
         let sessions_bottom = sidebar_h.saturating_sub(b + footer_height);
         if row < sessions_top || row >= sessions_bottom {

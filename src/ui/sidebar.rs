@@ -7,7 +7,9 @@ use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::keybindings::{Command, Keybindings};
-use crate::layout::{card_height, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR};
+use crate::layout::{
+    card_height, plugin_block_rows, BANNER_MIN_WIDTH, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR,
+};
 use crate::state::{FilterMode, ViewMode, FILTER_TABS};
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
@@ -19,20 +21,6 @@ use super::text::{
     shorten_dir, truncate,
 };
 use super::{PluginStatus, PluginView, SessionView};
-
-/// Minimum content width to allocate a banner row at all. The very last
-/// fallback just shows " upgrade" (8 cols).
-const BANNER_MIN_WIDTH: u16 = 8;
-
-/// Rows the plugin status block takes in the footer: title + one row
-/// per plugin + trailing separator. Zero when no plugins are configured
-/// so the sidebar keeps its original layout for users without any extensions.
-fn plugin_block_rows(plugins: &[PluginView]) -> u16 {
-    if plugins.is_empty() {
-        return 0;
-    }
-    plugins.len() as u16 + 2
-}
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_sidebar(
@@ -89,7 +77,7 @@ pub fn draw_sidebar(
     };
 
     let banner_visible = update_available.is_some() && content.width >= BANNER_MIN_WIDTH;
-    let plugin_rows = plugin_block_rows(plugins);
+    let plugin_rows = plugin_block_rows(plugins.len());
     let footer_height: u16 = 3 + banner_visible as u16 + plugin_rows;
 
     let [header_area, sessions_area, footer_area] = Layout::vertical([
@@ -840,23 +828,14 @@ fn draw_sidebar_tabs(
 mod tests {
     use super::*;
 
-    fn plugin_view(key: char, name: &str, status: PluginStatus) -> PluginView<'_> {
-        PluginView { key, name, status }
-    }
-
     #[test]
     fn plugin_block_rows_is_zero_without_plugins() {
-        assert_eq!(plugin_block_rows(&[]), 0);
+        assert_eq!(plugin_block_rows(0), 0);
     }
 
     #[test]
     fn plugin_block_rows_counts_title_and_separator() {
         // N plugins render as: title + N rows + trailing separator = N + 2.
-        let plugins = [
-            plugin_view('g', "GPU", PluginStatus::Inactive),
-            plugin_view('m', "System", PluginStatus::Background),
-            plugin_view('h', "Hello", PluginStatus::Foreground),
-        ];
-        assert_eq!(plugin_block_rows(&plugins), 5);
+        assert_eq!(plugin_block_rows(3), 5);
     }
 }

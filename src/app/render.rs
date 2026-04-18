@@ -97,9 +97,20 @@ impl App {
 
             let full = frame.area();
             let reload_height = ui::reload_row_count(reload_status.as_ref(), full.width);
-            let [content_area, reload_area] =
-                Layout::vertical([Constraint::Min(1), Constraint::Length(reload_height)])
-                    .areas(full);
+            // Paint the reload bar as an overlay after everything else,
+            // not as its own layout slot. Keeping the content area at
+            // full height means PTY sizing (see `AppState::pty_size`)
+            // and mouse routing stay stable when the bar pops in.
+            let reload_area = if reload_height > 0 {
+                Some(Rect {
+                    x: full.x,
+                    y: full.bottom().saturating_sub(reload_height),
+                    width: full.width,
+                    height: reload_height,
+                })
+            } else {
+                None
+            };
 
             let (sidebar_area, gap_area, main_area) = match layout_mode {
                 LayoutMode::Horizontal => {
@@ -108,13 +119,13 @@ impl App {
                         Constraint::Length(1),
                         Constraint::Min(1),
                     ])
-                    .areas(content_area);
+                    .areas(full);
                     (s, Some(g), m)
                 }
                 LayoutMode::Vertical => {
                     let [s, m] =
                         Layout::vertical([Constraint::Length(sidebar_height), Constraint::Min(1)])
-                            .areas(content_area);
+                            .areas(full);
                     (s, None, m)
                 }
             };
@@ -171,12 +182,6 @@ impl App {
                 &self.state.keybindings,
                 update_available.as_ref(),
             );
-
-            if let Some(status) = reload_status.as_ref() {
-                if reload_area.height > 0 {
-                    ui::draw_reload_bar(frame, reload_area, status, theme);
-                }
-            }
 
             if let Some(gap) = gap_area {
                 let (sep_char, sep_fg) = if dragging_sep {
@@ -321,6 +326,15 @@ impl App {
 
             if let Some(ref menu) = context_menu {
                 ui::draw_context_menu(frame, menu.x, menu.y, menu.selected, menu.items(), theme);
+            }
+
+            // Overlay the reload bar last so it sits on top of the sidebar
+            // footer, main pane, warning popup, and context menu. The
+            // underlying layouts keep their full area, so PTY sizing and
+            // mouse routing are unaffected by the bar's presence.
+            if let (Some(status), Some(area)) = (reload_status.as_ref(), reload_area) {
+                frame.render_widget(Clear, area);
+                ui::draw_reload_bar(frame, area, status, theme);
             }
         })?;
 
