@@ -18,6 +18,22 @@ pub const TAB_INNER_PAD: u16 = 1;
 /// Separator glyph rendered between tabs (width 1).
 pub const TAB_SEPARATOR: &str = "│";
 
+/// Minimum sidebar content width before the update banner renders at all.
+pub const BANNER_MIN_WIDTH: u16 = 8;
+
+/// Rows the plugin status block takes in the sidebar footer: title +
+/// one row per plugin + trailing separator. Zero when no plugins are
+/// configured so the sidebar keeps its original layout for users
+/// without any extensions. Shared so mouse hit-testing in
+/// `AppState::session_at_row` stays in sync with the sidebar renderer.
+pub const fn plugin_block_rows(count: usize) -> u16 {
+    if count == 0 {
+        0
+    } else {
+        count as u16 + 2
+    }
+}
+
 pub fn card_height(view_mode: ViewMode) -> usize {
     match view_mode {
         ViewMode::Expanded => 5,

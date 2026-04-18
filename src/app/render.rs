@@ -1,4 +1,5 @@
 use std::io;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -9,7 +10,7 @@ use ratatui::DefaultTerminal;
 use crate::bridge;
 use crate::state::{FocusMode, LayoutMode, MainView, SessionRow};
 use crate::theme::THEMES;
-use crate::ui::{self, SessionView, SettingsView};
+use crate::ui::{self, PluginStatus, PluginView, SessionView, SettingsView};
 use crate::update::UpdateCheckMode;
 
 use super::update::format_update_check_help;
@@ -94,6 +95,23 @@ impl App {
                 })
                 .collect();
 
+            let full = frame.area();
+            let reload_height = ui::reload_row_count(reload_status.as_ref(), full.width);
+            // Paint the reload bar as an overlay after everything else,
+            // not as its own layout slot. Keeping the content area at
+            // full height means PTY sizing (see `AppState::pty_size`)
+            // and mouse routing stay stable when the bar pops in.
+            let reload_area = if reload_height > 0 {
+                Some(Rect {
+                    x: full.x,
+                    y: full.bottom().saturating_sub(reload_height),
+                    width: full.width,
+                    height: reload_height,
+                })
+            } else {
+                None
+            };
+
             let (sidebar_area, gap_area, main_area) = match layout_mode {
                 LayoutMode::Horizontal => {
                     let [s, g, m] = Layout::horizontal([
@@ -101,23 +119,48 @@ impl App {
                         Constraint::Length(1),
                         Constraint::Min(1),
                     ])
-                    .areas(frame.area());
+                    .areas(full);
                     (s, Some(g), m)
                 }
                 LayoutMode::Vertical => {
                     let [s, m] =
                         Layout::vertical([Constraint::Length(sidebar_height), Constraint::Min(1)])
-                            .areas(frame.area());
+                            .areas(full);
                     (s, None, m)
                 }
             };
 
-            let plugin_hints: Vec<(char, &str)> = self
+            let plugin_views: Vec<PluginView> = self
                 .state
                 .plugins
                 .iter()
-                .map(|p| (p.key, p.name.as_str()))
+                .enumerate()
+                .map(|(i, p)| {
+                    let alive = self
+                        .plugin_instances
+                        .get(i)
+                        .and_then(|slot| slot.as_ref())
+                        .map(|inst| inst.alive)
+                        .unwrap_or(false);
+                    let status = match (alive, main_view == MainView::Plugin(i)) {
+                        (true, true) => PluginStatus::Foreground,
+                        (true, false) => PluginStatus::Background,
+                        (false, _) => PluginStatus::Inactive,
+                    };
+                    PluginView {
+                        key: p.key,
+                        name: p.name.as_str(),
+                        status,
+                    }
+                })
                 .collect();
+
+            // 1 Hz pulse for plugins running in the background — the main
+            // loop already redraws every ~16 ms so we don't need a tick.
+            let blink_on = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| (d.as_millis() / 500) % 2 == 0)
+                .unwrap_or(true);
 
             captured_banner_bounds = ui::draw_sidebar(
                 frame,
@@ -134,10 +177,10 @@ impl App {
                 layout_mode == LayoutMode::Vertical,
                 &spinner_frame,
                 view_mode,
-                &plugin_hints,
+                &plugin_views,
+                blink_on,
                 &self.state.keybindings,
                 update_available.as_ref(),
-                reload_status.as_ref(),
             );
 
             if let Some(gap) = gap_area {
@@ -283,6 +326,15 @@ impl App {
 
             if let Some(ref menu) = context_menu {
                 ui::draw_context_menu(frame, menu.x, menu.y, menu.selected, menu.items(), theme);
+            }
+
+            // Overlay the reload bar last so it sits on top of the sidebar
+            // footer, main pane, warning popup, and context menu. The
+            // underlying layouts keep their full area, so PTY sizing and
+            // mouse routing are unaffected by the bar's presence.
+            if let (Some(status), Some(area)) = (reload_status.as_ref(), reload_area) {
+                frame.render_widget(Clear, area);
+                ui::draw_reload_bar(frame, area, status, theme);
             }
         })?;
 

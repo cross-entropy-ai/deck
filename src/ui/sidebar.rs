@@ -7,8 +7,10 @@ use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::keybindings::{Command, Keybindings};
-use crate::layout::{card_height, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR};
-use crate::state::{FilterMode, ReloadStatus, ViewMode, FILTER_TABS};
+use crate::layout::{
+    card_height, plugin_block_rows, BANNER_MIN_WIDTH, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR,
+};
+use crate::state::{FilterMode, ViewMode, FILTER_TABS};
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
 
@@ -18,68 +20,7 @@ use super::text::{
     format_idle_badge, idle_color, pack_hint_lines, pad_line, primary_key_string, scroll_offset,
     shorten_dir, truncate,
 };
-use super::SessionView;
-
-/// Minimum content width to allocate a banner row at all. The very last
-/// fallback just shows " upgrade" (8 cols).
-const BANNER_MIN_WIDTH: u16 = 8;
-
-const RELOAD_PREFIX: &str = " reload: ";
-const RELOAD_CONT_INDENT: &str = "   ";
-/// Cap on wrapped rows for a reload error so the banner can't swallow
-/// the sessions list entirely on short terminals.
-const RELOAD_MAX_ROWS: usize = 4;
-
-/// Greedy char-width wrap — serde error messages don't have useful word
-/// boundaries, so a straight fill-the-row approach is fine.
-fn wrap_width(s: &str, width: usize) -> Vec<String> {
-    if width == 0 {
-        return Vec::new();
-    }
-    let mut out: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    let mut cur_w = 0usize;
-    for ch in s.chars() {
-        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-        if cur_w + cw > width && !cur.is_empty() {
-            out.push(std::mem::take(&mut cur));
-            cur_w = 0;
-        }
-        cur.push(ch);
-        cur_w += cw;
-    }
-    if !cur.is_empty() {
-        out.push(cur);
-    }
-    out
-}
-
-/// Row count the reload banner needs in the footer, including the
-/// prefix on the first row. Caller uses this to size `footer_area`.
-fn reload_row_count(status: Option<&ReloadStatus>, width: u16) -> u16 {
-    let Some(status) = status else { return 0 };
-    match status {
-        ReloadStatus::Ok => 1,
-        ReloadStatus::Err(e) => {
-            let w = width as usize;
-            let first = w.saturating_sub(RELOAD_PREFIX.width());
-            let cont = w.saturating_sub(RELOAD_CONT_INDENT.width());
-            if first == 0 {
-                return 1;
-            }
-            let mut lines = wrap_width(e, first);
-            if lines.len() > 1 && cont > 0 && cont != first {
-                // Re-wrap the tail with the narrower continuation width.
-                let head = lines.remove(0);
-                let tail: String = lines.concat();
-                let mut rewrapped = vec![head];
-                rewrapped.extend(wrap_width(&tail, cont));
-                lines = rewrapped;
-            }
-            lines.len().clamp(1, RELOAD_MAX_ROWS) as u16
-        }
-    }
-}
+use super::{PluginStatus, PluginView, SessionView};
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_sidebar(
@@ -97,10 +38,10 @@ pub fn draw_sidebar(
     tabs_mode: bool,
     spinner_frame: &str,
     view_mode: ViewMode,
-    plugins: &[(char, &str)],
+    plugins: &[PluginView],
+    blink_on: bool,
     keybindings: &Keybindings,
     update_available: Option<&UpdateStatus>,
-    reload_status: Option<&ReloadStatus>,
 ) -> Option<Rect> {
     if tabs_mode {
         return draw_sidebar_tabs(
@@ -136,8 +77,8 @@ pub fn draw_sidebar(
     };
 
     let banner_visible = update_available.is_some() && content.width >= BANNER_MIN_WIDTH;
-    let status_rows = reload_row_count(reload_status, content.width);
-    let footer_height: u16 = 3 + banner_visible as u16 + status_rows;
+    let plugin_rows = plugin_block_rows(plugins.len());
+    let footer_height: u16 = 3 + banner_visible as u16 + plugin_rows;
 
     let [header_area, sessions_area, footer_area] = Layout::vertical([
         Constraint::Length(3),
@@ -172,13 +113,13 @@ pub fn draw_sidebar(
         footer_area.width,
         show_help,
         plugins,
+        blink_on,
         keybindings,
         if banner_visible {
             update_available
         } else {
             None
         },
-        reload_status,
     )
 }
 
@@ -475,6 +416,80 @@ fn draw_sessions_compact(
     );
 }
 
+fn plugin_dot_color(status: PluginStatus, blink_on: bool, theme: &Theme) -> ratatui::style::Color {
+    match status {
+        PluginStatus::Foreground => theme.green,
+        // Alternates at 1 Hz between yellow and subtle so the pulse is
+        // visible against the sidebar bg without changing the glyph.
+        PluginStatus::Background => {
+            if blink_on {
+                theme.yellow
+            } else {
+                theme.subtle
+            }
+        }
+        PluginStatus::Inactive => theme.dim,
+    }
+}
+
+fn plugin_dot_glyph(status: PluginStatus) -> &'static str {
+    match status {
+        PluginStatus::Inactive => "○",
+        _ => "●",
+    }
+}
+
+fn append_plugin_rows(
+    rows: &mut Vec<Line<'static>>,
+    plugins: &[PluginView],
+    blink_on: bool,
+    width: usize,
+    theme: &Theme,
+) {
+    if plugins.is_empty() {
+        return;
+    }
+
+    rows.push(Line::from(vec![
+        Span::raw(" "),
+        Span::styled("\u{eb5c}", Style::default().fg(theme.accent)),
+        Span::styled(
+            " Plugins",
+            Style::default().fg(theme.muted).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    for p in plugins {
+        let dot_color = plugin_dot_color(p.status, blink_on, theme);
+        let key_color = match p.status {
+            PluginStatus::Inactive => theme.dim,
+            _ => theme.muted,
+        };
+        let name_color = match p.status {
+            PluginStatus::Foreground => theme.text,
+            PluginStatus::Background => theme.secondary,
+            PluginStatus::Inactive => theme.muted,
+        };
+        let name_style = match p.status {
+            PluginStatus::Foreground => Style::default().fg(name_color).add_modifier(Modifier::BOLD),
+            _ => Style::default().fg(name_color),
+        };
+        rows.push(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(plugin_dot_glyph(p.status), Style::default().fg(dot_color)),
+            Span::raw(" "),
+            Span::styled(p.key.to_string(), Style::default().fg(key_color)),
+            Span::raw("  "),
+            Span::styled(p.name.to_string(), name_style),
+        ]));
+    }
+
+    rows.push(Line::from(Span::styled(
+        "─".repeat(width),
+        Style::default().fg(theme.dim),
+    )));
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_footer(
     frame: &mut Frame,
@@ -483,10 +498,10 @@ fn draw_footer(
     theme: &Theme,
     width: u16,
     show_help: bool,
-    plugins: &[(char, &str)],
+    plugins: &[PluginView],
+    blink_on: bool,
     keybindings: &Keybindings,
     update_available: Option<&UpdateStatus>,
-    reload_status: Option<&ReloadStatus>,
 ) -> Option<Rect> {
     let w = width as usize;
     let sep = Line::from(Span::styled("─".repeat(w), Style::default().fg(theme.dim)));
@@ -525,9 +540,6 @@ fn draw_footer(
                 "quit".into(),
             ),
         ];
-        for &(key, name) in plugins {
-            entries.push((key.to_string(), name.to_string()));
-        }
         entries.retain(|(k, _)| !k.is_empty());
         pack_hint_lines(&entries, w, theme)
     } else {
@@ -546,47 +558,7 @@ fn draw_footer(
     let mut rows: Vec<Line> = Vec::with_capacity(5);
     rows.push(sep);
 
-    if let Some(status) = reload_status {
-        let (color, body) = match status {
-            ReloadStatus::Ok => (theme.green, "applied".to_string()),
-            ReloadStatus::Err(e) => (theme.pink, e.clone()),
-        };
-        let first_w = w.saturating_sub(RELOAD_PREFIX.width());
-        let cont_w = w.saturating_sub(RELOAD_CONT_INDENT.width());
-        let mut wrapped = wrap_width(&body, first_w.max(1));
-        if wrapped.len() > 1 && cont_w > 0 && cont_w != first_w {
-            let head = wrapped.remove(0);
-            let tail: String = wrapped.concat();
-            let mut rewrapped = vec![head];
-            rewrapped.extend(wrap_width(&tail, cont_w));
-            wrapped = rewrapped;
-        }
-        // Truncate any overflow so the last rendered row shows an ellipsis
-        // instead of silently dropping bytes off the end of the message.
-        if wrapped.len() > RELOAD_MAX_ROWS {
-            wrapped.truncate(RELOAD_MAX_ROWS);
-            if let Some(last) = wrapped.last_mut() {
-                let room = cont_w.max(1).saturating_sub(1);
-                *last = format!("{}…", truncate(last, room));
-            }
-        }
-        for (i, chunk) in wrapped.into_iter().enumerate() {
-            if i == 0 {
-                rows.push(Line::from(vec![
-                    Span::styled(
-                        RELOAD_PREFIX,
-                        Style::default().fg(color).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(chunk, Style::default().fg(color)),
-                ]));
-            } else {
-                rows.push(Line::from(vec![
-                    Span::raw(RELOAD_CONT_INDENT),
-                    Span::styled(chunk, Style::default().fg(color)),
-                ]));
-            }
-        }
-    }
+    append_plugin_rows(&mut rows, plugins, blink_on, w, theme);
 
     let mut upgrade_bounds: Option<Rect> = None;
     if let Some(status) = update_available {
@@ -857,51 +829,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wrap_width_zero_returns_empty() {
-        assert!(wrap_width("hello", 0).is_empty());
+    fn plugin_block_rows_is_zero_without_plugins() {
+        assert_eq!(plugin_block_rows(0), 0);
     }
 
     #[test]
-    fn wrap_width_fits_in_single_chunk() {
-        assert_eq!(wrap_width("hi", 10), vec!["hi".to_string()]);
-    }
-
-    #[test]
-    fn wrap_width_splits_on_width_boundary() {
-        // 16 chars, width 5 → 4 chunks of <=5.
-        let chunks = wrap_width("abcdefghijklmnop", 5);
-        assert_eq!(chunks.len(), 4);
-        for (i, c) in chunks.iter().enumerate() {
-            let expected_len = if i < 3 { 5 } else { 1 };
-            assert_eq!(c.chars().count(), expected_len, "chunk {i}: {c:?}");
-        }
-        assert_eq!(chunks.concat(), "abcdefghijklmnop");
-    }
-
-    #[test]
-    fn reload_row_count_ok_is_one_row() {
-        assert_eq!(reload_row_count(Some(&ReloadStatus::Ok), 20), 1);
-    }
-
-    #[test]
-    fn reload_row_count_none_is_zero_rows() {
-        assert_eq!(reload_row_count(None, 20), 0);
-    }
-
-    #[test]
-    fn reload_row_count_err_grows_with_length_and_caps() {
-        let short = ReloadStatus::Err("boom".into());
-        assert_eq!(reload_row_count(Some(&short), 30), 1);
-
-        // Long message wrapped at width 20 should produce multiple rows,
-        // but never exceed RELOAD_MAX_ROWS.
-        let long = ReloadStatus::Err("x".repeat(200));
-        let rows = reload_row_count(Some(&long), 20);
-        assert!(rows >= 2, "expected multi-row wrap, got {rows}");
-        assert!(
-            rows <= RELOAD_MAX_ROWS as u16,
-            "row count {rows} exceeds cap {}",
-            RELOAD_MAX_ROWS
-        );
+    fn plugin_block_rows_counts_title_and_separator() {
+        // N plugins render as: title + N rows + trailing separator = N + 2.
+        assert_eq!(plugin_block_rows(3), 5);
     }
 }
