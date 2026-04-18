@@ -564,6 +564,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.quit = true;
         }
 
+        // Handled entirely in dispatch (needs App-level access to raw
+        // keybindings, plugin instances, PTY, etc.).
+        Action::ReloadConfig => {}
+
         Action::None => {}
     }
 

@@ -82,6 +82,7 @@ fn command_to_action(cmd: Command) -> Action {
         Command::Quit => Action::Quit,
         Command::ToggleFocus => Action::ToggleFocus,
         Command::TriggerUpgrade => Action::TriggerUpgrade,
+        Command::ReloadConfig => Action::ReloadConfig,
     }
 }
 

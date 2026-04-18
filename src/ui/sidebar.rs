@@ -8,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::keybindings::{Command, Keybindings};
 use crate::layout::{card_height, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR};
-use crate::state::{FilterMode, ViewMode, FILTER_TABS};
+use crate::state::{FilterMode, ReloadStatus, ViewMode, FILTER_TABS};
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
 
@@ -23,6 +23,63 @@ use super::SessionView;
 /// Minimum content width to allocate a banner row at all. The very last
 /// fallback just shows " upgrade" (8 cols).
 const BANNER_MIN_WIDTH: u16 = 8;
+
+const RELOAD_PREFIX: &str = " reload: ";
+const RELOAD_CONT_INDENT: &str = "   ";
+/// Cap on wrapped rows for a reload error so the banner can't swallow
+/// the sessions list entirely on short terminals.
+const RELOAD_MAX_ROWS: usize = 4;
+
+/// Greedy char-width wrap — serde error messages don't have useful word
+/// boundaries, so a straight fill-the-row approach is fine.
+fn wrap_width(s: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_w = 0usize;
+    for ch in s.chars() {
+        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if cur_w + cw > width && !cur.is_empty() {
+            out.push(std::mem::take(&mut cur));
+            cur_w = 0;
+        }
+        cur.push(ch);
+        cur_w += cw;
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Row count the reload banner needs in the footer, including the
+/// prefix on the first row. Caller uses this to size `footer_area`.
+fn reload_row_count(status: Option<&ReloadStatus>, width: u16) -> u16 {
+    let Some(status) = status else { return 0 };
+    match status {
+        ReloadStatus::Ok => 1,
+        ReloadStatus::Err(e) => {
+            let w = width as usize;
+            let first = w.saturating_sub(RELOAD_PREFIX.width());
+            let cont = w.saturating_sub(RELOAD_CONT_INDENT.width());
+            if first == 0 {
+                return 1;
+            }
+            let mut lines = wrap_width(e, first);
+            if lines.len() > 1 && cont > 0 && cont != first {
+                // Re-wrap the tail with the narrower continuation width.
+                let head = lines.remove(0);
+                let tail: String = lines.concat();
+                let mut rewrapped = vec![head];
+                rewrapped.extend(wrap_width(&tail, cont));
+                lines = rewrapped;
+            }
+            lines.len().clamp(1, RELOAD_MAX_ROWS) as u16
+        }
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_sidebar(
@@ -43,6 +100,7 @@ pub fn draw_sidebar(
     plugins: &[(char, &str)],
     keybindings: &Keybindings,
     update_available: Option<&UpdateStatus>,
+    reload_status: Option<&ReloadStatus>,
 ) -> Option<Rect> {
     if tabs_mode {
         return draw_sidebar_tabs(
@@ -78,7 +136,8 @@ pub fn draw_sidebar(
     };
 
     let banner_visible = update_available.is_some() && content.width >= BANNER_MIN_WIDTH;
-    let footer_height: u16 = if banner_visible { 4 } else { 3 };
+    let status_rows = reload_row_count(reload_status, content.width);
+    let footer_height: u16 = 3 + banner_visible as u16 + status_rows;
 
     let [header_area, sessions_area, footer_area] = Layout::vertical([
         Constraint::Length(3),
@@ -119,6 +178,7 @@ pub fn draw_sidebar(
         } else {
             None
         },
+        reload_status,
     )
 }
 
@@ -426,6 +486,7 @@ fn draw_footer(
     plugins: &[(char, &str)],
     keybindings: &Keybindings,
     update_available: Option<&UpdateStatus>,
+    reload_status: Option<&ReloadStatus>,
 ) -> Option<Rect> {
     let w = width as usize;
     let sep = Line::from(Span::styled("─".repeat(w), Style::default().fg(theme.dim)));
@@ -450,6 +511,10 @@ fn draw_footer(
             (
                 primary_key_string(keybindings, Command::OpenThemePicker),
                 "theme".into(),
+            ),
+            (
+                primary_key_string(keybindings, Command::ReloadConfig),
+                "reload".into(),
             ),
             (
                 primary_key_string(keybindings, Command::ToggleHelp),
@@ -478,8 +543,50 @@ fn draw_footer(
         )])]
     };
 
-    let mut rows: Vec<Line> = Vec::with_capacity(4);
+    let mut rows: Vec<Line> = Vec::with_capacity(5);
     rows.push(sep);
+
+    if let Some(status) = reload_status {
+        let (color, body) = match status {
+            ReloadStatus::Ok => (theme.green, "applied".to_string()),
+            ReloadStatus::Err(e) => (theme.pink, e.clone()),
+        };
+        let first_w = w.saturating_sub(RELOAD_PREFIX.width());
+        let cont_w = w.saturating_sub(RELOAD_CONT_INDENT.width());
+        let mut wrapped = wrap_width(&body, first_w.max(1));
+        if wrapped.len() > 1 && cont_w > 0 && cont_w != first_w {
+            let head = wrapped.remove(0);
+            let tail: String = wrapped.concat();
+            let mut rewrapped = vec![head];
+            rewrapped.extend(wrap_width(&tail, cont_w));
+            wrapped = rewrapped;
+        }
+        // Truncate any overflow so the last rendered row shows an ellipsis
+        // instead of silently dropping bytes off the end of the message.
+        if wrapped.len() > RELOAD_MAX_ROWS {
+            wrapped.truncate(RELOAD_MAX_ROWS);
+            if let Some(last) = wrapped.last_mut() {
+                let room = cont_w.max(1).saturating_sub(1);
+                *last = format!("{}…", truncate(last, room));
+            }
+        }
+        for (i, chunk) in wrapped.into_iter().enumerate() {
+            if i == 0 {
+                rows.push(Line::from(vec![
+                    Span::styled(
+                        RELOAD_PREFIX,
+                        Style::default().fg(color).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(chunk, Style::default().fg(color)),
+                ]));
+            } else {
+                rows.push(Line::from(vec![
+                    Span::raw(RELOAD_CONT_INDENT),
+                    Span::styled(chunk, Style::default().fg(color)),
+                ]));
+            }
+        }
+    }
 
     let mut upgrade_bounds: Option<Rect> = None;
     if let Some(status) = update_available {
@@ -743,4 +850,58 @@ fn draw_sidebar_tabs(
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wrap_width_zero_returns_empty() {
+        assert!(wrap_width("hello", 0).is_empty());
+    }
+
+    #[test]
+    fn wrap_width_fits_in_single_chunk() {
+        assert_eq!(wrap_width("hi", 10), vec!["hi".to_string()]);
+    }
+
+    #[test]
+    fn wrap_width_splits_on_width_boundary() {
+        // 16 chars, width 5 → 4 chunks of <=5.
+        let chunks = wrap_width("abcdefghijklmnop", 5);
+        assert_eq!(chunks.len(), 4);
+        for (i, c) in chunks.iter().enumerate() {
+            let expected_len = if i < 3 { 5 } else { 1 };
+            assert_eq!(c.chars().count(), expected_len, "chunk {i}: {c:?}");
+        }
+        assert_eq!(chunks.concat(), "abcdefghijklmnop");
+    }
+
+    #[test]
+    fn reload_row_count_ok_is_one_row() {
+        assert_eq!(reload_row_count(Some(&ReloadStatus::Ok), 20), 1);
+    }
+
+    #[test]
+    fn reload_row_count_none_is_zero_rows() {
+        assert_eq!(reload_row_count(None, 20), 0);
+    }
+
+    #[test]
+    fn reload_row_count_err_grows_with_length_and_caps() {
+        let short = ReloadStatus::Err("boom".into());
+        assert_eq!(reload_row_count(Some(&short), 30), 1);
+
+        // Long message wrapped at width 20 should produce multiple rows,
+        // but never exceed RELOAD_MAX_ROWS.
+        let long = ReloadStatus::Err("x".repeat(200));
+        let rows = reload_row_count(Some(&long), 20);
+        assert!(rows >= 2, "expected multi-row wrap, got {rows}");
+        assert!(
+            rows <= RELOAD_MAX_ROWS as u16,
+            "row count {rows} exceeds cap {}",
+            RELOAD_MAX_ROWS
+        );
+    }
 }

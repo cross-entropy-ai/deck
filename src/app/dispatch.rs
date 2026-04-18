@@ -1,5 +1,7 @@
 use crate::action::{self, Action};
-use crate::state::{FocusMode, MainView, SideEffect};
+use crate::config::Config;
+use crate::keybindings::{self, Keybindings};
+use crate::state::{FocusMode, MainView, ReloadStatus, SideEffect, SIDEBAR_MAX, SIDEBAR_MIN};
 use crate::theme::THEMES;
 use crate::tmux;
 use crate::update;
@@ -139,6 +141,10 @@ impl App {
                 self.state.focus_mode = FocusMode::Main;
                 false
             }
+            Action::ReloadConfig => {
+                self.reload_config();
+                false
+            }
             _ => {
                 let fx = action::apply_action(&mut self.state, action);
                 self.execute_side_effects(&fx);
@@ -211,6 +217,70 @@ impl App {
         if fx.refresh_sessions {
             self.request_refresh();
         }
+    }
+
+    /// Reload `~/.config/deck/config.json` and apply it in place. On
+    /// failure the previous in-memory state is left untouched and the
+    /// error string is stored in `state.reload_error` for the sidebar
+    /// to display. On success, any plugin instances are killed (PTYs
+    /// dropped) and must be re-launched by the user.
+    fn reload_config(&mut self) {
+        let mut cfg = match Config::try_load() {
+            Ok(c) => c,
+            Err(e) => {
+                self.state.reload_status = Some(ReloadStatus::Err(e));
+                self.state.reload_status_at = Some(std::time::Instant::now());
+                return;
+            }
+        };
+
+        // Mirror startup: backfill any keybindings the user hasn't set.
+        keybindings::ensure_complete(&mut cfg.keybindings);
+
+        let (compiled, kb_warnings) = Keybindings::from_config(&cfg.keybindings, &cfg.plugins);
+        for warning in &kb_warnings {
+            eprintln!("deck: {}", warning);
+        }
+
+        // Kill any running plugin PTYs. Dropping the PluginInstance drops
+        // its Pty, which lets portable-pty reap the child process.
+        self.plugin_instances.clear();
+        self.plugin_instances = (0..cfg.plugins.len()).map(|_| None).collect();
+        if matches!(self.state.main_view, MainView::Plugin(_)) {
+            self.state.main_view = MainView::Terminal;
+            self.state.focus_mode = FocusMode::Sidebar;
+        }
+
+        let new_theme_index = THEMES
+            .iter()
+            .position(|t| t.name == cfg.theme)
+            .unwrap_or(0);
+        let theme_changed = new_theme_index != self.state.theme_index;
+
+        self.state.theme_index = new_theme_index;
+        self.state.layout_mode = cfg.layout;
+        self.state.show_borders = cfg.show_borders;
+        self.state.view_mode = cfg.view_mode;
+        self.state.sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+        self.state.sidebar_height = cfg.sidebar_height;
+        self.state.exclude_patterns = cfg.exclude_patterns;
+        self.state.plugins = cfg.plugins;
+        self.state.keybindings = compiled;
+        self.state.update_check_mode = cfg.update_check;
+
+        // Reset sub-UIs whose indices may no longer be valid.
+        self.state.theme_picker_selected = new_theme_index;
+        self.state.exclude_editor = None;
+
+        self.raw_keybindings = cfg.keybindings;
+        self.state.reload_status = Some(ReloadStatus::Ok);
+        self.state.reload_status_at = Some(std::time::Instant::now());
+
+        self.resize_pty();
+        if theme_changed {
+            tmux::apply_theme(&THEMES[self.state.theme_index]);
+        }
+        self.request_refresh();
     }
 
     fn create_new_session(&mut self) {

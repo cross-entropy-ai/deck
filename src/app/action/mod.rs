@@ -49,6 +49,7 @@ pub enum Action {
     ToggleUpdateCheck,
     TriggerUpgrade,
     AbortUpgrade,
+    ReloadConfig,
 
     OpenExcludeEditor,
     CloseExcludeEditor,
