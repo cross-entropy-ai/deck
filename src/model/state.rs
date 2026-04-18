@@ -255,6 +255,32 @@ pub struct AppState {
     /// Column range of the clickable "upgrade" span in the footer banner,
     /// captured during render for mouse hit-testing. (y, x_start, x_end).
     pub banner_upgrade_bounds: Option<Rect>,
+
+    /// Result of the most recent manual config reload. Rendered in the
+    /// sidebar footer and auto-cleared by the main loop after a short
+    /// TTL — see `RELOAD_STATUS_OK_TTL` / `RELOAD_STATUS_ERR_TTL`.
+    pub reload_status: Option<ReloadStatus>,
+    pub reload_status_at: Option<Instant>,
+}
+
+/// Auto-expiry windows for the sidebar reload banner. Success fades
+/// fast; errors hang around long enough to read a parse message.
+pub const RELOAD_STATUS_OK_TTL: std::time::Duration = std::time::Duration::from_secs(2);
+pub const RELOAD_STATUS_ERR_TTL: std::time::Duration = std::time::Duration::from_secs(8);
+
+#[derive(Debug, Clone)]
+pub enum ReloadStatus {
+    Ok,
+    Err(String),
+}
+
+impl ReloadStatus {
+    pub fn ttl(&self) -> std::time::Duration {
+        match self {
+            ReloadStatus::Ok => RELOAD_STATUS_OK_TTL,
+            ReloadStatus::Err(_) => RELOAD_STATUS_ERR_TTL,
+        }
+    }
 }
 
 impl AppState {
@@ -310,6 +336,19 @@ impl AppState {
             update_available: None,
             update_last_checked_secs: None,
             banner_upgrade_bounds: None,
+            reload_status: None,
+            reload_status_at: None,
+        }
+    }
+
+    /// Drop the reload banner once its per-variant TTL has elapsed.
+    /// Called from the main loop so rendering stays side-effect-free.
+    pub fn tick_reload_status(&mut self, now: Instant) {
+        if let (Some(status), Some(shown_at)) = (&self.reload_status, self.reload_status_at) {
+            if now.saturating_duration_since(shown_at) >= status.ttl() {
+                self.reload_status = None;
+                self.reload_status_at = None;
+            }
         }
     }
 

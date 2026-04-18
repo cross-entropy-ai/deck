@@ -73,6 +73,7 @@ impl App {
             update_check_help,
         };
         let update_available = s.update_available.clone();
+        let reload_status = s.reload_status.clone();
         let hover_sep = s.hover_separator;
         let dragging_sep = s.dragging_separator;
 
@@ -136,6 +137,7 @@ impl App {
                 &plugin_hints,
                 &self.state.keybindings,
                 update_available.as_ref(),
+                reload_status.as_ref(),
             );
 
             if let Some(gap) = gap_area {

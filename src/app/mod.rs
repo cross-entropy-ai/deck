@@ -183,6 +183,8 @@ impl App {
                 self.state.update_available = None;
             }
 
+            self.state.tick_reload_status(Instant::now());
+
             self.render(terminal)?;
 
             if event::poll(Duration::from_millis(POLL_MS))? {

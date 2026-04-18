@@ -59,6 +59,7 @@ pub enum Command {
     Quit,
     ToggleFocus,
     TriggerUpgrade,
+    ReloadConfig,
 }
 
 impl Command {
@@ -80,6 +81,7 @@ impl Command {
         Command::Quit,
         Command::ToggleFocus,
         Command::TriggerUpgrade,
+        Command::ReloadConfig,
     ];
 
     pub fn name(self) -> &'static str {
@@ -101,6 +103,7 @@ impl Command {
             Command::Quit => "quit",
             Command::ToggleFocus => "toggle_focus",
             Command::TriggerUpgrade => "trigger_upgrade",
+            Command::ReloadConfig => "reload_config",
         }
     }
 
@@ -123,6 +126,7 @@ impl Command {
             Command::Quit => "quit",
             Command::ToggleFocus => "toggle focus",
             Command::TriggerUpgrade => "install update",
+            Command::ReloadConfig => "reload config",
         }
     }
 
@@ -171,6 +175,9 @@ impl Command {
             }
             Command::TriggerUpgrade => {
                 vec![KeyBinding::new(KeyCode::Char('u'), KeyModifiers::NONE)]
+            }
+            Command::ReloadConfig => {
+                vec![KeyBinding::new(KeyCode::Char('r'), KeyModifiers::NONE)]
             }
         }
     }
@@ -775,6 +782,31 @@ mod tests {
         assert_eq!(
             Command::from_name("trigger_upgrade"),
             Some(Command::TriggerUpgrade)
+        );
+    }
+
+    #[test]
+    fn reload_config_default_key_is_r() {
+        let kb = Keybindings::default();
+        assert_eq!(
+            kb.lookup(&KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)),
+            Some(Command::ReloadConfig)
+        );
+    }
+
+    #[test]
+    fn reload_config_is_not_global() {
+        // Reload must only fire when the sidebar is focused; `is_global`
+        // would bypass that gate in `key_to_action`.
+        assert!(!Command::ReloadConfig.is_global());
+    }
+
+    #[test]
+    fn reload_config_appears_in_all() {
+        assert!(Command::ALL.contains(&Command::ReloadConfig));
+        assert_eq!(
+            Command::from_name("reload_config"),
+            Some(Command::ReloadConfig)
         );
     }
 

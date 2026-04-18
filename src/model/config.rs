@@ -119,6 +119,27 @@ impl Config {
         config
     }
 
+    /// Strict loader used by the manual-reload path. Unlike `load()` this
+    /// surfaces parse errors instead of silently falling back to defaults,
+    /// so the caller can keep the previous in-memory state on failure.
+    /// A missing file is treated as success with defaults.
+    pub fn try_load() -> Result<Self, String> {
+        Self::try_load_from(&config_path())
+    }
+
+    fn try_load_from(path: &std::path::Path) -> Result<Self, String> {
+        // Keep messages compact — the sidebar footer is narrow and users
+        // already know which file they just edited. Serde's own error
+        // format carries the useful line/column info.
+        match fs::read_to_string(path) {
+            Ok(content) => {
+                serde_json::from_str(&content).map_err(|e| format!("parse: {}", e))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
+            Err(e) => Err(format!("read: {}", e)),
+        }
+    }
+
     pub fn to_json(&self) -> String {
         let mut out = serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string());
         out.push('\n');
@@ -462,6 +483,43 @@ mod tests {
         };
         let roundtrip: Config = serde_json::from_str(&config.to_json()).unwrap();
         assert_eq!(roundtrip.update_check, UpdateCheckMode::Disabled);
+    }
+
+    #[test]
+    fn try_load_from_missing_path_returns_defaults() {
+        let path = std::env::temp_dir().join("deck-try-load-missing.json");
+        let _ = fs::remove_file(&path);
+        let cfg = Config::try_load_from(&path).expect("missing file is not an error");
+        assert_eq!(cfg.theme, Config::default().theme);
+    }
+
+    #[test]
+    fn try_load_from_invalid_json_returns_err() {
+        let path = std::env::temp_dir().join("deck-try-load-bad.json");
+        fs::write(&path, "{ this is not json").unwrap();
+        let err = Config::try_load_from(&path).unwrap_err();
+        assert!(err.starts_with("parse:"), "expected parse error, got: {err}");
+        // Path must not leak into the message — footer is too narrow.
+        assert!(
+            !err.contains(path.to_str().unwrap()),
+            "error should omit the file path: {err}"
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn try_load_from_valid_json_round_trips() {
+        let path = std::env::temp_dir().join("deck-try-load-ok.json");
+        let original = Config {
+            theme: "Nord".to_string(),
+            sidebar_width: 42,
+            ..Config::default()
+        };
+        fs::write(&path, original.to_json()).unwrap();
+        let loaded = Config::try_load_from(&path).unwrap();
+        assert_eq!(loaded.theme, "Nord");
+        assert_eq!(loaded.sidebar_width, 42);
+        let _ = fs::remove_file(&path);
     }
 
     #[test]
