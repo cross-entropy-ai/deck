@@ -1,4 +1,5 @@
 use super::{format_git_status, format_idle_badge, truncate};
+use crate::state::SessionStatus;
 use crate::ui::SessionView;
 
 fn session_view<'a>(
@@ -19,6 +20,8 @@ fn session_view<'a>(
         modified,
         untracked,
         idle_seconds: 0,
+        status: SessionStatus::default(),
+        is_current: false,
     }
 }
 

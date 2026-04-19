@@ -7,6 +7,8 @@ fn make_session(name: &str) -> SessionRow {
         branch: "main".to_string(),
         ahead: 0,
         behind: 0,
+        status: SessionStatus::default(),
+        status_event_ts_ms: None,
         staged: 0,
         modified: 0,
         untracked: 0,
@@ -64,4 +66,41 @@ fn vertical_tab_hit_testing_only_uses_tab_row() {
 
     assert_eq!(state.session_at_col(2, 1), Some(0));
     assert_eq!(state.session_at_col(2, 2), None);
+}
+
+#[test]
+fn effective_status_downgrades_acked_waiting_to_idle() {
+    let mut state = make_state(LayoutMode::Horizontal, true, 120, 40);
+    state.sessions[0].status = SessionStatus::Waiting;
+    state.sessions[0].status_event_ts_ms = Some(1000);
+    state.acked_ts_ms.insert("alpha".to_string(), 2000);
+
+    assert_eq!(state.effective_status(&state.sessions[0]), SessionStatus::Idle);
+}
+
+#[test]
+fn effective_status_keeps_waiting_when_event_newer_than_ack() {
+    let mut state = make_state(LayoutMode::Horizontal, true, 120, 40);
+    state.sessions[0].status = SessionStatus::Waiting;
+    state.sessions[0].status_event_ts_ms = Some(2000);
+    state.acked_ts_ms.insert("alpha".to_string(), 1000);
+
+    assert_eq!(
+        state.effective_status(&state.sessions[0]),
+        SessionStatus::Waiting
+    );
+}
+
+#[test]
+fn effective_status_passes_non_waiting_through_unchanged() {
+    let mut state = make_state(LayoutMode::Horizontal, true, 120, 40);
+    state.sessions[0].status = SessionStatus::Working;
+    // Even with a stale ack that would suppress Waiting, Working is
+    // untouched — the override only applies to Waiting.
+    state.acked_ts_ms.insert("alpha".to_string(), u64::MAX);
+
+    assert_eq!(
+        state.effective_status(&state.sessions[0]),
+        SessionStatus::Working
+    );
 }

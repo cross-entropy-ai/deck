@@ -18,9 +18,10 @@ use super::overlays::{draw_confirm_kill, draw_help, draw_rename_input};
 use super::text::{
     build_status_spans, build_tab_status, format_activity_compact, format_git_status,
     format_idle_badge, idle_color, pack_hint_lines, pad_line, primary_key_string, scroll_offset,
-    shorten_dir, truncate,
+    shorten_dir, status_color, status_icon, status_icon_compact, truncate,
 };
 use super::{PluginStatus, PluginView, SessionView};
+use crate::state::SessionStatus;
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_sidebar(
@@ -52,6 +53,7 @@ pub fn draw_sidebar(
             theme,
             show_borders,
             spinner_frame,
+            blink_on,
             keybindings,
             update_available,
         );
@@ -100,6 +102,7 @@ pub fn draw_sidebar(
             sessions,
             focused,
             spinner_frame,
+            blink_on,
             theme,
             view_mode,
         );
@@ -138,12 +141,14 @@ fn draw_header(frame: &mut Frame, area: Rect, count: usize, theme: &Theme) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_sessions(
     frame: &mut Frame,
     area: Rect,
     sessions: &[SessionView],
     focused: usize,
     spinner_frame: &str,
+    blink_on: bool,
     theme: &Theme,
     view_mode: ViewMode,
 ) {
@@ -178,20 +183,15 @@ fn draw_sessions(
                 };
                 let bg = if is_focused { theme.surface } else { theme.bg };
 
-                let activity_icon = if session.idle_seconds < 3 {
-                    Span::styled(spinner_frame, Style::default().fg(theme.green).bg(bg))
-                } else {
-                    Span::styled(
-                        "󰒲",
-                        Style::default()
-                            .fg(if is_emphasized {
-                                theme.dim
-                            } else {
-                                theme.muted
-                            })
-                            .bg(bg),
-                    )
-                };
+                let activity_icon = status_icon(
+                    session.status,
+                    session.is_current,
+                    theme,
+                    spinner_frame,
+                    blink_on,
+                    is_emphasized,
+                    bg,
+                );
                 let idx_str = format!("{:>2}", i + 1);
                 let text_width = width.saturating_sub(6);
                 let name_display = truncate(session.name, text_width);
@@ -290,17 +290,19 @@ fn draw_sessions(
             );
         }
         ViewMode::Compact => {
-            draw_sessions_compact(frame, area, sessions, focused, spinner_frame, theme);
+            draw_sessions_compact(frame, area, sessions, focused, spinner_frame, blink_on, theme);
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_sessions_compact(
     frame: &mut Frame,
     area: Rect,
     sessions: &[SessionView],
     focused: usize,
     spinner_frame: &str,
+    blink_on: bool,
     theme: &Theme,
 ) {
     let width = area.width as usize;
@@ -324,8 +326,31 @@ fn draw_sessions_compact(
         };
         let bg = if is_focused { theme.surface } else { theme.bg };
 
-        let activity_text = format_activity_compact(session.idle_seconds, spinner_frame);
-        let activity_color = idle_color(theme, session.idle_seconds, is_emphasized);
+        // For Working sessions we keep the spinner; for Idle we show
+        // the compact "time since last activity" badge (e.g. "2m");
+        // for Waiting we surface the bell glyph + blink color so it
+        // stands out even in the cramped compact layout.
+        let activity_text = if session.is_current {
+            status_icon_compact(session.status, true, spinner_frame)
+        } else {
+            match session.status {
+                SessionStatus::Working => spinner_frame.to_string(),
+                SessionStatus::Waiting => {
+                    status_icon_compact(session.status, false, spinner_frame)
+                }
+                SessionStatus::Idle => {
+                    format_activity_compact(session.idle_seconds, spinner_frame)
+                }
+            }
+        };
+        let activity_color = if session.is_current {
+            status_color(session.status, true, theme, blink_on, is_emphasized)
+        } else {
+            match session.status {
+                SessionStatus::Idle => idle_color(theme, session.idle_seconds, is_emphasized),
+                _ => status_color(session.status, false, theme, blink_on, is_emphasized),
+            }
+        };
         let idx_str = format!("{:>2}", i + 1);
 
         let mut spans = vec![
@@ -639,6 +664,7 @@ fn draw_sidebar_tabs(
     theme: &Theme,
     show_borders: bool,
     spinner_frame: &str,
+    blink_on: bool,
     keybindings: &Keybindings,
     _update_available: Option<&UpdateStatus>,
 ) -> Option<Rect> {
@@ -769,24 +795,31 @@ fn draw_sidebar_tabs(
         if let Some(session) = sessions.get(focused) {
             let avail = content.width as usize;
             let dir = shorten_dir(session.dir);
-            let status = build_tab_status(session);
+            let git = build_tab_status(session);
             let activity = format_activity_compact(session.idle_seconds, spinner_frame);
+            let status_text =
+                status_icon_compact(session.status, session.is_current, spinner_frame);
+            let status_color =
+                status_color(session.status, session.is_current, theme, blink_on, true);
 
-            let mut detail = format!("  {}", dir);
+            let mut tail = format!("  {}", dir);
             if !session.branch.is_empty() {
-                detail.push_str(&format!("  {}", session.branch));
+                tail.push_str(&format!("  {}", session.branch));
             }
-            if !status.is_empty() {
-                detail.push_str(&format!("  {}", status));
+            if !git.is_empty() {
+                tail.push_str(&format!("  {}", git));
             }
-            detail.push_str(&format!("  {}", activity));
-            let detail = truncate(&detail, avail);
+            tail.push_str(&format!("  {}", activity));
+            let tail = truncate(&tail, avail.saturating_sub(status_text.width() + 2));
 
             let detail_line = pad_line(
-                vec![Span::styled(
-                    detail,
-                    Style::default().fg(theme.subtle).bg(theme.bg),
-                )],
+                vec![
+                    Span::styled(
+                        format!(" {} ", status_text),
+                        Style::default().fg(status_color).bg(theme.bg),
+                    ),
+                    Span::styled(tail, Style::default().fg(theme.subtle).bg(theme.bg)),
+                ],
                 theme.bg,
                 avail,
             );

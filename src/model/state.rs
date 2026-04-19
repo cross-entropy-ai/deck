@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Instant;
 
 use ratatui::layout::Rect;
@@ -61,6 +62,23 @@ pub enum ViewMode {
     Compact,
 }
 
+/// Three-state session activity model.
+///
+/// - `Idle`: nothing demanding attention — shell at prompt, or a
+///   Claude agent between turns whose last Waiting has been acked.
+/// - `Working`: something is actively running in the pane, or Claude
+///   is executing a tool / processing a turn.
+/// - `Waiting`: Claude fired Stop or Notification and the user hasn't
+///   visited the session since. Non-Claude programs never produce
+///   `Waiting` in this version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SessionStatus {
+    #[default]
+    Idle,
+    Working,
+    Waiting,
+}
+
 pub const SETTINGS_ITEM_COUNT: usize = 7;
 
 // --- Context menu ---
@@ -100,6 +118,12 @@ pub struct SessionRow {
     pub untracked: u32,
     pub is_current: bool,
     pub idle_seconds: u64,
+    /// Raw activity status, pre-ack.
+    pub status: SessionStatus,
+    /// Unix-ms timestamp of the hook event that produced `status`. Only
+    /// set when the status came from a Claude state file; used by the
+    /// ack-on-detach override to decide whether a Waiting has been seen.
+    pub status_event_ts_ms: Option<u64>,
 }
 
 // --- Side effects ---
@@ -233,6 +257,24 @@ pub struct AppState {
     /// TTL — see `RELOAD_STATUS_OK_TTL` / `RELOAD_STATUS_ERR_TTL`.
     pub reload_status: Option<ReloadStatus>,
     pub reload_status_at: Option<Instant>,
+
+    /// Unix-ms timestamp at which the user last detached from each
+    /// session. Used by the Waiting-ack override: if the latest Claude
+    /// hook event for session S is older than `acked_ts_ms[S]`, the
+    /// Waiting status is downgraded to Idle in the UI. In-memory only,
+    /// so ack resets on deck restart.
+    pub acked_ts_ms: HashMap<String, u64>,
+
+    /// Per-session ts of the most recent Waiting event we already fired
+    /// a desktop notification for. Stops us from re-notifying every
+    /// refresh cycle while a session sits in Waiting.
+    pub last_notified_ts_ms: HashMap<String, u64>,
+
+    /// First snapshot is used to seed `last_notified_ts_ms` without
+    /// firing notifications — otherwise restarting deck while any
+    /// session was already Waiting would dump a notification per
+    /// session into the user's tray.
+    pub notifications_armed: bool,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -309,6 +351,26 @@ impl AppState {
             banner_upgrade_bounds: None,
             reload_status: None,
             reload_status_at: None,
+            acked_ts_ms: HashMap::new(),
+            last_notified_ts_ms: HashMap::new(),
+            notifications_armed: false,
+        }
+    }
+
+    /// Apply the Waiting-ack override. A Waiting status whose underlying
+    /// hook event is older than the user's last visit to that session is
+    /// downgraded to Idle — the user has seen it, so stop drawing
+    /// attention until a fresh hook event bumps the timestamp.
+    pub fn effective_status(&self, row: &SessionRow) -> SessionStatus {
+        if row.status != SessionStatus::Waiting {
+            return row.status;
+        }
+        let event_ts = row.status_event_ts_ms.unwrap_or(0);
+        let ack_ts = self.acked_ts_ms.get(&row.name).copied().unwrap_or(0);
+        if event_ts <= ack_ts {
+            SessionStatus::Idle
+        } else {
+            SessionStatus::Waiting
         }
     }
 

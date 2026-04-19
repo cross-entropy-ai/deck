@@ -1,6 +1,6 @@
 use super::{apply_action, Action};
 use crate::state::{
-    AppState, FocusMode, LayoutMode, MainView, SessionRow, ViewMode,
+    AppState, FocusMode, LayoutMode, MainView, SessionRow, SessionStatus, ViewMode,
 };
 
 fn make_session(name: &str, idle: u64) -> SessionRow {
@@ -15,6 +15,8 @@ fn make_session(name: &str, idle: u64) -> SessionRow {
         untracked: 0,
         is_current: false,
         idle_seconds: idle,
+        status: SessionStatus::default(),
+        status_event_ts_ms: None,
     }
 }
 

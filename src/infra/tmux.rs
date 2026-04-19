@@ -10,6 +10,17 @@ pub struct SessionInfo {
     pub activity: u64,
 }
 
+/// A single pane within a tmux session. Populated by `list_panes`.
+#[derive(Debug, Clone)]
+pub struct TmuxPane {
+    pub session: String,
+    /// Pane ID (e.g. "%42") — stable within a tmux server lifetime.
+    pub pane_id: String,
+    pub pid: u32,
+    pub current_command: String,
+    pub current_path: String,
+}
+
 /// Run a tmux command and return stdout, trimmed.
 fn tmux(args: &[&str]) -> Option<String> {
     let output = Command::new("tmux").args(args).output().ok()?;
@@ -37,6 +48,33 @@ pub fn list_sessions() -> Vec<SessionInfo> {
                 name: name.to_string(),
                 dir: dir.to_string(),
                 activity,
+            })
+        })
+        .collect()
+}
+
+/// List every pane across every session, with the info deck needs to
+/// derive session status (pane_id for Claude hook matching, pid for
+/// process-tree walks, current_command for the proc heuristic).
+pub fn list_panes() -> Vec<TmuxPane> {
+    let format = "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}";
+    let Some(raw) = tmux(&["list-panes", "-a", "-F", format]) else {
+        return Vec::new();
+    };
+    raw.lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(5, '\t');
+            let session = parts.next()?.to_string();
+            let pane_id = parts.next()?.to_string();
+            let pid = parts.next()?.parse::<u32>().ok()?;
+            let current_command = parts.next()?.to_string();
+            let current_path = parts.next().unwrap_or("").to_string();
+            Some(TmuxPane {
+                session,
+                pane_id,
+                pid,
+                current_command,
+                current_path,
             })
         })
         .collect()
