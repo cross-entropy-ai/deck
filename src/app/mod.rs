@@ -185,6 +185,13 @@ impl App {
 
             self.state.tick_reload_status(Instant::now());
 
+            // Another deck (typically `deck --force`) asked us to quit
+            // via SIGTERM. Translate it into the same Action::Quit the
+            // right-click menu uses so teardown is identical.
+            if crate::shutdown::shutdown_requested() && self.dispatch(Action::Quit) {
+                break;
+            }
+
             self.render(terminal)?;
 
             if event::poll(Duration::from_millis(POLL_MS))? {
