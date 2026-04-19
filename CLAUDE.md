@@ -35,10 +35,21 @@ A patched `vt100` crate lives in `patches/vt100/` and is applied via `[patch.cra
 
 ## Workflow Rules
 
-- **Always create a new branch** for any feature or fix before making changes. Use `feature/<name>` or `fix/<name>` naming.
-- PR into `main`. Do not push directly to `main`.
+Development work (bug fix or new feature):
+
+- **Always create a new branch** before making changes. Use `feature/<name>` or `fix/<name>` naming.
+- Commit on the branch, push, and open a PR into `main`. Do not push code changes directly to `main`.
 - Follow existing commit message style: imperative mood, concise summary line, optional body explaining "why".
+
+Releases are the exception — see below.
 
 ## Release
 
-Tag with `vX.Y.Z` and push the tag. GitHub Actions builds binaries and updates the Homebrew tap (`cross-entropy-ai/homebrew-tap`). See `docs/release.md`.
+Releases do **not** go through a branch or PR. Tag `main` directly with `vX.Y.Z` and push the tag:
+
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+GitHub Actions builds binaries and updates the Homebrew tap (`cross-entropy-ai/homebrew-tap`). See `docs/release.md`.
