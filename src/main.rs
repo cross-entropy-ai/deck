@@ -15,8 +15,9 @@ use std::io;
 use std::process::Command;
 
 use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+    EnableFocusChange, EnableMouseCapture, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use instance_guard::{AcquireError, InstanceGuard};
@@ -103,6 +104,7 @@ fn main() -> io::Result<()> {
             io::stdout(),
             EnableMouseCapture,
             EnableBracketedPaste,
+            EnableFocusChange,
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
         )?;
         let size = terminal.size()?;
@@ -112,6 +114,7 @@ fn main() -> io::Result<()> {
             io::stdout(),
             DisableMouseCapture,
             DisableBracketedPaste,
+            DisableFocusChange,
             PopKeyboardEnhancementFlags
         )?;
         result

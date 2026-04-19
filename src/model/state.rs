@@ -275,6 +275,13 @@ pub struct AppState {
     /// session was already Waiting would dump a notification per
     /// session into the user's tray.
     pub notifications_armed: bool,
+
+    /// Whether the host terminal (Ghostty / iTerm2 / etc.) currently
+    /// has OS-level keyboard focus. Updated from crossterm's
+    /// `FocusGained` / `FocusLost` events. Used to gate the "you're
+    /// already attached, no notification needed" check — if you're
+    /// attached but looking at another macOS app, we still notify.
+    pub terminal_focused: bool,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -354,6 +361,11 @@ impl AppState {
             acked_ts_ms: HashMap::new(),
             last_notified_ts_ms: HashMap::new(),
             notifications_armed: false,
+            // Assume focused until the terminal tells us otherwise. The
+            // alternative (false default) would race the first
+            // FocusGained event and could fire spurious notifications
+            // immediately after launch.
+            terminal_focused: true,
         }
     }
 

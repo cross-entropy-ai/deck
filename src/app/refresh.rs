@@ -130,7 +130,10 @@ impl App {
             if !self.state.notifications_armed {
                 continue;
             }
-            if row.name == current {
+            // Skip only when the user is both attached to this session
+            // *and* looking at the terminal. If they're attached but in
+            // a different macOS app, they still need the banner.
+            if row.name == current && self.state.terminal_focused {
                 continue;
             }
             let ack = self.state.acked_ts_ms.get(&row.name).copied().unwrap_or(0);
