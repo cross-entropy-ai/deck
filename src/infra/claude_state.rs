@@ -142,20 +142,31 @@ fn pid_alive(pid: u32) -> bool {
 
 /// Match each session name to its best-fitting Claude state. Priority:
 /// 1. `tmux_pane` matches a pane in the session (deck-launched Claude)
-/// 2. `cwd` matches the session's start dir or any pane's current path
-/// 3. pid is a descendant of any pane's shell
+/// 2. `cwd` matches exactly one session's pane (deck-external Claude)
+/// 3. pid is a descendant of exactly one pane's shell
 ///
-/// If multiple states match one session (e.g. two Claude instances in
-/// the same project), the one with the newest `ts_ms` wins.
+/// Ambiguity (multiple sessions matching at any tier) drops the state
+/// for that tier and falls through to the next, ultimately discarding
+/// it rather than picking nondeterministically — assigning a Waiting
+/// indicator to the wrong session is worse than not showing one at all.
+///
+/// If multiple states match the same session at different tiers, the
+/// state with the newest `ts_ms` wins.
 pub fn match_to_sessions(
     states: &[LiveState],
     panes_by_session: &HashMap<String, Vec<TmuxPane>>,
 ) -> HashMap<String, ClaudeState> {
+    // Lazily populated `ps -e` output, shared across all states in
+    // this call. Without this cache we'd shell out once per pane per
+    // state — quadratic in pane count under degraded conditions
+    // (many stale Claude state files).
+    let mut ppids: Option<HashMap<u32, u32>> = None;
+
     let mut chosen: HashMap<String, ClaudeState> = HashMap::new();
 
     for live in states {
         let s = &live.state;
-        let Some(session) = find_session(s, panes_by_session) else {
+        let Some(session) = find_session(s, panes_by_session, &mut ppids) else {
             continue;
         };
         match chosen.get(&session) {
@@ -172,8 +183,10 @@ pub fn match_to_sessions(
 fn find_session(
     state: &ClaudeState,
     panes_by_session: &HashMap<String, Vec<TmuxPane>>,
+    ppids: &mut Option<HashMap<u32, u32>>,
 ) -> Option<String> {
-    // 1. Exact tmux_pane match — cheapest and most reliable.
+    // 1. Exact tmux_pane match. pane_id is unique within a tmux server
+    //    so this is unambiguous by construction.
     if !state.tmux_pane.is_empty() {
         for (session, panes) in panes_by_session {
             if panes.iter().any(|p| p.pane_id == state.tmux_pane) {
@@ -182,29 +195,38 @@ fn find_session(
         }
     }
 
-    // 2. cwd matches any pane's current_path or the session's start dir.
-    //    We normalize here because tmux sometimes reports cwd with a
-    //    trailing slash and sometimes without.
+    // 2. cwd matches any pane's current_path. Normalized because tmux
+    //    sometimes reports paths with trailing slashes and sometimes
+    //    without. Skip the match if more than one session qualifies —
+    //    e.g. the same repo open in two tmux sessions — since picking
+    //    one would be nondeterministic via HashMap iteration order.
     if !state.cwd.is_empty() {
         let state_cwd = normalize_path(&state.cwd);
-        for (session, panes) in panes_by_session {
-            if panes
+        let mut matches = panes_by_session.iter().filter(|(_, panes)| {
+            panes
                 .iter()
                 .any(|p| normalize_path(&p.current_path) == state_cwd)
-            {
-                return Some(session.clone());
+        });
+        if let Some((first, _)) = matches.next() {
+            if matches.next().is_none() {
+                return Some(first.clone());
             }
+            // Ambiguous → fall through to the pid check.
         }
     }
 
-    // 3. pid-is-descendant fallback. Walk up each pane's shell tree to
-    //    see whether the Claude pid is under it. Only run this if we
-    //    haven't matched by the cheaper checks — it shells out.
-    for (session, panes) in panes_by_session {
-        for pane in panes {
-            if pid_is_descendant(state.pid, pane.pid) {
-                return Some(session.clone());
-            }
+    // 3. pid-is-descendant fallback. Walk up each pane's shell tree
+    //    to see whether the Claude pid is under it. Same uniqueness
+    //    rule as cwd: only commit if exactly one pane matches.
+    let map = ppids.get_or_insert_with(read_ppid_map);
+    let mut pid_matches = panes_by_session.iter().filter(|(_, panes)| {
+        panes
+            .iter()
+            .any(|pane| pid_is_descendant_with_map(state.pid, pane.pid, map))
+    });
+    if let Some((first, _)) = pid_matches.next() {
+        if pid_matches.next().is_none() {
+            return Some(first.clone());
         }
     }
 
@@ -220,17 +242,20 @@ fn normalize_path(p: &str) -> String {
     }
 }
 
-/// True if `child` is a (transitive) descendant of `ancestor`, using
-/// `ps -o pid,ppid` to walk the process tree. Cached per-call to avoid
-/// refetching ps output for each pane.
-fn pid_is_descendant(child: u32, ancestor: u32) -> bool {
+/// True if `child` is a (transitive) descendant of `ancestor`, using a
+/// caller-supplied pid→ppid table. Hoisting the table out of this
+/// function lets `match_to_sessions` build it at most once per refresh.
+fn pid_is_descendant_with_map(
+    child: u32,
+    ancestor: u32,
+    ppids: &HashMap<u32, u32>,
+) -> bool {
     if child == 0 || ancestor == 0 {
         return false;
     }
     if child == ancestor {
         return true;
     }
-    let ppids = read_ppid_map();
     let mut cur = child;
     // Depth-bounded to protect against cycles (shouldn't happen but
     // malformed ps output could loop us otherwise).

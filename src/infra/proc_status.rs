@@ -19,14 +19,18 @@ const SHELL_COMMANDS: &[&str] = &[
 
 /// Long-running, mostly-passive programs that, in the absence of a
 /// Claude state file, shouldn't be classified as "the user is busy
-/// here". Claude Code in particular spends most of its life idle
-/// between prompts; without hook visibility, defaulting it to Working
-/// would leave half the sidebar permanently spinning.
+/// here".
+///
+/// Deliberately excludes `node`: although Claude Code's launcher is a
+/// node binary, that name is also dev servers, test watchers, build
+/// scripts, and long-running CLIs — all of which are doing real work
+/// that deserves a Working indicator. We catch the Claude case more
+/// narrowly via the digits-and-dots version-string title check below.
 ///
 /// `tmux` shows up when the user has a nested tmux client attached;
 /// `ssh` for an open remote shell. Both feel more like "shell at a
 /// prompt" than "actively running a tool".
-const PASSIVE_COMMANDS: &[&str] = &["claude", "node", "tmux", "ssh"];
+const PASSIVE_COMMANDS: &[&str] = &["claude", "tmux", "ssh"];
 
 /// Derive a session's status from its panes. `Working` wins over
 /// `Idle` — if any pane is busy, the whole session is. "Busy" excludes

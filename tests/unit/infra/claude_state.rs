@@ -85,3 +85,28 @@ fn unmatched_state_is_dropped() {
     let out = match_to_sessions(&states, &panes_by_session);
     assert!(out.is_empty());
 }
+
+#[test]
+fn ambiguous_cwd_match_is_dropped() {
+    // Same repo open in two tmux sessions. Without a tmux_pane
+    // hint, picking either would be nondeterministic via HashMap
+    // iteration order — rather than blink the wrong session, drop
+    // the state entirely.
+    let mut panes_by_session: HashMap<String, Vec<TmuxPane>> = HashMap::new();
+    panes_by_session.insert(
+        "alpha".to_string(),
+        vec![pane("alpha", "%1", 111, "/tmp/project")],
+    );
+    panes_by_session.insert(
+        "beta".to_string(),
+        vec![pane("beta", "%2", 222, "/tmp/project")],
+    );
+
+    let states = vec![state("s1", 999, "", "/tmp/project", 1000)];
+    let out = match_to_sessions(&states, &panes_by_session);
+    assert!(
+        out.is_empty(),
+        "ambiguous cwd should drop, not pick at random; got {:?}",
+        out.keys().collect::<Vec<_>>()
+    );
+}

@@ -40,12 +40,11 @@ fn empty_session_is_idle() {
 #[test]
 fn passive_agents_default_to_idle() {
     // Claude Code's process-title is its version (e.g. "2.1.114");
-    // matched as digits-and-dots. `claude`, `node`, `tmux`, `ssh`
-    // are also passive — without a Claude state file we shouldn't
+    // matched as digits-and-dots. `claude`, `tmux`, `ssh` are also
+    // passive — without a Claude state file we shouldn't
     // pessimistically call those Working.
     assert_eq!(status_for_session(&[pane("2.1.114")]), SessionStatus::Idle);
     assert_eq!(status_for_session(&[pane("claude")]), SessionStatus::Idle);
-    assert_eq!(status_for_session(&[pane("node")]), SessionStatus::Idle);
     assert_eq!(status_for_session(&[pane("tmux")]), SessionStatus::Idle);
     assert_eq!(status_for_session(&[pane("ssh")]), SessionStatus::Idle);
 }
@@ -55,4 +54,13 @@ fn vim_still_marks_session_working() {
     // Sanity check: actually-busy programs aren't accidentally
     // swept into the passive list.
     assert_eq!(status_for_session(&[pane("vim")]), SessionStatus::Working);
+}
+
+#[test]
+fn node_workloads_are_treated_as_working() {
+    // Dev servers, test watchers, and long-running CLIs all show up
+    // as `node`. Treating them as Working is the right default —
+    // Claude Code itself is identified by its version-string title,
+    // not by the `node` name.
+    assert_eq!(status_for_session(&[pane("node")]), SessionStatus::Working);
 }
