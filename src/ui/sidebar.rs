@@ -456,7 +456,7 @@ fn append_plugin_rows(
         Span::styled("\u{eb5c}", Style::default().fg(theme.accent)),
         Span::styled(
             " Plugins",
-            Style::default().fg(theme.muted).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
         ),
     ]));
 
