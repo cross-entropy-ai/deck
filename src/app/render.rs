@@ -22,7 +22,6 @@ impl App {
         let sidebar_active = s.focus_mode == FocusMode::Sidebar;
         let focused = s.focused;
         let theme = &THEMES[s.theme_index];
-        let filter_mode = s.filter_mode;
         let confirm_kill = s.confirm_kill;
         let show_help = s.show_help;
         let rename_input = s.renaming.as_ref().map(|r| (r.input.clone(), r.cursor));
@@ -169,7 +168,6 @@ impl App {
                 focused,
                 sidebar_active,
                 theme,
-                filter_mode,
                 show_help,
                 confirm_name.as_deref(),
                 rename_input.as_ref().map(|(s, c)| (s.as_str(), *c)),

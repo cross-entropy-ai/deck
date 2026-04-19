@@ -2,8 +2,6 @@ mod keyboard;
 mod mouse;
 mod reduce;
 
-use crate::state::FilterMode;
-
 pub use keyboard::key_to_action;
 pub use mouse::mouse_to_action;
 pub use reduce::apply_action;
@@ -64,9 +62,6 @@ pub enum Action {
 
     ToggleHelp,
     DismissHelp,
-
-    CycleFilter,
-    SetFilter(FilterMode),
 
     SetFocusMain,
     SetFocusSidebar,

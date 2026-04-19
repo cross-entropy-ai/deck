@@ -81,10 +81,6 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     }
 
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) && in_sidebar {
-        if let Some(mode) = state.filter_tab_at(mouse.column, mouse.row) {
-            return Action::SetFilter(mode);
-        }
-
         let idx = match state.layout_mode {
             LayoutMode::Horizontal => state.session_at_row(mouse.row),
             LayoutMode::Vertical => state.session_at_col(mouse.column, mouse.row),

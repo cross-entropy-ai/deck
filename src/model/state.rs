@@ -53,33 +53,6 @@ pub enum MainView {
     Upgrade,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FilterMode {
-    All,
-    Working,
-    Idle,
-}
-
-impl FilterMode {
-    pub fn next(self) -> Self {
-        match self {
-            FilterMode::All => FilterMode::Working,
-            FilterMode::Working => FilterMode::Idle,
-            FilterMode::Idle => FilterMode::All,
-        }
-    }
-
-    pub fn tab_label(self) -> &'static str {
-        match self {
-            FilterMode::All => "All",
-            FilterMode::Idle => "Idle",
-            FilterMode::Working => "Working",
-        }
-    }
-}
-
-pub const FILTER_TABS: [FilterMode; 3] = [FilterMode::All, FilterMode::Idle, FilterMode::Working];
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ViewMode {
@@ -209,7 +182,6 @@ pub struct AppState {
     pub filtered: Vec<usize>,
     pub focused: usize,
     pub current_session: String,
-    pub filter_mode: FilterMode,
     pub session_order: Vec<String>,
 
     // UI state
@@ -304,7 +276,6 @@ impl AppState {
             filtered: Vec::new(),
             focused: 0,
             current_session: String::new(),
-            filter_mode: FilterMode::All,
             session_order: Vec::new(),
             main_view: MainView::Terminal,
             focus_mode: FocusMode::Main,
@@ -440,7 +411,7 @@ impl AppState {
             LayoutMode::Horizontal => self.term_height,
             LayoutMode::Vertical => self.effective_sidebar_height(),
         };
-        let header_height = 3u16;
+        let header_height = 2u16;
         let footer_height = self.sidebar_footer_height();
         let sessions_top = b + header_height;
         let sessions_bottom = sidebar_h.saturating_sub(b + footer_height);
@@ -459,30 +430,6 @@ impl AppState {
         } else {
             None
         }
-    }
-
-    pub fn filter_tab_at(&self, col: u16, row: u16) -> Option<FilterMode> {
-        if self.layout_mode != LayoutMode::Horizontal {
-            return None;
-        }
-
-        let b = if self.show_borders { 1u16 } else { 0 };
-        let tab_row = b + 1;
-        if row != tab_row {
-            return None;
-        }
-
-        let mut x = 2u16;
-        let local_col = col.saturating_sub(b);
-        for mode in FILTER_TABS {
-            let width = mode.tab_label().len() as u16 + 2;
-            if local_col >= x && local_col < x + width {
-                return Some(mode);
-            }
-            x += width + 1;
-        }
-
-        None
     }
 
     /// Map a screen column to a tab index in vertical/tabs mode.
@@ -526,18 +473,7 @@ impl AppState {
     // --- Filtering and ordering ---
 
     pub fn recompute_filter(&mut self) {
-        self.filtered = self
-            .sessions
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| match self.filter_mode {
-                FilterMode::All => true,
-                FilterMode::Working => s.idle_seconds < 3,
-                FilterMode::Idle => s.idle_seconds >= 3,
-            })
-            .map(|(i, _)| i)
-            .collect();
-
+        self.filtered = (0..self.sessions.len()).collect();
         if !self.filtered.is_empty() && self.focused >= self.filtered.len() {
             self.focused = self.filtered.len() - 1;
         }

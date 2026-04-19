@@ -1,5 +1,5 @@
 use crate::state::{
-    AppState, ContextMenu, FilterMode, FocusMode, KillRequest, LayoutMode, MainView, MenuKind,
+    AppState, ContextMenu, FocusMode, KillRequest, LayoutMode, MainView, MenuKind,
     RenameRequest, RenameState, SideEffect, ViewMode, GLOBAL_MENU_ITEMS, SESSION_MENU_ITEMS,
     SETTINGS_ITEM_COUNT,
 };
@@ -106,9 +106,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.confirm_kill = false;
         }
         Action::ReorderSession(direction) => {
-            if state.filter_mode != FilterMode::All {
-                return fx;
-            }
             let Some(&session_idx) = state.filtered.get(state.focused) else {
                 return fx;
             };
@@ -406,16 +403,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::DismissHelp => {
             state.show_help = false;
-        }
-
-        Action::CycleFilter => {
-            state.filter_mode = state.filter_mode.next();
-            state.recompute_filter();
-        }
-        Action::SetFilter(mode) => {
-            state.filter_mode = mode;
-            state.focus_mode = FocusMode::Sidebar;
-            state.recompute_filter();
         }
 
         Action::SetFocusMain => {

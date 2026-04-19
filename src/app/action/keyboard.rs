@@ -71,7 +71,6 @@ fn command_to_action(cmd: Command) -> Action {
         Command::KillSession => Action::KillSession,
         Command::ReorderUp => Action::ReorderSession(-1),
         Command::ReorderDown => Action::ReorderSession(1),
-        Command::CycleFilter => Action::CycleFilter,
         Command::OpenSettings => Action::OpenSettings,
         Command::OpenThemePicker => Action::OpenThemePicker,
         Command::ToggleBorders => Action::ToggleBorders,
