@@ -1,6 +1,6 @@
 use super::{apply_action, Action};
 use crate::state::{
-    AppState, FilterMode, FocusMode, LayoutMode, MainView, SessionRow, ViewMode,
+    AppState, FocusMode, LayoutMode, MainView, SessionRow, ViewMode,
 };
 
 fn make_session(name: &str, idle: u64) -> SessionRow {
@@ -130,27 +130,6 @@ fn cancel_kill_clears_flag() {
     state.confirm_kill = true;
     apply_action(&mut state, Action::CancelKill);
     assert!(!state.confirm_kill);
-}
-
-#[test]
-fn cycle_filter_rotates() {
-    let mut state = make_test_state(3);
-    assert_eq!(state.filter_mode, FilterMode::All);
-    apply_action(&mut state, Action::CycleFilter);
-    assert_eq!(state.filter_mode, FilterMode::Working);
-    apply_action(&mut state, Action::CycleFilter);
-    assert_eq!(state.filter_mode, FilterMode::Idle);
-    apply_action(&mut state, Action::CycleFilter);
-    assert_eq!(state.filter_mode, FilterMode::All);
-}
-
-#[test]
-fn set_filter_switches_to_requested_tab() {
-    let mut state = make_test_state(3);
-    state.focus_mode = FocusMode::Main;
-    apply_action(&mut state, Action::SetFilter(FilterMode::Idle));
-    assert_eq!(state.filter_mode, FilterMode::Idle);
-    assert_eq!(state.focus_mode, FocusMode::Sidebar);
 }
 
 #[test]
@@ -367,17 +346,6 @@ fn exclude_editor_invalid_regex_shows_error() {
     assert!(editor.adding);
     assert!(editor.error.is_some());
     assert!(state.exclude_patterns.is_empty());
-}
-
-#[test]
-fn reorder_only_in_all_filter() {
-    let mut state = make_test_state(3);
-    state.filter_mode = FilterMode::Working;
-    state.focused = 1;
-    let original_order: Vec<String> = state.sessions.iter().map(|s| s.name.clone()).collect();
-    apply_action(&mut state, Action::ReorderSession(-1));
-    let new_order: Vec<String> = state.sessions.iter().map(|s| s.name.clone()).collect();
-    assert_eq!(original_order, new_order);
 }
 
 #[test]

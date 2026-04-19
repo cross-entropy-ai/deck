@@ -10,7 +10,7 @@ use crate::keybindings::{Command, Keybindings};
 use crate::layout::{
     card_height, plugin_block_rows, BANNER_MIN_WIDTH, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR,
 };
-use crate::state::{FilterMode, ViewMode, FILTER_TABS};
+use crate::state::ViewMode;
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
 
@@ -30,7 +30,6 @@ pub fn draw_sidebar(
     focused: usize,
     sidebar_active: bool,
     theme: &Theme,
-    filter_mode: FilterMode,
     show_help: bool,
     confirm_kill: Option<&str>,
     rename_input: Option<(&str, usize)>,
@@ -81,13 +80,13 @@ pub fn draw_sidebar(
     let footer_height: u16 = 3 + banner_visible as u16 + plugin_rows;
 
     let [header_area, sessions_area, footer_area] = Layout::vertical([
-        Constraint::Length(3),
+        Constraint::Length(2),
         Constraint::Min(1),
         Constraint::Length(footer_height),
     ])
     .areas(content);
 
-    draw_header(frame, header_area, sessions.len(), theme, filter_mode);
+    draw_header(frame, header_area, sessions.len(), theme);
     if show_help {
         draw_help(frame, sessions_area, theme, keybindings);
     } else if let Some(name) = confirm_kill {
@@ -123,13 +122,7 @@ pub fn draw_sidebar(
     )
 }
 
-fn draw_header(
-    frame: &mut Frame,
-    area: Rect,
-    count: usize,
-    theme: &Theme,
-    filter_mode: FilterMode,
-) {
+fn draw_header(frame: &mut Frame, area: Rect, count: usize, theme: &Theme) {
     let title = Line::from(vec![
         Span::styled(" ", Style::default()),
         Span::styled("\u{e795}", Style::default().fg(theme.accent)),
@@ -139,25 +132,8 @@ fn draw_header(
         ),
         Span::styled(format!(" ({})", count), Style::default().fg(theme.dim)),
     ]);
-    let mut tabs: Vec<Span> = vec![Span::styled(" ", Style::default())];
-    for (idx, mode) in FILTER_TABS.iter().enumerate() {
-        let active = *mode == filter_mode;
-        let style = if active {
-            Style::default()
-                .fg(theme.bg)
-                .bg(theme.accent)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme.muted)
-        };
-        tabs.push(Span::styled(format!(" {} ", mode.tab_label()), style));
-        if idx + 1 < FILTER_TABS.len() {
-            tabs.push(Span::styled(" ", Style::default()));
-        }
-    }
     frame.render_widget(
-        Paragraph::new(vec![title, Line::from(tabs), Line::raw("")])
-            .style(Style::default().bg(theme.bg)),
+        Paragraph::new(vec![title, Line::raw("")]).style(Style::default().bg(theme.bg)),
         area,
     );
 }
