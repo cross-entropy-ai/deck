@@ -12,32 +12,50 @@ use crate::state::SessionStatus;
 use crate::tmux::TmuxPane;
 
 /// Names tmux reports when a pane's foreground process is an
-/// interactive shell. Treated as "idle, awaiting input". Everything
-/// else is treated as "something's running".
-///
-/// The list intentionally stays short and obvious. Fancier shells
-/// (ion, xonsh, nushell) can be added when users report them.
+/// interactive shell. Treated as "idle, awaiting input".
 const SHELL_COMMANDS: &[&str] = &[
     "zsh", "bash", "sh", "fish", "dash", "ksh", "tcsh", "csh",
 ];
 
+/// Long-running, mostly-passive programs that, in the absence of a
+/// Claude state file, shouldn't be classified as "the user is busy
+/// here". Claude Code in particular spends most of its life idle
+/// between prompts; without hook visibility, defaulting it to Working
+/// would leave half the sidebar permanently spinning.
+///
+/// `tmux` shows up when the user has a nested tmux client attached;
+/// `ssh` for an open remote shell. Both feel more like "shell at a
+/// prompt" than "actively running a tool".
+const PASSIVE_COMMANDS: &[&str] = &["claude", "node", "tmux", "ssh"];
+
 /// Derive a session's status from its panes. `Working` wins over
-/// `Idle` — if any pane is busy, the whole session is.
+/// `Idle` — if any pane is busy, the whole session is. "Busy" excludes
+/// shells, recognized passive programs, and Claude Code's version-
+/// string process title (e.g. `2.1.114`).
 pub fn status_for_session(panes: &[TmuxPane]) -> SessionStatus {
     if panes.is_empty() {
         return SessionStatus::Idle;
     }
-    if panes.iter().any(|p| !is_shell(&p.current_command)) {
+    if panes.iter().any(|p| !is_idle_default(&p.current_command)) {
         SessionStatus::Working
     } else {
         SessionStatus::Idle
     }
 }
 
-fn is_shell(cmd: &str) -> bool {
+fn is_idle_default(cmd: &str) -> bool {
     // tmux sometimes prefixes with `-` for login shells (`-zsh`).
     let cmd = cmd.trim_start_matches('-');
-    SHELL_COMMANDS.contains(&cmd)
+    if SHELL_COMMANDS.contains(&cmd) {
+        return true;
+    }
+    if PASSIVE_COMMANDS.contains(&cmd) {
+        return true;
+    }
+    // Version-string process titles like "2.1.114" — Claude Code sets
+    // its own title to its semver. Treat anything that's just digits
+    // and dots as a passive agent.
+    !cmd.is_empty() && cmd.chars().all(|c| c.is_ascii_digit() || c == '.')
 }
 
 #[cfg(test)]

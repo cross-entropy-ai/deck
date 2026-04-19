@@ -52,6 +52,13 @@ pub struct LiveState {
 /// firing SessionEnd would otherwise pin a status forever.
 const MAX_STATE_AGE_MS: u64 = 24 * 3600 * 1000;
 
+/// Tighter cap for `working` specifically. A Claude that crashes mid-tool
+/// or that ran with a stale settings.json (so Stop never propagated) can
+/// leave a `working` entry pinned indefinitely. 30 minutes is long enough
+/// for any reasonable single tool invocation but short enough that the
+/// sidebar self-heals when something goes wrong.
+const MAX_WORKING_STATE_AGE_MS: u64 = 30 * 60 * 1000;
+
 fn state_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("DECK_STATE_DIR") {
         return PathBuf::from(dir);
@@ -97,13 +104,21 @@ fn read_from(dir: &std::path::Path) -> Vec<ClaudeState> {
     out
 }
 
-/// Filter out stale entries: older than `MAX_STATE_AGE_MS`, or whose
-/// pid is no longer a running process.
+/// Filter out stale entries: older than `MAX_STATE_AGE_MS` (or
+/// `MAX_WORKING_STATE_AGE_MS` for `working`), or whose pid is no
+/// longer a running process.
 pub fn filter_live(states: Vec<ClaudeState>) -> Vec<LiveState> {
     let now = now_ms();
     states
         .into_iter()
-        .filter(|s| now.saturating_sub(s.ts_ms) <= MAX_STATE_AGE_MS)
+        .filter(|s| {
+            let max_age = if s.status == "working" {
+                MAX_WORKING_STATE_AGE_MS
+            } else {
+                MAX_STATE_AGE_MS
+            };
+            now.saturating_sub(s.ts_ms) <= max_age
+        })
         .filter(|s| pid_alive(s.pid))
         .map(|state| LiveState { state })
         .collect()
