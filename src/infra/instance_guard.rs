@@ -1,8 +1,16 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crate::tmux;
+
+/// How long we wait for the old deck to quit after SIGTERM before
+/// falling back to SIGKILL. The signal handler flips a flag the event
+/// loop reads on its next ~16ms tick, so the old instance should exit
+/// well under this budget in the common case.
+const GRACEFUL_KILL_TIMEOUT: Duration = Duration::from_secs(2);
+const GRACEFUL_KILL_POLL: Duration = Duration::from_millis(50);
 
 #[derive(Debug)]
 pub enum AcquireError {
@@ -137,7 +145,37 @@ pub enum KillError {
 }
 
 fn real_kill(pid: u32) -> Result<(), KillError> {
-    let ret = unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+    // Ask politely first — the target deck installs a SIGTERM handler
+    // (see `infra::shutdown`) that flips a flag its event loop picks up
+    // and translates into the normal Action::Quit shutdown (terminal
+    // state restored, lock file removed via Drop). Only if the old
+    // process doesn't go away within the timeout do we fall back to
+    // SIGKILL as a last resort.
+    match send_signal(pid, libc::SIGTERM) {
+        Ok(()) => {}
+        Err(KillError::NoSuchProcess) => return Ok(()),
+        Err(other) => return Err(other),
+    }
+
+    let start = Instant::now();
+    while start.elapsed() < GRACEFUL_KILL_TIMEOUT {
+        std::thread::sleep(GRACEFUL_KILL_POLL);
+        if matches!(send_signal(pid, 0), Err(KillError::NoSuchProcess)) {
+            return Ok(());
+        }
+    }
+
+    // Hung or swallowing SIGTERM — use the hammer. The lock file won't
+    // be cleared via Drop in this path, but the caller's remove_file
+    // sweep handles that.
+    match send_signal(pid, libc::SIGKILL) {
+        Ok(()) | Err(KillError::NoSuchProcess) => Ok(()),
+        Err(other) => Err(other),
+    }
+}
+
+fn send_signal(pid: u32, sig: libc::c_int) -> Result<(), KillError> {
+    let ret = unsafe { libc::kill(pid as libc::pid_t, sig) };
     if ret == 0 {
         return Ok(());
     }

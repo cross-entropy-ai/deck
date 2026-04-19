@@ -1,8 +1,11 @@
-use super::{AcquireError, InstanceGuard, KillError};
+use super::{
+    real_kill, send_signal, AcquireError, InstanceGuard, KillError, GRACEFUL_KILL_TIMEOUT,
+};
 use std::fs;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 /// Spawn a long-running child whose argv[0] matches our "looks like deck"
 /// heuristic (anything containing "deck"). Using `CommandExt::arg0`
@@ -131,6 +134,70 @@ fn force_kills_and_acquires_when_lock_holds_deck_pid() {
     unsafe {
         libc::kill(victim_pid as libc::pid_t, libc::SIGKILL);
     }
+    let _ = child.wait();
+}
+
+#[test]
+fn send_signal_zero_to_self_reports_alive() {
+    // signal 0 never delivers, just checks deliverability.
+    assert!(matches!(send_signal(std::process::id(), 0), Ok(())));
+}
+
+#[test]
+fn real_kill_terminates_cooperative_child() {
+    // `sleep` has no SIGTERM handler, so the default action (terminate)
+    // fires immediately. real_kill should resolve well under the
+    // graceful timeout without needing the SIGKILL fallback.
+    let child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn sleep");
+    let pid = child.id();
+
+    // In production, `deck --force` is not the parent of the target
+    // deck, so when the old deck exits it gets reaped by its own
+    // parent shell and `kill(pid, 0)` returns ESRCH promptly. Here we
+    // ARE the parent, so the child becomes a zombie (still a valid
+    // signal target) until we wait() on it. Reap on a helper thread
+    // so the poll in real_kill sees ESRCH as soon as the child dies.
+    let reap = std::thread::spawn(move || {
+        let mut child = child;
+        let _ = child.wait();
+    });
+
+    let start = Instant::now();
+    let result = real_kill(pid);
+    let elapsed = start.elapsed();
+    let _ = reap.join();
+
+    assert!(matches!(result, Ok(())), "real_kill returned {result:?}");
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "cooperative child should terminate fast, took {elapsed:?}"
+    );
+}
+
+#[test]
+fn real_kill_falls_back_to_sigkill_for_stubborn_child() {
+    // `trap '' TERM` tells the shell to ignore SIGTERM. The shell
+    // stays parked in `sleep 30`, so real_kill has to time out and
+    // escalate to SIGKILL. This is the safety-net path.
+    let mut child = std::process::Command::new("sh")
+        .args(["-c", "trap '' TERM; sleep 30"])
+        .spawn()
+        .expect("spawn sh");
+    let pid = child.id();
+
+    let start = Instant::now();
+    let result = real_kill(pid);
+    let elapsed = start.elapsed();
+
+    assert!(matches!(result, Ok(())), "real_kill returned {result:?}");
+    assert!(
+        elapsed >= GRACEFUL_KILL_TIMEOUT,
+        "stubborn child should force a fallback, but returned in {elapsed:?}"
+    );
+
     let _ = child.wait();
 }
 

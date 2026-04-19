@@ -4,7 +4,7 @@ mod model;
 mod ui;
 
 pub(crate) use app::action;
-pub(crate) use infra::{git, instance_guard, nesting_guard, pty, refresh, tmux, update};
+pub(crate) use infra::{git, instance_guard, nesting_guard, pty, refresh, shutdown, tmux, update};
 pub(crate) use model::{config, keybindings, state};
 pub(crate) use ui::{bridge, layout, theme};
 
@@ -28,6 +28,13 @@ fn main() -> io::Result<()> {
         Ok(None) => return Ok(()),
         Err(code) => std::process::exit(code),
     };
+
+    // Install the SIGTERM handler before we acquire the lock, so a
+    // concurrent `deck --force` that targets us is handled as soon as
+    // the flag lands rather than hitting the default terminate action.
+    if let Err(err) = shutdown::install_sigterm_handler() {
+        eprintln!("deck: failed to install SIGTERM handler: {err}");
+    }
 
     let acquire_result = if args.force {
         InstanceGuard::acquire_forcing(std::process::id())
