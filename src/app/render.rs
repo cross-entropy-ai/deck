@@ -42,8 +42,14 @@ impl App {
             None
         };
 
-        let views_owned: Vec<SessionRow> =
-            s.filtered.iter().map(|&i| s.sessions[i].clone()).collect();
+        let views_owned: Vec<(SessionRow, crate::state::SessionStatus)> = s
+            .filtered
+            .iter()
+            .map(|&i| {
+                let row = &s.sessions[i];
+                (row.clone(), s.effective_status(row))
+            })
+            .collect();
 
         let spinner_frame = self.spinner.current_frame().to_string();
         let update_check_help = format_update_check_help(s.update_last_checked_secs);
@@ -81,7 +87,7 @@ impl App {
         terminal.draw(|frame| {
             let views: Vec<SessionView> = views_owned
                 .iter()
-                .map(|r| SessionView {
+                .map(|(r, status)| SessionView {
                     name: r.name.as_str(),
                     dir: r.dir.as_str(),
                     branch: r.branch.as_str(),
@@ -91,6 +97,8 @@ impl App {
                     modified: r.modified,
                     untracked: r.untracked,
                     idle_seconds: r.idle_seconds,
+                    status: *status,
+                    is_current: r.is_current,
                 })
                 .collect();
 

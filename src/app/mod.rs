@@ -243,6 +243,16 @@ impl App {
                     Event::Resize(w, h) => {
                         self.dispatch(Action::Resize(w, h));
                     }
+                    // Track host-terminal focus so the notify gate can
+                    // tell "user is in this Claude session AND looking
+                    // at it" from "user is attached but in another
+                    // macOS app". Only the latter should pop a banner.
+                    Event::FocusGained => {
+                        self.state.terminal_focused = true;
+                    }
+                    Event::FocusLost => {
+                        self.state.terminal_focused = false;
+                    }
                     _ => {}
                 }
             }

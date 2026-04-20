@@ -1,6 +1,9 @@
+pub mod claude_state;
 pub mod git;
+pub mod hooks;
 pub mod instance_guard;
 pub mod nesting_guard;
+pub mod proc_status;
 pub mod pty;
 pub mod refresh;
 pub mod shutdown;

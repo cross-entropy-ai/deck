@@ -9,7 +9,7 @@ mod text;
 pub mod theme;
 
 use crate::keybindings::Keybindings;
-use crate::state::{LayoutMode, ViewMode};
+use crate::state::{LayoutMode, SessionStatus, ViewMode};
 
 pub use menu::draw_context_menu;
 pub use reload::{draw_reload_bar, reload_row_count};
@@ -42,6 +42,14 @@ pub struct SessionView<'a> {
     pub modified: u32,
     pub untracked: u32,
     pub idle_seconds: u64,
+    /// Effective status: the raw `SessionRow.status` after applying
+    /// the Waiting-ack override (see `AppState::effective_status`).
+    pub status: SessionStatus,
+    /// True iff this session is the one tmux is currently attached to.
+    /// The status icon is overridden to a "you are here" marker for
+    /// the current session — anything live there is already visible
+    /// in the main pane, so the icon's job is just to confirm focus.
+    pub is_current: bool,
 }
 
 pub struct ExcludeEditorView<'a> {
