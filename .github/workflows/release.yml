@@ -26,6 +26,31 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+  meta:
+    needs: check
+    if: needs.check.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      is_beta: ${{ steps.m.outputs.is_beta }}
+      formula_name: ${{ steps.m.outputs.formula_name }}
+      formula_class: ${{ steps.m.outputs.formula_class }}
+      bin_name: ${{ steps.m.outputs.bin_name }}
+    steps:
+      - name: Derive channel from tag
+        id: m
+        run: |
+          if [[ "${{ github.ref_name }}" == *-* ]]; then
+            echo "is_beta=true" >> "$GITHUB_OUTPUT"
+            echo "formula_name=deck-beta" >> "$GITHUB_OUTPUT"
+            echo "formula_class=DeckBeta" >> "$GITHUB_OUTPUT"
+            echo "bin_name=deck-beta" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_beta=false" >> "$GITHUB_OUTPUT"
+            echo "formula_name=deck" >> "$GITHUB_OUTPUT"
+            echo "formula_class=Deck" >> "$GITHUB_OUTPUT"
+            echo "bin_name=deck" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     needs: check
     if: needs.check.outputs.exists != 'true'
@@ -78,7 +103,7 @@ jobs:
           path: "*.tar.gz"
 
   release:
-    needs: [check, build]
+    needs: [check, meta, build]
     if: needs.check.outputs.exists != 'true'
     runs-on: ubuntu-latest
     steps:
@@ -91,15 +116,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          prerelease: ${{ needs.meta.outputs.is_beta == 'true' }}
           files: "*.tar.gz"
 
   homebrew:
-    needs: [check, release]
+    needs: [check, meta, release]
     if: needs.check.outputs.exists != 'true'
     runs-on: ubuntu-latest
     env:
       TAP_REPO: cross-entropy-ai/homebrew-tap
-      PACKAGE_NAME: deck
       REPO_SLUG: cross-entropy-ai/deck
     steps:
       - name: Download all artifacts
@@ -119,6 +144,9 @@ jobs:
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           VERSION: ${{ github.ref_name }}
+          FORMULA_NAME: ${{ needs.meta.outputs.formula_name }}
+          FORMULA_CLASS: ${{ needs.meta.outputs.formula_class }}
+          BIN_NAME: ${{ needs.meta.outputs.bin_name }}
           SHA_AARCH64_DARWIN: ${{ steps.sha.outputs.aarch64_darwin }}
           SHA_X86_64_DARWIN: ${{ steps.sha.outputs.x86_64_darwin }}
           SHA_X86_64_LINUX: ${{ steps.sha.outputs.x86_64_linux }}
@@ -127,8 +155,8 @@ jobs:
           FORMULA_VERSION="${VERSION#v}"
           BASE_URL="https://github.com/${REPO_SLUG}/releases/download/${VERSION}"
 
-          cat > deck.rb << FORMULA
-          class Deck < Formula
+          cat > "${FORMULA_NAME}.rb" << FORMULA
+          class ${FORMULA_CLASS} < Formula
             desc "Terminal sidebar for browsing and switching tmux sessions"
             homepage "https://github.com/${REPO_SLUG}"
             version "${FORMULA_VERSION}"
@@ -156,11 +184,11 @@ jobs:
             depends_on "tmux"
 
             def install
-              bin.install "deck"
+              bin.install "deck" => "${BIN_NAME}"
             end
 
             test do
-              assert_match version.to_s, shell_output("#{bin}/deck --version")
+              assert_match version.to_s, shell_output("#{bin}/${BIN_NAME} --version")
             end
           end
           FORMULA
@@ -172,10 +200,10 @@ jobs:
 
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap
           mkdir -p tap/Formula
-          cp deck.rb tap/Formula/deck.rb
+          cp "${FORMULA_NAME}.rb" "tap/Formula/${FORMULA_NAME}.rb"
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/deck.rb
-          git commit -m "deck ${VERSION}"
+          git add "Formula/${FORMULA_NAME}.rb"
+          git commit -m "${FORMULA_NAME} ${VERSION}"
           git push
