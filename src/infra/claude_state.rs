@@ -131,8 +131,9 @@ fn pid_alive(pid: u32) -> bool {
     // kill(pid, 0) is the standard "does this process exist" probe on
     // Unix — no signal delivered, just existence / permission check.
     #[cfg(unix)]
-    unsafe {
-        libc::kill(pid as i32, 0) == 0 || *libc::__error() == libc::EPERM
+    {
+        let rc = unsafe { libc::kill(pid as i32, 0) };
+        rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
     #[cfg(not(unix))]
     {
