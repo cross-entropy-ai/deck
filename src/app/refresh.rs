@@ -12,13 +12,6 @@ fn parse_status(raw: &str) -> SessionStatus {
     }
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 /// Emit an OSC 9 desktop notification. Recognized by Ghostty, iTerm2,
 /// WezTerm, Kitty (with `enable_audio_bell`), and tmux 3.3+ when
 /// `allow-passthrough` is on. Silently no-ops on terminals that don't
@@ -90,17 +83,29 @@ impl App {
             }
         }
 
-        // Ack-on-detach: when the user switches away from a session,
-        // stamp `now` as its acked_ts. Any Waiting whose underlying
-        // hook event is older than this will render as Idle (see
-        // `AppState::effective_status`). A fresh Notification fires a
-        // new hook event whose ts bumps past the ack, reviving Waiting.
-        if !self.state.current_session.is_empty()
-            && self.state.current_session != current
-        {
-            self.state
-                .acked_ts_ms
-                .insert(self.state.current_session.clone(), now_ms());
+        // Ack-on-attach: while the user is attached to a session, they
+        // can see every event directly in the pane, so advance that
+        // session's ack to its latest observed hook event. Any event
+        // that arrives *after* the user detaches will have a newer
+        // ts and revive Waiting (see `effective_status`).
+        //
+        // Critically this does NOT stamp the detach with wall-clock
+        // time: doing so would ack events the user never saw, if a
+        // hook fired in the brief window between the last refresh and
+        // the tmux switch.
+        if !current.is_empty() {
+            if let Some(row) = self.state.sessions.iter().find(|r| r.name == current) {
+                if let Some(ts) = row.status_event_ts_ms {
+                    let entry = self
+                        .state
+                        .acked_ts_ms
+                        .entry(row.name.clone())
+                        .or_insert(0);
+                    if ts > *entry {
+                        *entry = ts;
+                    }
+                }
+            }
         }
 
         // Desktop notifications for new Waiting events. We fire once

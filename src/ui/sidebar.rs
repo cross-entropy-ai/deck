@@ -417,19 +417,24 @@ fn draw_sessions_compact(
     );
 }
 
-fn plugin_dot_color(status: PluginStatus, blink_on: bool, theme: &Theme) -> ratatui::style::Color {
+fn plugin_dot_style(status: PluginStatus, blink_on: bool, theme: &Theme) -> Style {
     match status {
-        PluginStatus::Foreground => theme.green,
-        // Alternates at 1 Hz between yellow and subtle so the pulse is
-        // visible against the sidebar bg without changing the glyph.
+        PluginStatus::Foreground => Style::default().fg(theme.green),
+        // Strong visibility pulse: bright yellow + bold when on, dim
+        // when off. `dim` is defined to be close-to-bg in every theme
+        // (both dark and light), so the off-phase reads as "fading
+        // out" rather than "turning a different color". Mirrors the
+        // Waiting blink used in the session row.
         PluginStatus::Background => {
             if blink_on {
-                theme.yellow
+                Style::default()
+                    .fg(theme.yellow)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                theme.subtle
+                Style::default().fg(theme.dim)
             }
         }
-        PluginStatus::Inactive => theme.dim,
+        PluginStatus::Inactive => Style::default().fg(theme.dim),
     }
 }
 
@@ -461,7 +466,7 @@ fn append_plugin_rows(
     ]));
 
     for p in plugins {
-        let dot_color = plugin_dot_color(p.status, blink_on, theme);
+        let dot_style = plugin_dot_style(p.status, blink_on, theme);
         let key_color = match p.status {
             PluginStatus::Inactive => theme.dim,
             _ => theme.muted,
@@ -477,7 +482,7 @@ fn append_plugin_rows(
         };
         rows.push(Line::from(vec![
             Span::raw(" "),
-            Span::styled(plugin_dot_glyph(p.status), Style::default().fg(dot_color)),
+            Span::styled(plugin_dot_glyph(p.status), dot_style),
             Span::raw(" "),
             Span::styled(p.key.to_string(), Style::default().fg(key_color)),
             Span::raw("  "),

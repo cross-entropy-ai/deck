@@ -59,7 +59,14 @@ fi
 status=$(map_event_to_status "$event")
 [ -n "$status" ] || exit 0
 
-ts_ms=$(($(date +%s) * 1000))
+# Use jq's `now` for millisecond resolution — BSD `date` on macOS
+# has no portable sub-second format. jq is already a hard dep above,
+# so this doesn't widen the dependency set. Falls back to seconds *
+# 1000 if jq's `now` unexpectedly rounds (it shouldn't on any platform
+# we care about, but be defensive — ms is strictly better than s, and
+# s is still better than failing the hook).
+ts_ms=$(jq -n 'now * 1000 | floor' 2>/dev/null)
+[ -n "$ts_ms" ] || ts_ms=$(($(date +%s) * 1000))
 pid=$PPID
 tmux_pane="${TMUX_PANE:-}"
 

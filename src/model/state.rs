@@ -369,20 +369,26 @@ impl AppState {
         }
     }
 
-    /// Apply the Waiting-ack override. A Waiting status whose underlying
-    /// hook event is older than the user's last visit to that session is
-    /// downgraded to Idle — the user has seen it, so stop drawing
-    /// attention until a fresh hook event bumps the timestamp.
+    /// Apply the activity-ack override. A Waiting or Working status whose
+    /// underlying hook event is older than the user's last visit to that
+    /// session is downgraded to Idle — the user has seen it, so stop
+    /// drawing attention until a fresh hook event bumps the timestamp.
+    ///
+    /// Symmetric for Working because Claude Code can leave a session
+    /// pinned as Working when a turn ends without a Stop hook (e.g. the
+    /// user hits Esc mid-turn, or a plugin Stop hook eats the event).
+    /// Attaching to that session and seeing Claude sit idle is itself
+    /// the acknowledgement.
     pub fn effective_status(&self, row: &SessionRow) -> SessionStatus {
-        if row.status != SessionStatus::Waiting {
-            return row.status;
+        if row.status == SessionStatus::Idle {
+            return SessionStatus::Idle;
         }
         let event_ts = row.status_event_ts_ms.unwrap_or(0);
         let ack_ts = self.acked_ts_ms.get(&row.name).copied().unwrap_or(0);
         if event_ts <= ack_ts {
             SessionStatus::Idle
         } else {
-            SessionStatus::Waiting
+            row.status
         }
     }
 
