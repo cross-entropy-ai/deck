@@ -1,15 +1,43 @@
 # deck
 
-deck wraps your tmux, providing a fast way to switch sessions and manage multiple vibe coding projects from one sidebar.
+A tmux session sidebar inside your terminal: browse and switch sessions while the main area stays attached to the current session’s PTY—no full-screen “menu replaces your shell” workflow.
 
 ![screenshot](docs/screenshot.png)
 
-## Core features
+## What deck is
 
-- **Session-first navigation**: browse and switch tmux sessions from one persistent sidebar
-- **Fast session ops**: create, rename, kill, reorder, and filter sessions in-place
-- **Terminal stays live**: the main pane remains attached to the selected session instead of being replaced by a menu screen
-- **Keyboard and mouse support**: navigate with keys, click to switch, right-click for context actions
+- **A sidebar UI for tmux**: a [ratatui](https://github.com/ratatui-org/ratatui) TUI that lists sessions on the side; the main pane shows real terminal output for the selected session.
+- **Session-first workflow**: create, rename, kill, reorder, and filter sessions; optional git hints, themes, keybindings, and preferences in `~/.config/deck/config.json`.
+- **A local helper**: it expects `tmux` already installed and on your `PATH`. If tmux is missing, deck exits.
+
+## What deck is not
+
+- **Not a tmux replacement**: it does not implement multiplexing or attach/detach semantics. deck is a front end in your terminal; tmux remains the owner of sessions and processes.
+- **Not a general “terminal IDE” or system terminal app**: a single binary plus TUI—not a host like iTerm2 or Windows Terminal.
+- **Not a window/pane-centric tmux manager**: interaction centers on the **session** list and main PTY; complex pane layouts stay in your normal tmux habits.
+- **Not remote sync or collaboration**: it does not sync sessions across machines or manage team access.
+
+## What deck helps you do
+
+- **Switch sessions with less disruption**: pick a session in the sidebar and keep the main pane connected—fewer “full-screen menu → back to shell” context switches.
+- **Do common session work from the sidebar**: filter, reorder, create/rename/kill (see the key table below and in-app `h` / `?` help).
+- **Persist preferences**: theme, layout, sidebar size, exclude rules, plugin-style commands (each in its own PTY) live in config and load on the next start.
+- **Single instance by default**: avoids running two decks fighting over the same terminal state; use `deck --force` to take over explicitly (see `--help`).
+
+## What deck does not help you do
+
+- **It does not install or configure tmux for you**: versions, socket, and `tmux.conf` are still yours.
+- **It does not guarantee every nested setup is safe**: running deck inside tmux (and similar nesting) has guards and limits; tricky nesting is still your call.
+- **It does not replace day-to-day work inside a session**: shell, editor, splitting panes or switching windows in tmux work as before; deck mainly reduces **session-level** navigation and housekeeping.
+
+## Features at a glance
+
+- **Session-first navigation**: browse and switch tmux sessions from the sidebar.
+- **Session operations**: create, rename, kill, reorder, filter.
+- **Main pane stays live**: the large pane stays attached to the selected session instead of being replaced by a full-screen menu.
+- **Keyboard and mouse**: key navigation, click to switch, context menu on right-click (when your terminal supports it).
+
+For implementation details, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Install
 
@@ -31,9 +59,9 @@ Or download a pre-built binary from [GitHub Releases](https://github.com/cross-e
 deck
 ```
 
-Requirements:
+**Requirements**: `tmux` installed and available on `PATH`. If there are no sessions, deck tries to create a detached session named `default` so it can start.
 
-- `tmux` installed and available in `PATH`
+**Config**: `~/.config/deck/config.json`
 
 deck runs two panes. The **sidebar** lists your tmux sessions with working directory, git branch, and idle time. The **main pane** stays attached to the focused session so the terminal never disappears behind a menu.
 
@@ -100,3 +128,5 @@ cargo run
 cargo build --release
 ./target/release/deck
 ```
+
+You still need tmux installed locally to run it.
