@@ -4,40 +4,7 @@ A tmux session sidebar inside your terminal: browse and switch sessions while th
 
 ![screenshot](docs/screenshot.png)
 
-## What deck is
-
-- **A sidebar UI for tmux**: a [ratatui](https://github.com/ratatui-org/ratatui) TUI that lists sessions on the side; the main pane shows real terminal output for the selected session.
-- **Session-first workflow**: create, rename, kill, reorder, and filter sessions; optional git hints, themes, keybindings, and preferences in `~/.config/deck/config.json`.
-- **A local helper**: it expects `tmux` already installed and on your `PATH`. If tmux is missing, deck exits.
-
-## What deck is not
-
-- **Not a tmux replacement**: it does not implement multiplexing or attach/detach semantics. deck is a front end in your terminal; tmux remains the owner of sessions and processes.
-- **Not a general “terminal IDE” or system terminal app**: a single binary plus TUI—not a host like iTerm2 or Windows Terminal.
-- **Not a window/pane-centric tmux manager**: interaction centers on the **session** list and main PTY; complex pane layouts stay in your normal tmux habits.
-- **Not remote sync or collaboration**: it does not sync sessions across machines or manage team access.
-
-## What deck helps you do
-
-- **Switch sessions with less disruption**: pick a session in the sidebar and keep the main pane connected—fewer “full-screen menu → back to shell” context switches.
-- **Do common session work from the sidebar**: filter, reorder, create/rename/kill (see the key table below and in-app `h` / `?` help).
-- **Persist preferences**: theme, layout, sidebar size, exclude rules, plugin-style commands (each in its own PTY) live in config and load on the next start.
-- **Single instance by default**: avoids running two decks fighting over the same terminal state; use `deck --force` to take over explicitly (see `--help`).
-
-## What deck does not help you do
-
-- **It does not install or configure tmux for you**: versions, socket, and `tmux.conf` are still yours.
-- **It does not guarantee every nested setup is safe**: running deck inside tmux (and similar nesting) has guards and limits; tricky nesting is still your call.
-- **It does not replace day-to-day work inside a session**: shell, editor, splitting panes or switching windows in tmux work as before; deck mainly reduces **session-level** navigation and housekeeping.
-
-## Features at a glance
-
-- **Session-first navigation**: browse and switch tmux sessions from the sidebar.
-- **Session operations**: create, rename, kill, reorder, filter.
-- **Main pane stays live**: the large pane stays attached to the selected session instead of being replaced by a full-screen menu.
-- **Keyboard and mouse**: key navigation, click to switch, context menu on right-click (when your terminal supports it).
-
-For implementation details, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+deck **is** a [ratatui](https://github.com/ratatui-org/ratatui) sidebar UI for tmux—the sidebar lists sessions, the main pane stays attached to the selected session's PTY. It **is not** a tmux replacement, a general system terminal app, or a window/pane manager; tmux still owns multiplexing and processes. deck **helps you** browse, switch, create, rename, kill, reorder, and filter sessions from the sidebar, and persists themes, layout, keybindings, and plugin commands in `~/.config/deck/config.json`. It **does not help you** install or configure tmux, work safely in arbitrary nested tmux setups, or do what you normally do inside a session.
 
 ## Install
 
@@ -121,6 +88,8 @@ Each plugin shows up in the sidebar; press its key while the sidebar is focused 
 ```bash
 cargo run
 ```
+
+For implementation details, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Build from source
 
