@@ -4,7 +4,13 @@ A tmux session sidebar inside your terminal: browse and switch sessions while th
 
 ![screenshot](docs/screenshot.png)
 
-deck **is** a [ratatui](https://github.com/ratatui-org/ratatui) sidebar UI for tmux—the sidebar lists sessions, the main pane stays attached to the selected session's PTY. It **is not** a tmux replacement, a general system terminal app, or a window/pane manager; tmux still owns multiplexing and processes. deck **helps you** browse, switch, create, rename, kill, reorder, and filter sessions from the sidebar, and persists themes, layout, keybindings, and plugin commands in `~/.config/deck/config.json`. It **does not help you** install or configure tmux, work safely in arbitrary nested tmux setups, or do what you normally do inside a session.
+`deck` **is** a [ratatui](https://github.com/ratatui-org/ratatui) sidebar UI for tmux (the sidebar lists sessions).
+
+`deck` **is not** a tmux replacement, a general system terminal app, or a window/pane manager;
+
+`deck` **helps you** browse, switch, create, rename, kill, reorder, and filter sessions from the sidebar, and persists themes, layout, keybindings, and plugin commands in `~/.config/deck/config.json`.
+
+`deck` **does not help you** install or configure tmux, work safely in arbitrary nested tmux setups, or do what you normally do inside a session.
 
 ## Install
 
