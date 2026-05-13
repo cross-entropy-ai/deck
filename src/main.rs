@@ -22,10 +22,13 @@ use crossterm::event::{
 use crossterm::execute;
 use instance_guard::{AcquireError, InstanceGuard};
 
+#[derive(Debug, PartialEq, Eq)]
 struct ParsedArgs {
     force: bool,
+    attach_override: Option<String>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum ParsedCommand {
     Run(ParsedArgs),
     HooksInstall,
@@ -33,7 +36,7 @@ enum ParsedCommand {
 }
 
 fn main() -> io::Result<()> {
-    let args = match parse_args() {
+    let args = match parse_args(std::env::args().skip(1)) {
         Ok(Some(ParsedCommand::Run(args))) => args,
         Ok(Some(ParsedCommand::HooksInstall)) => {
             if let Err(e) = hooks::run_install() {
@@ -92,7 +95,30 @@ fn main() -> io::Result<()> {
         std::process::exit(1);
     }
 
-    // Ensure at least one session exists
+    // `deck new <name>`: create the requested session up front, in the
+    // caller's current directory. Duplicate-name is a hard error; this
+    // is checked before the create so we don't silently coalesce with an
+    // existing session that happens to share the name.
+    if let Some(name) = &args.attach_override {
+        if tmux::list_sessions().iter().any(|s| &s.name == name) {
+            eprintln!("deck: session '{name}' already exists");
+            std::process::exit(1);
+        }
+        let cwd = match std::env::current_dir() {
+            Ok(path) => path,
+            Err(err) => {
+                eprintln!("deck: cannot determine current directory: {err}");
+                std::process::exit(1);
+            }
+        };
+        if tmux::new_session(name, &cwd.to_string_lossy()).is_none() {
+            eprintln!("deck: failed to create session '{name}'");
+            std::process::exit(1);
+        }
+    }
+
+    // Ensure at least one session exists (no-op for the `new` path,
+    // since we just created one above).
     if tmux::list_sessions().is_empty() {
         let _ = Command::new("tmux")
             .args(["new-session", "-d", "-s", "default"])
@@ -108,7 +134,7 @@ fn main() -> io::Result<()> {
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
         )?;
         let size = terminal.size()?;
-        let mut app = app::App::new(size.width, size.height)?;
+        let mut app = app::App::new(size.width, size.height, args.attach_override.clone())?;
         let result = app.run(terminal);
         execute!(
             io::stdout(),
@@ -123,9 +149,8 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn parse_args() -> Result<Option<ParsedCommand>, i32> {
-    let mut force = false;
-    let mut iter = std::env::args().skip(1).peekable();
+fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<ParsedCommand>, i32> {
+    let mut iter = args.into_iter().peekable();
 
     if let Some(first) = iter.peek() {
         if first == "hooks" {
@@ -134,7 +159,10 @@ fn parse_args() -> Result<Option<ParsedCommand>, i32> {
         }
     }
 
-    for arg in iter {
+    let mut force = false;
+    let mut attach_override: Option<String> = None;
+
+    while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--version" | "-V" => {
                 println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
@@ -147,6 +175,28 @@ fn parse_args() -> Result<Option<ParsedCommand>, i32> {
             "--force" | "-f" => {
                 force = true;
             }
+            "new" => {
+                if attach_override.is_some() {
+                    eprintln!("deck: 'new' may only be specified once");
+                    return Err(2);
+                }
+                let Some(name) = iter.next() else {
+                    eprintln!("deck: 'new' requires a session name");
+                    eprintln!("Run `deck --help` for usage.");
+                    return Err(2);
+                };
+                if name.starts_with('-') {
+                    eprintln!("deck: expected a session name after 'new', got '{name}'");
+                    return Err(2);
+                }
+                if let Some(extra) = iter.peek() {
+                    if !extra.starts_with('-') {
+                        eprintln!("deck: unexpected argument '{extra}' after `new {name}`");
+                        return Err(2);
+                    }
+                }
+                attach_override = Some(name);
+            }
             _ => {
                 eprintln!("deck: unknown argument '{arg}'");
                 eprintln!("Run `deck --help` for usage.");
@@ -155,7 +205,10 @@ fn parse_args() -> Result<Option<ParsedCommand>, i32> {
         }
     }
 
-    Ok(Some(ParsedCommand::Run(ParsedArgs { force })))
+    Ok(Some(ParsedCommand::Run(ParsedArgs {
+        force,
+        attach_override,
+    })))
 }
 
 fn parse_hooks_args<I: Iterator<Item = String>>(mut iter: I) -> Result<Option<ParsedCommand>, i32> {
@@ -184,8 +237,77 @@ fn parse_hooks_args<I: Iterator<Item = String>>(mut iter: I) -> Result<Option<Pa
 
 fn print_help() {
     println!(
-        "{name} {version}\n\nUsage:\n  {name}                     Launch the sidebar UI\n  {name} --force             Terminate an existing deck instance and take over\n  {name} hooks install       Install Claude Code state hooks into ~/.claude/settings.json\n  {name} hooks uninstall     Remove deck's Claude Code hooks\n  {name} --version           Print version\n  {name} --help              Show this help",
+        "{name} {version}\n\nUsage:\n  {name}                     Launch the sidebar UI\n  {name} new <session>       Create a session named <session> in the current\n                             directory and attach to it\n  {name} --force             Terminate an existing deck instance and take over\n  {name} hooks install       Install Claude Code state hooks into ~/.claude/settings.json\n  {name} hooks uninstall     Remove deck's Claude Code hooks\n  {name} --version           Print version\n  {name} --help              Show this help",
         name = env!("CARGO_PKG_NAME"),
         version = env!("CARGO_PKG_VERSION"),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_args, ParsedArgs, ParsedCommand};
+
+    fn args(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn new_with_name_yields_attach_override() {
+        let result = parse_args(args(&["new", "foo"])).unwrap().unwrap();
+        assert_eq!(
+            result,
+            ParsedCommand::Run(ParsedArgs {
+                force: false,
+                attach_override: Some("foo".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn new_without_name_is_usage_error() {
+        let result = parse_args(args(&["new"]));
+        assert_eq!(result, Err(2));
+    }
+
+    #[test]
+    fn new_with_extra_positional_is_usage_error() {
+        let result = parse_args(args(&["new", "foo", "bar"]));
+        assert_eq!(result, Err(2));
+    }
+
+    #[test]
+    fn force_before_new_combines() {
+        let result = parse_args(args(&["--force", "new", "foo"])).unwrap().unwrap();
+        assert_eq!(
+            result,
+            ParsedCommand::Run(ParsedArgs {
+                force: true,
+                attach_override: Some("foo".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn force_after_new_combines() {
+        let result = parse_args(args(&["new", "foo", "--force"])).unwrap().unwrap();
+        assert_eq!(
+            result,
+            ParsedCommand::Run(ParsedArgs {
+                force: true,
+                attach_override: Some("foo".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn plain_deck_has_no_override() {
+        let result = parse_args(args(&[])).unwrap().unwrap();
+        assert_eq!(
+            result,
+            ParsedCommand::Run(ParsedArgs {
+                force: false,
+                attach_override: None,
+            })
+        );
+    }
 }

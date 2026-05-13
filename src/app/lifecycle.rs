@@ -25,9 +25,12 @@ impl App {
         )
     }
 
-    pub(super) fn ensure_attach_target(nesting_guard: &NestingGuard) -> Option<String> {
+    pub(super) fn ensure_attach_target(
+        nesting_guard: &NestingGuard,
+        attach_override: Option<&str>,
+    ) -> Option<String> {
         let sessions = tmux::list_sessions();
-        if let Some(name) = nesting_guard.preferred_attach_target(&sessions) {
+        if let Some(name) = Self::pick_attach_target(nesting_guard, attach_override, &sessions) {
             return Some(name);
         }
 
@@ -44,6 +47,19 @@ impl App {
 
         tmux::new_session(&name, &dir)?;
         Some(name)
+    }
+
+    pub(super) fn pick_attach_target(
+        nesting_guard: &NestingGuard,
+        attach_override: Option<&str>,
+        sessions: &[tmux::SessionInfo],
+    ) -> Option<String> {
+        if let Some(name) = attach_override {
+            if sessions.iter().any(|s| s.name == name) {
+                return Some(name.to_string());
+            }
+        }
+        nesting_guard.preferred_attach_target(sessions)
     }
 }
 

@@ -53,7 +53,11 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(term_width: u16, term_height: u16) -> io::Result<Self> {
+    pub fn new(
+        term_width: u16,
+        term_height: u16,
+        attach_override: Option<String>,
+    ) -> io::Result<Self> {
         let mut cfg = Config::load();
 
         let before = cfg.to_json();
@@ -103,7 +107,11 @@ impl App {
         let nesting_guard = NestingGuard::new();
 
         let (pty_rows, pty_cols) = state.pty_size();
-        let pty = Self::spawn_tmux_pty((pty_rows, pty_cols), &nesting_guard)?;
+        let pty = Self::spawn_tmux_pty(
+            (pty_rows, pty_cols),
+            &nesting_guard,
+            attach_override.as_deref(),
+        )?;
         let parser = vt100::Parser::new(pty_rows, pty_cols, 0);
 
         let mut app = App {
