@@ -48,7 +48,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
 
     match mouse.kind {
         MouseEventKind::Moved => {
-            return Action::SetHoverSeparator(on_separator);
+            return Action::None;
         }
         MouseEventKind::Down(MouseButton::Left) if on_separator => {
             return Action::StartDrag;

@@ -225,7 +225,6 @@ pub struct AppState {
     pub show_borders: bool,
     pub context_menu: Option<ContextMenu>,
     pub exclude_editor: Option<ExcludeEditorState>,
-    pub hover_separator: bool,
     pub dragging_separator: bool,
 
     // Terminal dimensions
@@ -342,7 +341,6 @@ impl AppState {
             show_borders,
             context_menu: None,
             exclude_editor: None,
-            hover_separator: false,
             dragging_separator: false,
             term_width,
             term_height,

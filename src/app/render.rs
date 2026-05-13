@@ -80,7 +80,6 @@ impl App {
         };
         let update_available = s.update_available.clone();
         let reload_status = s.reload_status.clone();
-        let hover_sep = s.hover_separator;
         let dragging_sep = s.dragging_separator;
 
         let mut captured_banner_bounds: Option<Rect> = None;
@@ -192,8 +191,6 @@ impl App {
             if let Some(gap) = gap_area {
                 let (sep_char, sep_fg) = if dragging_sep {
                     ('┃', theme.green)
-                } else if hover_sep {
-                    ('┃', theme.accent)
                 } else {
                     ('│', theme.dim)
                 };

@@ -523,9 +523,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.dragging_separator = false;
             fx.save_config = true;
         }
-        Action::SetHoverSeparator(hover) => {
-            state.hover_separator = hover;
-        }
 
         Action::Resize(w, h) => {
             state.term_width = w;

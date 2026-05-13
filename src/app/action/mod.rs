@@ -83,7 +83,6 @@ pub enum Action {
     ResizeSidebarHeight(u16),
     StartDrag,
     StopDrag,
-    SetHoverSeparator(bool),
 
     Resize(u16, u16),
 
