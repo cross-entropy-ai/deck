@@ -84,6 +84,12 @@ pub enum Action {
     StartDrag,
     StopDrag,
 
+    RenameCursorLeft,
+    RenameCursorRight,
+    RenameCursorHome,
+    RenameCursorEnd,
+    RenameDelete,
+
     Resize(u16, u16),
 
     ForwardKey(Vec<u8>),

@@ -43,6 +43,17 @@ impl NestingGuard {
         self.unsafe_sessions = Self::unsafe_sessions(self.host_session.as_deref());
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_parts(
+        host_session: Option<String>,
+        unsafe_sessions: HashSet<String>,
+    ) -> Self {
+        Self {
+            host_session,
+            unsafe_sessions,
+        }
+    }
+
     pub fn preferred_attach_target(&self, sessions: &[tmux::SessionInfo]) -> Option<String> {
         Self::preferred_attach_target_for_unsafe(sessions, &self.unsafe_sessions)
     }

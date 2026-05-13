@@ -11,8 +11,9 @@ impl App {
     pub(super) fn spawn_tmux_pty(
         size: (u16, u16),
         nesting_guard: &NestingGuard,
+        attach_override: Option<&str>,
     ) -> io::Result<Pty> {
-        let target = Self::ensure_attach_target(nesting_guard)
+        let target = Self::ensure_attach_target(nesting_guard, attach_override)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no tmux session to attach"))?;
         let args = ["attach", "-t", target.as_str()];
         Pty::spawn(
@@ -76,7 +77,7 @@ impl App {
     pub(super) fn respawn_pty(&mut self) -> io::Result<()> {
         let (pty_rows, pty_cols) = self.state.pty_size();
         self.nesting_guard.refresh();
-        self.pty = Self::spawn_tmux_pty((pty_rows, pty_cols), &self.nesting_guard)?;
+        self.pty = Self::spawn_tmux_pty((pty_rows, pty_cols), &self.nesting_guard, None)?;
         self.parser = vt100::Parser::new(pty_rows, pty_cols, 0);
         Ok(())
     }

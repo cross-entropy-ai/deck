@@ -158,6 +158,37 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 }
             }
         }
+        Action::RenameCursorLeft => {
+            if let Some(ref mut r) = state.renaming {
+                if let Some(prev) = r.input[..r.cursor].chars().last() {
+                    r.cursor -= prev.len_utf8();
+                }
+            }
+        }
+        Action::RenameCursorRight => {
+            if let Some(ref mut r) = state.renaming {
+                if let Some(next) = r.input[r.cursor..].chars().next() {
+                    r.cursor += next.len_utf8();
+                }
+            }
+        }
+        Action::RenameCursorHome => {
+            if let Some(ref mut r) = state.renaming {
+                r.cursor = 0;
+            }
+        }
+        Action::RenameCursorEnd => {
+            if let Some(ref mut r) = state.renaming {
+                r.cursor = r.input.len();
+            }
+        }
+        Action::RenameDelete => {
+            if let Some(ref mut r) = state.renaming {
+                if r.cursor < r.input.len() {
+                    r.input.remove(r.cursor);
+                }
+            }
+        }
         Action::RenameConfirm => {
             if let Some(r) = state.renaming.take() {
                 let new_name = r.input.trim().to_string();

@@ -1,6 +1,6 @@
 use super::{apply_action, Action};
 use crate::state::{
-    AppState, FocusMode, LayoutMode, MainView, SessionRow, SessionStatus, ViewMode,
+    AppState, FocusMode, LayoutMode, MainView, RenameState, SessionRow, SessionStatus, ViewMode,
 };
 
 fn make_session(name: &str, idle: u64) -> SessionRow {
@@ -369,4 +369,75 @@ fn settings_adjust_view_mode_toggles() {
     let fx = apply_action(&mut state, Action::SettingsAdjust(1));
     assert_eq!(state.view_mode, ViewMode::Compact);
     assert!(fx.save_config);
+}
+
+fn renaming(input: &str, cursor: usize) -> RenameState {
+    RenameState {
+        original_name: input.to_string(),
+        input: input.to_string(),
+        cursor,
+    }
+}
+
+#[test]
+fn rename_cursor_left_steps_back_one_char() {
+    let mut state = make_test_state(1);
+    state.renaming = Some(renaming("hello", 3));
+    apply_action(&mut state, Action::RenameCursorLeft);
+    assert_eq!(state.renaming.as_ref().unwrap().cursor, 2);
+}
+
+#[test]
+fn rename_cursor_left_at_zero_is_noop() {
+    let mut state = make_test_state(1);
+    state.renaming = Some(renaming("hello", 0));
+    apply_action(&mut state, Action::RenameCursorLeft);
+    assert_eq!(state.renaming.as_ref().unwrap().cursor, 0);
+}
+
+#[test]
+fn rename_cursor_right_advances_over_multibyte_char() {
+    // 中文 = 3 bytes per char in UTF-8.
+    let mut state = make_test_state(1);
+    state.renaming = Some(renaming("中文abc", 0));
+    apply_action(&mut state, Action::RenameCursorRight);
+    assert_eq!(state.renaming.as_ref().unwrap().cursor, 3);
+}
+
+#[test]
+fn rename_cursor_right_at_end_is_noop() {
+    let mut state = make_test_state(1);
+    state.renaming = Some(renaming("hi", 2));
+    apply_action(&mut state, Action::RenameCursorRight);
+    assert_eq!(state.renaming.as_ref().unwrap().cursor, 2);
+}
+
+#[test]
+fn rename_cursor_home_and_end_jump_to_extremes() {
+    let mut state = make_test_state(1);
+    state.renaming = Some(renaming("hello", 3));
+    apply_action(&mut state, Action::RenameCursorHome);
+    assert_eq!(state.renaming.as_ref().unwrap().cursor, 0);
+    apply_action(&mut state, Action::RenameCursorEnd);
+    assert_eq!(state.renaming.as_ref().unwrap().cursor, 5);
+}
+
+#[test]
+fn rename_delete_removes_char_at_cursor_without_moving() {
+    let mut state = make_test_state(1);
+    state.renaming = Some(renaming("abcd", 1));
+    apply_action(&mut state, Action::RenameDelete);
+    let r = state.renaming.as_ref().unwrap();
+    assert_eq!(r.input, "acd");
+    assert_eq!(r.cursor, 1);
+}
+
+#[test]
+fn rename_delete_at_end_is_noop() {
+    let mut state = make_test_state(1);
+    state.renaming = Some(renaming("abc", 3));
+    apply_action(&mut state, Action::RenameDelete);
+    let r = state.renaming.as_ref().unwrap();
+    assert_eq!(r.input, "abc");
+    assert_eq!(r.cursor, 3);
 }
