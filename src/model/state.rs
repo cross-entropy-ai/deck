@@ -198,6 +198,56 @@ pub struct ExcludeEditorState {
     pub error: Option<String>,
 }
 
+// --- Notification state ---
+
+/// Desktop-notification dedup state plus terminal focus tracking. Lives
+/// in its own struct because it's the slice of `AppState` with the
+/// weakest coupling to session-list logic — only `app/refresh.rs` and
+/// `effective_status` touch it.
+#[derive(Debug, Default)]
+pub struct NotificationState {
+    /// Unix-ms timestamp at which the user last detached from each
+    /// session. Used by the Waiting-ack override: if the latest Claude
+    /// hook event for session S is older than `acked_ts_ms[S]`, the
+    /// Waiting status is downgraded to Idle in the UI. In-memory only,
+    /// so ack resets on deck restart.
+    pub acked_ts_ms: HashMap<String, u64>,
+
+    /// Per-session ts of the most recent Waiting event we already fired
+    /// a desktop notification for. Stops us from re-notifying every
+    /// refresh cycle while a session sits in Waiting.
+    pub last_notified_ts_ms: HashMap<String, u64>,
+
+    /// First snapshot is used to seed `last_notified_ts_ms` without
+    /// firing notifications — otherwise restarting deck while any
+    /// session was already Waiting would dump a notification per
+    /// session into the user's tray.
+    pub notifications_armed: bool,
+
+    /// Whether the host terminal (Ghostty / iTerm2 / etc.) currently
+    /// has OS-level keyboard focus. Updated from crossterm's
+    /// `FocusGained` / `FocusLost` events. Used to gate the "you're
+    /// already attached, no notification needed" check — if you're
+    /// attached but looking at another macOS app, we still notify.
+    ///
+    /// Defaults to true: assume focused until the terminal tells us
+    /// otherwise. A `false` default would race the first FocusGained
+    /// event and could fire spurious notifications immediately after
+    /// launch.
+    pub terminal_focused: bool,
+}
+
+impl NotificationState {
+    pub fn new() -> Self {
+        Self {
+            acked_ts_ms: HashMap::new(),
+            last_notified_ts_ms: HashMap::new(),
+            notifications_armed: false,
+            terminal_focused: true,
+        }
+    }
+}
+
 // --- AppState ---
 
 pub struct AppState {
@@ -257,30 +307,9 @@ pub struct AppState {
     pub reload_status: Option<ReloadStatus>,
     pub reload_status_at: Option<Instant>,
 
-    /// Unix-ms timestamp at which the user last detached from each
-    /// session. Used by the Waiting-ack override: if the latest Claude
-    /// hook event for session S is older than `acked_ts_ms[S]`, the
-    /// Waiting status is downgraded to Idle in the UI. In-memory only,
-    /// so ack resets on deck restart.
-    pub acked_ts_ms: HashMap<String, u64>,
-
-    /// Per-session ts of the most recent Waiting event we already fired
-    /// a desktop notification for. Stops us from re-notifying every
-    /// refresh cycle while a session sits in Waiting.
-    pub last_notified_ts_ms: HashMap<String, u64>,
-
-    /// First snapshot is used to seed `last_notified_ts_ms` without
-    /// firing notifications — otherwise restarting deck while any
-    /// session was already Waiting would dump a notification per
-    /// session into the user's tray.
-    pub notifications_armed: bool,
-
-    /// Whether the host terminal (Ghostty / iTerm2 / etc.) currently
-    /// has OS-level keyboard focus. Updated from crossterm's
-    /// `FocusGained` / `FocusLost` events. Used to gate the "you're
-    /// already attached, no notification needed" check — if you're
-    /// attached but looking at another macOS app, we still notify.
-    pub terminal_focused: bool,
+    /// Desktop-notification dedup state plus terminal focus tracking.
+    /// See `NotificationState` for field-by-field commentary.
+    pub notification: NotificationState,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -356,14 +385,7 @@ impl AppState {
             banner_upgrade_bounds: None,
             reload_status: None,
             reload_status_at: None,
-            acked_ts_ms: HashMap::new(),
-            last_notified_ts_ms: HashMap::new(),
-            notifications_armed: false,
-            // Assume focused until the terminal tells us otherwise. The
-            // alternative (false default) would race the first
-            // FocusGained event and could fire spurious notifications
-            // immediately after launch.
-            terminal_focused: true,
+            notification: NotificationState::new(),
         }
     }
 
@@ -382,7 +404,12 @@ impl AppState {
             return SessionStatus::Idle;
         }
         let event_ts = row.status_event_ts_ms.unwrap_or(0);
-        let ack_ts = self.acked_ts_ms.get(&row.name).copied().unwrap_or(0);
+        let ack_ts = self
+            .notification
+            .acked_ts_ms
+            .get(&row.name)
+            .copied()
+            .unwrap_or(0);
         if event_ts <= ack_ts {
             SessionStatus::Idle
         } else {
