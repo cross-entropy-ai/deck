@@ -102,7 +102,7 @@ fn kill_session_requires_confirmation() {
     let mut state = make_test_state(3);
     state.focused = 1;
     let fx = apply_action(&mut state, Action::KillSession);
-    assert!(state.confirm_kill);
+    assert!(state.overlay.confirm_kill);
     assert!(fx.kill_session.is_none());
 }
 
@@ -110,16 +110,16 @@ fn kill_session_requires_confirmation() {
 fn kill_single_session_prevented() {
     let mut state = make_test_state(1);
     apply_action(&mut state, Action::KillSession);
-    assert!(!state.confirm_kill);
+    assert!(!state.overlay.confirm_kill);
 }
 
 #[test]
 fn confirm_kill_returns_side_effect_with_switch_target() {
     let mut state = make_test_state(3);
     state.focused = 1;
-    state.confirm_kill = true;
+    state.overlay.confirm_kill = true;
     let fx = apply_action(&mut state, Action::ConfirmKill);
-    assert!(!state.confirm_kill);
+    assert!(!state.overlay.confirm_kill);
     assert!(fx.kill_session.is_some());
     let kill = fx.kill_session.unwrap();
     assert_eq!(kill.name, "sess-1");
@@ -129,9 +129,9 @@ fn confirm_kill_returns_side_effect_with_switch_target() {
 #[test]
 fn cancel_kill_clears_flag() {
     let mut state = make_test_state(3);
-    state.confirm_kill = true;
+    state.overlay.confirm_kill = true;
     apply_action(&mut state, Action::CancelKill);
-    assert!(!state.confirm_kill);
+    assert!(!state.overlay.confirm_kill);
 }
 
 #[test]
@@ -247,9 +247,9 @@ fn quit_signals_quit() {
 #[test]
 fn dismiss_help() {
     let mut state = make_test_state(1);
-    state.show_help = true;
+    state.overlay.show_help = true;
     apply_action(&mut state, Action::DismissHelp);
-    assert!(!state.show_help);
+    assert!(!state.overlay.show_help);
 }
 
 #[test]
@@ -263,17 +263,17 @@ fn open_and_navigate_context_menu() {
             y: 5,
         },
     );
-    assert!(state.context_menu.is_some());
+    assert!(state.overlay.context_menu.is_some());
     assert_eq!(state.focused, 1);
 
     apply_action(&mut state, Action::MenuNext);
-    assert_eq!(state.context_menu.as_ref().unwrap().selected, 1);
+    assert_eq!(state.overlay.context_menu.as_ref().unwrap().selected, 1);
 
     apply_action(&mut state, Action::MenuPrev);
-    assert_eq!(state.context_menu.as_ref().unwrap().selected, 0);
+    assert_eq!(state.overlay.context_menu.as_ref().unwrap().selected, 0);
 
     apply_action(&mut state, Action::MenuDismiss);
-    assert!(state.context_menu.is_none());
+    assert!(state.overlay.context_menu.is_none());
 }
 
 #[test]
@@ -301,9 +301,9 @@ fn open_close_exclude_editor() {
     state.main_view = MainView::Settings;
     state.settings.selected = 4;
     apply_action(&mut state, Action::OpenExcludeEditor);
-    assert!(state.exclude_editor.is_some());
+    assert!(state.overlay.exclude_editor.is_some());
     apply_action(&mut state, Action::CloseExcludeEditor);
-    assert!(state.exclude_editor.is_none());
+    assert!(state.overlay.exclude_editor.is_none());
 }
 
 #[test]
@@ -312,14 +312,14 @@ fn exclude_editor_add_pattern() {
     state.exclude_patterns = vec!["_*".to_string()];
     apply_action(&mut state, Action::OpenExcludeEditor);
     apply_action(&mut state, Action::ExcludeEditorStartAdd);
-    assert!(state.exclude_editor.as_ref().unwrap().adding);
+    assert!(state.overlay.exclude_editor.as_ref().unwrap().adding);
     apply_action(&mut state, Action::ExcludeEditorInput('t'));
     apply_action(&mut state, Action::ExcludeEditorInput('*'));
     let fx = apply_action(&mut state, Action::ExcludeEditorConfirm);
     assert_eq!(state.exclude_patterns, vec!["_*", "t*"]);
     assert!(fx.save_config);
     assert!(fx.refresh_sessions);
-    assert!(!state.exclude_editor.as_ref().unwrap().adding);
+    assert!(!state.overlay.exclude_editor.as_ref().unwrap().adding);
 }
 
 #[test]
@@ -327,7 +327,7 @@ fn exclude_editor_delete_pattern() {
     let mut state = make_test_state(1);
     state.exclude_patterns = vec!["_*".to_string(), "scratch*".to_string()];
     apply_action(&mut state, Action::OpenExcludeEditor);
-    state.exclude_editor.as_mut().unwrap().selected = 0;
+    state.overlay.exclude_editor.as_mut().unwrap().selected = 0;
     let fx = apply_action(&mut state, Action::ExcludeEditorDelete);
     assert_eq!(state.exclude_patterns, vec!["scratch*"]);
     assert!(fx.save_config);
@@ -344,7 +344,7 @@ fn exclude_editor_invalid_regex_shows_error() {
         apply_action(&mut state, Action::ExcludeEditorInput(ch));
     }
     apply_action(&mut state, Action::ExcludeEditorConfirm);
-    let editor = state.exclude_editor.as_ref().unwrap();
+    let editor = state.overlay.exclude_editor.as_ref().unwrap();
     assert!(editor.adding);
     assert!(editor.error.is_some());
     assert!(state.exclude_patterns.is_empty());
@@ -382,52 +382,52 @@ fn renaming(input: &str, cursor: usize) -> RenameState {
 #[test]
 fn rename_cursor_left_steps_back_one_char() {
     let mut state = make_test_state(1);
-    state.renaming = Some(renaming("hello", 3));
+    state.overlay.renaming = Some(renaming("hello", 3));
     apply_action(&mut state, Action::RenameCursorLeft);
-    assert_eq!(state.renaming.as_ref().unwrap().cursor, 2);
+    assert_eq!(state.overlay.renaming.as_ref().unwrap().cursor, 2);
 }
 
 #[test]
 fn rename_cursor_left_at_zero_is_noop() {
     let mut state = make_test_state(1);
-    state.renaming = Some(renaming("hello", 0));
+    state.overlay.renaming = Some(renaming("hello", 0));
     apply_action(&mut state, Action::RenameCursorLeft);
-    assert_eq!(state.renaming.as_ref().unwrap().cursor, 0);
+    assert_eq!(state.overlay.renaming.as_ref().unwrap().cursor, 0);
 }
 
 #[test]
 fn rename_cursor_right_advances_over_multibyte_char() {
     // 中文 = 3 bytes per char in UTF-8.
     let mut state = make_test_state(1);
-    state.renaming = Some(renaming("中文abc", 0));
+    state.overlay.renaming = Some(renaming("中文abc", 0));
     apply_action(&mut state, Action::RenameCursorRight);
-    assert_eq!(state.renaming.as_ref().unwrap().cursor, 3);
+    assert_eq!(state.overlay.renaming.as_ref().unwrap().cursor, 3);
 }
 
 #[test]
 fn rename_cursor_right_at_end_is_noop() {
     let mut state = make_test_state(1);
-    state.renaming = Some(renaming("hi", 2));
+    state.overlay.renaming = Some(renaming("hi", 2));
     apply_action(&mut state, Action::RenameCursorRight);
-    assert_eq!(state.renaming.as_ref().unwrap().cursor, 2);
+    assert_eq!(state.overlay.renaming.as_ref().unwrap().cursor, 2);
 }
 
 #[test]
 fn rename_cursor_home_and_end_jump_to_extremes() {
     let mut state = make_test_state(1);
-    state.renaming = Some(renaming("hello", 3));
+    state.overlay.renaming = Some(renaming("hello", 3));
     apply_action(&mut state, Action::RenameCursorHome);
-    assert_eq!(state.renaming.as_ref().unwrap().cursor, 0);
+    assert_eq!(state.overlay.renaming.as_ref().unwrap().cursor, 0);
     apply_action(&mut state, Action::RenameCursorEnd);
-    assert_eq!(state.renaming.as_ref().unwrap().cursor, 5);
+    assert_eq!(state.overlay.renaming.as_ref().unwrap().cursor, 5);
 }
 
 #[test]
 fn rename_delete_removes_char_at_cursor_without_moving() {
     let mut state = make_test_state(1);
-    state.renaming = Some(renaming("abcd", 1));
+    state.overlay.renaming = Some(renaming("abcd", 1));
     apply_action(&mut state, Action::RenameDelete);
-    let r = state.renaming.as_ref().unwrap();
+    let r = state.overlay.renaming.as_ref().unwrap();
     assert_eq!(r.input, "acd");
     assert_eq!(r.cursor, 1);
 }
@@ -435,9 +435,9 @@ fn rename_delete_removes_char_at_cursor_without_moving() {
 #[test]
 fn rename_delete_at_end_is_noop() {
     let mut state = make_test_state(1);
-    state.renaming = Some(renaming("abc", 3));
+    state.overlay.renaming = Some(renaming("abc", 3));
     apply_action(&mut state, Action::RenameDelete);
-    let r = state.renaming.as_ref().unwrap();
+    let r = state.overlay.renaming.as_ref().unwrap();
     assert_eq!(r.input, "abc");
     assert_eq!(r.cursor, 3);
 }

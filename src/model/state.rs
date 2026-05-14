@@ -198,6 +198,27 @@ pub struct ExcludeEditorState {
     pub error: Option<String>,
 }
 
+// --- Overlay state ---
+
+/// UI state for transient sidebar overlays — help screen, kill-confirm
+/// prompt, in-progress rename, right-click context menu, and the
+/// exclude-pattern editor popup. Grouped so the renderer and key
+/// dispatcher have a single place to ask "is any overlay active?".
+///
+/// `warning_state` (the nesting-detection banner) lives on `App` rather
+/// than here because it is produced by the `NestingGuard` that App
+/// owns, and the dispatch loop's "block actions while a warning is
+/// up" gate reads it from App directly. Lifting it into AppState would
+/// add an indirection without consolidating any logic.
+#[derive(Debug, Default)]
+pub struct OverlayState {
+    pub show_help: bool,
+    pub confirm_kill: bool,
+    pub renaming: Option<RenameState>,
+    pub context_menu: Option<ContextMenu>,
+    pub exclude_editor: Option<ExcludeEditorState>,
+}
+
 // --- Settings page state ---
 
 /// UI state for the settings page and its sub-popovers (theme picker,
@@ -289,13 +310,12 @@ pub struct AppState {
     pub view_mode: ViewMode,
     pub sidebar_width: u16,
     pub sidebar_height: u16,
-    pub show_help: bool,
-    pub confirm_kill: bool,
-    pub renaming: Option<RenameState>,
     pub show_borders: bool,
-    pub context_menu: Option<ContextMenu>,
-    pub exclude_editor: Option<ExcludeEditorState>,
     pub dragging_separator: bool,
+
+    /// Transient sidebar overlays — help, kill-confirm, rename, context
+    /// menu, exclude editor. See `OverlayState`.
+    pub overlay: OverlayState,
 
     // Terminal dimensions
     pub term_width: u16,
@@ -384,13 +404,9 @@ impl AppState {
             view_mode,
             sidebar_width,
             sidebar_height,
-            show_help: false,
-            confirm_kill: false,
-            renaming: None,
             show_borders,
-            context_menu: None,
-            exclude_editor: None,
             dragging_separator: false,
+            overlay: OverlayState::default(),
             term_width,
             term_height,
             last_scroll: Instant::now(),
@@ -578,7 +594,7 @@ impl AppState {
 
     /// Map a screen position to a context menu item index.
     pub fn menu_item_at(&self, col: u16, row: u16) -> Option<usize> {
-        let menu = self.context_menu.as_ref()?;
+        let menu = self.overlay.context_menu.as_ref()?;
         let items = menu.items();
         let menu_width = context_menu_width(items);
         let menu_height = items.len() as u16 + 2;

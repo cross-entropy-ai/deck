@@ -270,7 +270,7 @@ impl App {
 
         // Reset sub-UIs whose indices may no longer be valid.
         self.state.settings.theme_picker_selected = new_theme_index;
-        self.state.exclude_editor = None;
+        self.state.overlay.exclude_editor = None;
 
         self.raw_keybindings = cfg.keybindings;
         self.state.reload_status = Some(ReloadStatus::Ok);

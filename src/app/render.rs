@@ -22,10 +22,14 @@ impl App {
         let sidebar_active = s.focus_mode == FocusMode::Sidebar;
         let focused = s.focused;
         let theme = &THEMES[s.theme_index];
-        let confirm_kill = s.confirm_kill;
-        let show_help = s.show_help;
-        let rename_input = s.renaming.as_ref().map(|r| (r.input.clone(), r.cursor));
-        let context_menu = s.context_menu.clone();
+        let confirm_kill = s.overlay.confirm_kill;
+        let show_help = s.overlay.show_help;
+        let rename_input = s
+            .overlay
+            .renaming
+            .as_ref()
+            .map(|r| (r.input.clone(), r.cursor));
+        let context_menu = s.overlay.context_menu.clone();
         let show_borders = s.show_borders;
         let layout_mode = s.layout_mode;
         let view_mode = s.view_mode;
@@ -65,13 +69,17 @@ impl App {
             show_borders: s.show_borders,
             view_mode: s.view_mode,
             exclude_count: s.exclude_patterns.len(),
-            exclude_editor: s.exclude_editor.as_ref().map(|e| ui::ExcludeEditorView {
-                patterns: &s.exclude_patterns,
-                selected: e.selected,
-                adding: e.adding,
-                input: &e.input,
-                error: e.error.as_deref(),
-            }),
+            exclude_editor: s
+                .overlay
+                .exclude_editor
+                .as_ref()
+                .map(|e| ui::ExcludeEditorView {
+                    patterns: &s.exclude_patterns,
+                    selected: e.selected,
+                    adding: e.adding,
+                    input: &e.input,
+                    error: e.error.as_deref(),
+                }),
             keybindings: &s.keybindings,
             keybindings_view_open: s.settings.keybindings_view_open,
             keybindings_view_scroll: s.settings.keybindings_view_scroll,
