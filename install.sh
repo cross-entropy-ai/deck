@@ -17,7 +17,7 @@ detect_platform() {
 
     case "$OS" in
         Darwin) OS_TARGET="apple-darwin" ;;
-        Linux)  OS_TARGET="unknown-linux-gnu" ;;
+        Linux)  OS_TARGET="unknown-linux-musl" ;;
         *)
             err "Unsupported OS: $OS (only macOS and Linux are supported)"
             ;;
