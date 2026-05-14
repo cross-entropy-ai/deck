@@ -167,10 +167,10 @@ fn open_settings_switches_main_pane_to_settings() {
 fn settings_adjust_theme_opens_picker() {
     let mut state = make_test_state(1);
     state.theme_index = 0;
-    state.settings_selected = 0;
+    state.settings.selected = 0;
     let fx = apply_action(&mut state, Action::SettingsAdjust(1));
-    assert!(state.theme_picker_open);
-    assert_eq!(state.theme_picker_selected, 0);
+    assert!(state.settings.theme_picker_open);
+    assert_eq!(state.settings.theme_picker_selected, 0);
     assert!(!fx.save_config);
 }
 
@@ -178,10 +178,10 @@ fn settings_adjust_theme_opens_picker() {
 fn confirm_theme_picker_selects_theme_and_saves() {
     let mut state = make_test_state(1);
     state.theme_index = 0;
-    state.theme_picker_open = true;
-    state.theme_picker_selected = 3;
+    state.settings.theme_picker_open = true;
+    state.settings.theme_picker_selected = 3;
     let fx = apply_action(&mut state, Action::ConfirmThemePicker);
-    assert!(!state.theme_picker_open);
+    assert!(!state.settings.theme_picker_open);
     assert!(!fx.save_config);
 }
 
@@ -189,10 +189,10 @@ fn confirm_theme_picker_selects_theme_and_saves() {
 fn theme_picker_next_previews_theme_immediately() {
     let mut state = make_test_state(1);
     state.theme_index = 0;
-    state.theme_picker_open = true;
-    state.theme_picker_selected = 0;
+    state.settings.theme_picker_open = true;
+    state.settings.theme_picker_selected = 0;
     let fx = apply_action(&mut state, Action::ThemePickerNext);
-    assert_eq!(state.theme_picker_selected, 1);
+    assert_eq!(state.settings.theme_picker_selected, 1);
     assert_eq!(state.theme_index, 1);
     assert!(fx.save_config);
 }
@@ -200,7 +200,7 @@ fn theme_picker_next_previews_theme_immediately() {
 #[test]
 fn settings_adjust_layout_resizes_and_saves() {
     let mut state = make_test_state(1);
-    state.settings_selected = 1;
+    state.settings.selected = 1;
     let fx = apply_action(&mut state, Action::SettingsAdjust(1));
     assert_eq!(state.layout_mode, LayoutMode::Vertical);
     assert!(fx.resize_pty);
@@ -211,7 +211,7 @@ fn settings_adjust_layout_resizes_and_saves() {
 fn settings_adjust_borders_resizes_and_saves() {
     let mut state = make_test_state(1);
     let initial = state.show_borders;
-    state.settings_selected = 2;
+    state.settings.selected = 2;
     let fx = apply_action(&mut state, Action::SettingsAdjust(1));
     assert_ne!(state.show_borders, initial);
     assert!(fx.resize_pty);
@@ -299,7 +299,7 @@ fn reorder_session_moves_up() {
 fn open_close_exclude_editor() {
     let mut state = make_test_state(1);
     state.main_view = MainView::Settings;
-    state.settings_selected = 4;
+    state.settings.selected = 4;
     apply_action(&mut state, Action::OpenExcludeEditor);
     assert!(state.exclude_editor.is_some());
     apply_action(&mut state, Action::CloseExcludeEditor);
@@ -365,7 +365,7 @@ fn toggle_view_mode_flips_and_saves() {
 #[test]
 fn settings_adjust_view_mode_toggles() {
     let mut state = make_test_state(1);
-    state.settings_selected = 3;
+    state.settings.selected = 3;
     let fx = apply_action(&mut state, Action::SettingsAdjust(1));
     assert_eq!(state.view_mode, ViewMode::Compact);
     assert!(fx.save_config);

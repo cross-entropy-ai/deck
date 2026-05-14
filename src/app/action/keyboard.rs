@@ -37,13 +37,13 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     }
 
     if state.main_view == MainView::Settings && state.focus_mode == FocusMode::Main {
-        if state.keybindings_view_open {
+        if state.settings.keybindings_view_open {
             return keybindings_view_key_to_action(key);
         }
         if state.exclude_editor.is_some() {
             return exclude_editor_key_to_action(key, state);
         }
-        if state.theme_picker_open {
+        if state.settings.theme_picker_open {
             return theme_picker_key_to_action(key);
         }
         return settings_key_to_action(key);

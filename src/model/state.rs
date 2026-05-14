@@ -198,6 +198,26 @@ pub struct ExcludeEditorState {
     pub error: Option<String>,
 }
 
+// --- Settings page state ---
+
+/// UI state for the settings page and its sub-popovers (theme picker,
+/// keybindings viewer). Update-check fields stay on `AppState` because
+/// they are read and written from many code paths outside the settings
+/// page (refresh loop, banner rendering, mouse hit-testing).
+#[derive(Debug, Default)]
+pub struct SettingsState {
+    /// Selected row in the settings page.
+    pub selected: usize,
+
+    /// Theme picker overlay (open inside the settings page).
+    pub theme_picker_open: bool,
+    pub theme_picker_selected: usize,
+
+    /// Keybindings viewer overlay (read-only).
+    pub keybindings_view_open: bool,
+    pub keybindings_view_scroll: u16,
+}
+
 // --- Notification state ---
 
 /// Desktop-notification dedup state plus terminal focus tracking. Lives
@@ -262,9 +282,9 @@ pub struct AppState {
     pub main_view: MainView,
     pub focus_mode: FocusMode,
     pub theme_index: usize,
-    pub settings_selected: usize,
-    pub theme_picker_open: bool,
-    pub theme_picker_selected: usize,
+    /// Settings page navigation + theme picker / keybindings viewer
+    /// overlays. See `SettingsState`.
+    pub settings: SettingsState,
     pub layout_mode: LayoutMode,
     pub view_mode: ViewMode,
     pub sidebar_width: u16,
@@ -288,10 +308,6 @@ pub struct AppState {
     pub exclude_patterns: Vec<String>,
     pub plugins: Vec<PluginConfig>,
     pub keybindings: Keybindings,
-
-    // Keybindings viewer (read-only settings page)
-    pub keybindings_view_open: bool,
-    pub keybindings_view_scroll: u16,
 
     // Update check
     pub update_check_mode: UpdateCheckMode,
@@ -357,9 +373,13 @@ impl AppState {
             main_view: MainView::Terminal,
             focus_mode: FocusMode::Main,
             theme_index,
-            settings_selected: 0,
-            theme_picker_open: false,
-            theme_picker_selected: theme_index,
+            settings: SettingsState {
+                selected: 0,
+                theme_picker_open: false,
+                theme_picker_selected: theme_index,
+                keybindings_view_open: false,
+                keybindings_view_scroll: 0,
+            },
             layout_mode,
             view_mode,
             sidebar_width,
@@ -377,8 +397,6 @@ impl AppState {
             exclude_patterns,
             plugins,
             keybindings,
-            keybindings_view_open: false,
-            keybindings_view_scroll: 0,
             update_check_mode,
             update_available: None,
             update_last_checked_secs: None,

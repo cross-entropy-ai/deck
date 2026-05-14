@@ -228,25 +228,25 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::OpenSettings => {
             state.main_view = MainView::Settings;
             state.focus_mode = FocusMode::Main;
-            state.theme_picker_open = false;
-            state.theme_picker_selected = state.theme_index;
+            state.settings.theme_picker_open = false;
+            state.settings.theme_picker_selected = state.theme_index;
         }
         Action::CloseSettings => {
             state.main_view = MainView::Terminal;
             state.focus_mode = FocusMode::Main;
-            state.theme_picker_open = false;
+            state.settings.theme_picker_open = false;
         }
         Action::SettingsNext => {
-            state.settings_selected = (state.settings_selected + 1).min(SETTINGS_ITEM_COUNT - 1);
+            state.settings.selected = (state.settings.selected + 1).min(SETTINGS_ITEM_COUNT - 1);
         }
         Action::SettingsPrev => {
-            if state.settings_selected > 0 {
-                state.settings_selected -= 1;
+            if state.settings.selected > 0 {
+                state.settings.selected -= 1;
             }
         }
         Action::SettingsAdjust(direction) => {
             let _ = direction;
-            let inner = match state.settings_selected {
+            let inner = match state.settings.selected {
                 0 => apply_action(state, Action::OpenThemePicker),
                 1 => apply_action(state, Action::ToggleLayout),
                 2 => apply_action(state, Action::ToggleBorders),
@@ -261,45 +261,48 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::OpenThemePicker => {
             state.main_view = MainView::Settings;
             state.focus_mode = FocusMode::Main;
-            state.theme_picker_open = true;
-            state.theme_picker_selected = state.theme_index.min(THEMES.len().saturating_sub(1));
+            state.settings.theme_picker_open = true;
+            state.settings.theme_picker_selected =
+                state.theme_index.min(THEMES.len().saturating_sub(1));
         }
         Action::CloseThemePicker => {
-            state.theme_picker_open = false;
+            state.settings.theme_picker_open = false;
         }
         Action::ThemePickerNext => {
             if !THEMES.is_empty() {
-                state.theme_picker_selected =
-                    (state.theme_picker_selected + 1).min(THEMES.len() - 1);
-                state.theme_index = state.theme_picker_selected;
+                state.settings.theme_picker_selected =
+                    (state.settings.theme_picker_selected + 1).min(THEMES.len() - 1);
+                state.theme_index = state.settings.theme_picker_selected;
                 fx.save_config = true;
                 fx.apply_tmux_theme = true;
             }
         }
         Action::ThemePickerPrev => {
-            if state.theme_picker_selected > 0 {
-                state.theme_picker_selected -= 1;
-                state.theme_index = state.theme_picker_selected;
+            if state.settings.theme_picker_selected > 0 {
+                state.settings.theme_picker_selected -= 1;
+                state.theme_index = state.settings.theme_picker_selected;
                 fx.save_config = true;
                 fx.apply_tmux_theme = true;
             }
         }
         Action::ConfirmThemePicker => {
-            state.theme_picker_open = false;
+            state.settings.theme_picker_open = false;
         }
 
         Action::OpenKeybindingsView => {
-            state.keybindings_view_open = true;
-            state.keybindings_view_scroll = 0;
+            state.settings.keybindings_view_open = true;
+            state.settings.keybindings_view_scroll = 0;
         }
         Action::CloseKeybindingsView => {
-            state.keybindings_view_open = false;
+            state.settings.keybindings_view_open = false;
         }
         Action::KeybindingsViewScrollUp => {
-            state.keybindings_view_scroll = state.keybindings_view_scroll.saturating_sub(1);
+            state.settings.keybindings_view_scroll =
+                state.settings.keybindings_view_scroll.saturating_sub(1);
         }
         Action::KeybindingsViewScrollDown => {
-            state.keybindings_view_scroll = state.keybindings_view_scroll.saturating_add(1);
+            state.settings.keybindings_view_scroll =
+                state.settings.keybindings_view_scroll.saturating_add(1);
         }
 
         Action::ToggleUpdateCheck => {
@@ -441,7 +444,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::SetFocusSidebar => {
             state.focus_mode = FocusMode::Sidebar;
-            state.theme_picker_open = false;
+            state.settings.theme_picker_open = false;
         }
         Action::ToggleFocus => {
             state.focus_mode = match state.focus_mode {
@@ -449,7 +452,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 FocusMode::Sidebar => FocusMode::Main,
             };
             if state.focus_mode == FocusMode::Sidebar {
-                state.theme_picker_open = false;
+                state.settings.theme_picker_open = false;
             }
         }
 
