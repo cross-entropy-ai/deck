@@ -2,6 +2,7 @@ pub mod action;
 
 mod dispatch;
 mod lifecycle;
+mod osc52;
 mod pty;
 mod refresh;
 mod render;
@@ -25,6 +26,7 @@ use crate::theme::THEMES;
 use crate::tmux;
 use crate::update::UpdateCheckMode;
 
+use self::osc52::Osc52Forwarder;
 use self::update::bootstrap_update_check;
 
 const POLL_MS: u64 = 16;
@@ -50,6 +52,7 @@ pub struct App {
     update_checker: Option<crate::update::UpdateChecker>,
     upgrade_instance: Option<PluginInstance>,
     last_update_request: Option<Instant>,
+    osc52: Osc52Forwarder,
 }
 
 impl App {
@@ -127,6 +130,7 @@ impl App {
             update_checker,
             upgrade_instance: None,
             last_update_request,
+            osc52: Osc52Forwarder::new(),
         };
 
         tmux::apply_theme(&THEMES[theme_index]);
@@ -143,7 +147,7 @@ impl App {
             for event in self.pty.drain() {
                 match event {
                     PtyEvent::Output(data) => {
-                        Self::forward_osc52(&data);
+                        self.osc52.push(&data);
                         self.parser.process(&data);
                     }
                     PtyEvent::Exited => pty_alive = false,
