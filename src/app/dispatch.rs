@@ -156,8 +156,10 @@ impl App {
     fn switch_client(&self, session: &str) {
         if self.pty.slave_tty.is_empty() {
             tmux::switch_session(session);
+            tmux::refresh_client();
         } else {
             tmux::switch_client_for_tty(&self.pty.slave_tty, session);
+            tmux::refresh_client_for_tty(&self.pty.slave_tty);
         }
     }
 
