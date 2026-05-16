@@ -326,10 +326,10 @@ fn draw_sessions_compact(
         };
         let bg = if is_focused { theme.surface } else { theme.bg };
 
-        // For Working sessions we keep the spinner; for Idle we show
-        // the compact "time since last activity" badge (e.g. "2m");
-        // for Waiting we surface the bell glyph + blink color so it
-        // stands out even in the cramped compact layout.
+        // Compact layout uses status glyphs only — no idle time badge.
+        // Working: spinner; Waiting: bell; Idle: moon (or spinner for
+        // the first few seconds after a transition, for visual
+        // continuity).
         let activity_text = if session.is_current {
             status_icon_compact(session.status, true, spinner_frame)
         } else {
@@ -339,7 +339,11 @@ fn draw_sessions_compact(
                     status_icon_compact(session.status, false, spinner_frame)
                 }
                 SessionStatus::Idle => {
-                    format_activity_compact(session.idle_seconds, spinner_frame)
+                    if session.idle_seconds < 3 {
+                        spinner_frame.to_string()
+                    } else {
+                        "󰒲".to_string()
+                    }
                 }
             }
         };
