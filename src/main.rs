@@ -8,7 +8,7 @@ pub(crate) use infra::{
     claude_state, git, hooks, instance_guard, nesting_guard, proc_status, pty, refresh, shutdown,
     tmux, update,
 };
-pub(crate) use model::{config, keybindings, state};
+pub(crate) use model::{config, keybindings, new_session, state};
 pub(crate) use ui::{bridge, layout, theme};
 
 use std::io;

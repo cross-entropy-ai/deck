@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::PluginConfig;
 use crate::keybindings::Keybindings;
 use crate::layout::{card_height, context_menu_width, plugin_block_rows, tab_col_ranges, BANNER_MIN_WIDTH};
+use crate::new_session::NewSessionState;
 use crate::update::{UpdateCheckMode, UpdateStatus};
 
 // --- Constants ---
@@ -226,6 +227,7 @@ pub struct OverlayState {
     pub renaming: Option<RenameState>,
     pub context_menu: Option<ContextMenu>,
     pub exclude_editor: Option<ExcludeEditorState>,
+    pub new_session: Option<NewSessionState>,
 }
 
 // --- Settings page state ---

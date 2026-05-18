@@ -106,6 +106,39 @@ pub fn expand_path(s: &str, home: &std::path::Path) -> PathBuf {
     buf
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct NewSessionState {
+    /// User-visible path. `~` and `..` preserved verbatim.
+    pub input: String,
+    /// Byte offset into `input`.
+    pub cursor: usize,
+    /// All children (directories only) of the parent of `input`.
+    /// Written by dispatch after `read_dir`. The reducer never mutates
+    /// this directly.
+    pub entries: Vec<String>,
+    /// Indices into `entries` after leaf-prefix + dotfile filtering.
+    /// Recomputed by the reducer whenever `input` changes.
+    pub filtered: Vec<usize>,
+    /// Index into `filtered`. Reducer clamps to `0..filtered.len()`.
+    pub selected: usize,
+    /// Last error encountered. Cleared on the next successful mutation.
+    pub error: Option<String>,
+}
+
+impl NewSessionState {
+    /// Helper: rebuild `filtered` from current `input` and `entries`,
+    /// clamp `selected` to the new range.
+    pub fn refilter(&mut self) {
+        let (_parent, leaf) = split_input(&self.input);
+        self.filtered = filter_entries(&self.entries, leaf);
+        if self.filtered.is_empty() {
+            self.selected = 0;
+        } else if self.selected >= self.filtered.len() {
+            self.selected = self.filtered.len() - 1;
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "../../tests/unit/model/new_session.rs"]
 mod tests;
