@@ -168,7 +168,7 @@ fn settings_adjust_theme_opens_picker() {
     let mut state = make_test_state(1);
     state.theme_index = 0;
     state.settings.selected = 0;
-    let fx = apply_action(&mut state, Action::SettingsAdjust(1));
+    let fx = apply_action(&mut state, Action::SettingsAdjust);
     assert!(state.settings.theme_picker_open);
     assert_eq!(state.settings.theme_picker_selected, 0);
     assert!(!fx.save_config);
@@ -201,7 +201,7 @@ fn theme_picker_next_previews_theme_immediately() {
 fn settings_adjust_layout_resizes_and_saves() {
     let mut state = make_test_state(1);
     state.settings.selected = 1;
-    let fx = apply_action(&mut state, Action::SettingsAdjust(1));
+    let fx = apply_action(&mut state, Action::SettingsAdjust);
     assert_eq!(state.layout_mode, LayoutMode::Vertical);
     assert!(fx.resize_pty);
     assert!(fx.save_config);
@@ -212,7 +212,7 @@ fn settings_adjust_borders_resizes_and_saves() {
     let mut state = make_test_state(1);
     let initial = state.show_borders;
     state.settings.selected = 2;
-    let fx = apply_action(&mut state, Action::SettingsAdjust(1));
+    let fx = apply_action(&mut state, Action::SettingsAdjust);
     assert_ne!(state.show_borders, initial);
     assert!(fx.resize_pty);
     assert!(fx.save_config);
@@ -366,7 +366,7 @@ fn toggle_view_mode_flips_and_saves() {
 fn settings_adjust_view_mode_toggles() {
     let mut state = make_test_state(1);
     state.settings.selected = 3;
-    let fx = apply_action(&mut state, Action::SettingsAdjust(1));
+    let fx = apply_action(&mut state, Action::SettingsAdjust);
     assert_eq!(state.view_mode, ViewMode::Compact);
     assert!(fx.save_config);
 }

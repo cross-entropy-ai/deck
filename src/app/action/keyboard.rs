@@ -131,10 +131,12 @@ fn settings_key_to_action(key: &KeyEvent) -> Action {
         KeyCode::Esc => Action::CloseSettings,
         KeyCode::Char('j') | KeyCode::Down => Action::SettingsNext,
         KeyCode::Char('k') | KeyCode::Up => Action::SettingsPrev,
-        KeyCode::Char('h') | KeyCode::Left => Action::SettingsAdjust(-1),
-        KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
-            Action::SettingsAdjust(1)
-        }
+        KeyCode::Char('h')
+        | KeyCode::Char('l')
+        | KeyCode::Left
+        | KeyCode::Right
+        | KeyCode::Enter
+        | KeyCode::Char(' ') => Action::SettingsAdjust,
         _ => Action::None,
     }
 }
