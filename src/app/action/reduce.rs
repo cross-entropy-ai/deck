@@ -437,19 +437,112 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::CloseNewSessionPicker => {
             state.overlay.new_session = None;
         }
-        Action::NewSessionInput(_)
-        | Action::NewSessionBackspace
-        | Action::NewSessionTab
-        | Action::NewSessionConfirm
-        | Action::NewSessionPrev
-        | Action::NewSessionNext
-        | Action::NewSessionCursorLeft
-        | Action::NewSessionCursorRight
-        | Action::NewSessionCursorHome
-        | Action::NewSessionCursorEnd
-        | Action::NewSessionClear
-        | Action::NewSessionDeleteSegment => {
-            // Implemented in Task 5. Keep the compile passing.
+        Action::NewSessionInput(ch) => {
+            if let Some(ns) = state.overlay.new_session.as_mut() {
+                let parent_before = crate::new_session::split_input(&ns.input).0.to_string();
+                ns.input.insert(ns.cursor, ch);
+                ns.cursor += ch.len_utf8();
+                ns.refilter();
+                let parent_after = crate::new_session::split_input(&ns.input).0;
+                if parent_before != parent_after {
+                    fx.reread_new_session_entries = true;
+                }
+                ns.error = None;
+            }
+        }
+        Action::NewSessionBackspace => {
+            if let Some(ns) = state.overlay.new_session.as_mut() {
+                let parent_before = crate::new_session::split_input(&ns.input).0.to_string();
+                crate::new_session::smart_backspace(&mut ns.input, &mut ns.cursor);
+                ns.refilter();
+                let parent_after = crate::new_session::split_input(&ns.input).0;
+                if parent_before != parent_after {
+                    fx.reread_new_session_entries = true;
+                }
+                ns.error = None;
+            }
+        }
+        Action::NewSessionTab => {
+            if let Some(ns) = state.overlay.new_session.as_mut() {
+                if let Some(&idx) = ns.filtered.get(ns.selected) {
+                    let entry = ns.entries[idx].clone();
+                    crate::new_session::tab_complete(&mut ns.input, &mut ns.cursor, &entry);
+                    ns.refilter();
+                    fx.reread_new_session_entries = true;
+                    ns.error = None;
+                }
+            }
+        }
+        Action::NewSessionConfirm => {
+            // Handled at dispatch (needs fs::metadata).
+        }
+        Action::NewSessionPrev => {
+            if let Some(ns) = state.overlay.new_session.as_mut() {
+                if ns.selected > 0 {
+                    ns.selected -= 1;
+                }
+            }
+        }
+        Action::NewSessionNext => {
+            if let Some(ns) = state.overlay.new_session.as_mut() {
+                if !ns.filtered.is_empty() && ns.selected + 1 < ns.filtered.len() {
+                    ns.selected += 1;
+                }
+            }
+        }
+        Action::NewSessionCursorLeft => {
+            if let Some(ns) = state.overlay.new_session.as_mut() {
+                if let Some(prev) = ns.input[..ns.cursor].chars().last() {
+                    ns.cursor -= prev.len_utf8();
+                }
+            }
+        }
+        Action::NewSessionCursorRight => {
+            if let Some(ns) = state.overlay.new_session.as_mut() {
+                if let Some(next) = ns.input[ns.cursor..].chars().next() {
+                    ns.cursor += next.len_utf8();
+                }
+            }
+        }
+        Action::NewSessionCursorHome => {
+            if let Some(ns) = state.overlay.new_session.as_mut() {
+                ns.cursor = 0;
+            }
+        }
+        Action::NewSessionCursorEnd => {
+            if let Some(ns) = state.overlay.new_session.as_mut() {
+                ns.cursor = ns.input.len();
+            }
+        }
+        Action::NewSessionClear => {
+            if let Some(ns) = state.overlay.new_session.as_mut() {
+                ns.input.clear();
+                ns.cursor = 0;
+                ns.refilter();
+                fx.reread_new_session_entries = true;
+                ns.error = None;
+            }
+        }
+        Action::NewSessionDeleteSegment => {
+            if let Some(ns) = state.overlay.new_session.as_mut() {
+                // Trim trailing chars back to (and including) the previous `/`.
+                let mut new_end = ns.cursor;
+                while new_end > 0 && !ns.input[..new_end].ends_with('/') {
+                    let prev = ns.input[..new_end]
+                        .chars()
+                        .last()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(0);
+                    new_end -= prev;
+                }
+                ns.input.truncate(new_end);
+                ns.cursor = new_end;
+                ns.refilter();
+                // Always reread: the user explicitly cleared the segment they
+                // were typing and expects a fresh listing of the parent dir.
+                fx.reread_new_session_entries = true;
+                ns.error = None;
+            }
         }
 
         Action::ToggleHelp => {

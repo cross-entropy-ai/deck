@@ -441,3 +441,76 @@ fn rename_delete_at_end_is_noop() {
     assert_eq!(r.input, "abc");
     assert_eq!(r.cursor, 3);
 }
+
+fn picker_state_with(input: &str, entries: Vec<String>) -> AppState {
+    use crate::new_session::NewSessionState;
+    let mut state = make_test_state(0);
+    let mut ns = NewSessionState {
+        input: input.to_string(),
+        cursor: input.len(),
+        entries,
+        filtered: vec![],
+        selected: 0,
+        error: None,
+    };
+    ns.refilter();
+    state.overlay.new_session = Some(ns);
+    state
+}
+
+#[test]
+fn new_session_input_inserts_at_cursor() {
+    let mut state = picker_state_with("~/foo/", vec!["bar".into(), "baz".into()]);
+    let fx = apply_action(&mut state, Action::NewSessionInput('b'));
+    let ns = state.overlay.new_session.as_ref().unwrap();
+    assert_eq!(ns.input, "~/foo/b");
+    assert_eq!(ns.cursor, 7);
+    assert_eq!(ns.filtered, vec![0, 1]); // both still match "b"
+    assert!(!fx.reread_new_session_entries); // parent didn't change
+}
+
+#[test]
+fn new_session_input_crossing_slash_sets_reread() {
+    let mut state = picker_state_with("~/foo", vec!["foo".into()]);
+    let fx = apply_action(&mut state, Action::NewSessionInput('/'));
+    let ns = state.overlay.new_session.as_ref().unwrap();
+    assert_eq!(ns.input, "~/foo/");
+    assert!(fx.reread_new_session_entries);
+}
+
+#[test]
+fn new_session_backspace_at_trailing_slash_goes_up() {
+    let mut state = picker_state_with("~/foo/bar/", vec![]);
+    let fx = apply_action(&mut state, Action::NewSessionBackspace);
+    let ns = state.overlay.new_session.as_ref().unwrap();
+    assert_eq!(ns.input, "~/foo/");
+    assert!(fx.reread_new_session_entries);
+}
+
+#[test]
+fn new_session_tab_descends_into_selected_entry() {
+    let mut state = picker_state_with("~/foo/b", vec!["bar".into(), "baz".into()]);
+    let fx = apply_action(&mut state, Action::NewSessionTab);
+    let ns = state.overlay.new_session.as_ref().unwrap();
+    assert_eq!(ns.input, "~/foo/bar/");
+    assert!(fx.reread_new_session_entries);
+}
+
+#[test]
+fn new_session_next_clamped_to_filtered_len() {
+    let mut state = picker_state_with("~/", vec!["a".into(), "b".into()]);
+    apply_action(&mut state, Action::NewSessionNext);
+    apply_action(&mut state, Action::NewSessionNext);
+    apply_action(&mut state, Action::NewSessionNext); // tries to overrun
+    let ns = state.overlay.new_session.as_ref().unwrap();
+    assert_eq!(ns.selected, 1);
+}
+
+#[test]
+fn new_session_delete_segment_goes_back_to_slash() {
+    let mut state = picker_state_with("~/foo/bar", vec![]);
+    let fx = apply_action(&mut state, Action::NewSessionDeleteSegment);
+    let ns = state.overlay.new_session.as_ref().unwrap();
+    assert_eq!(ns.input, "~/foo/");
+    assert!(fx.reread_new_session_entries);
+}
