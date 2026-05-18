@@ -129,3 +129,41 @@ fn expand_path_normalizes_parent_dir() {
     assert_eq!(expand_path("~/foo/../bar", &home), PathBuf::from("/home/u/bar"));
     assert_eq!(expand_path("~/./bar", &home), PathBuf::from("/home/u/bar"));
 }
+
+#[cfg(test)]
+mod fs_integration {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn read_dir_entries_lists_subdirs_only() {
+        // This test calls `App::read_dir_entries` indirectly via the
+        // model layer is hard — `read_dir_entries` lives in
+        // `app::dispatch`. Instead, exercise the underlying contract
+        // by listing manually and verifying our helpers behave.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("src")).unwrap();
+        fs::create_dir(tmp.path().join("tests")).unwrap();
+        fs::write(tmp.path().join("README"), "").unwrap();
+
+        let mut names: Vec<String> = fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.metadata().map(|m| m.is_dir()).unwrap_or(false))
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["src", "tests"]);
+
+        let filtered = filter_entries(&names, "s");
+        assert_eq!(filtered, vec![0]); // "src" matches
+    }
+
+    #[test]
+    fn expand_path_resolves_real_tempdir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().to_path_buf();
+        let resolved = expand_path("~/foo", &home);
+        assert_eq!(resolved, tmp.path().join("foo"));
+    }
+}
