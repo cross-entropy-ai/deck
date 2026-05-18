@@ -6,6 +6,10 @@ use crate::state::{AppState, FocusMode, MainView};
 use super::Action;
 
 pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
+    if state.overlay.new_session.is_some() {
+        return new_session_key_to_action(key);
+    }
+
     if state.overlay.renaming.is_some() {
         return match key.code {
             KeyCode::Enter => Action::RenameConfirm,
@@ -185,6 +189,30 @@ fn theme_picker_key_to_action(key: &KeyEvent) -> Action {
         KeyCode::Char('h') | KeyCode::Left => Action::ThemePickerPrev,
         KeyCode::Char('l') | KeyCode::Right => Action::ThemePickerNext,
         KeyCode::Enter | KeyCode::Char(' ') => Action::ConfirmThemePicker,
+        _ => Action::None,
+    }
+}
+
+fn new_session_key_to_action(key: &KeyEvent) -> Action {
+    use crossterm::event::KeyModifiers;
+    match key.code {
+        KeyCode::Esc => Action::CloseNewSessionPicker,
+        KeyCode::Enter => Action::NewSessionConfirm,
+        KeyCode::Tab => Action::NewSessionTab,
+        KeyCode::Backspace => Action::NewSessionBackspace,
+        KeyCode::Up => Action::NewSessionPrev,
+        KeyCode::Down => Action::NewSessionNext,
+        KeyCode::Left => Action::NewSessionCursorLeft,
+        KeyCode::Right => Action::NewSessionCursorRight,
+        KeyCode::Home => Action::NewSessionCursorHome,
+        KeyCode::End => Action::NewSessionCursorEnd,
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Action::NewSessionClear
+        }
+        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Action::NewSessionDeleteSegment
+        }
+        KeyCode::Char(ch) => Action::NewSessionInput(ch),
         _ => Action::None,
     }
 }

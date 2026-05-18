@@ -430,6 +430,28 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
 
+        Action::OpenNewSessionPicker => {
+            // Handled at dispatch (needs FS IO).
+            fx.open_new_session_picker = true;
+        }
+        Action::CloseNewSessionPicker => {
+            state.overlay.new_session = None;
+        }
+        Action::NewSessionInput(_)
+        | Action::NewSessionBackspace
+        | Action::NewSessionTab
+        | Action::NewSessionConfirm
+        | Action::NewSessionPrev
+        | Action::NewSessionNext
+        | Action::NewSessionCursorLeft
+        | Action::NewSessionCursorRight
+        | Action::NewSessionCursorHome
+        | Action::NewSessionCursorEnd
+        | Action::NewSessionClear
+        | Action::NewSessionDeleteSegment => {
+            // Implemented in Task 5. Keep the compile passing.
+        }
+
         Action::ToggleHelp => {
             state.overlay.show_help = true;
         }
