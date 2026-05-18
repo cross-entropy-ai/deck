@@ -510,7 +510,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 MenuKind::Global => {
                     let inner = match selected_label {
                         Some("New session") => SideEffect {
-                            create_session: true,
+                            create_session: Some("~/claude".to_string()),
                             refresh_sessions: true,
                             ..SideEffect::default()
                         },

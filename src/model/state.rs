@@ -143,7 +143,18 @@ pub struct SideEffect {
     pub switch_session: Option<String>,
     pub kill_session: Option<KillRequest>,
     pub rename_session: Option<RenameRequest>,
-    pub create_session: bool,
+    /// `Some(dir)` means: create a new tmux session at `dir`. Was a
+    /// plain bool before the new-session picker landed; the picker
+    /// supplies its own dir, and the old `~/claude` default is dead.
+    pub create_session: Option<String>,
+    /// Dispatch should open the new-session picker overlay. Fired by
+    /// the global menu's "New session" item; uses the focused session's
+    /// dir as the picker's starting point.
+    pub open_new_session_picker: bool,
+    /// Dispatch should re-run `read_dir` for the picker's current
+    /// parent and refresh `entries`. Fired by any reducer arm that
+    /// changes the effective parent.
+    pub reread_new_session_entries: bool,
     pub resize_pty: bool,
     pub save_config: bool,
     pub apply_tmux_theme: bool,
@@ -166,7 +177,11 @@ impl SideEffect {
         if other.rename_session.is_some() {
             self.rename_session = other.rename_session;
         }
-        self.create_session |= other.create_session;
+        if other.create_session.is_some() {
+            self.create_session = other.create_session;
+        }
+        self.open_new_session_picker |= other.open_new_session_picker;
+        self.reread_new_session_entries |= other.reread_new_session_entries;
         self.resize_pty |= other.resize_pty;
         self.save_config |= other.save_config;
         self.apply_tmux_theme |= other.apply_tmux_theme;

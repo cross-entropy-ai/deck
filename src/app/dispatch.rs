@@ -226,8 +226,8 @@ impl App {
             tmux::kill_session(&kill.name);
         }
 
-        if fx.create_session {
-            self.create_new_session();
+        if let Some(ref dir) = fx.create_session {
+            self.create_new_session(dir);
         }
 
         if fx.resize_pty {
@@ -311,9 +311,12 @@ impl App {
         self.request_refresh();
     }
 
-    fn create_new_session(&mut self) {
+    fn create_new_session(&mut self, dir: &str) {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let dir = format!("{}/claude", home);
+        let home_path = std::path::PathBuf::from(&home);
+        let expanded = crate::new_session::expand_path(dir, &home_path);
+        let dir_str = expanded.to_string_lossy().to_string();
+
         let existing: Vec<&str> = self
             .state
             .sessions
@@ -328,7 +331,7 @@ impl App {
             }
             idx += 1;
         };
-        if tmux::new_session(&name, &dir).is_some() {
+        if tmux::new_session(&name, &dir_str).is_some() {
             self.switch_client(&name);
         }
     }
