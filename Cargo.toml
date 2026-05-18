@@ -18,4 +18,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 semver = "1"
 
 [patch.crates-io]
-vt100 = { path = "patches/vt100" }
+# Track our long-lived `deck` branch on Junyi-99/vt100-rust, which
+# carries fixes we depend on. See docs/vt100-fork.md for what's
+# patched and how to maintain it.
+vt100 = { git = "https://github.com/Junyi-99/vt100-rust", branch = "deck" }

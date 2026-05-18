@@ -2,6 +2,14 @@
 
 Status: draft for review (2026-04-19). No code changes have been made.
 
+> **Update 2026-05-18**: the decision below still stands — we kept `vt100`. The
+> implementation has moved off the vendored `patches/vt100/` directory; patches
+> are now carried on a long-lived `deck` branch of a public fork
+> (`Junyi-99/vt100-rust`) and pulled in via a `[patch.crates-io]` git
+> dependency. See `docs/vt100-fork.md` for what's patched, how to add new
+> fixes, and how to track upstream. References to `patches/vt100/` below are
+> historical.
+
 ## TL;DR
 
 **Keep `vt100` (the patched fork at `patches/vt100/`). Do not migrate.**
