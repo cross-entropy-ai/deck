@@ -42,6 +42,7 @@ impl App {
             .as_ref()
             .map(|r| (r.input.clone(), r.cursor));
         let context_menu = s.overlay.context_menu.clone();
+        let new_session_overlay = s.overlay.new_session.clone();
         let show_borders = s.show_borders;
         let layout_mode = s.layout_mode;
         let view_mode = s.view_mode;
@@ -349,6 +350,18 @@ impl App {
 
             if let Some(ref menu) = context_menu {
                 ui::draw_context_menu(frame, menu.x, menu.y, menu.selected, menu.items(), theme);
+            }
+
+            if let Some(ref ns) = new_session_overlay {
+                let view = ui::NewSessionView {
+                    input: &ns.input,
+                    cursor: ns.cursor,
+                    entries: &ns.entries,
+                    filtered: &ns.filtered,
+                    selected: ns.selected,
+                    error: ns.error.as_deref(),
+                };
+                ui::draw_new_session(frame, frame.area(), &view, theme);
             }
 
             // Overlay the reload bar last so it sits on top of the sidebar

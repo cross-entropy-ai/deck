@@ -1,6 +1,7 @@
 pub mod bridge;
 pub mod layout;
 mod menu;
+mod new_session;
 mod overlays;
 mod reload;
 mod settings;
@@ -12,6 +13,7 @@ use crate::keybindings::Keybindings;
 use crate::state::{LayoutMode, SessionStatus, ViewMode};
 
 pub use menu::draw_context_menu;
+pub use new_session::draw_new_session;
 pub use reload::{draw_reload_bar, reload_row_count};
 pub use settings::draw_settings_page;
 pub use sidebar::draw_sidebar;
@@ -57,6 +59,15 @@ pub struct ExcludeEditorView<'a> {
     pub selected: usize,
     pub adding: bool,
     pub input: &'a str,
+    pub error: Option<&'a str>,
+}
+
+pub struct NewSessionView<'a> {
+    pub input: &'a str,
+    pub cursor: usize,
+    pub entries: &'a [String],
+    pub filtered: &'a [usize],
+    pub selected: usize,
     pub error: Option<&'a str>,
 }
 
