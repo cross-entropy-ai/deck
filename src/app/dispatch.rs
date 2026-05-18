@@ -174,11 +174,12 @@ impl App {
             Ok(pty) => {
                 self.pty = pty;
                 self.parser = vt100::Parser::new(rows, cols, 0);
+                self.needs_full_redraw = true;
             }
             Err(_) => {
-                // Spawn failed (no tmux? no target?). Fall back to
-                // the legacy switch-client path so at least the
-                // switch is attempted — residue may persist.
+                // Spawn failed (no tmux? no target?). Fall back to the
+                // legacy switch-client path so at least the switch is
+                // attempted — residue may persist.
                 if self.pty.slave_tty.is_empty() {
                     tmux::switch_session(session);
                 } else {
