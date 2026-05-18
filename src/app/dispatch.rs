@@ -31,8 +31,9 @@ fn read_dir_entries(path: &std::path::Path) -> (Vec<String>, Option<String>) {
                 std::io::ErrorKind::PermissionDenied => "permission denied".to_string(),
                 _ => {
                     let s = e.to_string();
-                    if s.len() > 40 {
-                        format!("{}…", &s[..39])
+                    if s.chars().count() > 40 {
+                        let truncated: String = s.chars().take(39).collect();
+                        format!("{truncated}…")
                     } else {
                         s
                     }
