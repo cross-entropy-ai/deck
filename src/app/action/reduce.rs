@@ -66,11 +66,11 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::KillSession => {
             if state.sessions.len() > 1 && state.filtered.get(state.focused).is_some() {
-                state.confirm_kill = true;
+                state.overlay.confirm_kill = true;
             }
         }
         Action::ConfirmKill => {
-            state.confirm_kill = false;
+            state.overlay.confirm_kill = false;
             if state.sessions.len() <= 1 {
                 return fx;
             }
@@ -103,7 +103,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.refresh_sessions = true;
         }
         Action::CancelKill => {
-            state.confirm_kill = false;
+            state.overlay.confirm_kill = false;
         }
         Action::ReorderSession(direction) => {
             let Some(&session_idx) = state.filtered.get(state.focused) else {
@@ -132,7 +132,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if let Some(&session_idx) = state.filtered.get(state.focused) {
                 let name = state.sessions[session_idx].name.clone();
                 let len = name.len();
-                state.renaming = Some(RenameState {
+                state.overlay.renaming = Some(RenameState {
                     original_name: name.clone(),
                     input: name,
                     cursor: len,
@@ -140,13 +140,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::RenameInput(ch) => {
-            if let Some(ref mut r) = state.renaming {
+            if let Some(ref mut r) = state.overlay.renaming {
                 r.input.insert(r.cursor, ch);
                 r.cursor += ch.len_utf8();
             }
         }
         Action::RenameBackspace => {
-            if let Some(ref mut r) = state.renaming {
+            if let Some(ref mut r) = state.overlay.renaming {
                 if r.cursor > 0 {
                     let prev = r.input[..r.cursor]
                         .chars()
@@ -159,38 +159,38 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::RenameCursorLeft => {
-            if let Some(ref mut r) = state.renaming {
+            if let Some(ref mut r) = state.overlay.renaming {
                 if let Some(prev) = r.input[..r.cursor].chars().last() {
                     r.cursor -= prev.len_utf8();
                 }
             }
         }
         Action::RenameCursorRight => {
-            if let Some(ref mut r) = state.renaming {
+            if let Some(ref mut r) = state.overlay.renaming {
                 if let Some(next) = r.input[r.cursor..].chars().next() {
                     r.cursor += next.len_utf8();
                 }
             }
         }
         Action::RenameCursorHome => {
-            if let Some(ref mut r) = state.renaming {
+            if let Some(ref mut r) = state.overlay.renaming {
                 r.cursor = 0;
             }
         }
         Action::RenameCursorEnd => {
-            if let Some(ref mut r) = state.renaming {
+            if let Some(ref mut r) = state.overlay.renaming {
                 r.cursor = r.input.len();
             }
         }
         Action::RenameDelete => {
-            if let Some(ref mut r) = state.renaming {
+            if let Some(ref mut r) = state.overlay.renaming {
                 if r.cursor < r.input.len() {
                     r.input.remove(r.cursor);
                 }
             }
         }
         Action::RenameConfirm => {
-            if let Some(r) = state.renaming.take() {
+            if let Some(r) = state.overlay.renaming.take() {
                 let new_name = r.input.trim().to_string();
                 if !new_name.is_empty() && new_name != r.original_name {
                     fx.rename_session = Some(RenameRequest {
@@ -202,7 +202,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::RenameCancel => {
-            state.renaming = None;
+            state.overlay.renaming = None;
         }
 
         Action::ToggleLayout => {
@@ -228,25 +228,25 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::OpenSettings => {
             state.main_view = MainView::Settings;
             state.focus_mode = FocusMode::Main;
-            state.theme_picker_open = false;
-            state.theme_picker_selected = state.theme_index;
+            state.settings.theme_picker_open = false;
+            state.settings.theme_picker_selected = state.theme_index;
         }
         Action::CloseSettings => {
             state.main_view = MainView::Terminal;
             state.focus_mode = FocusMode::Main;
-            state.theme_picker_open = false;
+            state.settings.theme_picker_open = false;
         }
         Action::SettingsNext => {
-            state.settings_selected = (state.settings_selected + 1).min(SETTINGS_ITEM_COUNT - 1);
+            state.settings.selected = (state.settings.selected + 1).min(SETTINGS_ITEM_COUNT - 1);
         }
         Action::SettingsPrev => {
-            if state.settings_selected > 0 {
-                state.settings_selected -= 1;
+            if state.settings.selected > 0 {
+                state.settings.selected -= 1;
             }
         }
         Action::SettingsAdjust(direction) => {
             let _ = direction;
-            let inner = match state.settings_selected {
+            let inner = match state.settings.selected {
                 0 => apply_action(state, Action::OpenThemePicker),
                 1 => apply_action(state, Action::ToggleLayout),
                 2 => apply_action(state, Action::ToggleBorders),
@@ -261,45 +261,48 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::OpenThemePicker => {
             state.main_view = MainView::Settings;
             state.focus_mode = FocusMode::Main;
-            state.theme_picker_open = true;
-            state.theme_picker_selected = state.theme_index.min(THEMES.len().saturating_sub(1));
+            state.settings.theme_picker_open = true;
+            state.settings.theme_picker_selected =
+                state.theme_index.min(THEMES.len().saturating_sub(1));
         }
         Action::CloseThemePicker => {
-            state.theme_picker_open = false;
+            state.settings.theme_picker_open = false;
         }
         Action::ThemePickerNext => {
             if !THEMES.is_empty() {
-                state.theme_picker_selected =
-                    (state.theme_picker_selected + 1).min(THEMES.len() - 1);
-                state.theme_index = state.theme_picker_selected;
+                state.settings.theme_picker_selected =
+                    (state.settings.theme_picker_selected + 1).min(THEMES.len() - 1);
+                state.theme_index = state.settings.theme_picker_selected;
                 fx.save_config = true;
                 fx.apply_tmux_theme = true;
             }
         }
         Action::ThemePickerPrev => {
-            if state.theme_picker_selected > 0 {
-                state.theme_picker_selected -= 1;
-                state.theme_index = state.theme_picker_selected;
+            if state.settings.theme_picker_selected > 0 {
+                state.settings.theme_picker_selected -= 1;
+                state.theme_index = state.settings.theme_picker_selected;
                 fx.save_config = true;
                 fx.apply_tmux_theme = true;
             }
         }
         Action::ConfirmThemePicker => {
-            state.theme_picker_open = false;
+            state.settings.theme_picker_open = false;
         }
 
         Action::OpenKeybindingsView => {
-            state.keybindings_view_open = true;
-            state.keybindings_view_scroll = 0;
+            state.settings.keybindings_view_open = true;
+            state.settings.keybindings_view_scroll = 0;
         }
         Action::CloseKeybindingsView => {
-            state.keybindings_view_open = false;
+            state.settings.keybindings_view_open = false;
         }
         Action::KeybindingsViewScrollUp => {
-            state.keybindings_view_scroll = state.keybindings_view_scroll.saturating_sub(1);
+            state.settings.keybindings_view_scroll =
+                state.settings.keybindings_view_scroll.saturating_sub(1);
         }
         Action::KeybindingsViewScrollDown => {
-            state.keybindings_view_scroll = state.keybindings_view_scroll.saturating_add(1);
+            state.settings.keybindings_view_scroll =
+                state.settings.keybindings_view_scroll.saturating_add(1);
         }
 
         Action::ToggleUpdateCheck => {
@@ -315,7 +318,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::TriggerUpgrade | Action::AbortUpgrade => {}
 
         Action::OpenExcludeEditor => {
-            state.exclude_editor = Some(crate::state::ExcludeEditorState {
+            state.overlay.exclude_editor = Some(crate::state::ExcludeEditorState {
                 selected: 0,
                 adding: false,
                 input: String::new(),
@@ -324,24 +327,24 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             });
         }
         Action::CloseExcludeEditor => {
-            state.exclude_editor = None;
+            state.overlay.exclude_editor = None;
         }
         Action::ExcludeEditorNext => {
-            if let Some(ref mut editor) = state.exclude_editor {
+            if let Some(ref mut editor) = state.overlay.exclude_editor {
                 if !editor.adding && !state.exclude_patterns.is_empty() {
                     editor.selected = (editor.selected + 1).min(state.exclude_patterns.len() - 1);
                 }
             }
         }
         Action::ExcludeEditorPrev => {
-            if let Some(ref mut editor) = state.exclude_editor {
+            if let Some(ref mut editor) = state.overlay.exclude_editor {
                 if !editor.adding && editor.selected > 0 {
                     editor.selected -= 1;
                 }
             }
         }
         Action::ExcludeEditorStartAdd => {
-            if let Some(ref mut editor) = state.exclude_editor {
+            if let Some(ref mut editor) = state.overlay.exclude_editor {
                 editor.adding = true;
                 editor.input.clear();
                 editor.cursor = 0;
@@ -349,7 +352,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::ExcludeEditorCancelAdd => {
-            if let Some(ref mut editor) = state.exclude_editor {
+            if let Some(ref mut editor) = state.overlay.exclude_editor {
                 editor.adding = false;
                 editor.input.clear();
                 editor.cursor = 0;
@@ -357,7 +360,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::ExcludeEditorDelete => {
-            if let Some(ref mut editor) = state.exclude_editor {
+            if let Some(ref mut editor) = state.overlay.exclude_editor {
                 if !editor.adding && !state.exclude_patterns.is_empty() {
                     state.exclude_patterns.remove(editor.selected);
                     if editor.selected > 0 && editor.selected >= state.exclude_patterns.len() {
@@ -369,7 +372,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::ExcludeEditorInput(ch) => {
-            if let Some(ref mut editor) = state.exclude_editor {
+            if let Some(ref mut editor) = state.overlay.exclude_editor {
                 if editor.adding {
                     editor.input.insert(editor.cursor, ch);
                     editor.cursor += ch.len_utf8();
@@ -378,7 +381,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::ExcludeEditorBackspace => {
-            if let Some(ref mut editor) = state.exclude_editor {
+            if let Some(ref mut editor) = state.overlay.exclude_editor {
                 if editor.adding && editor.cursor > 0 {
                     let prev = editor.input[..editor.cursor]
                         .chars()
@@ -392,7 +395,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::ExcludeEditorConfirm => {
-            if let Some(ref mut editor) = state.exclude_editor {
+            if let Some(ref mut editor) = state.overlay.exclude_editor {
                 if editor.adding {
                     let pattern = editor.input.trim().to_string();
                     if pattern.is_empty() {
@@ -430,10 +433,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
 
         Action::ToggleHelp => {
-            state.show_help = true;
+            state.overlay.show_help = true;
         }
         Action::DismissHelp => {
-            state.show_help = false;
+            state.overlay.show_help = false;
         }
 
         Action::SetFocusMain => {
@@ -441,7 +444,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::SetFocusSidebar => {
             state.focus_mode = FocusMode::Sidebar;
-            state.theme_picker_open = false;
+            state.settings.theme_picker_open = false;
         }
         Action::ToggleFocus => {
             state.focus_mode = match state.focus_mode {
@@ -449,13 +452,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 FocusMode::Sidebar => FocusMode::Main,
             };
             if state.focus_mode == FocusMode::Sidebar {
-                state.theme_picker_open = false;
+                state.settings.theme_picker_open = false;
             }
         }
 
         Action::OpenSessionMenu { filtered_idx, x, y } => {
             state.focused = filtered_idx;
-            state.context_menu = Some(ContextMenu {
+            state.overlay.context_menu = Some(ContextMenu {
                 kind: MenuKind::Session { filtered_idx },
                 items: SESSION_MENU_ITEMS.to_vec(),
                 x,
@@ -464,7 +467,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             });
         }
         Action::OpenGlobalMenu { x, y } => {
-            state.context_menu = Some(ContextMenu {
+            state.overlay.context_menu = Some(ContextMenu {
                 kind: MenuKind::Global,
                 items: GLOBAL_MENU_ITEMS.to_vec(),
                 x,
@@ -473,20 +476,20 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             });
         }
         Action::MenuNext => {
-            if let Some(ref mut menu) = state.context_menu {
+            if let Some(ref mut menu) = state.overlay.context_menu {
                 let len = menu.items().len();
                 menu.selected = (menu.selected + 1).min(len - 1);
             }
         }
         Action::MenuPrev => {
-            if let Some(ref mut menu) = state.context_menu {
+            if let Some(ref mut menu) = state.overlay.context_menu {
                 if menu.selected > 0 {
                     menu.selected -= 1;
                 }
             }
         }
         Action::MenuConfirm => {
-            let menu = match state.context_menu.take() {
+            let menu = match state.overlay.context_menu.take() {
                 Some(m) => m,
                 Option::None => return fx,
             };
@@ -529,10 +532,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::MenuDismiss => {
-            state.context_menu = None;
+            state.overlay.context_menu = None;
         }
         Action::MenuHover(idx) => {
-            if let Some(ref mut menu) = state.context_menu {
+            if let Some(ref mut menu) = state.overlay.context_menu {
                 menu.selected = idx;
             }
         }

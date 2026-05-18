@@ -11,7 +11,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         return Action::TriggerUpgrade;
     }
 
-    if state.context_menu.is_some() {
+    if state.overlay.context_menu.is_some() {
         return match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if let Some(idx) = state.menu_item_at(mouse.column, mouse.row) {

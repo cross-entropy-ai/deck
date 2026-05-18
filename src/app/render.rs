@@ -34,10 +34,14 @@ impl App {
         let sidebar_active = s.focus_mode == FocusMode::Sidebar;
         let focused = s.focused;
         let theme = &THEMES[s.theme_index];
-        let confirm_kill = s.confirm_kill;
-        let show_help = s.show_help;
-        let rename_input = s.renaming.as_ref().map(|r| (r.input.clone(), r.cursor));
-        let context_menu = s.context_menu.clone();
+        let confirm_kill = s.overlay.confirm_kill;
+        let show_help = s.overlay.show_help;
+        let rename_input = s
+            .overlay
+            .renaming
+            .as_ref()
+            .map(|r| (r.input.clone(), r.cursor));
+        let context_menu = s.overlay.context_menu.clone();
         let show_borders = s.show_borders;
         let layout_mode = s.layout_mode;
         let view_mode = s.view_mode;
@@ -67,26 +71,30 @@ impl App {
         let update_check_help = format_update_check_help(s.update_last_checked_secs);
         let update_check_mode = s.update_check_mode;
         let settings_view = SettingsView {
-            selected: s.settings_selected,
+            selected: s.settings.selected,
             focus_main: s.focus_mode == FocusMode::Main,
             theme_name: THEMES[s.theme_index].name,
-            theme_picker_open: s.theme_picker_open,
-            theme_picker_selected: s.theme_picker_selected,
+            theme_picker_open: s.settings.theme_picker_open,
+            theme_picker_selected: s.settings.theme_picker_selected,
             theme_names: THEMES.iter().map(|theme| theme.name).collect(),
             layout_mode: s.layout_mode,
             show_borders: s.show_borders,
             view_mode: s.view_mode,
             exclude_count: s.exclude_patterns.len(),
-            exclude_editor: s.exclude_editor.as_ref().map(|e| ui::ExcludeEditorView {
-                patterns: &s.exclude_patterns,
-                selected: e.selected,
-                adding: e.adding,
-                input: &e.input,
-                error: e.error.as_deref(),
-            }),
+            exclude_editor: s
+                .overlay
+                .exclude_editor
+                .as_ref()
+                .map(|e| ui::ExcludeEditorView {
+                    patterns: &s.exclude_patterns,
+                    selected: e.selected,
+                    adding: e.adding,
+                    input: &e.input,
+                    error: e.error.as_deref(),
+                }),
             keybindings: &s.keybindings,
-            keybindings_view_open: s.keybindings_view_open,
-            keybindings_view_scroll: s.keybindings_view_scroll,
+            keybindings_view_open: s.settings.keybindings_view_open,
+            keybindings_view_scroll: s.settings.keybindings_view_scroll,
             update_check_enabled: update_check_mode == UpdateCheckMode::Enabled,
             update_check_help,
         };

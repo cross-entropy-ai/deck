@@ -297,8 +297,8 @@ impl App {
         self.state.update_check_mode = cfg.update_check;
 
         // Reset sub-UIs whose indices may no longer be valid.
-        self.state.theme_picker_selected = new_theme_index;
-        self.state.exclude_editor = None;
+        self.state.settings.theme_picker_selected = new_theme_index;
+        self.state.overlay.exclude_editor = None;
 
         self.raw_keybindings = cfg.keybindings;
         self.state.reload_status = Some(ReloadStatus::Ok);

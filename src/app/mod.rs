@@ -261,10 +261,10 @@ impl App {
                     // at it" from "user is attached but in another
                     // macOS app". Only the latter should pop a banner.
                     Event::FocusGained => {
-                        self.state.terminal_focused = true;
+                        self.state.notification.terminal_focused = true;
                     }
                     Event::FocusLost => {
-                        self.state.terminal_focused = false;
+                        self.state.notification.terminal_focused = false;
                     }
                     _ => {}
                 }

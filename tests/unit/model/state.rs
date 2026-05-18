@@ -73,7 +73,7 @@ fn effective_status_downgrades_acked_waiting_to_idle() {
     let mut state = make_state(LayoutMode::Horizontal, true, 120, 40);
     state.sessions[0].status = SessionStatus::Waiting;
     state.sessions[0].status_event_ts_ms = Some(1000);
-    state.acked_ts_ms.insert("alpha".to_string(), 2000);
+    state.notification.acked_ts_ms.insert("alpha".to_string(), 2000);
 
     assert_eq!(state.effective_status(&state.sessions[0]), SessionStatus::Idle);
 }
@@ -83,7 +83,7 @@ fn effective_status_keeps_waiting_when_event_newer_than_ack() {
     let mut state = make_state(LayoutMode::Horizontal, true, 120, 40);
     state.sessions[0].status = SessionStatus::Waiting;
     state.sessions[0].status_event_ts_ms = Some(2000);
-    state.acked_ts_ms.insert("alpha".to_string(), 1000);
+    state.notification.acked_ts_ms.insert("alpha".to_string(), 1000);
 
     assert_eq!(
         state.effective_status(&state.sessions[0]),
@@ -96,7 +96,7 @@ fn effective_status_keeps_working_when_event_newer_than_ack() {
     let mut state = make_state(LayoutMode::Horizontal, true, 120, 40);
     state.sessions[0].status = SessionStatus::Working;
     state.sessions[0].status_event_ts_ms = Some(2000);
-    state.acked_ts_ms.insert("alpha".to_string(), 1000);
+    state.notification.acked_ts_ms.insert("alpha".to_string(), 1000);
 
     assert_eq!(
         state.effective_status(&state.sessions[0]),
@@ -113,7 +113,7 @@ fn effective_status_downgrades_acked_working_to_idle() {
     let mut state = make_state(LayoutMode::Horizontal, true, 120, 40);
     state.sessions[0].status = SessionStatus::Working;
     state.sessions[0].status_event_ts_ms = Some(1000);
-    state.acked_ts_ms.insert("alpha".to_string(), 2000);
+    state.notification.acked_ts_ms.insert("alpha".to_string(), 2000);
 
     assert_eq!(state.effective_status(&state.sessions[0]), SessionStatus::Idle);
 }
@@ -133,7 +133,7 @@ fn waiting_fired_after_detach_is_not_suppressed() {
     // this Waiting visible — the old wall-clock-on-detach stamp would
     // have suppressed it.
     let mut state = make_state(LayoutMode::Horizontal, true, 120, 40);
-    state.acked_ts_ms.insert("alpha".to_string(), 100);
+    state.notification.acked_ts_ms.insert("alpha".to_string(), 100);
 
     state.sessions[0].status = SessionStatus::Waiting;
     state.sessions[0].status_event_ts_ms = Some(200);

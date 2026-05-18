@@ -198,65 +198,55 @@ pub struct ExcludeEditorState {
     pub error: Option<String>,
 }
 
-// --- AppState ---
+// --- Overlay state ---
 
-pub struct AppState {
-    // Session data
-    pub sessions: Vec<SessionRow>,
-    pub filtered: Vec<usize>,
-    pub focused: usize,
-    pub current_session: String,
-    pub session_order: Vec<String>,
-
-    // UI state
-    pub main_view: MainView,
-    pub focus_mode: FocusMode,
-    pub theme_index: usize,
-    pub settings_selected: usize,
-    pub theme_picker_open: bool,
-    pub theme_picker_selected: usize,
-    pub layout_mode: LayoutMode,
-    pub view_mode: ViewMode,
-    pub sidebar_width: u16,
-    pub sidebar_height: u16,
+/// UI state for transient sidebar overlays — help screen, kill-confirm
+/// prompt, in-progress rename, right-click context menu, and the
+/// exclude-pattern editor popup. Grouped so the renderer and key
+/// dispatcher have a single place to ask "is any overlay active?".
+///
+/// `warning_state` (the nesting-detection banner) lives on `App` rather
+/// than here because it is produced by the `NestingGuard` that App
+/// owns, and the dispatch loop's "block actions while a warning is
+/// up" gate reads it from App directly. Lifting it into AppState would
+/// add an indirection without consolidating any logic.
+#[derive(Debug, Default)]
+pub struct OverlayState {
     pub show_help: bool,
     pub confirm_kill: bool,
     pub renaming: Option<RenameState>,
-    pub show_borders: bool,
     pub context_menu: Option<ContextMenu>,
     pub exclude_editor: Option<ExcludeEditorState>,
-    pub dragging_separator: bool,
+}
 
-    // Terminal dimensions
-    pub term_width: u16,
-    pub term_height: u16,
+// --- Settings page state ---
 
-    // Scroll throttle
-    pub last_scroll: Instant,
+/// UI state for the settings page and its sub-popovers (theme picker,
+/// keybindings viewer). Update-check fields stay on `AppState` because
+/// they are read and written from many code paths outside the settings
+/// page (refresh loop, banner rendering, mouse hit-testing).
+#[derive(Debug, Default)]
+pub struct SettingsState {
+    /// Selected row in the settings page.
+    pub selected: usize,
 
-    // Config
-    pub exclude_patterns: Vec<String>,
-    pub plugins: Vec<PluginConfig>,
-    pub keybindings: Keybindings,
+    /// Theme picker overlay (open inside the settings page).
+    pub theme_picker_open: bool,
+    pub theme_picker_selected: usize,
 
-    // Keybindings viewer (read-only settings page)
+    /// Keybindings viewer overlay (read-only).
     pub keybindings_view_open: bool,
     pub keybindings_view_scroll: u16,
+}
 
-    // Update check
-    pub update_check_mode: UpdateCheckMode,
-    pub update_available: Option<UpdateStatus>,
-    pub update_last_checked_secs: Option<u64>,
-    /// Column range of the clickable "upgrade" span in the footer banner,
-    /// captured during render for mouse hit-testing. (y, x_start, x_end).
-    pub banner_upgrade_bounds: Option<Rect>,
+// --- Notification state ---
 
-    /// Result of the most recent manual config reload. Rendered in the
-    /// sidebar footer and auto-cleared by the main loop after a short
-    /// TTL — see `RELOAD_STATUS_OK_TTL` / `RELOAD_STATUS_ERR_TTL`.
-    pub reload_status: Option<ReloadStatus>,
-    pub reload_status_at: Option<Instant>,
-
+/// Desktop-notification dedup state plus terminal focus tracking. Lives
+/// in its own struct because it's the slice of `AppState` with the
+/// weakest coupling to session-list logic — only `app/refresh.rs` and
+/// `effective_status` touch it.
+#[derive(Debug, Default)]
+pub struct NotificationState {
     /// Unix-ms timestamp at which the user last detached from each
     /// session. Used by the Waiting-ack override: if the latest Claude
     /// hook event for session S is older than `acked_ts_ms[S]`, the
@@ -280,7 +270,82 @@ pub struct AppState {
     /// `FocusGained` / `FocusLost` events. Used to gate the "you're
     /// already attached, no notification needed" check — if you're
     /// attached but looking at another macOS app, we still notify.
+    ///
+    /// Defaults to true: assume focused until the terminal tells us
+    /// otherwise. A `false` default would race the first FocusGained
+    /// event and could fire spurious notifications immediately after
+    /// launch.
     pub terminal_focused: bool,
+}
+
+impl NotificationState {
+    pub fn new() -> Self {
+        Self {
+            acked_ts_ms: HashMap::new(),
+            last_notified_ts_ms: HashMap::new(),
+            notifications_armed: false,
+            terminal_focused: true,
+        }
+    }
+}
+
+// --- AppState ---
+
+pub struct AppState {
+    // Session data
+    pub sessions: Vec<SessionRow>,
+    pub filtered: Vec<usize>,
+    pub focused: usize,
+    pub current_session: String,
+    pub session_order: Vec<String>,
+
+    // UI state
+    pub main_view: MainView,
+    pub focus_mode: FocusMode,
+    pub theme_index: usize,
+    /// Settings page navigation + theme picker / keybindings viewer
+    /// overlays. See `SettingsState`.
+    pub settings: SettingsState,
+    pub layout_mode: LayoutMode,
+    pub view_mode: ViewMode,
+    pub sidebar_width: u16,
+    pub sidebar_height: u16,
+    pub show_borders: bool,
+    pub dragging_separator: bool,
+
+    /// Transient sidebar overlays — help, kill-confirm, rename, context
+    /// menu, exclude editor. See `OverlayState`.
+    pub overlay: OverlayState,
+
+    // Terminal dimensions
+    pub term_width: u16,
+    pub term_height: u16,
+
+    // Scroll throttle
+    pub last_scroll: Instant,
+
+    // Config
+    pub exclude_patterns: Vec<String>,
+    pub plugins: Vec<PluginConfig>,
+    pub keybindings: Keybindings,
+
+    // Update check
+    pub update_check_mode: UpdateCheckMode,
+    pub update_available: Option<UpdateStatus>,
+    pub update_last_checked_secs: Option<u64>,
+    /// Column range of the clickable "upgrade" span in the footer banner,
+    /// captured during render for mouse hit-testing. (y, x_start, x_end).
+    pub banner_upgrade_bounds: Option<Rect>,
+
+    /// Result of the most recent manual config reload. Rendered in the
+    /// sidebar footer and auto-cleared by the main loop after a short
+    /// TTL — see `RELOAD_STATUS_OK_TTL` / `RELOAD_STATUS_ERR_TTL`.
+    pub reload_status: Option<ReloadStatus>,
+    pub reload_status_at: Option<Instant>,
+
+    /// Desktop-notification dedup state plus terminal focus tracking.
+    /// See `NotificationState` for field-by-field commentary.
+    pub notification: NotificationState,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -328,42 +393,33 @@ impl AppState {
             main_view: MainView::Terminal,
             focus_mode: FocusMode::Main,
             theme_index,
-            settings_selected: 0,
-            theme_picker_open: false,
-            theme_picker_selected: theme_index,
+            settings: SettingsState {
+                selected: 0,
+                theme_picker_open: false,
+                theme_picker_selected: theme_index,
+                keybindings_view_open: false,
+                keybindings_view_scroll: 0,
+            },
             layout_mode,
             view_mode,
             sidebar_width,
             sidebar_height,
-            show_help: false,
-            confirm_kill: false,
-            renaming: None,
             show_borders,
-            context_menu: None,
-            exclude_editor: None,
             dragging_separator: false,
+            overlay: OverlayState::default(),
             term_width,
             term_height,
             last_scroll: Instant::now(),
             exclude_patterns,
             plugins,
             keybindings,
-            keybindings_view_open: false,
-            keybindings_view_scroll: 0,
             update_check_mode,
             update_available: None,
             update_last_checked_secs: None,
             banner_upgrade_bounds: None,
             reload_status: None,
             reload_status_at: None,
-            acked_ts_ms: HashMap::new(),
-            last_notified_ts_ms: HashMap::new(),
-            notifications_armed: false,
-            // Assume focused until the terminal tells us otherwise. The
-            // alternative (false default) would race the first
-            // FocusGained event and could fire spurious notifications
-            // immediately after launch.
-            terminal_focused: true,
+            notification: NotificationState::new(),
         }
     }
 
@@ -382,7 +438,12 @@ impl AppState {
             return SessionStatus::Idle;
         }
         let event_ts = row.status_event_ts_ms.unwrap_or(0);
-        let ack_ts = self.acked_ts_ms.get(&row.name).copied().unwrap_or(0);
+        let ack_ts = self
+            .notification
+            .acked_ts_ms
+            .get(&row.name)
+            .copied()
+            .unwrap_or(0);
         if event_ts <= ack_ts {
             SessionStatus::Idle
         } else {
@@ -533,7 +594,7 @@ impl AppState {
 
     /// Map a screen position to a context menu item index.
     pub fn menu_item_at(&self, col: u16, row: u16) -> Option<usize> {
-        let menu = self.context_menu.as_ref()?;
+        let menu = self.overlay.context_menu.as_ref()?;
         let items = menu.items();
         let menu_width = context_menu_width(items);
         let menu_height = items.len() as u16 + 2;

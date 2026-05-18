@@ -6,7 +6,7 @@ use crate::state::{AppState, FocusMode, MainView};
 use super::Action;
 
 pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
-    if state.renaming.is_some() {
+    if state.overlay.renaming.is_some() {
         return match key.code {
             KeyCode::Enter => Action::RenameConfirm,
             KeyCode::Esc => Action::RenameCancel,
@@ -21,7 +21,7 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         };
     }
 
-    if state.context_menu.is_some() {
+    if state.overlay.context_menu.is_some() {
         return match key.code {
             KeyCode::Char('j') | KeyCode::Down => Action::MenuNext,
             KeyCode::Char('k') | KeyCode::Up => Action::MenuPrev,
@@ -37,13 +37,13 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     }
 
     if state.main_view == MainView::Settings && state.focus_mode == FocusMode::Main {
-        if state.keybindings_view_open {
+        if state.settings.keybindings_view_open {
             return keybindings_view_key_to_action(key);
         }
-        if state.exclude_editor.is_some() {
+        if state.overlay.exclude_editor.is_some() {
             return exclude_editor_key_to_action(key, state);
         }
-        if state.theme_picker_open {
+        if state.settings.theme_picker_open {
             return theme_picker_key_to_action(key);
         }
         return settings_key_to_action(key);
@@ -91,11 +91,11 @@ fn command_to_action(cmd: Command) -> Action {
 }
 
 fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
-    if state.show_help {
+    if state.overlay.show_help {
         return Action::DismissHelp;
     }
 
-    if state.confirm_kill {
+    if state.overlay.confirm_kill {
         return if key.code == KeyCode::Char('y') {
             Action::ConfirmKill
         } else {
@@ -140,7 +140,11 @@ fn settings_key_to_action(key: &KeyEvent) -> Action {
 }
 
 fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
-    let adding = state.exclude_editor.as_ref().is_some_and(|e| e.adding);
+    let adding = state
+        .overlay
+        .exclude_editor
+        .as_ref()
+        .is_some_and(|e| e.adding);
 
     if adding {
         return match key.code {

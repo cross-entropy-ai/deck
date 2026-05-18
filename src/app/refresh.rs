@@ -98,6 +98,7 @@ impl App {
                 if let Some(ts) = row.status_event_ts_ms {
                     let entry = self
                         .state
+                        .notification
                         .acked_ts_ms
                         .entry(row.name.clone())
                         .or_insert(0);
@@ -123,6 +124,7 @@ impl App {
             };
             let last = self
                 .state
+                .notification
                 .last_notified_ts_ms
                 .get(&row.name)
                 .copied()
@@ -130,24 +132,33 @@ impl App {
             if ts <= last {
                 continue;
             }
-            self.state.last_notified_ts_ms.insert(row.name.clone(), ts);
+            self.state
+                .notification
+                .last_notified_ts_ms
+                .insert(row.name.clone(), ts);
 
-            if !self.state.notifications_armed {
+            if !self.state.notification.notifications_armed {
                 continue;
             }
             // Skip only when the user is both attached to this session
             // *and* looking at the terminal. If they're attached but in
             // a different macOS app, they still need the banner.
-            if row.name == current && self.state.terminal_focused {
+            if row.name == current && self.state.notification.terminal_focused {
                 continue;
             }
-            let ack = self.state.acked_ts_ms.get(&row.name).copied().unwrap_or(0);
+            let ack = self
+                .state
+                .notification
+                .acked_ts_ms
+                .get(&row.name)
+                .copied()
+                .unwrap_or(0);
             if ts <= ack {
                 continue;
             }
             notify_waiting(&row.name);
         }
-        self.state.notifications_armed = true;
+        self.state.notification.notifications_armed = true;
 
         self.state.current_session = current;
     }
