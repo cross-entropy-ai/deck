@@ -31,6 +31,13 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         };
     }
 
+    if state.overlay.new_session.is_some() {
+        // The picker is keyboard-driven; mouse events are inert while it
+        // is open so we don't fire phantom context menus or session
+        // switches behind the overlay.
+        return Action::None;
+    }
+
     let (on_separator, in_sidebar) = match state.layout_mode {
         LayoutMode::Horizontal => {
             let gap_col = state.sidebar_width;
