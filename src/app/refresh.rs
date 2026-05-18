@@ -1,16 +1,8 @@
 use crate::nesting_guard::WarningState;
 use crate::refresh::{RefreshRequest, SessionSnapshot};
-use crate::state::{SessionRow, SessionStatus};
+use crate::state::SessionRow;
 
 use super::App;
-
-fn parse_status(raw: &str) -> SessionStatus {
-    match raw {
-        "working" => SessionStatus::Working,
-        "waiting" => SessionStatus::Waiting,
-        _ => SessionStatus::Idle,
-    }
-}
 
 /// Emit an OSC 9 desktop notification. Recognized by Ghostty, iTerm2,
 /// WezTerm, Kitty (with `enable_audio_bell`), and tmux 3.3+ when
@@ -63,7 +55,7 @@ impl App {
                 modified: r.modified,
                 untracked: r.untracked,
                 idle_seconds: r.idle_seconds,
-                status: parse_status(&r.status),
+                status: r.status,
                 status_event_ts_ms: r.status_event_ts_ms,
             })
             .collect();

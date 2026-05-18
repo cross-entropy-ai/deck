@@ -42,9 +42,7 @@ pub struct SnapshotRow {
     pub modified: u32,
     pub untracked: u32,
     pub idle_seconds: u64,
-    /// "idle" | "working" | "waiting". A string (not an enum) so the
-    /// worker thread doesn't need to import the UI-layer enum.
-    pub status: String,
+    pub status: SessionStatus,
     pub status_event_ts_ms: Option<u64>,
 }
 
@@ -150,7 +148,7 @@ fn collect(req: &RefreshRequest) -> SessionSnapshot {
         .map(|s| {
             let git_info = git::get_git_info(&s.dir);
             let idle_seconds = now.saturating_sub(s.activity);
-            let (status_str, status_event_ts_ms) = compute_status(
+            let (status, status_event_ts_ms) = compute_status(
                 &s.name,
                 &claude_by_session,
                 panes_by_session.get(&s.name).map(|v| v.as_slice()).unwrap_or(&[]),
@@ -165,7 +163,7 @@ fn collect(req: &RefreshRequest) -> SessionSnapshot {
                 modified: git_info.modified,
                 untracked: git_info.untracked,
                 idle_seconds,
-                status: status_str,
+                status,
                 status_event_ts_ms,
             }
         })
@@ -177,25 +175,30 @@ fn collect(req: &RefreshRequest) -> SessionSnapshot {
     }
 }
 
-/// Returns (status_string, event_ts_ms) for one session. Claude state
-/// — when present — takes precedence over the proc heuristic because
-/// it's the only signal that can distinguish Waiting from Working.
+/// Returns (status, event_ts_ms) for one session. Claude state — when
+/// present — takes precedence over the proc heuristic because it's the
+/// only signal that can distinguish Waiting from Working.
 fn compute_status(
     session_name: &str,
     claude_by_session: &HashMap<String, claude_state::ClaudeState>,
     panes: &[TmuxPane],
-) -> (String, Option<u64>) {
+) -> (SessionStatus, Option<u64>) {
     if let Some(claude) = claude_by_session.get(session_name) {
-        return (claude.status.clone(), Some(claude.ts_ms));
+        let status = match claude.status.as_str() {
+            "working" => SessionStatus::Working,
+            "waiting" => SessionStatus::Waiting,
+            _ => SessionStatus::Idle,
+        };
+        return (status, Some(claude.ts_ms));
     }
     // The proc heuristic only ever returns Working or Idle (it has no
-    // way to know about Claude state). Waiting maps to Idle defensively
-    // in case `status_for_session` grows later.
+    // way to know about Claude state). Waiting collapses to Idle
+    // defensively in case `status_for_session` grows later.
     let status = match proc_status::status_for_session(panes) {
-        SessionStatus::Working => "working",
-        SessionStatus::Idle | SessionStatus::Waiting => "idle",
+        SessionStatus::Working => SessionStatus::Working,
+        SessionStatus::Idle | SessionStatus::Waiting => SessionStatus::Idle,
     };
-    (status.to_string(), None)
+    (status, None)
 }
 
 #[cfg(test)]
