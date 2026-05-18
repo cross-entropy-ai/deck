@@ -21,8 +21,8 @@ const SIDEBAR_HEIGHT_MAX_BORDERED: u16 = 6;
 const MIN_MAIN_WIDTH: u16 = 10;
 const MIN_MAIN_HEIGHT: u16 = 1;
 
-pub const SESSION_MENU_ITEMS: &[&str] = &["Switch", "Rename", "Kill", "Move up", "Move down"];
-pub const GLOBAL_MENU_ITEMS: &[&str] = &[
+const SESSION_MENU_ITEMS: &[&str] = &["Switch", "Rename", "Kill", "Move up", "Move down"];
+const GLOBAL_MENU_ITEMS: &[&str] = &[
     "New session",
     "Toggle layout",
     "Toggle borders",
@@ -89,18 +89,26 @@ pub enum MenuKind {
     Global,
 }
 
+impl MenuKind {
+    pub fn items(&self) -> &'static [&'static str] {
+        match self {
+            MenuKind::Session { .. } => SESSION_MENU_ITEMS,
+            MenuKind::Global => GLOBAL_MENU_ITEMS,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ContextMenu {
     pub kind: MenuKind,
-    pub items: Vec<&'static str>,
     pub x: u16,
     pub y: u16,
     pub selected: usize,
 }
 
 impl ContextMenu {
-    pub fn items(&self) -> &[&'static str] {
-        &self.items
+    pub fn items(&self) -> &'static [&'static str] {
+        self.kind.items()
     }
 }
 

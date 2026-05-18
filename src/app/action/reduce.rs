@@ -1,7 +1,6 @@
 use crate::state::{
     AppState, ContextMenu, FocusMode, KillRequest, LayoutMode, MainView, MenuKind,
-    RenameRequest, RenameState, SideEffect, ViewMode, GLOBAL_MENU_ITEMS, SESSION_MENU_ITEMS,
-    SETTINGS_ITEM_COUNT,
+    RenameRequest, RenameState, SideEffect, ViewMode, SETTINGS_ITEM_COUNT,
 };
 use crate::theme::THEMES;
 
@@ -460,7 +459,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.focused = filtered_idx;
             state.overlay.context_menu = Some(ContextMenu {
                 kind: MenuKind::Session { filtered_idx },
-                items: SESSION_MENU_ITEMS.to_vec(),
                 x,
                 y,
                 selected: 0,
@@ -469,7 +467,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::OpenGlobalMenu { x, y } => {
             state.overlay.context_menu = Some(ContextMenu {
                 kind: MenuKind::Global,
-                items: GLOBAL_MENU_ITEMS.to_vec(),
                 x,
                 y,
                 selected: 0,
@@ -493,7 +490,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 Some(m) => m,
                 Option::None => return fx,
             };
-            let selected_label = menu.items.get(menu.selected).copied();
+            let selected_label = menu.items().get(menu.selected).copied();
             match menu.kind {
                 MenuKind::Session { filtered_idx } => {
                     state.focused = filtered_idx;
