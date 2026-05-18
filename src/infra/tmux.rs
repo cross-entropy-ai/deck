@@ -150,19 +150,6 @@ pub fn switch_client_for_tty(client_tty: &str, session: &str) {
     let _ = tmux(&["switch-client", "-c", client_tty, "-t", session]);
 }
 
-/// Force a full redraw of the current tmux client. Used after
-/// `switch-client` because tmux's optimized cursor-positioning repaint
-/// leaves cells untouched when the new session's content matches the
-/// previous one — yielding stale characters in the deck pane.
-pub fn refresh_client() {
-    let _ = tmux(&["refresh-client"]);
-}
-
-/// Force a full redraw of a specific tmux client (by TTY).
-pub fn refresh_client_for_tty(client_tty: &str) {
-    let _ = tmux(&["refresh-client", "-c", client_tty]);
-}
-
 /// Apply a deck theme to tmux's global options (status bar, pane borders, etc.).
 pub fn apply_theme(theme: &crate::theme::Theme) {
     let bg = color_hex(theme.bg);

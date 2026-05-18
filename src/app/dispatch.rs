@@ -153,14 +153,24 @@ impl App {
         }
     }
 
-    fn switch_client(&self, session: &str) {
+    fn switch_client(&mut self, session: &str) {
         if self.pty.slave_tty.is_empty() {
             tmux::switch_session(session);
-            tmux::refresh_client();
         } else {
             tmux::switch_client_for_tty(&self.pty.slave_tty, session);
-            tmux::refresh_client_for_tty(&self.pty.slave_tty);
         }
+        // tmux maintains a per-client tty cache and only emits writes
+        // for cells where the new session's content differs from what
+        // it last sent. Right after switch-client, that cache still
+        // reflects the OLD session — so any cell whose new content
+        // happens to match (most commonly: bg space where the new
+        // session is sparse) gets skipped, leaving the old character
+        // visible in the vt100 parser.
+        //
+        // Feeding the parser \x1b[2J\x1b[H here forces it to forget
+        // the old screen. tmux's subsequent repaint fills in cells it
+        // considers dirty; cells it skips stay blank instead of stale.
+        self.parser.process(b"\x1b[2J\x1b[H");
     }
 
     fn switch_to_session_if_safe(&mut self, session: &str) -> bool {
