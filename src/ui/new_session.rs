@@ -95,8 +95,9 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
 
 fn render_input_with_cursor(input: &str, cursor: usize) -> String {
     // Cursor representation: a vertical bar inserted at `cursor`.
-    // Falls back to end-of-string if `cursor` is out of bounds.
-    if cursor >= input.len() {
+    // Falls back to end-of-string if `cursor` is out of bounds or
+    // (defensively) not on a UTF-8 char boundary.
+    if cursor >= input.len() || !input.is_char_boundary(cursor) {
         format!("{input}▌")
     } else {
         let (before, after) = input.split_at(cursor);
