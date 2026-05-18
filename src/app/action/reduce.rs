@@ -244,8 +244,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 state.settings.selected -= 1;
             }
         }
-        Action::SettingsAdjust(direction) => {
-            let _ = direction;
+        Action::SettingsAdjust => {
             let inner = match state.settings.selected {
                 0 => apply_action(state, Action::OpenThemePicker),
                 1 => apply_action(state, Action::ToggleLayout),

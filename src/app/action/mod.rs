@@ -32,7 +32,7 @@ pub enum Action {
     CloseSettings,
     SettingsNext,
     SettingsPrev,
-    SettingsAdjust(i32),
+    SettingsAdjust,
     OpenThemePicker,
     CloseThemePicker,
     ThemePickerNext,
