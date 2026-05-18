@@ -31,7 +31,7 @@ See `docs/ARCHITECTURE.md` for the full diagram. The key layers:
 
 The rendering path: `app.run()` loop -> build `SessionView` slices (borrowed, not cloned) -> `ui::draw_*()` pure functions -> `bridge::render_screen()` for the PTY pane.
 
-A patched `vt100` crate lives in `patches/vt100/` and is applied via `[patch.crates-io]` in Cargo.toml.
+`vt100` is pinned to a long-lived `deck` branch on a fork (`Junyi-99/vt100-rust`) via `[patch.crates-io]` in `Cargo.toml`. See `docs/vt100-fork.md` for what's patched and how to add new fixes.
 
 ## Workflow Rules
 
