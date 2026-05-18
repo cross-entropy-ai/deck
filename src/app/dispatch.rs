@@ -8,6 +8,41 @@ use crate::update;
 
 use super::App;
 
+/// Read a directory and return (sorted dir names, error message). On
+/// any failure the entries list is empty and the error is set.
+fn read_dir_entries(path: &std::path::Path) -> (Vec<String>, Option<String>) {
+    match std::fs::read_dir(path) {
+        Ok(rd) => {
+            let mut names: Vec<String> = rd
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.metadata()
+                        .map(|m| m.is_dir())
+                        .unwrap_or(false)
+                })
+                .filter_map(|e| e.file_name().into_string().ok())
+                .collect();
+            names.sort();
+            (names, None)
+        }
+        Err(e) => {
+            let msg = match e.kind() {
+                std::io::ErrorKind::NotFound => "not found".to_string(),
+                std::io::ErrorKind::PermissionDenied => "permission denied".to_string(),
+                _ => {
+                    let s = e.to_string();
+                    if s.len() > 40 {
+                        format!("{}…", &s[..39])
+                    } else {
+                        s
+                    }
+                }
+            };
+            (Vec::new(), Some(msg))
+        }
+    }
+}
+
 impl App {
     pub(super) fn dispatch(&mut self, action: Action) -> bool {
         match action {
@@ -145,6 +180,21 @@ impl App {
                 self.reload_config();
                 false
             }
+            Action::OpenNewSessionPicker => {
+                self.open_new_session_picker();
+                false
+            }
+            Action::NewSessionConfirm => {
+                if let Some(dir) = self.confirm_new_session() {
+                    // Trigger creation via the standard side-effect path so the
+                    // refresh / switch_client flow stays unified.
+                    let mut fx = crate::state::SideEffect::default();
+                    fx.create_session = Some(dir);
+                    fx.refresh_sessions = true;
+                    self.execute_side_effects(&fx);
+                }
+                false
+            }
             _ => {
                 let fx = action::apply_action(&mut self.state, action);
                 self.execute_side_effects(&fx);
@@ -245,6 +295,25 @@ impl App {
         if fx.refresh_sessions {
             self.request_refresh();
         }
+
+        if fx.reread_new_session_entries {
+            if let Some(ns) = self.state.overlay.new_session.as_mut() {
+                use crate::new_session::{expand_path, split_input};
+                let home = std::path::PathBuf::from(
+                    std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
+                );
+                let (parent, _leaf) = split_input(&ns.input);
+                let parent_path = expand_path(parent, &home);
+                let (entries, error) = read_dir_entries(&parent_path);
+                ns.entries = entries;
+                ns.error = error;
+                ns.refilter();
+            }
+        }
+
+        if fx.open_new_session_picker {
+            self.open_new_session_picker();
+        }
     }
 
     /// Reload `~/.config/deck/config.json` and apply it in place. On
@@ -309,6 +378,73 @@ impl App {
             tmux::apply_theme(&THEMES[self.state.theme_index]);
         }
         self.request_refresh();
+    }
+
+    fn open_new_session_picker(&mut self) {
+        use crate::new_session::{expand_path, split_input, NewSessionState};
+
+        // Starting dir: focused session's dir if any, else $HOME.
+        let start_dir = self
+            .state
+            .filtered
+            .get(self.state.focused)
+            .and_then(|&i| self.state.sessions.get(i))
+            .map(|s| s.dir.clone())
+            .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+        let mut input = start_dir;
+        if !input.ends_with('/') {
+            input.push('/');
+        }
+
+        let home = std::path::PathBuf::from(
+            std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
+        );
+        let (parent, _leaf) = split_input(&input);
+        let parent_path = expand_path(parent, &home);
+
+        let (entries, error) = read_dir_entries(&parent_path);
+
+        let mut ns = NewSessionState {
+            cursor: input.len(),
+            input,
+            entries,
+            filtered: vec![],
+            selected: 0,
+            error,
+        };
+        ns.refilter();
+        self.state.overlay.new_session = Some(ns);
+    }
+
+    fn confirm_new_session(&mut self) -> Option<String> {
+        use crate::new_session::expand_path;
+
+        let Some(ns) = self.state.overlay.new_session.as_mut() else {
+            return None;
+        };
+        let home = std::path::PathBuf::from(
+            std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
+        );
+        let resolved = expand_path(&ns.input, &home);
+        match std::fs::metadata(&resolved) {
+            Ok(m) if m.is_dir() => {
+                let dir = resolved.to_string_lossy().to_string();
+                self.state.overlay.new_session = None;
+                Some(dir)
+            }
+            Ok(_) => {
+                ns.error = Some("not a directory".into());
+                None
+            }
+            Err(e) => {
+                ns.error = Some(match e.kind() {
+                    std::io::ErrorKind::NotFound => "not found".into(),
+                    std::io::ErrorKind::PermissionDenied => "permission denied".into(),
+                    _ => "cannot stat".into(),
+                });
+                None
+            }
+        }
     }
 
     fn create_new_session(&mut self, dir: &str) {
