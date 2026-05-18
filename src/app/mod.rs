@@ -50,6 +50,10 @@ pub struct App {
     update_checker: Option<crate::update::UpdateChecker>,
     upgrade_instance: Option<PluginInstance>,
     last_update_request: Option<Instant>,
+    /// Set to true after a session switch (PTY respawn) so the next
+    /// render call wipes the terminal before drawing — bypasses
+    /// ratatui's frame-to-frame diff in case it misses any cells.
+    pub(super) needs_full_redraw: bool,
 }
 
 impl App {
@@ -127,6 +131,7 @@ impl App {
             update_checker,
             upgrade_instance: None,
             last_update_request,
+            needs_full_redraw: false,
         };
 
         tmux::apply_theme(&THEMES[theme_index]);
