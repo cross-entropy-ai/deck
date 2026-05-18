@@ -1,0 +1,298 @@
+use super::*;
+use crate::infra::command::{CommandError, CommandRunner, Output};
+use std::collections::HashMap;
+use std::os::unix::process::ExitStatusExt;
+use std::process::ExitStatus;
+use std::sync::Mutex;
+use std::time::Duration;
+
+/// A canned response keyed on the joined args.
+enum FakeResponse {
+    Ok(String),
+    Timeout,
+    Spawn,
+    NonZero(String), // stderr
+}
+
+/// In-memory runner. Looks up the joined-arg string in `responses`;
+/// missing keys default to "succeed with empty stdout" so tests can
+/// stay terse about the calls they don't care about.
+struct FakeRunner {
+    responses: Mutex<HashMap<String, FakeResponse>>,
+}
+
+impl FakeRunner {
+    fn new() -> Self {
+        Self {
+            responses: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn set(&self, args: &[&str], resp: FakeResponse) {
+        let key = args.join(" ");
+        self.responses.lock().unwrap().insert(key, resp);
+    }
+}
+
+impl CommandRunner for FakeRunner {
+    fn run(
+        &self,
+        program: &str,
+        args: &[&str],
+        _timeout: Duration,
+    ) -> Result<Output, CommandError> {
+        let key = args.join(" ");
+        let map = self.responses.lock().unwrap();
+        let resp = map.get(&key);
+        match resp {
+            Some(FakeResponse::Ok(stdout)) => Ok(Output {
+                status: ExitStatus::from_raw(0),
+                stdout: stdout.as_bytes().to_vec(),
+                stderr: Vec::new(),
+            }),
+            Some(FakeResponse::Timeout) => Err(CommandError::Timeout {
+                program: program.to_string(),
+                elapsed: Duration::from_secs(1),
+            }),
+            Some(FakeResponse::Spawn) => Err(CommandError::Spawn {
+                program: program.to_string(),
+                source: std::io::Error::other("fake spawn failure"),
+            }),
+            Some(FakeResponse::NonZero(err)) => Err(CommandError::NonZero {
+                program: program.to_string(),
+                status: ExitStatus::from_raw(1 << 8),
+                stderr: err.as_bytes().to_vec(),
+            }),
+            None => Ok(Output {
+                status: ExitStatus::from_raw(0),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            }),
+        }
+    }
+}
+
+// --- parse_sessions ---
+
+#[test]
+fn parse_sessions_handles_normal_output() {
+    let mut activity = HashMap::new();
+    activity.insert("alpha".to_string(), 100u64);
+    let raw = "alpha\t/tmp/alpha\nbeta\t/tmp/beta";
+    let got = parse_sessions(raw, &activity);
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0].name, "alpha");
+    assert_eq!(got[0].dir, "/tmp/alpha");
+    assert_eq!(got[0].activity, 100);
+    assert_eq!(got[1].name, "beta");
+    assert_eq!(got[1].activity, 0); // not in activity map
+}
+
+#[test]
+fn parse_sessions_skips_malformed_lines() {
+    let activity = HashMap::new();
+    let raw = "good\t/dir\nno_tab_here\nalso\tbad\textra";
+    let got = parse_sessions(raw, &activity);
+    // The last line still has a tab, so it parses with dir = "bad\textra"-prefix.
+    // The `no_tab_here` line is dropped.
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0].name, "good");
+    assert_eq!(got[1].name, "also");
+}
+
+#[test]
+fn parse_sessions_empty_input() {
+    let activity = HashMap::new();
+    let got = parse_sessions("", &activity);
+    assert!(got.is_empty());
+}
+
+// --- parse_panes ---
+
+#[test]
+fn parse_panes_handles_normal_output() {
+    let raw = "alpha\t%1\t1234\tvim\t/tmp/alpha\nbeta\t%2\t5678\tzsh\t/tmp/beta";
+    let got = parse_panes(raw);
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0].session, "alpha");
+    assert_eq!(got[0].pane_id, "%1");
+    assert_eq!(got[0].pid, 1234);
+    assert_eq!(got[0].current_command, "vim");
+    assert_eq!(got[0].current_path, "/tmp/alpha");
+}
+
+#[test]
+fn parse_panes_tolerates_missing_path() {
+    // 4 tabs => current_path empty (unwrap_or)
+    let raw = "alpha\t%1\t1234\tvim\t";
+    let got = parse_panes(raw);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].current_path, "");
+}
+
+#[test]
+fn parse_panes_skips_malformed_pid() {
+    let raw = "alpha\t%1\tNOT_A_PID\tvim\t/tmp/alpha\nbeta\t%2\t9\tzsh\t/tmp/beta";
+    let got = parse_panes(raw);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].session, "beta");
+}
+
+#[test]
+fn parse_panes_empty_input() {
+    let got = parse_panes("");
+    assert!(got.is_empty());
+}
+
+// --- parse_window_activity ---
+
+#[test]
+fn parse_window_activity_takes_max_per_session() {
+    let raw = "s1\t100\ns1\t300\ns1\t200\ns2\t50";
+    let got = parse_window_activity(raw);
+    assert_eq!(got.get("s1").copied(), Some(300));
+    assert_eq!(got.get("s2").copied(), Some(50));
+}
+
+#[test]
+fn parse_window_activity_ignores_malformed_lines() {
+    let raw = "s1\tabc\nbroken_line\ns2\t42";
+    let got = parse_window_activity(raw);
+    assert_eq!(got.get("s1").copied(), Some(0)); // unparseable -> 0
+    assert_eq!(got.get("s2").copied(), Some(42));
+}
+
+// --- parse_client_session_for_tty ---
+
+#[test]
+fn parse_client_session_matches_tty() {
+    let raw = "/dev/ttys001\tmain\n/dev/ttys002\tother";
+    assert_eq!(
+        parse_client_session_for_tty(raw, "/dev/ttys002").as_deref(),
+        Some("other"),
+    );
+}
+
+#[test]
+fn parse_client_session_returns_none_when_tty_missing() {
+    let raw = "/dev/ttys001\tmain";
+    assert!(parse_client_session_for_tty(raw, "/dev/nope").is_none());
+}
+
+// --- integration with FakeRunner ---
+
+#[test]
+fn list_sessions_with_runner_returns_parsed_rows() {
+    let runner = FakeRunner::new();
+    runner.set(
+        &["list-sessions", "-F", "#{session_name}\t#{session_path}"],
+        FakeResponse::Ok("alpha\t/tmp/alpha\nbeta\t/tmp/beta".to_string()),
+    );
+    runner.set(
+        &[
+            "list-windows",
+            "-a",
+            "-F",
+            "#{session_name}\t#{window_activity}",
+        ],
+        FakeResponse::Ok("alpha\t99".to_string()),
+    );
+
+    let got = list_sessions_with(&runner);
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0].name, "alpha");
+    assert_eq!(got[0].activity, 99);
+    assert_eq!(got[1].activity, 0);
+}
+
+#[test]
+fn list_sessions_with_runner_returns_empty_on_timeout() {
+    let runner = FakeRunner::new();
+    runner.set(
+        &["list-sessions", "-F", "#{session_name}\t#{session_path}"],
+        FakeResponse::Timeout,
+    );
+    assert!(list_sessions_with(&runner).is_empty());
+}
+
+#[test]
+fn list_sessions_with_runner_returns_empty_on_nonzero() {
+    let runner = FakeRunner::new();
+    runner.set(
+        &["list-sessions", "-F", "#{session_name}\t#{session_path}"],
+        FakeResponse::NonZero("no server".to_string()),
+    );
+    assert!(list_sessions_with(&runner).is_empty());
+}
+
+#[test]
+fn list_sessions_with_runner_returns_empty_on_spawn() {
+    let runner = FakeRunner::new();
+    runner.set(
+        &["list-sessions", "-F", "#{session_name}\t#{session_path}"],
+        FakeResponse::Spawn,
+    );
+    assert!(list_sessions_with(&runner).is_empty());
+}
+
+#[test]
+fn list_panes_with_runner_returns_parsed_rows() {
+    let runner = FakeRunner::new();
+    runner.set(
+        &[
+            "list-panes",
+            "-a",
+            "-F",
+            "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}",
+        ],
+        FakeResponse::Ok("a\t%1\t1\tvim\t/x".to_string()),
+    );
+    let got = list_panes_with(&runner);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].current_command, "vim");
+}
+
+#[test]
+fn list_panes_with_runner_returns_empty_on_timeout() {
+    let runner = FakeRunner::new();
+    runner.set(
+        &[
+            "list-panes",
+            "-a",
+            "-F",
+            "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}",
+        ],
+        FakeResponse::Timeout,
+    );
+    assert!(list_panes_with(&runner).is_empty());
+}
+
+#[test]
+fn pid_looks_like_deck_with_runner_uses_ps_output() {
+    let runner = FakeRunner::new();
+    let pid_str = "1234";
+    runner.set(
+        &["-p", pid_str, "-o", "command="],
+        FakeResponse::Ok(format!("/usr/local/bin/{}", env!("CARGO_PKG_NAME"))),
+    );
+    assert!(pid_looks_like_deck_with(&runner, 1234));
+}
+
+#[test]
+fn pid_looks_like_deck_with_runner_false_on_other_proc() {
+    let runner = FakeRunner::new();
+    let pid_str = "1234";
+    runner.set(
+        &["-p", pid_str, "-o", "command="],
+        FakeResponse::Ok("/usr/bin/vim".to_string()),
+    );
+    assert!(!pid_looks_like_deck_with(&runner, 1234));
+}
+
+#[test]
+fn pid_looks_like_deck_with_runner_false_on_timeout() {
+    let runner = FakeRunner::new();
+    let pid_str = "1234";
+    runner.set(&["-p", pid_str, "-o", "command="], FakeResponse::Timeout);
+    assert!(!pid_looks_like_deck_with(&runner, 1234));
+}

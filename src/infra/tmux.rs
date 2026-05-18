@@ -1,5 +1,14 @@
 use std::collections::HashMap;
-use std::process::Command;
+use std::sync::OnceLock;
+use std::time::Duration;
+
+use crate::infra::command::{CommandError, CommandRunner, RealRunner};
+
+/// How long any single tmux invocation may take before we give up and
+/// treat it as a failure. tmux is local IPC; healthy calls finish in a
+/// few milliseconds, so 1s is plenty of headroom while still rescuing
+/// us from a wedged server.
+pub const TMUX_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Info about a tmux session.
 #[derive(Debug, Clone)]
@@ -21,25 +30,42 @@ pub struct TmuxPane {
     pub current_path: String,
 }
 
-/// Run a tmux command and return stdout, trimmed.
+/// Process-wide runner. Module-private so callers can't override it;
+/// tests reach the parsers + `_with_runner` helpers instead.
+fn default_runner() -> &'static dyn CommandRunner {
+    static R: OnceLock<RealRunner> = OnceLock::new();
+    R.get_or_init(RealRunner::default)
+}
+
+/// Run a tmux command and return stdout, trimmed. `None` on any
+/// failure (spawn, non-zero exit, timeout). The error reason is
+/// dropped here; we only carry it through the typed paths used in
+/// tests today, leaving room to surface it in the UI later.
 fn tmux(args: &[&str]) -> Option<String> {
-    let output = Command::new("tmux").args(args).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    tmux_with(default_runner(), args).ok()
+}
+
+fn tmux_with(runner: &dyn CommandRunner, args: &[&str]) -> Result<String, CommandError> {
+    runner
+        .run("tmux", args, TMUX_TIMEOUT)
+        .map(|out| out.stdout_trimmed())
 }
 
 /// List all tmux sessions.
 pub fn list_sessions() -> Vec<SessionInfo> {
+    list_sessions_with(default_runner())
+}
+
+fn list_sessions_with(runner: &dyn CommandRunner) -> Vec<SessionInfo> {
     let format = "#{session_name}\t#{session_path}";
-    let Some(raw) = tmux(&["list-sessions", "-F", format]) else {
+    let Ok(raw) = tmux_with(runner, &["list-sessions", "-F", format]) else {
         return Vec::new();
     };
+    let window_activity = latest_window_activity_with(runner);
+    parse_sessions(&raw, &window_activity)
+}
 
-    // window_activity tracks actual buffer output, even for background sessions.
-    let window_activity = latest_window_activity();
-
+fn parse_sessions(raw: &str, window_activity: &HashMap<String, u64>) -> Vec<SessionInfo> {
     raw.lines()
         .filter_map(|line| {
             let (name, dir) = line.split_once('\t')?;
@@ -57,10 +83,19 @@ pub fn list_sessions() -> Vec<SessionInfo> {
 /// derive session status (pane_id for Claude hook matching, pid for
 /// process-tree walks, current_command for the proc heuristic).
 pub fn list_panes() -> Vec<TmuxPane> {
-    let format = "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}";
-    let Some(raw) = tmux(&["list-panes", "-a", "-F", format]) else {
+    list_panes_with(default_runner())
+}
+
+fn list_panes_with(runner: &dyn CommandRunner) -> Vec<TmuxPane> {
+    let format =
+        "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}";
+    let Ok(raw) = tmux_with(runner, &["list-panes", "-a", "-F", format]) else {
         return Vec::new();
     };
+    parse_panes(&raw)
+}
+
+fn parse_panes(raw: &str) -> Vec<TmuxPane> {
     raw.lines()
         .filter_map(|line| {
             let mut parts = line.splitn(5, '\t');
@@ -81,11 +116,15 @@ pub fn list_panes() -> Vec<TmuxPane> {
 }
 
 /// Get the max window_activity timestamp per session.
-fn latest_window_activity() -> HashMap<String, u64> {
+fn latest_window_activity_with(runner: &dyn CommandRunner) -> HashMap<String, u64> {
     let format = "#{session_name}\t#{window_activity}";
-    let Some(raw) = tmux(&["list-windows", "-a", "-F", format]) else {
+    let Ok(raw) = tmux_with(runner, &["list-windows", "-a", "-F", format]) else {
         return HashMap::new();
     };
+    parse_window_activity(&raw)
+}
+
+fn parse_window_activity(raw: &str) -> HashMap<String, u64> {
     let mut map: HashMap<String, u64> = HashMap::new();
     for line in raw.lines() {
         if let Some((name, ts_str)) = line.split_once('\t') {
@@ -113,6 +152,10 @@ pub fn host_session() -> Option<String> {
 /// Get the session name for a specific client TTY.
 pub fn current_session_for_tty(client_tty: &str) -> Option<String> {
     let raw = tmux(&["list-clients", "-F", "#{client_tty}\t#{session_name}"])?;
+    parse_client_session_for_tty(&raw, client_tty)
+}
+
+fn parse_client_session_for_tty(raw: &str, client_tty: &str) -> Option<String> {
     for line in raw.lines() {
         if let Some((tty, session)) = line.split_once('\t') {
             if tty == client_tty {
@@ -184,7 +227,8 @@ pub fn apply_theme(theme: &crate::theme::Theme) {
         args.push(val.clone());
     }
 
-    let _ = Command::new("tmux").args(&args).output();
+    let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+    let _ = default_runner().run("tmux", &args_ref, TMUX_TIMEOUT);
 }
 
 fn color_hex(c: ratatui::style::Color) -> String {
@@ -212,17 +256,18 @@ fn color_hex(c: ratatui::style::Color) -> String {
 }
 
 pub fn pid_looks_like_deck(pid: u32) -> bool {
-    let pid = pid.to_string();
-    let output = Command::new("ps")
-        .args(["-p", &pid, "-o", "command="])
-        .output()
-        .ok();
-    let Some(output) = output else {
+    pid_looks_like_deck_with(default_runner(), pid)
+}
+
+fn pid_looks_like_deck_with(runner: &dyn CommandRunner, pid: u32) -> bool {
+    let pid_str = pid.to_string();
+    let Ok(out) = runner.run("ps", &["-p", &pid_str, "-o", "command="], TMUX_TIMEOUT) else {
         return false;
     };
-    if !output.status.success() {
-        return false;
-    }
-    let command = String::from_utf8_lossy(&output.stdout);
+    let command = String::from_utf8_lossy(&out.stdout);
     command.contains(env!("CARGO_PKG_NAME"))
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/infra/tmux.rs"]
+mod tests;

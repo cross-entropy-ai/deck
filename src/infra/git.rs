@@ -1,4 +1,14 @@
-use std::process::Command;
+use std::sync::OnceLock;
+use std::time::Duration;
+
+use crate::infra::command::{CommandRunner, RealRunner};
+
+/// Hard cap on a single `git status` call. Repos on network filesystems
+/// or with misbehaving hooks have been observed to hang `git status`
+/// indefinitely; this keeps the refresh worker responsive at the cost
+/// of treating slow repos as if they had no git info — which is the
+/// same UX users already see for non-git dirs.
+pub const GIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Git info for a directory.
 #[derive(Debug, Clone, Default)]
@@ -11,24 +21,42 @@ pub struct GitInfo {
     pub untracked: u32,
 }
 
+fn default_runner() -> &'static dyn CommandRunner {
+    static R: OnceLock<RealRunner> = OnceLock::new();
+    R.get_or_init(RealRunner::default)
+}
+
 /// Get git branch and status for a directory.
 pub fn get_git_info(dir: &str) -> GitInfo {
+    get_git_info_with(default_runner(), dir)
+}
+
+/// Test seam: run `git status` via the given runner. Failure modes
+/// (spawn / non-zero / timeout) all collapse to the same default
+/// `GitInfo`, matching the legacy contract.
+fn get_git_info_with(runner: &dyn CommandRunner, dir: &str) -> GitInfo {
     if dir.is_empty() {
         return GitInfo::default();
     }
 
-    let output = Command::new("git")
-        .args(["status", "--porcelain=v1", "-b"])
-        .current_dir(dir)
-        .output()
-        .ok()
-        .filter(|o| o.status.success());
-
-    let Some(output) = output else {
+    // The runner trait can't take `current_dir`, so we shell out to a
+    // wrapper `git -C <dir> status ...` form, which has identical
+    // semantics for our purposes.
+    let Ok(out) = runner.run(
+        "git",
+        &["-C", dir, "status", "--porcelain=v1", "-b"],
+        GIT_TIMEOUT,
+    ) else {
         return GitInfo::default();
     };
 
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = String::from_utf8_lossy(&out.stdout);
+    parse_git_status(&text)
+}
+
+/// Pure parser for `git status --porcelain=v1 -b` output. Exposed for
+/// unit tests and intentionally independent of any runner.
+fn parse_git_status(text: &str) -> GitInfo {
     let mut info = GitInfo::default();
 
     for line in text.lines() {
@@ -73,3 +101,7 @@ fn parse_branch_header(header: &str, info: &mut GitInfo) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/infra/git.rs"]
+mod tests;
