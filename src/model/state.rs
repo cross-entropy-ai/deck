@@ -21,8 +21,9 @@ const SIDEBAR_HEIGHT_MAX_BORDERED: u16 = 6;
 const MIN_MAIN_WIDTH: u16 = 10;
 const MIN_MAIN_HEIGHT: u16 = 1;
 
-const SESSION_MENU_ITEMS: &[&str] = &["Switch", "Rename", "Kill", "Move up", "Move down"];
-const GLOBAL_MENU_ITEMS: &[&str] = &[
+const SESSION_MENU_ITEMS: &'static [&'static str] =
+    &["Switch", "Rename", "Kill", "Move up", "Move down"];
+const GLOBAL_MENU_ITEMS: &'static [&'static str] = &[
     "New session",
     "Toggle layout",
     "Toggle borders",
