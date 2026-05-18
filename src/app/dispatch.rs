@@ -154,23 +154,38 @@ impl App {
     }
 
     fn switch_client(&mut self, session: &str) {
-        if self.pty.slave_tty.is_empty() {
-            tmux::switch_session(session);
-        } else {
-            tmux::switch_client_for_tty(&self.pty.slave_tty, session);
-        }
-        // tmux maintains a per-client tty cache and only emits writes
-        // for cells where the new session's content differs from what
-        // it last sent. Right after switch-client, that cache still
-        // reflects the OLD session — so any cell whose new content
-        // happens to match (most commonly: bg space where the new
-        // session is sparse) gets skipped, leaving the old character
-        // visible in the vt100 parser.
+        // Respawn the embedded tmux client attached to the target
+        // session instead of asking the existing client to switch.
         //
-        // Feeding the parser \x1b[2J\x1b[H here forces it to forget
-        // the old screen. tmux's subsequent repaint fills in cells it
-        // considers dirty; cells it skips stay blank instead of stale.
-        self.parser.process(b"\x1b[2J\x1b[H");
+        // Why: tmux maintains a per-client tty-cache for repaint
+        // optimization — after switch-client, that cache still
+        // reflects the previous session, so cells whose new content
+        // matches the old (most commonly bg space where the new
+        // session is sparse, but also any coincidental match) get
+        // skipped. The vt100 parser's screen has two buffers
+        // (primary + alt) and tmux may toggle between them on
+        // switch, making a simple parser-side clear unreliable.
+        //
+        // A fresh tmux client starts with an empty tty-cache, so
+        // tmux re-emits every cell of the target pane. Coupled with
+        // a fresh vt100 parser, no stale bytes can leak through.
+        let (rows, cols) = self.state.pty_size();
+        match Self::spawn_tmux_pty((rows, cols), &self.nesting_guard, Some(session)) {
+            Ok(pty) => {
+                self.pty = pty;
+                self.parser = vt100::Parser::new(rows, cols, 0);
+            }
+            Err(_) => {
+                // Spawn failed (no tmux? no target?). Fall back to
+                // the legacy switch-client path so at least the
+                // switch is attempted — residue may persist.
+                if self.pty.slave_tty.is_empty() {
+                    tmux::switch_session(session);
+                } else {
+                    tmux::switch_client_for_tty(&self.pty.slave_tty, session);
+                }
+            }
+        }
     }
 
     fn switch_to_session_if_safe(&mut self, session: &str) -> bool {
