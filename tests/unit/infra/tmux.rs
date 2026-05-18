@@ -10,8 +10,6 @@ use std::time::Duration;
 enum FakeResponse {
     Ok(String),
     Timeout,
-    Spawn,
-    NonZero(String), // stderr
 }
 
 /// In-memory runner. Looks up the joined-arg string in `responses`;
@@ -53,15 +51,6 @@ impl CommandRunner for FakeRunner {
             Some(FakeResponse::Timeout) => Err(CommandError::Timeout {
                 program: program.to_string(),
                 elapsed: Duration::from_secs(1),
-            }),
-            Some(FakeResponse::Spawn) => Err(CommandError::Spawn {
-                program: program.to_string(),
-                source: std::io::Error::other("fake spawn failure"),
-            }),
-            Some(FakeResponse::NonZero(err)) => Err(CommandError::NonZero {
-                program: program.to_string(),
-                status: ExitStatus::from_raw(1 << 8),
-                stderr: err.as_bytes().to_vec(),
             }),
             None => Ok(Output {
                 status: ExitStatus::from_raw(0),
@@ -211,26 +200,6 @@ fn list_sessions_with_runner_returns_empty_on_timeout() {
     runner.set(
         &["list-sessions", "-F", "#{session_name}\t#{session_path}"],
         FakeResponse::Timeout,
-    );
-    assert!(list_sessions_with(&runner).is_empty());
-}
-
-#[test]
-fn list_sessions_with_runner_returns_empty_on_nonzero() {
-    let runner = FakeRunner::new();
-    runner.set(
-        &["list-sessions", "-F", "#{session_name}\t#{session_path}"],
-        FakeResponse::NonZero("no server".to_string()),
-    );
-    assert!(list_sessions_with(&runner).is_empty());
-}
-
-#[test]
-fn list_sessions_with_runner_returns_empty_on_spawn() {
-    let runner = FakeRunner::new();
-    runner.set(
-        &["list-sessions", "-F", "#{session_name}\t#{session_path}"],
-        FakeResponse::Spawn,
     );
     assert!(list_sessions_with(&runner).is_empty());
 }

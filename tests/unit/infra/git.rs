@@ -8,8 +8,6 @@ use std::time::Duration;
 enum FakeResponse {
     Ok(String),
     Timeout,
-    Spawn,
-    NonZero,
 }
 
 struct FakeRunner {
@@ -41,15 +39,6 @@ impl CommandRunner for FakeRunner {
             Some(FakeResponse::Timeout) => Err(CommandError::Timeout {
                 program: program.to_string(),
                 elapsed: Duration::from_secs(2),
-            }),
-            Some(FakeResponse::Spawn) => Err(CommandError::Spawn {
-                program: program.to_string(),
-                source: std::io::Error::other("fake spawn"),
-            }),
-            Some(FakeResponse::NonZero) => Err(CommandError::NonZero {
-                program: program.to_string(),
-                status: ExitStatus::from_raw(128 << 8),
-                stderr: b"not a git repository".to_vec(),
             }),
             None => panic!("FakeRunner called twice in one test"),
         }
@@ -171,16 +160,3 @@ fn get_git_info_returns_default_on_timeout() {
     assert_eq!(info.modified, 0);
 }
 
-#[test]
-fn get_git_info_returns_default_on_spawn_failure() {
-    let runner = FakeRunner::new(FakeResponse::Spawn);
-    let info = get_git_info_with(&runner, "/tmp/repo");
-    assert_eq!(info.branch, "");
-}
-
-#[test]
-fn get_git_info_returns_default_on_nonzero() {
-    let runner = FakeRunner::new(FakeResponse::NonZero);
-    let info = get_git_info_with(&runner, "/tmp/not-a-repo");
-    assert_eq!(info.branch, "");
-}

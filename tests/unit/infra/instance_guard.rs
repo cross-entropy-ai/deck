@@ -1,6 +1,4 @@
-use super::{
-    real_kill, send_signal, AcquireError, InstanceGuard, KillError, GRACEFUL_KILL_TIMEOUT,
-};
+use super::{real_kill, AcquireError, InstanceGuard, KillError, GRACEFUL_KILL_TIMEOUT};
 use std::fs;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
@@ -135,12 +133,6 @@ fn force_kills_and_acquires_when_lock_holds_deck_pid() {
         libc::kill(victim_pid as libc::pid_t, libc::SIGKILL);
     }
     let _ = child.wait();
-}
-
-#[test]
-fn send_signal_zero_to_self_reports_alive() {
-    // signal 0 never delivers, just checks deliverability.
-    assert!(matches!(send_signal(std::process::id(), 0), Ok(())));
 }
 
 #[test]

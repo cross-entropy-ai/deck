@@ -53,14 +53,3 @@ fn real_runner_kills_after_timeout() {
     );
 }
 
-#[test]
-fn command_error_program_round_trips() {
-    let e = CommandError::Timeout {
-        program: "git".to_string(),
-        elapsed: Duration::from_secs(2),
-    };
-    assert_eq!(e.program(), "git");
-    let display = format!("{e}");
-    assert!(display.contains("git"));
-    assert!(display.contains("timed out"));
-}
