@@ -60,7 +60,6 @@ pub enum Action {
     ExcludeEditorConfirm,
     ExcludeEditorCancelAdd,
 
-    OpenNewSessionPicker,
     CloseNewSessionPicker,
     NewSessionInput(char),
     NewSessionBackspace,

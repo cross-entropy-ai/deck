@@ -430,10 +430,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
 
-        Action::OpenNewSessionPicker => {
-            // Handled at dispatch (needs FS IO).
-            fx.open_new_session_picker = true;
-        }
         Action::CloseNewSessionPicker => {
             state.overlay.new_session = None;
         }

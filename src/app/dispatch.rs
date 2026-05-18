@@ -181,10 +181,6 @@ impl App {
                 self.reload_config();
                 false
             }
-            Action::OpenNewSessionPicker => {
-                self.open_new_session_picker();
-                false
-            }
             Action::NewSessionConfirm => {
                 if let Some(dir) = self.confirm_new_session() {
                     // Trigger creation via the standard side-effect path so the
