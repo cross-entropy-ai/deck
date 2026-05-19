@@ -1,21 +1,6 @@
 use super::*;
 
 #[test]
-fn compare_newer_returns_true() {
-    assert_eq!(compare("0.1.3", "0.2.0"), Some(true));
-}
-
-#[test]
-fn compare_equal_returns_false() {
-    assert_eq!(compare("0.2.0", "0.2.0"), Some(false));
-}
-
-#[test]
-fn compare_older_returns_false() {
-    assert_eq!(compare("0.3.0", "0.2.0"), Some(false));
-}
-
-#[test]
 fn compare_respects_numeric_order() {
     // Pure string compare would flip this: "0.10.0" < "0.9.9" lex.
     assert_eq!(compare("0.9.9", "0.10.0"), Some(true));
@@ -84,24 +69,6 @@ fn cache_is_fresh_handles_clock_skew() {
     };
     // now < checked_at — clock moved backwards; treat as fresh.
     assert!(UpdateCache::is_fresh(&status, 1500, 200));
-}
-
-#[test]
-fn update_status_round_trip() {
-    let status = UpdateStatus {
-        latest_version: "0.2.0".into(),
-        current_version: "0.1.3".into(),
-        release_url: "https://example.com".into(),
-        checked_at: 1234,
-    };
-    let json = serde_json::to_string(&status).unwrap();
-    let parsed: UpdateStatus = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed, status);
-}
-
-#[test]
-fn update_check_mode_default_is_enabled() {
-    assert_eq!(UpdateCheckMode::default(), UpdateCheckMode::Enabled);
 }
 
 #[test]

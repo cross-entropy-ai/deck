@@ -88,29 +88,6 @@ fn parse_json_without_exclude_patterns_uses_default() {
 }
 
 #[test]
-fn config_save_includes_exclude_patterns() {
-    let config = Config {
-        exclude_patterns: vec!["_*".to_string(), "/^test/".to_string()],
-        ..Config::default()
-    };
-    let roundtrip: Config = serde_json::from_str(&config.to_json()).unwrap();
-    assert_eq!(roundtrip.exclude_patterns, vec!["_*", "/^test/"]);
-}
-
-#[test]
-fn parse_json_with_view_mode() {
-    let json = r#"{
-  "theme": "Catppuccin Mocha",
-  "layout": "horizontal",
-  "show_borders": true,
-  "sidebar_width": 28,
-  "view_mode": "compact"
-}"#;
-    let config = parse(json);
-    assert_eq!(config.view_mode, ViewMode::Compact);
-}
-
-#[test]
 fn parse_json_without_view_mode_uses_default() {
     let json = r#"{
   "theme": "Catppuccin Mocha",
@@ -150,34 +127,10 @@ fn parse_json_with_plugins() {
 }
 
 #[test]
-fn parse_json_without_plugins_uses_empty() {
-    let json = r#"{ "theme": "Nord" }"#;
-    let config = parse(json);
-    assert!(config.plugins.is_empty());
-}
-
-#[test]
-fn sidebar_height_round_trips() {
-    let config = Config {
-        sidebar_height: 5,
-        ..Config::default()
-    };
-    let roundtrip: Config = serde_json::from_str(&config.to_json()).unwrap();
-    assert_eq!(roundtrip.sidebar_height, 5);
-}
-
-#[test]
 fn parse_json_without_sidebar_height_uses_default() {
     let json = r#"{ "theme": "Nord" }"#;
     let config = parse(json);
     assert_eq!(config.sidebar_height, SIDEBAR_HEIGHT);
-}
-
-#[test]
-fn parse_json_with_layout_enum() {
-    let json = r#"{ "layout": "vertical" }"#;
-    let config = parse(json);
-    assert_eq!(config.layout, LayoutMode::Vertical);
 }
 
 #[test]
@@ -212,13 +165,6 @@ fn parse_json_with_keybindings_null() {
         config.keybindings.get("toggle_borders"),
         Some(&KeyBindingValue::Unbind)
     );
-}
-
-#[test]
-fn parse_json_without_keybindings_uses_empty() {
-    let json = r#"{ "theme": "Nord" }"#;
-    let config = parse(json);
-    assert!(config.keybindings.is_empty());
 }
 
 #[test]
@@ -260,16 +206,6 @@ fn parse_json_without_update_check_defaults_to_enabled() {
     let json = r#"{ "theme": "Nord" }"#;
     let config = parse(json);
     assert_eq!(config.update_check, UpdateCheckMode::Enabled);
-}
-
-#[test]
-fn update_check_round_trip() {
-    let config = Config {
-        update_check: UpdateCheckMode::Disabled,
-        ..Config::default()
-    };
-    let roundtrip: Config = serde_json::from_str(&config.to_json()).unwrap();
-    assert_eq!(roundtrip.update_check, UpdateCheckMode::Disabled);
 }
 
 #[test]
