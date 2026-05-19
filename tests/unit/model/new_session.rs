@@ -91,6 +91,26 @@ fn expand_path_normalizes_parent_dir() {
     assert_eq!(expand_path("~/./bar", &home), PathBuf::from("/home/u/bar"));
 }
 
+#[test]
+fn auto_session_name_picks_start_when_free() {
+    let names: Vec<&str> = vec![];
+    assert_eq!(auto_session_name(&names, 0), "session-0");
+}
+
+#[test]
+fn auto_session_name_skips_taken_indices() {
+    let names = vec!["session-0", "session-1"];
+    assert_eq!(auto_session_name(&names, 2), "session-2");
+    // Search starts at `start`; it does NOT fill gaps below.
+    assert_eq!(auto_session_name(&names, 0), "session-2");
+}
+
+#[test]
+fn auto_session_name_skips_non_session_collisions_too() {
+    let names = vec!["foo", "bar", "session-3"];
+    assert_eq!(auto_session_name(&names, 3), "session-4");
+}
+
 #[cfg(test)]
 mod fs_integration {
     use super::*;
