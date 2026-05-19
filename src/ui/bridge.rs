@@ -17,15 +17,28 @@ pub fn render_screen(
             let Some(cell) = screen.cell(row, col) else {
                 continue;
             };
-            if cell.is_wide_continuation() {
-                continue;
-            }
 
             let x = area.x + col;
             let y = area.y + row;
             let Some(target) = buf.cell_mut((x, y)) else {
                 continue;
             };
+
+            if cell.is_wide_continuation() {
+                // The previous column rendered a 2-cell wide glyph that
+                // covers this position. Mark skip=true so ratatui's diff
+                // knows this cell is owned by the wide glyph and
+                // (critically) so the diff can correctly overwrite this
+                // position when the previous frame had different content
+                // here.
+                //
+                // Without this, residue appears in two cases:
+                // - Session switch (covered today by terminal.clear() in
+                //   render.rs).
+                // - Sidebar resize (no workaround; this fix addresses it).
+                target.set_skip(true);
+                continue;
+            }
 
             let contents = cell.contents();
             if contents.is_empty() {
@@ -73,5 +86,33 @@ pub fn set_cursor(frame: &mut ratatui::Frame, screen: &vt100::Screen, area: Rect
     let y = area.y + row;
     if x < area.right() && y < area.bottom() {
         frame.set_cursor_position((x, y));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wide_char_continuation_sets_skip_flag() {
+        // CJK ideograph U+4E2D ("中") is a typical 2-cell-wide glyph.
+        let mut parser = vt100::Parser::new(2, 10, 0);
+        parser.process("中".as_bytes());
+
+        let area = Rect::new(0, 0, 10, 2);
+        let mut buf = Buffer::empty(area);
+        render_screen(parser.screen(), area, &mut buf, Color::White, Color::Black);
+
+        // Column 0 holds the wide char itself; column 1 is its
+        // continuation. Without the skip flag, ratatui's diff cannot
+        // tell column 1 is "owned by" column 0, and residue from a
+        // previous frame can leak through.
+        let col_0 = buf.cell((0, 0)).unwrap();
+        let col_1 = buf.cell((1, 0)).unwrap();
+        assert_eq!(col_0.symbol(), "中");
+        assert!(
+            col_1.skip,
+            "wide-char continuation cell must have skip=true"
+        );
     }
 }
