@@ -452,6 +452,7 @@ fn picker_state_with(input: &str, entries: Vec<String>) -> AppState {
         filtered: vec![],
         selected: 0,
         error: None,
+        ..NewSessionState::default()
     };
     ns.refilter();
     state.overlay.new_session = Some(ns);
@@ -478,14 +479,9 @@ fn new_session_input_crossing_slash_sets_reread() {
     assert!(fx.reread_new_session_entries);
 }
 
-#[test]
-fn new_session_backspace_at_trailing_slash_goes_up() {
-    let mut state = picker_state_with("~/foo/bar/", vec![]);
-    let fx = apply_action(&mut state, Action::NewSessionBackspace);
-    let ns = state.overlay.new_session.as_ref().unwrap();
-    assert_eq!(ns.input, "~/foo/");
-    assert!(fx.reread_new_session_entries);
-}
+// `new_session_backspace_at_trailing_slash_goes_up` was deleted with
+// the schema delta. The "up a level" behavior now lives in
+// `Action::NewSessionDirUp` (added in Task 12) and will be tested there.
 
 #[test]
 fn new_session_tab_descends_into_selected_entry() {

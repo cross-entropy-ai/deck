@@ -48,15 +48,6 @@ fn filter_entries_shows_dotfiles_when_leaf_starts_with_dot() {
 }
 
 #[test]
-fn smart_backspace_goes_up_at_trailing_slash() {
-    let mut s = "~/foo/bar/".to_string();
-    let mut c = s.len();
-    smart_backspace(&mut s, &mut c);
-    assert_eq!(s, "~/foo/");
-    assert_eq!(c, s.len());
-}
-
-#[test]
 fn smart_backspace_deletes_char_mid_leaf() {
     let mut s = "~/foo/ba".to_string();
     let mut c = s.len();
@@ -72,36 +63,6 @@ fn smart_backspace_empty_input_noop() {
     smart_backspace(&mut s, &mut c);
     assert_eq!(s, "");
     assert_eq!(c, 0);
-}
-
-#[test]
-fn smart_backspace_root_only_noop() {
-    // input is exactly "/" — guarded by `len > 1`.
-    let mut s = "/".to_string();
-    let mut c = 1;
-    smart_backspace(&mut s, &mut c);
-    assert_eq!(s, "");
-    assert_eq!(c, 0);
-    // Note: smart_backspace falls through to char-delete branch, which
-    // deletes the lone `/`. That's acceptable — user can retype.
-}
-
-#[test]
-fn tab_complete_appends_entry_and_slash() {
-    let mut s = "~/foo/ba".to_string();
-    let mut c = s.len();
-    tab_complete(&mut s, &mut c, "bar");
-    assert_eq!(s, "~/foo/bar/");
-    assert_eq!(c, s.len());
-}
-
-#[test]
-fn tab_complete_empty_leaf() {
-    let mut s = "~/foo/".to_string();
-    let mut c = s.len();
-    tab_complete(&mut s, &mut c, "bar");
-    assert_eq!(s, "~/foo/bar/");
-    assert_eq!(c, s.len());
 }
 
 #[test]

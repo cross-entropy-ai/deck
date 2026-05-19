@@ -186,7 +186,14 @@ impl App {
                     // Trigger creation via the standard side-effect path so the
                     // refresh / switch_client flow stays unified.
                     let mut fx = crate::state::SideEffect::default();
-                    fx.create_session = Some(dir);
+                    // Task 10 placeholder: real name comes from picker state in Task 13.
+                    let existing: Vec<&str> =
+                        self.state.sessions.iter().map(|s| s.name.as_str()).collect();
+                    let name = crate::new_session::auto_session_name(
+                        &existing,
+                        self.state.sessions.len(),
+                    );
+                    fx.create_session = Some(crate::state::CreateSessionRequest { name, dir });
                     fx.refresh_sessions = true;
                     self.execute_side_effects(&fx);
                 }
@@ -273,8 +280,8 @@ impl App {
             tmux::kill_session(&kill.name);
         }
 
-        if let Some(ref dir) = fx.create_session {
-            self.create_new_session(dir);
+        if let Some(ref req) = fx.create_session {
+            self.create_new_session(&req.name, &req.dir);
         }
 
         if fx.resize_pty {
@@ -408,6 +415,7 @@ impl App {
             filtered: vec![],
             selected: 0,
             error,
+            ..NewSessionState::default()
         };
         ns.refilter();
         self.state.overlay.new_session = Some(ns);
@@ -444,28 +452,14 @@ impl App {
         }
     }
 
-    fn create_new_session(&mut self, dir: &str) {
+    fn create_new_session(&mut self, name: &str, dir: &str) {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
         let home_path = std::path::PathBuf::from(&home);
         let expanded = crate::new_session::expand_path(dir, &home_path);
         let dir_str = expanded.to_string_lossy().to_string();
 
-        let existing: Vec<&str> = self
-            .state
-            .sessions
-            .iter()
-            .map(|s| s.name.as_str())
-            .collect();
-        let mut idx = self.state.sessions.len();
-        let name = loop {
-            let candidate = format!("session-{}", idx);
-            if !existing.contains(&candidate.as_str()) {
-                break candidate;
-            }
-            idx += 1;
-        };
-        if tmux::new_session(&name, &dir_str).is_some() {
-            self.switch_client(&name);
+        if tmux::new_session(name, &dir_str).is_some() {
+            self.switch_client(name);
         }
     }
 }

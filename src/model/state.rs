@@ -143,10 +143,11 @@ pub struct SideEffect {
     pub switch_session: Option<String>,
     pub kill_session: Option<KillRequest>,
     pub rename_session: Option<RenameRequest>,
-    /// `Some(dir)` means: create a new tmux session at `dir`. Was a
-    /// plain bool before the new-session picker landed; the picker
-    /// supplies its own dir, and the old `~/claude` default is dead.
-    pub create_session: Option<String>,
+    /// `Some(req)` means: create a new tmux session with `req.name` at
+    /// `req.dir`. The picker fills both fields; the auto-naming loop that
+    /// used to live in `App::create_new_session` now lives in
+    /// `App::open_new_session_picker` and is editable via the name input.
+    pub create_session: Option<CreateSessionRequest>,
     /// Dispatch should open the new-session picker overlay. Fired by
     /// the global menu's "New session" item; uses the focused session's
     /// dir as the picker's starting point.
@@ -203,6 +204,13 @@ pub struct KillRequest {
 pub struct RenameRequest {
     pub old_name: String,
     pub new_name: String,
+}
+
+/// Info needed to execute "create a new tmux session".
+#[derive(Debug)]
+pub struct CreateSessionRequest {
+    pub name: String,
+    pub dir: String,
 }
 
 /// UI state for an in-progress rename.

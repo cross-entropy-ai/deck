@@ -38,19 +38,10 @@ pub fn filter_entries(entries: &[String], leaf: &str) -> Vec<usize> {
         .collect()
 }
 
-/// Backspace with up-a-level semantics. If `cursor` is at the end of
-/// `input` and `input` ends with `/` (and isn't just `/`), drop the
-/// trailing `/` plus the previous segment. Otherwise delete one char
-/// before the cursor.
+/// Delete one char before the cursor. Up-a-level semantics moved to
+/// `NewSessionDirUp` (see `app::action`); this helper now only does the
+/// simple char-delete branch.
 pub fn smart_backspace(input: &mut String, cursor: &mut usize) {
-    if *cursor == input.len() && input.len() > 1 && input.ends_with('/') {
-        // up one level
-        input.pop(); // drop trailing /
-        let new_end = input.rfind('/').map(|i| i + 1).unwrap_or(0);
-        input.truncate(new_end);
-        *cursor = input.len();
-        return;
-    }
     if *cursor > 0 {
         let prev = input[..*cursor]
             .chars()
@@ -60,18 +51,6 @@ pub fn smart_backspace(input: &mut String, cursor: &mut usize) {
         *cursor -= prev;
         input.remove(*cursor);
     }
-}
-
-/// Replace the trailing leaf segment of `input` with `entry` plus a
-/// trailing `/`. Used by Tab completion. Cursor lands at the new end.
-pub fn tab_complete(input: &mut String, cursor: &mut usize, entry: &str) {
-    let (parent, _leaf) = split_input(input);
-    let parent_owned = parent.to_string();
-    input.clear();
-    input.push_str(&parent_owned);
-    input.push_str(entry);
-    input.push('/');
-    *cursor = input.len();
 }
 
 /// Resolve a user-typed path to an absolute, normalized `PathBuf`.
@@ -108,6 +87,13 @@ pub fn expand_path(s: &str, home: &std::path::Path) -> PathBuf {
 
 #[derive(Debug, Clone, Default)]
 pub struct NewSessionState {
+    /// Session name input field. Pre-filled with the next free
+    /// `session-N` when the picker opens; user-editable.
+    pub name: String,
+    /// Byte offset into `name`.
+    pub name_cursor: usize,
+    /// Which field has keyboard focus.
+    pub focus: PickerFocus,
     /// User-visible path. `~` and `..` preserved verbatim.
     pub input: String,
     /// Byte offset into `input`.
@@ -136,6 +122,27 @@ impl NewSessionState {
         } else if self.selected >= self.filtered.len() {
             self.selected = self.filtered.len() - 1;
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickerFocus {
+    #[default]
+    Name,
+    Dir,
+}
+
+/// Pick the next free `session-N`, starting the search from `start`
+/// (typically `existing.len()`). Used to pre-fill the picker's name
+/// field with what was previously generated inline at create time.
+pub fn auto_session_name(existing: &[&str], start: usize) -> String {
+    let mut idx = start;
+    loop {
+        let candidate = format!("session-{idx}");
+        if !existing.contains(&candidate.as_str()) {
+            return candidate;
+        }
+        idx += 1;
     }
 }
 
