@@ -354,6 +354,9 @@ impl App {
 
             if let Some(ref ns) = new_session_overlay {
                 let view = ui::NewSessionView {
+                    name: &ns.name,
+                    name_cursor: ns.name_cursor,
+                    focus_name: matches!(ns.focus, crate::new_session::PickerFocus::Name),
                     input: &ns.input,
                     cursor: ns.cursor,
                     entries: &ns.entries,

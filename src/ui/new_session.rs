@@ -16,8 +16,8 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
     let visible_entries = view.filtered.len().min(MAX_VISIBLE_ENTRIES);
     let entry_rows = visible_entries.max(1) as u16; // always reserve one row for "(no entries)"
     let extra_for_error = if view.error.is_some() { 1 } else { 0 };
-    // borders(2) + input(1) + blank(1) + entries(N) + blank(1) + error(0|1) + footer(1)
-    let height = (2 + 1 + 1 + entry_rows + 1 + extra_for_error + 1)
+    // borders(2) + name(1) + path(1) + blank(1) + entries(N) + blank(1) + error(0|1) + footer(1)
+    let height = (2 + 1 + 1 + 1 + entry_rows + 1 + extra_for_error + 1)
         .max(POPUP_MIN_HEIGHT)
         .min(area.height.saturating_sub(2));
     let width = POPUP_WIDTH.min(area.width.saturating_sub(4));
@@ -37,11 +37,32 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Input row.
-    let display_input = render_input_with_cursor(view.input, view.cursor);
+    // Name row.
+    let name_display = if view.focus_name {
+        render_input_with_cursor(view.name, view.name_cursor)
+    } else {
+        view.name.to_string()
+    };
     lines.push(Line::from(vec![
-        Span::styled("  Path: ", Style::default().fg(theme.dim)),
-        Span::styled(display_input, Style::default().fg(theme.text)),
+        Span::styled(
+            "  Name: ",
+            Style::default().fg(if view.focus_name { theme.accent } else { theme.dim }),
+        ),
+        Span::styled(name_display, Style::default().fg(theme.text)),
+    ]));
+
+    // Path row.
+    let path_display = if !view.focus_name {
+        render_input_with_cursor(view.input, view.cursor)
+    } else {
+        view.input.to_string()
+    };
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  Path: ",
+            Style::default().fg(if !view.focus_name { theme.accent } else { theme.dim }),
+        ),
+        Span::styled(path_display, Style::default().fg(theme.text)),
     ]));
     lines.push(Line::raw(""));
 
@@ -86,7 +107,7 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
 
     // Footer.
     lines.push(Line::from(Span::styled(
-        "  ⏎ create   ⇥ complete   ⎋ cancel",
+        "  ⏎ create   ⇥ switch   ←→ nav   ⎋ cancel",
         Style::default().fg(theme.dim).add_modifier(Modifier::DIM),
     )));
 

@@ -63,6 +63,9 @@ pub struct ExcludeEditorView<'a> {
 }
 
 pub struct NewSessionView<'a> {
+    pub name: &'a str,
+    pub name_cursor: usize,
+    pub focus_name: bool,
     pub input: &'a str,
     pub cursor: usize,
     pub entries: &'a [String],
