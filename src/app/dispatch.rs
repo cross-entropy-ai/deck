@@ -294,6 +294,12 @@ impl App {
 
         if fx.resize_pty {
             self.resize_pty();
+            // Force a full repaint after any PTY resize (sidebar drag,
+            // toggle borders/layout). ratatui's frame-to-frame diff
+            // can leak stale cells from the old layout — same class
+            // of bug fixed for session switch via terminal.clear()
+            // (see docs/bugs/2026-05-18-session-switch-residue.md).
+            self.needs_full_redraw = true;
         }
 
         if fx.save_config {
