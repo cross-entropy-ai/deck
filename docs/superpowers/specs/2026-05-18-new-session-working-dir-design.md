@@ -236,3 +236,142 @@ No mocking of the filesystem — tempdir is reliable and fast. Mirrors the prece
 
 - The `~/claude` hardcode in `app/lifecycle.rs:28` is the duplicate flagged in the redundancy audit. This spec only removes the hardcode in `dispatch.rs:314` (replaced by the picker); the CLI path stays as-is. A separate refactor PR can unify them.
 - A "show files too, but only dirs are selectable" mode is possible but adds layout decisions (icons? colors? toggle?). Defer.
+
+---
+
+## Addendum 2026-05-19: Session name input
+
+After manually testing the picker, the auto-generated `session-N` was found to be a usability gap — users want to name sessions at creation time. This section extends the spec to add a name input field.
+
+### Scope change
+
+- "Non-goals" item `Session name input` is **removed**. Name input is now in scope.
+- The default name remains `session-N` (auto-generated, next free index) so users can keep current behavior by hitting Enter immediately.
+- CLI path (`deck new <name>`) unchanged.
+
+### State additions
+
+`NewSessionState` gains:
+
+```rust
+pub name: String,             // session name; pre-filled with next auto-generated session-N
+pub name_cursor: usize,       // byte offset into `name`
+pub focus: PickerFocus,       // which field receives keystrokes
+```
+
+with:
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickerFocus {
+    #[default]
+    Name,
+    Dir,
+}
+```
+
+`Default` makes `Name` the initial focus, matching the open-flow.
+
+### Open flow
+
+`App::open_new_session_picker` now also:
+
+1. Computes the next free `session-N` name (logic currently inlined in `App::create_new_session` — extracted into a new helper `auto_session_name(existing: &[&str]) -> String` in `src/model/new_session.rs`).
+2. Pre-fills `name` with the auto-name, `name_cursor = name.len()`, `focus = PickerFocus::Name`.
+
+### Key bindings
+
+Keyboard handler branches on `state.overlay.new_session.as_ref().map(|ns| ns.focus)` to pick a sub-mapper.
+
+**Name focus:**
+
+| Key | Action |
+|---|---|
+| Printable char | `NewSessionInput(char)` — inserts at `name_cursor` |
+| Backspace | `NewSessionBackspace` — deletes one char before `name_cursor` |
+| Left / Right | `NewSessionCursorLeft` / `NewSessionCursorRight` — moves `name_cursor` |
+| Home / End | `NewSessionCursorHome` / `NewSessionCursorEnd` |
+| Tab | `NewSessionSwitchFocus` — switches to Dir |
+| Enter | `NewSessionConfirm` |
+| Esc | `NewSessionCancel` |
+
+(`Ctrl+U` / `Ctrl+W` are NOT mapped for Name — only Dir needs them.)
+
+**Dir focus:**
+
+| Key | Action |
+|---|---|
+| Printable char | `NewSessionInput(char)` — inserts at `cursor` in `input` |
+| Backspace | `NewSessionBackspace` — deletes one char before `cursor` (no longer "smart up-a-level"; `←` does that explicitly) |
+| Left | `NewSessionDirUp` — drops trailing `/` + previous segment |
+| Right | `NewSessionDirEnter` — descends into `entries[filtered[selected]]` |
+| Home / End | `NewSessionCursorHome` / `NewSessionCursorEnd` — moves `cursor` (NOT a nav action) |
+| Up / Down | `NewSessionPrev` / `NewSessionNext` — moves `selected` |
+| Tab | `NewSessionSwitchFocus` — switches to Name |
+| Ctrl+U | `NewSessionClear` |
+| Ctrl+W | `NewSessionDeleteSegment` |
+| Enter | `NewSessionConfirm` |
+| Esc | `NewSessionCancel` |
+
+Reducer routes the shared variants (`NewSessionInput`, `NewSessionBackspace`, `NewSessionCursorLeft/Right/Home/End`) on `focus`. The Dir-field handler intercepts `Left`/`Right` and emits `NewSessionDirUp`/`NewSessionDirEnter` instead of the cursor-move variants — so the cursor-move arms only ever execute against the Name field or via Home/End in Dir.
+
+### Action variants (delta)
+
+- **Remove:** `Action::NewSessionTab` (and its reducer arm); the old `tab_complete` helper in `src/model/new_session.rs`.
+- **Add:** `Action::NewSessionSwitchFocus`, `Action::NewSessionDirUp`, `Action::NewSessionDirEnter`.
+
+### Smart backspace removed
+
+The "smart up-a-level on trailing `/`" branch of `smart_backspace` is now redundant with `NewSessionDirUp` (the `←` action). `smart_backspace` is simplified to plain char-delete; renamed accordingly if useful, or kept for symmetry with the rename overlay's `RenameBackspace` shape.
+
+### Confirm validation
+
+`App::confirm_new_session` adds name validation before the dir check:
+
+1. Trim `name`. If empty after trim → error `"name required"`.
+2. If name contains `.` → error `"name cannot contain '.'"`.
+3. If name contains `:` → error `"name cannot contain ':'"`.
+4. If name matches an existing session name (case-sensitive) → error `"name already in use"`.
+
+On any failure, write `error` to state and return `None` (overlay stays open). The dir validation runs after name validation; an invalid path with a valid name surfaces `"not a directory"` etc. as before.
+
+`App::create_new_session` signature becomes `create_new_session(&mut self, name: &str, dir: &str)`. The auto-naming loop is gone (moved to `auto_session_name`). The function now just: expand dir → call `tmux::new_session(name, dir_str)` → switch_client on success.
+
+`SideEffect.create_session` carries both: `Option<(String, String)>` for `(name, dir)`, OR — cleaner — promote to a dedicated `CreateSessionRequest { name: String, dir: String }` struct to match the existing `KillRequest` / `RenameRequest` pattern.
+
+We pick the **struct** option for consistency with the rest of `SideEffect`.
+
+### Layout
+
+Two input rows now. Focus indicator: cursor bar (`▌`) appears in the focused field; the unfocused field shows its text without cursor.
+
+```
+┌─ New session ─────────────────────────────────┐
+│ Name: session-3▌                               │
+│ Path: ~/projects/foo/                          │
+│                                                │
+│ ▸ src/                                         │
+│   tests/                                       │
+│   docs/                                        │
+│                                                │
+│ ⏎ create   ⇥ switch   ←→ nav   ⎋ cancel        │
+└────────────────────────────────────────────────┘
+```
+
+Footer wording changes (`⇥ complete` → `⇥ switch`, `←→ nav` added).
+
+### Testing
+
+New pure-function tests:
+
+- `auto_session_name` — picks next free `session-N` given a list of taken names; handles non-sequential gaps (`["session-0", "session-2"]` → `session-1`? No — the existing logic always picks the next *higher* index, so it would pick `session-3`. Pin that behavior in a test.)
+
+New reducer tests:
+
+- `new_session_switch_focus_toggles_field` — Tab moves focus Name↔Dir
+- `new_session_input_routes_by_focus` — char with focus=Name appends to `name`; char with focus=Dir appends to `input`
+- `new_session_dir_up_drops_segment` — `←` in dir field drops trailing-`/` + previous segment, sets `reread`
+- `new_session_dir_enter_descends_into_selected` — `→` in dir field with a selected entry replaces leaf with `entry/`, sets `reread`
+- `confirm_rejects_empty_name`, `confirm_rejects_dot_in_name`, `confirm_rejects_duplicate_name` — validate failures stay on overlay with `error` set
+
+Manual smoke addition: Tab cycles focus visibly; with `session-3` pre-filled, Backspace + retype produces `mysession` and Enter creates a session named `mysession` at the chosen dir.

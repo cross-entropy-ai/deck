@@ -1530,3 +1530,822 @@ Replaces the hard-coded `~/claude` default in `App::create_new_session` with an 
 EOF
 )"
 ```
+
+---
+
+## Addendum 2026-05-19: Session name input
+
+After Tasks 1–9 + final-review fixes landed, manual testing revealed the auto-generated `session-N` was a usability gap. Spec was extended (see Addendum section in `docs/superpowers/specs/2026-05-18-new-session-working-dir-design.md`).
+
+Five additional tasks below add a name input field, refactor the key handler to branch on focus, and tighten the `SideEffect.create_session` payload.
+
+**Current branch SHA:** `da8cc8c` (mouse gate fix).
+
+### Task 10: State + struct delta
+
+**Files:**
+- Modify: `src/model/new_session.rs` — add `PickerFocus` enum, fields to `NewSessionState`, `auto_session_name` helper, simplify `smart_backspace`, remove `tab_complete`.
+- Modify: `src/model/state.rs` — add `CreateSessionRequest` struct, migrate `SideEffect.create_session: Option<String>` → `Option<CreateSessionRequest>`.
+- Modify: `src/app/dispatch.rs` and `src/app/action/reduce.rs` — update call sites for the new type. **Behavior unchanged in this task** — auto-name and dir are still set as before, just packed in the struct.
+
+- [ ] **Step 1: Add `PickerFocus` and extend `NewSessionState`** in `src/model/new_session.rs`. Append above the `#[cfg(test)]` block:
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickerFocus {
+    #[default]
+    Name,
+    Dir,
+}
+```
+
+Modify `NewSessionState` to add the three new fields:
+
+```rust
+#[derive(Debug, Clone, Default)]
+pub struct NewSessionState {
+    pub name: String,
+    pub name_cursor: usize,
+    pub focus: PickerFocus,
+    pub input: String,
+    pub cursor: usize,
+    pub entries: Vec<String>,
+    pub filtered: Vec<usize>,
+    pub selected: usize,
+    pub error: Option<String>,
+}
+```
+
+- [ ] **Step 2: Add `auto_session_name`** in `src/model/new_session.rs`:
+
+```rust
+/// Pick the next free `session-N`, starting the search from `start`
+/// (typically `existing.len()`). Used to pre-fill the picker's name
+/// field with what was previously generated inline at create time.
+pub fn auto_session_name(existing: &[&str], start: usize) -> String {
+    let mut idx = start;
+    loop {
+        let candidate = format!("session-{idx}");
+        if !existing.contains(&candidate.as_str()) {
+            return candidate;
+        }
+        idx += 1;
+    }
+}
+```
+
+- [ ] **Step 3: Simplify `smart_backspace`** — drop the up-a-level branch. The whole function becomes the char-delete branch:
+
+```rust
+pub fn smart_backspace(input: &mut String, cursor: &mut usize) {
+    if *cursor > 0 {
+        let prev = input[..*cursor]
+            .chars()
+            .last()
+            .map(|c| c.len_utf8())
+            .unwrap_or(0);
+        *cursor -= prev;
+        input.remove(*cursor);
+    }
+}
+```
+
+Update tests in `tests/unit/model/new_session.rs`:
+
+- `smart_backspace_goes_up_at_trailing_slash` — DELETE this test (behavior moved to `NewSessionDirUp` action).
+- `smart_backspace_root_only_noop` — update to assert plain char-delete: input `"/"` with cursor 1 → input `""`, cursor 0 (already what it asserts; the name is now accurate without the misleading "noop").
+
+Optionally rename the function to `delete_char_left` since "smart" is no longer accurate. Skip the rename if it costs too much churn — function name stays, body simplifies.
+
+- [ ] **Step 4: Remove `tab_complete`** from `src/model/new_session.rs` and its tests `tab_complete_appends_entry_and_slash`, `tab_complete_empty_leaf`. No callers will remain after Task 12.
+
+- [ ] **Step 5: Add `CreateSessionRequest`** in `src/model/state.rs`:
+
+```rust
+/// Info needed to execute "create a new tmux session".
+#[derive(Debug)]
+pub struct CreateSessionRequest {
+    pub name: String,
+    pub dir: String,
+}
+```
+
+Place it near `KillRequest` / `RenameRequest`.
+
+- [ ] **Step 6: Migrate `SideEffect.create_session`** from `Option<String>` to `Option<CreateSessionRequest>`. Update doc comment to reflect. Update `SideEffect::merge` (the existing `is_some()` overwrite pattern still works — just the type changed).
+
+- [ ] **Step 7: Update the one call site in `src/app/action/reduce.rs`**. The `Some("New session")` arm currently emits `open_new_session_picker: true` — leave that alone. The other call site is in `App::dispatch_action` arm for `Action::NewSessionConfirm`, where we currently build `fx.create_session = Some(dir)`. Change to:
+
+```rust
+fx.create_session = Some(crate::state::CreateSessionRequest {
+    name: "session-0".to_string(), // placeholder; Task 13 fills with picker's name
+    dir,
+});
+```
+
+(The placeholder name is wrong but compiles. Task 13 corrects it. The picker only fires this path once the name field exists, which is also Task 13.)
+
+- [ ] **Step 8: Update the dispatch consumer**. In `App::execute_side_effects`:
+
+```rust
+if let Some(ref req) = fx.create_session {
+    self.create_new_session(&req.name, &req.dir);
+}
+```
+
+- [ ] **Step 9: Update `App::create_new_session`** signature and body. Remove the auto-naming loop (moves to Task 13 via `auto_session_name`). New body:
+
+```rust
+fn create_new_session(&mut self, name: &str, dir: &str) {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let home_path = std::path::PathBuf::from(&home);
+    let expanded = crate::new_session::expand_path(dir, &home_path);
+    let dir_str = expanded.to_string_lossy().to_string();
+
+    if tmux::new_session(name, &dir_str).is_some() {
+        self.switch_client(name);
+    }
+}
+```
+
+- [ ] **Step 10: Build + test**
+
+Run: `cargo build --tests 2>&1 | tail -5`. Expected: clean.
+
+Run: `cargo test 2>&1 | tail -3`. Expected: tests pass (a few dropped/renamed from Step 3-4). Total count will drift slightly; verify nothing fails.
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add src/model/new_session.rs src/model/state.rs src/app/dispatch.rs src/app/action/reduce.rs tests/unit/model/new_session.rs
+git commit -m "Schema delta for name input: PickerFocus, CreateSessionRequest, helpers"
+```
+
+---
+
+### Task 11: Actions + keyboard handler split
+
+**Files:**
+- Modify: `src/app/action/mod.rs`
+- Modify: `src/app/action/keyboard.rs`
+
+- [ ] **Step 1: Remove `NewSessionTab`** from `src/app/action/mod.rs` (its reducer arm will be removed in Task 12).
+
+- [ ] **Step 2: Add the new variants** in `src/app/action/mod.rs`, near the other `NewSession*` variants:
+
+```rust
+NewSessionSwitchFocus,
+NewSessionDirUp,
+NewSessionDirEnter,
+```
+
+- [ ] **Step 3: Split keyboard helper into two field-specific functions** in `src/app/action/keyboard.rs`. Replace the existing `new_session_key_to_action` with:
+
+```rust
+fn new_session_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
+    use crate::new_session::PickerFocus;
+    let focus = state
+        .overlay
+        .new_session
+        .as_ref()
+        .map(|ns| ns.focus)
+        .unwrap_or(PickerFocus::Name);
+    match focus {
+        PickerFocus::Name => name_field_key_to_action(key),
+        PickerFocus::Dir => dir_field_key_to_action(key),
+    }
+}
+
+fn name_field_key_to_action(key: &KeyEvent) -> Action {
+    use crossterm::event::KeyModifiers;
+    let _ = KeyModifiers::CONTROL; // explicit no-op; suppresses unused-import if no ctrl arms below.
+    match key.code {
+        KeyCode::Esc => Action::CloseNewSessionPicker,
+        KeyCode::Enter => Action::NewSessionConfirm,
+        KeyCode::Tab => Action::NewSessionSwitchFocus,
+        KeyCode::Backspace => Action::NewSessionBackspace,
+        KeyCode::Left => Action::NewSessionCursorLeft,
+        KeyCode::Right => Action::NewSessionCursorRight,
+        KeyCode::Home => Action::NewSessionCursorHome,
+        KeyCode::End => Action::NewSessionCursorEnd,
+        KeyCode::Char(ch) => Action::NewSessionInput(ch),
+        _ => Action::None,
+    }
+}
+
+fn dir_field_key_to_action(key: &KeyEvent) -> Action {
+    use crossterm::event::KeyModifiers;
+    match key.code {
+        KeyCode::Esc => Action::CloseNewSessionPicker,
+        KeyCode::Enter => Action::NewSessionConfirm,
+        KeyCode::Tab => Action::NewSessionSwitchFocus,
+        KeyCode::Backspace => Action::NewSessionBackspace,
+        KeyCode::Up => Action::NewSessionPrev,
+        KeyCode::Down => Action::NewSessionNext,
+        KeyCode::Left => Action::NewSessionDirUp,
+        KeyCode::Right => Action::NewSessionDirEnter,
+        KeyCode::Home => Action::NewSessionCursorHome,
+        KeyCode::End => Action::NewSessionCursorEnd,
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Action::NewSessionClear
+        }
+        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Action::NewSessionDeleteSegment
+        }
+        KeyCode::Char(ch) => Action::NewSessionInput(ch),
+        _ => Action::None,
+    }
+}
+```
+
+The dummy `KeyModifiers` import in `name_field_key_to_action` is only there to mirror Dir's import — drop it if it causes warnings.
+
+- [ ] **Step 4: Update the gate** in `key_to_action`. Change the existing call from `new_session_key_to_action(key)` to `new_session_key_to_action(key, state)`. Single line, just pass state.
+
+- [ ] **Step 5: Build**
+
+Run: `cargo build --tests 2>&1 | tail -5`. Expected: clean. The reducer might warn about `NewSessionSwitchFocus`/`DirUp`/`DirEnter` being unmatched — Task 12 fixes.
+
+Run: `cargo test 2>&1 | tail -3`. Expected: existing tests still pass; the new variants aren't exercised yet.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/app/action/mod.rs src/app/action/keyboard.rs
+git commit -m "Keyboard split by picker focus; add SwitchFocus/DirUp/DirEnter"
+```
+
+---
+
+### Task 12: Reducer arms — focus routing + new actions
+
+**Files:**
+- Modify: `src/app/action/reduce.rs`
+- Modify: `tests/unit/app/action/reduce.rs`
+
+- [ ] **Step 1: Remove `Action::NewSessionTab` arm** in `src/app/action/reduce.rs`.
+
+- [ ] **Step 2: Add the three new arms** next to the other `NewSession*` arms:
+
+```rust
+Action::NewSessionSwitchFocus => {
+    if let Some(ns) = state.overlay.new_session.as_mut() {
+        ns.focus = match ns.focus {
+            crate::new_session::PickerFocus::Name => crate::new_session::PickerFocus::Dir,
+            crate::new_session::PickerFocus::Dir => crate::new_session::PickerFocus::Name,
+        };
+        ns.error = None;
+    }
+}
+Action::NewSessionDirUp => {
+    if let Some(ns) = state.overlay.new_session.as_mut() {
+        let parent_before = crate::new_session::split_input(&ns.input).0.to_string();
+        if ns.input.ends_with('/') && ns.input.len() > 1 {
+            ns.input.pop(); // drop trailing /
+        }
+        let new_end = ns.input.rfind('/').map(|i| i + 1).unwrap_or(0);
+        ns.input.truncate(new_end);
+        ns.cursor = ns.input.len();
+        ns.refilter();
+        let parent_after = crate::new_session::split_input(&ns.input).0;
+        if parent_before != parent_after {
+            fx.reread_new_session_entries = true;
+        }
+        ns.error = None;
+    }
+}
+Action::NewSessionDirEnter => {
+    if let Some(ns) = state.overlay.new_session.as_mut() {
+        if let Some(&idx) = ns.filtered.get(ns.selected) {
+            let entry = ns.entries[idx].clone();
+            // Replace leaf with entry + trailing slash. (Same shape as
+            // the old tab_complete helper; inlined since the helper is
+            // gone.)
+            let (parent, _leaf) = crate::new_session::split_input(&ns.input);
+            let parent_owned = parent.to_string();
+            ns.input.clear();
+            ns.input.push_str(&parent_owned);
+            ns.input.push_str(&entry);
+            ns.input.push('/');
+            ns.cursor = ns.input.len();
+            ns.refilter();
+            fx.reread_new_session_entries = true;
+            ns.error = None;
+        }
+    }
+}
+```
+
+- [ ] **Step 3: Route shared variants by `focus`** — replace the existing `NewSessionInput`, `NewSessionBackspace`, `NewSessionCursorLeft/Right/Home/End` arms with focus-aware versions:
+
+```rust
+Action::NewSessionInput(ch) => {
+    if let Some(ns) = state.overlay.new_session.as_mut() {
+        use crate::new_session::PickerFocus;
+        match ns.focus {
+            PickerFocus::Name => {
+                ns.name.insert(ns.name_cursor, ch);
+                ns.name_cursor += ch.len_utf8();
+            }
+            PickerFocus::Dir => {
+                let parent_before = crate::new_session::split_input(&ns.input).0.to_string();
+                ns.input.insert(ns.cursor, ch);
+                ns.cursor += ch.len_utf8();
+                ns.refilter();
+                let parent_after = crate::new_session::split_input(&ns.input).0;
+                if parent_before != parent_after {
+                    fx.reread_new_session_entries = true;
+                }
+            }
+        }
+        ns.error = None;
+    }
+}
+Action::NewSessionBackspace => {
+    if let Some(ns) = state.overlay.new_session.as_mut() {
+        use crate::new_session::PickerFocus;
+        match ns.focus {
+            PickerFocus::Name => {
+                crate::new_session::smart_backspace(&mut ns.name, &mut ns.name_cursor);
+            }
+            PickerFocus::Dir => {
+                let parent_before = crate::new_session::split_input(&ns.input).0.to_string();
+                crate::new_session::smart_backspace(&mut ns.input, &mut ns.cursor);
+                ns.refilter();
+                let parent_after = crate::new_session::split_input(&ns.input).0;
+                if parent_before != parent_after {
+                    fx.reread_new_session_entries = true;
+                }
+            }
+        }
+        ns.error = None;
+    }
+}
+Action::NewSessionCursorLeft => {
+    if let Some(ns) = state.overlay.new_session.as_mut() {
+        use crate::new_session::PickerFocus;
+        let (s, c) = match ns.focus {
+            PickerFocus::Name => (&ns.name, &mut ns.name_cursor),
+            PickerFocus::Dir => (&ns.input, &mut ns.cursor),
+        };
+        if let Some(prev) = s[..*c].chars().last() {
+            *c -= prev.len_utf8();
+        }
+    }
+}
+Action::NewSessionCursorRight => {
+    if let Some(ns) = state.overlay.new_session.as_mut() {
+        use crate::new_session::PickerFocus;
+        let (s, c) = match ns.focus {
+            PickerFocus::Name => (&ns.name, &mut ns.name_cursor),
+            PickerFocus::Dir => (&ns.input, &mut ns.cursor),
+        };
+        if let Some(next) = s[*c..].chars().next() {
+            *c += next.len_utf8();
+        }
+    }
+}
+Action::NewSessionCursorHome => {
+    if let Some(ns) = state.overlay.new_session.as_mut() {
+        use crate::new_session::PickerFocus;
+        match ns.focus {
+            PickerFocus::Name => ns.name_cursor = 0,
+            PickerFocus::Dir => ns.cursor = 0,
+        }
+    }
+}
+Action::NewSessionCursorEnd => {
+    if let Some(ns) = state.overlay.new_session.as_mut() {
+        use crate::new_session::PickerFocus;
+        match ns.focus {
+            PickerFocus::Name => ns.name_cursor = ns.name.len(),
+            PickerFocus::Dir => ns.cursor = ns.input.len(),
+        }
+    }
+}
+```
+
+- [ ] **Step 4: Update existing reducer tests** in `tests/unit/app/action/reduce.rs`. The `picker_state_with` helper currently builds `NewSessionState` with the old field set. Update it to set `name: String::new(), name_cursor: 0, focus: PickerFocus::Dir` (so existing tests that assume Dir focus keep working):
+
+```rust
+fn picker_state_with(input: &str, entries: Vec<String>) -> AppState {
+    use crate::new_session::{NewSessionState, PickerFocus};
+    let mut state = make_test_state(0);
+    let mut ns = NewSessionState {
+        name: String::new(),
+        name_cursor: 0,
+        focus: PickerFocus::Dir,
+        input: input.to_string(),
+        cursor: input.len(),
+        entries,
+        filtered: vec![],
+        selected: 0,
+        error: None,
+    };
+    ns.refilter();
+    state.overlay.new_session = Some(ns);
+    state
+}
+```
+
+- [ ] **Step 5: Add new reducer tests**
+
+```rust
+#[test]
+fn new_session_switch_focus_toggles_field() {
+    let mut state = picker_state_with("~/foo/", vec![]);
+    let ns = state.overlay.new_session.as_mut().unwrap();
+    ns.focus = crate::new_session::PickerFocus::Name; // start at Name
+    drop(ns);
+
+    apply_action(&mut state, Action::NewSessionSwitchFocus);
+    assert_eq!(
+        state.overlay.new_session.as_ref().unwrap().focus,
+        crate::new_session::PickerFocus::Dir
+    );
+
+    apply_action(&mut state, Action::NewSessionSwitchFocus);
+    assert_eq!(
+        state.overlay.new_session.as_ref().unwrap().focus,
+        crate::new_session::PickerFocus::Name
+    );
+}
+
+#[test]
+fn new_session_input_routes_to_name_when_focused_on_name() {
+    let mut state = picker_state_with("~/foo/", vec![]);
+    let ns = state.overlay.new_session.as_mut().unwrap();
+    ns.focus = crate::new_session::PickerFocus::Name;
+    drop(ns);
+
+    apply_action(&mut state, Action::NewSessionInput('x'));
+    let ns = state.overlay.new_session.as_ref().unwrap();
+    assert_eq!(ns.name, "x");
+    assert_eq!(ns.input, "~/foo/"); // dir untouched
+}
+
+#[test]
+fn new_session_dir_up_drops_segment() {
+    let mut state = picker_state_with("~/foo/bar/", vec![]);
+    let fx = apply_action(&mut state, Action::NewSessionDirUp);
+    let ns = state.overlay.new_session.as_ref().unwrap();
+    assert_eq!(ns.input, "~/foo/");
+    assert!(fx.reread_new_session_entries);
+}
+
+#[test]
+fn new_session_dir_enter_descends_into_selected() {
+    let mut state = picker_state_with("~/foo/", vec!["bar".into(), "baz".into()]);
+    let fx = apply_action(&mut state, Action::NewSessionDirEnter);
+    let ns = state.overlay.new_session.as_ref().unwrap();
+    assert_eq!(ns.input, "~/foo/bar/");
+    assert!(fx.reread_new_session_entries);
+}
+```
+
+The `new_session_tab_descends_into_selected_entry` test from Task 5 used `Action::NewSessionTab` (gone). Delete it — `new_session_dir_enter_descends_into_selected` covers the same behavior.
+
+- [ ] **Step 6: Build + test**
+
+Run: `cargo build --tests 2>&1 | tail -5`. Expected: clean.
+
+Run: `cargo test 2>&1 | tail -3`. Expected: all pass.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/app/action/reduce.rs tests/unit/app/action/reduce.rs
+git commit -m "Focus-aware reducer arms + SwitchFocus/DirUp/DirEnter"
+```
+
+---
+
+### Task 13: Dispatch — pre-fill name, validate on confirm
+
+**Files:**
+- Modify: `src/app/dispatch.rs`
+
+- [ ] **Step 1: Update `App::open_new_session_picker`** to pre-fill name + focus:
+
+```rust
+fn open_new_session_picker(&mut self) {
+    use crate::new_session::{auto_session_name, expand_path, split_input, NewSessionState, PickerFocus};
+
+    let start_dir = self
+        .state
+        .filtered
+        .get(self.state.focused)
+        .and_then(|&i| self.state.sessions.get(i))
+        .map(|s| s.dir.clone())
+        .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+    let mut input = start_dir;
+    if !input.ends_with('/') {
+        input.push('/');
+    }
+
+    let home = std::path::PathBuf::from(
+        std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
+    );
+    let (parent, _leaf) = split_input(&input);
+    let parent_path = expand_path(parent, &home);
+    let (entries, error) = read_dir_entries(&parent_path);
+
+    let existing: Vec<&str> = self
+        .state
+        .sessions
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect();
+    let name = auto_session_name(&existing, self.state.sessions.len());
+
+    let mut ns = NewSessionState {
+        name_cursor: name.len(),
+        name,
+        focus: PickerFocus::Name,
+        cursor: input.len(),
+        input,
+        entries,
+        filtered: vec![],
+        selected: 0,
+        error,
+    };
+    ns.refilter();
+    self.state.overlay.new_session = Some(ns);
+}
+```
+
+- [ ] **Step 2: Update `App::confirm_new_session`** to validate name first:
+
+```rust
+fn confirm_new_session(&mut self) -> Option<crate::state::CreateSessionRequest> {
+    use crate::new_session::expand_path;
+
+    let Some(ns) = self.state.overlay.new_session.as_mut() else {
+        return None;
+    };
+    let name = ns.name.trim().to_string();
+    if name.is_empty() {
+        ns.error = Some("name required".into());
+        return None;
+    }
+    if name.contains('.') {
+        ns.error = Some("name cannot contain '.'".into());
+        return None;
+    }
+    if name.contains(':') {
+        ns.error = Some("name cannot contain ':'".into());
+        return None;
+    }
+    let existing: Vec<&str> = self
+        .state
+        .sessions
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect();
+    if existing.contains(&name.as_str()) {
+        // Re-borrow ns after the immutable borrow of state.sessions.
+        if let Some(ns) = self.state.overlay.new_session.as_mut() {
+            ns.error = Some("name already in use".into());
+        }
+        return None;
+    }
+
+    let ns = self.state.overlay.new_session.as_mut().unwrap();
+    let home = std::path::PathBuf::from(
+        std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
+    );
+    let resolved = expand_path(&ns.input, &home);
+    match std::fs::metadata(&resolved) {
+        Ok(m) if m.is_dir() => {
+            let dir = resolved.to_string_lossy().to_string();
+            self.state.overlay.new_session = None;
+            Some(crate::state::CreateSessionRequest { name, dir })
+        }
+        Ok(_) => {
+            ns.error = Some("not a directory".into());
+            None
+        }
+        Err(e) => {
+            ns.error = Some(match e.kind() {
+                std::io::ErrorKind::NotFound => "not found".into(),
+                std::io::ErrorKind::PermissionDenied => "permission denied".into(),
+                _ => "cannot stat".into(),
+            });
+            None
+        }
+    }
+}
+```
+
+(Note: the borrow choreography around `existing` requires re-acquiring `ns` after the immutable borrow ends. Either pattern shown above, or hoist `existing` before mutably borrowing `ns`. Whichever compiles cleanly.)
+
+- [ ] **Step 3: Update the dispatch arm for `Action::NewSessionConfirm`** in `dispatch_action`. The placeholder `CreateSessionRequest` from Task 10 Step 7 needs to be replaced with the real return:
+
+```rust
+Action::NewSessionConfirm => {
+    if let Some(req) = self.confirm_new_session() {
+        let mut fx = crate::state::SideEffect::default();
+        fx.create_session = Some(req);
+        fx.refresh_sessions = true;
+        self.execute_side_effects(&fx);
+    }
+    false
+}
+```
+
+- [ ] **Step 4: Build + test**
+
+Run: `cargo build --tests 2>&1 | tail -5`. Expected: clean.
+
+Run: `cargo test 2>&1 | tail -3`. Expected: pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/app/dispatch.rs
+git commit -m "Pre-fill name + validate on confirm for new-session picker"
+```
+
+---
+
+### Task 14: Render two-row layout
+
+**Files:**
+- Modify: `src/ui/mod.rs`
+- Modify: `src/ui/new_session.rs`
+
+- [ ] **Step 1: Extend `NewSessionView` in `src/ui/mod.rs`**:
+
+```rust
+pub struct NewSessionView<'a> {
+    pub name: &'a str,
+    pub name_cursor: usize,
+    pub focus_name: bool,
+    pub input: &'a str,
+    pub cursor: usize,
+    pub entries: &'a [String],
+    pub filtered: &'a [usize],
+    pub selected: usize,
+    pub error: Option<&'a str>,
+}
+```
+
+`focus_name: bool` — `true` when the Name field is focused (Dir focused otherwise).
+
+- [ ] **Step 2: Update `app/render.rs`** view construction:
+
+```rust
+if let Some(ref ns) = new_session_overlay {
+    let view = ui::NewSessionView {
+        name: &ns.name,
+        name_cursor: ns.name_cursor,
+        focus_name: matches!(ns.focus, crate::new_session::PickerFocus::Name),
+        input: &ns.input,
+        cursor: ns.cursor,
+        entries: &ns.entries,
+        filtered: &ns.filtered,
+        selected: ns.selected,
+        error: ns.error.as_deref(),
+    };
+    ui::draw_new_session(frame, frame.area(), &view, theme);
+}
+```
+
+- [ ] **Step 3: Update `draw_new_session` in `src/ui/new_session.rs`** to render two rows + focus indicator. Replace the existing input-row rendering with:
+
+```rust
+// Name row.
+let name_display = if view.focus_name {
+    render_input_with_cursor(view.name, view.name_cursor)
+} else {
+    view.name.to_string()
+};
+lines.push(Line::from(vec![
+    Span::styled(
+        "  Name: ",
+        Style::default().fg(if view.focus_name { theme.accent } else { theme.dim }),
+    ),
+    Span::styled(name_display, Style::default().fg(theme.text)),
+]));
+
+// Path row.
+let path_display = if !view.focus_name {
+    render_input_with_cursor(view.input, view.cursor)
+} else {
+    view.input.to_string()
+};
+lines.push(Line::from(vec![
+    Span::styled(
+        "  Path: ",
+        Style::default().fg(if !view.focus_name { theme.accent } else { theme.dim }),
+    ),
+    Span::styled(path_display, Style::default().fg(theme.text)),
+]));
+lines.push(Line::raw(""));
+```
+
+(Two rows + blank, replacing the old single input row + blank.)
+
+Update the height calculation to account for the extra row:
+
+```rust
+// borders(2) + name(1) + path(1) + blank(1) + entries(N) + blank(1) + error(0|1) + footer(1)
+let height = (2 + 1 + 1 + 1 + entry_rows + 1 + extra_for_error + 1)
+    .max(POPUP_MIN_HEIGHT)
+    .min(area.height.saturating_sub(2));
+```
+
+Update the footer text:
+
+```rust
+"  ⏎ create   ⇥ switch   ←→ nav   ⎋ cancel"
+```
+
+(60-col width preserved.)
+
+- [ ] **Step 4: Build**
+
+Run: `cargo build 2>&1 | tail -3`. Expected: clean.
+
+Run: `cargo test 2>&1 | tail -3`. Expected: pass.
+
+- [ ] **Step 5: Manual smoke**
+
+```bash
+cargo build --release && ./target/release/deck
+```
+
+Right-click → New session. Verify:
+- Picker opens with Name = `session-N`, focus on Name (cursor on Name row).
+- Backspace + retype renames.
+- Tab → cursor moves to Path row.
+- In Path: ← goes up a dir, → enters highlighted subdir, ↑/↓ moves selection.
+- Tab → cursor back to Name.
+- Enter on valid name + dir → session created with that name + dir, tmux switches.
+- Enter with name `foo.bar` → error "name cannot contain '.'", overlay stays.
+- Enter with duplicate name → error "name already in use".
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/ui/mod.rs src/ui/new_session.rs src/app/render.rs
+git commit -m "Render two-row layout with focus indicator"
+```
+
+---
+
+### Task 15: Validation tests + auto_session_name tests
+
+**Files:**
+- Modify: `tests/unit/model/new_session.rs`
+
+- [ ] **Step 1: Add tests for `auto_session_name`**:
+
+```rust
+#[test]
+fn auto_session_name_picks_start_when_free() {
+    let names: Vec<&str> = vec![];
+    assert_eq!(auto_session_name(&names, 0), "session-0");
+}
+
+#[test]
+fn auto_session_name_skips_taken_indices() {
+    let names = vec!["session-0", "session-1"];
+    assert_eq!(auto_session_name(&names, 2), "session-2");
+    // Search starts at `start`; it does NOT fill gaps below.
+    assert_eq!(auto_session_name(&names, 0), "session-2");
+}
+
+#[test]
+fn auto_session_name_skips_non_session_collisions_too() {
+    let names = vec!["foo", "bar", "session-3"];
+    assert_eq!(auto_session_name(&names, 3), "session-4");
+}
+```
+
+- [ ] **Step 2: Add validation tests for `confirm_new_session`** — these are harder because `confirm_new_session` is a method on `App`, not a pure function. The cheapest option: skip integration of these as reducer tests (the reducer arm is empty for Confirm), and add manual-smoke coverage in Task 14 Step 5. If the test harness for `App` exists, add:
+
+```rust
+// (Skipped — App is hard to stand up in a unit test. Rely on manual smoke.)
+```
+
+- [ ] **Step 3: Run**
+
+Run: `cargo test new_session 2>&1 | tail -10`. Expected: 3 new tests pass.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add tests/unit/model/new_session.rs
+git commit -m "Tests for auto_session_name"
+```
+
+---
+
+### Final verification (after Task 15)
+
+```bash
+cargo build --release && cargo test && cargo clippy --tests
+```
+
+All clean. Then re-run the manual smoke from Task 14 once more end-to-end before pushing.
