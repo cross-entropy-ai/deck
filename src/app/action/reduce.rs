@@ -435,21 +435,64 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::NewSessionInput(ch) => {
             if let Some(ns) = state.overlay.new_session.as_mut() {
-                let parent_before = crate::new_session::split_input(&ns.input).0.to_string();
-                ns.input.insert(ns.cursor, ch);
-                ns.cursor += ch.len_utf8();
-                ns.refilter();
-                let parent_after = crate::new_session::split_input(&ns.input).0;
-                if parent_before != parent_after {
-                    fx.reread_new_session_entries = true;
+                use crate::new_session::PickerFocus;
+                match ns.focus {
+                    PickerFocus::Name => {
+                        ns.name.insert(ns.name_cursor, ch);
+                        ns.name_cursor += ch.len_utf8();
+                    }
+                    PickerFocus::Dir => {
+                        let parent_before = crate::new_session::split_input(&ns.input).0.to_string();
+                        ns.input.insert(ns.cursor, ch);
+                        ns.cursor += ch.len_utf8();
+                        ns.refilter();
+                        let parent_after = crate::new_session::split_input(&ns.input).0;
+                        if parent_before != parent_after {
+                            fx.reread_new_session_entries = true;
+                        }
+                    }
                 }
                 ns.error = None;
             }
         }
         Action::NewSessionBackspace => {
             if let Some(ns) = state.overlay.new_session.as_mut() {
+                use crate::new_session::PickerFocus;
+                match ns.focus {
+                    PickerFocus::Name => {
+                        crate::new_session::smart_backspace(&mut ns.name, &mut ns.name_cursor);
+                    }
+                    PickerFocus::Dir => {
+                        let parent_before = crate::new_session::split_input(&ns.input).0.to_string();
+                        crate::new_session::smart_backspace(&mut ns.input, &mut ns.cursor);
+                        ns.refilter();
+                        let parent_after = crate::new_session::split_input(&ns.input).0;
+                        if parent_before != parent_after {
+                            fx.reread_new_session_entries = true;
+                        }
+                    }
+                }
+                ns.error = None;
+            }
+        }
+        Action::NewSessionSwitchFocus => {
+            if let Some(ns) = state.overlay.new_session.as_mut() {
+                ns.focus = match ns.focus {
+                    crate::new_session::PickerFocus::Name => crate::new_session::PickerFocus::Dir,
+                    crate::new_session::PickerFocus::Dir => crate::new_session::PickerFocus::Name,
+                };
+                ns.error = None;
+            }
+        }
+        Action::NewSessionDirUp => {
+            if let Some(ns) = state.overlay.new_session.as_mut() {
                 let parent_before = crate::new_session::split_input(&ns.input).0.to_string();
-                crate::new_session::smart_backspace(&mut ns.input, &mut ns.cursor);
+                if ns.input.ends_with('/') && ns.input.len() > 1 {
+                    ns.input.pop();
+                }
+                let new_end = ns.input.rfind('/').map(|i| i + 1).unwrap_or(0);
+                ns.input.truncate(new_end);
+                ns.cursor = ns.input.len();
                 ns.refilter();
                 let parent_after = crate::new_session::split_input(&ns.input).0;
                 if parent_before != parent_after {
@@ -458,10 +501,22 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 ns.error = None;
             }
         }
-        Action::NewSessionSwitchFocus
-        | Action::NewSessionDirUp
-        | Action::NewSessionDirEnter => {
-            // Task 12 fills these in.
+        Action::NewSessionDirEnter => {
+            if let Some(ns) = state.overlay.new_session.as_mut() {
+                if let Some(&idx) = ns.filtered.get(ns.selected) {
+                    let entry = ns.entries[idx].clone();
+                    let (parent, _leaf) = crate::new_session::split_input(&ns.input);
+                    let parent_owned = parent.to_string();
+                    ns.input.clear();
+                    ns.input.push_str(&parent_owned);
+                    ns.input.push_str(&entry);
+                    ns.input.push('/');
+                    ns.cursor = ns.input.len();
+                    ns.refilter();
+                    fx.reread_new_session_entries = true;
+                    ns.error = None;
+                }
+            }
         }
         Action::NewSessionConfirm => {
             // Handled at dispatch (needs fs::metadata).
@@ -482,26 +537,44 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::NewSessionCursorLeft => {
             if let Some(ns) = state.overlay.new_session.as_mut() {
-                if let Some(prev) = ns.input[..ns.cursor].chars().last() {
-                    ns.cursor -= prev.len_utf8();
+                use crate::new_session::PickerFocus;
+                let (s, c) = match ns.focus {
+                    PickerFocus::Name => (&ns.name, &mut ns.name_cursor),
+                    PickerFocus::Dir => (&ns.input, &mut ns.cursor),
+                };
+                if let Some(prev) = s[..*c].chars().last() {
+                    *c -= prev.len_utf8();
                 }
             }
         }
         Action::NewSessionCursorRight => {
             if let Some(ns) = state.overlay.new_session.as_mut() {
-                if let Some(next) = ns.input[ns.cursor..].chars().next() {
-                    ns.cursor += next.len_utf8();
+                use crate::new_session::PickerFocus;
+                let (s, c) = match ns.focus {
+                    PickerFocus::Name => (&ns.name, &mut ns.name_cursor),
+                    PickerFocus::Dir => (&ns.input, &mut ns.cursor),
+                };
+                if let Some(next) = s[*c..].chars().next() {
+                    *c += next.len_utf8();
                 }
             }
         }
         Action::NewSessionCursorHome => {
             if let Some(ns) = state.overlay.new_session.as_mut() {
-                ns.cursor = 0;
+                use crate::new_session::PickerFocus;
+                match ns.focus {
+                    PickerFocus::Name => ns.name_cursor = 0,
+                    PickerFocus::Dir => ns.cursor = 0,
+                }
             }
         }
         Action::NewSessionCursorEnd => {
             if let Some(ns) = state.overlay.new_session.as_mut() {
-                ns.cursor = ns.input.len();
+                use crate::new_session::PickerFocus;
+                match ns.focus {
+                    PickerFocus::Name => ns.name_cursor = ns.name.len(),
+                    PickerFocus::Dir => ns.cursor = ns.input.len(),
+                }
             }
         }
         Action::NewSessionClear => {

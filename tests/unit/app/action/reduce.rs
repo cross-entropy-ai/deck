@@ -443,16 +443,18 @@ fn rename_delete_at_end_is_noop() {
 }
 
 fn picker_state_with(input: &str, entries: Vec<String>) -> AppState {
-    use crate::new_session::NewSessionState;
+    use crate::new_session::{NewSessionState, PickerFocus};
     let mut state = make_test_state(0);
     let mut ns = NewSessionState {
+        name: String::new(),
+        name_cursor: 0,
+        focus: PickerFocus::Dir,
         input: input.to_string(),
         cursor: input.len(),
         entries,
         filtered: vec![],
         selected: 0,
         error: None,
-        ..NewSessionState::default()
     };
     ns.refilter();
     state.overlay.new_session = Some(ns);
@@ -504,5 +506,55 @@ fn new_session_delete_segment_goes_back_to_slash() {
     let fx = apply_action(&mut state, Action::NewSessionDeleteSegment);
     let ns = state.overlay.new_session.as_ref().unwrap();
     assert_eq!(ns.input, "~/foo/");
+    assert!(fx.reread_new_session_entries);
+}
+
+#[test]
+fn new_session_switch_focus_toggles_field() {
+    let mut state = picker_state_with("~/foo/", vec![]);
+    // picker_state_with sets focus to Dir; switch to Name first
+    state.overlay.new_session.as_mut().unwrap().focus =
+        crate::new_session::PickerFocus::Name;
+
+    apply_action(&mut state, Action::NewSessionSwitchFocus);
+    assert_eq!(
+        state.overlay.new_session.as_ref().unwrap().focus,
+        crate::new_session::PickerFocus::Dir
+    );
+
+    apply_action(&mut state, Action::NewSessionSwitchFocus);
+    assert_eq!(
+        state.overlay.new_session.as_ref().unwrap().focus,
+        crate::new_session::PickerFocus::Name
+    );
+}
+
+#[test]
+fn new_session_input_routes_to_name_when_focused_on_name() {
+    let mut state = picker_state_with("~/foo/", vec![]);
+    state.overlay.new_session.as_mut().unwrap().focus =
+        crate::new_session::PickerFocus::Name;
+
+    apply_action(&mut state, Action::NewSessionInput('x'));
+    let ns = state.overlay.new_session.as_ref().unwrap();
+    assert_eq!(ns.name, "x");
+    assert_eq!(ns.input, "~/foo/"); // dir untouched
+}
+
+#[test]
+fn new_session_dir_up_drops_segment() {
+    let mut state = picker_state_with("~/foo/bar/", vec![]);
+    let fx = apply_action(&mut state, Action::NewSessionDirUp);
+    let ns = state.overlay.new_session.as_ref().unwrap();
+    assert_eq!(ns.input, "~/foo/");
+    assert!(fx.reread_new_session_entries);
+}
+
+#[test]
+fn new_session_dir_enter_descends_into_selected() {
+    let mut state = picker_state_with("~/foo/", vec!["bar".into(), "baz".into()]);
+    let fx = apply_action(&mut state, Action::NewSessionDirEnter);
+    let ns = state.overlay.new_session.as_ref().unwrap();
+    assert_eq!(ns.input, "~/foo/bar/");
     assert!(fx.reread_new_session_entries);
 }
