@@ -7,7 +7,7 @@ use super::Action;
 
 pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     if state.overlay.new_session.is_some() {
-        return new_session_key_to_action(key);
+        return new_session_key_to_action(key, state);
     }
 
     if state.overlay.renaming.is_some() {
@@ -193,17 +193,46 @@ fn theme_picker_key_to_action(key: &KeyEvent) -> Action {
     }
 }
 
-fn new_session_key_to_action(key: &KeyEvent) -> Action {
+fn new_session_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
+    use crate::new_session::PickerFocus;
+    let focus = state
+        .overlay
+        .new_session
+        .as_ref()
+        .map(|ns| ns.focus)
+        .unwrap_or(PickerFocus::Name);
+    match focus {
+        PickerFocus::Name => name_field_key_to_action(key),
+        PickerFocus::Dir => dir_field_key_to_action(key),
+    }
+}
+
+fn name_field_key_to_action(key: &KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Esc => Action::CloseNewSessionPicker,
+        KeyCode::Enter => Action::NewSessionConfirm,
+        KeyCode::Tab => Action::NewSessionSwitchFocus,
+        KeyCode::Backspace => Action::NewSessionBackspace,
+        KeyCode::Left => Action::NewSessionCursorLeft,
+        KeyCode::Right => Action::NewSessionCursorRight,
+        KeyCode::Home => Action::NewSessionCursorHome,
+        KeyCode::End => Action::NewSessionCursorEnd,
+        KeyCode::Char(ch) => Action::NewSessionInput(ch),
+        _ => Action::None,
+    }
+}
+
+fn dir_field_key_to_action(key: &KeyEvent) -> Action {
     use crossterm::event::KeyModifiers;
     match key.code {
         KeyCode::Esc => Action::CloseNewSessionPicker,
         KeyCode::Enter => Action::NewSessionConfirm,
-        KeyCode::Tab => Action::NewSessionTab,
+        KeyCode::Tab => Action::NewSessionSwitchFocus,
         KeyCode::Backspace => Action::NewSessionBackspace,
         KeyCode::Up => Action::NewSessionPrev,
         KeyCode::Down => Action::NewSessionNext,
-        KeyCode::Left => Action::NewSessionCursorLeft,
-        KeyCode::Right => Action::NewSessionCursorRight,
+        KeyCode::Left => Action::NewSessionDirUp,
+        KeyCode::Right => Action::NewSessionDirEnter,
         KeyCode::Home => Action::NewSessionCursorHome,
         KeyCode::End => Action::NewSessionCursorEnd,
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {

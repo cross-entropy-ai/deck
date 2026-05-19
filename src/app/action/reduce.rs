@@ -458,27 +458,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 ns.error = None;
             }
         }
-        Action::NewSessionTab => {
-            if let Some(ns) = state.overlay.new_session.as_mut() {
-                if let Some(&idx) = ns.filtered.get(ns.selected) {
-                    let entry = ns.entries[idx].clone();
-                    // Inlined former `tab_complete`: replace the trailing
-                    // leaf with `entry` plus a trailing `/`. Task 11 will
-                    // split this into a dedicated action; for now keep
-                    // the behavior here so the keyboard handler still
-                    // works.
-                    let parent =
-                        crate::new_session::split_input(&ns.input).0.to_string();
-                    ns.input.clear();
-                    ns.input.push_str(&parent);
-                    ns.input.push_str(&entry);
-                    ns.input.push('/');
-                    ns.cursor = ns.input.len();
-                    ns.refilter();
-                    fx.reread_new_session_entries = true;
-                    ns.error = None;
-                }
-            }
+        Action::NewSessionSwitchFocus
+        | Action::NewSessionDirUp
+        | Action::NewSessionDirEnter => {
+            // Task 12 fills these in.
         }
         Action::NewSessionConfirm => {
             // Handled at dispatch (needs fs::metadata).

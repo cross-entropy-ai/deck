@@ -483,14 +483,10 @@ fn new_session_input_crossing_slash_sets_reread() {
 // the schema delta. The "up a level" behavior now lives in
 // `Action::NewSessionDirUp` (added in Task 12) and will be tested there.
 
-#[test]
-fn new_session_tab_descends_into_selected_entry() {
-    let mut state = picker_state_with("~/foo/b", vec!["bar".into(), "baz".into()]);
-    let fx = apply_action(&mut state, Action::NewSessionTab);
-    let ns = state.overlay.new_session.as_ref().unwrap();
-    assert_eq!(ns.input, "~/foo/bar/");
-    assert!(fx.reread_new_session_entries);
-}
+// `new_session_tab_descends_into_selected_entry` was deleted with the
+// keyboard split: Tab now toggles focus (Action::NewSessionSwitchFocus).
+// The "descend into selected entry" behavior moves to
+// `Action::NewSessionDirEnter` (added in Task 12) and will be tested there.
 
 #[test]
 fn new_session_next_clamped_to_filtered_len() {

@@ -63,7 +63,6 @@ pub enum Action {
     CloseNewSessionPicker,
     NewSessionInput(char),
     NewSessionBackspace,
-    NewSessionTab,
     NewSessionConfirm,
     NewSessionPrev,
     NewSessionNext,
@@ -73,6 +72,9 @@ pub enum Action {
     NewSessionCursorEnd,
     NewSessionClear,
     NewSessionDeleteSegment,
+    NewSessionSwitchFocus,
+    NewSessionDirUp,
+    NewSessionDirEnter,
 
     ToggleHelp,
     DismissHelp,
