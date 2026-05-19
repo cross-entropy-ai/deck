@@ -106,8 +106,13 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
     }
 
     // Footer.
+    let footer = if view.focus_name {
+        "  ⏎ create   ⇥ switch   ←→ cursor   ⎋ cancel"
+    } else {
+        "  ⏎ create   ⇥ switch   ←→ nav   ⎋ cancel"
+    };
     lines.push(Line::from(Span::styled(
-        "  ⏎ create   ⇥ switch   ←→ nav   ⎋ cancel",
+        footer,
         Style::default().fg(theme.dim).add_modifier(Modifier::DIM),
     )));
 

@@ -217,7 +217,13 @@ fn name_field_key_to_action(key: &KeyEvent) -> Action {
         KeyCode::Right => Action::NewSessionCursorRight,
         KeyCode::Home => Action::NewSessionCursorHome,
         KeyCode::End => Action::NewSessionCursorEnd,
-        KeyCode::Char(ch) => Action::NewSessionInput(ch),
+        KeyCode::Char(ch)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            Action::NewSessionInput(ch)
+        }
         _ => Action::None,
     }
 }
