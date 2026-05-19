@@ -44,6 +44,23 @@ fn read_dir_entries(path: &std::path::Path) -> (Vec<String>, Option<String>) {
     }
 }
 
+/// Returns a static error string if `name` is invalid, else `None`.
+fn validate_session_name(name: &str, sessions: &[crate::state::SessionRow]) -> Option<&'static str> {
+    if name.is_empty() {
+        return Some("name required");
+    }
+    if name.contains('.') {
+        return Some("name cannot contain '.'");
+    }
+    if name.contains(':') {
+        return Some("name cannot contain ':'");
+    }
+    if sessions.iter().any(|s| s.name == name) {
+        return Some("name already in use");
+    }
+    None
+}
+
 impl App {
     pub(super) fn dispatch(&mut self, action: Action) -> bool {
         match action {
@@ -182,18 +199,9 @@ impl App {
                 false
             }
             Action::NewSessionConfirm => {
-                if let Some(dir) = self.confirm_new_session() {
-                    // Trigger creation via the standard side-effect path so the
-                    // refresh / switch_client flow stays unified.
+                if let Some(req) = self.confirm_new_session() {
                     let mut fx = crate::state::SideEffect::default();
-                    // Task 10 placeholder: real name comes from picker state in Task 13.
-                    let existing: Vec<&str> =
-                        self.state.sessions.iter().map(|s| s.name.as_str()).collect();
-                    let name = crate::new_session::auto_session_name(
-                        &existing,
-                        self.state.sessions.len(),
-                    );
-                    fx.create_session = Some(crate::state::CreateSessionRequest { name, dir });
+                    fx.create_session = Some(req);
                     fx.refresh_sessions = true;
                     self.execute_side_effects(&fx);
                 }
@@ -385,7 +393,9 @@ impl App {
     }
 
     fn open_new_session_picker(&mut self) {
-        use crate::new_session::{expand_path, split_input, NewSessionState};
+        use crate::new_session::{
+            auto_session_name, expand_path, split_input, NewSessionState, PickerFocus,
+        };
 
         // Starting dir: focused session's dir if any, else $HOME.
         let start_dir = self
@@ -405,48 +415,74 @@ impl App {
         );
         let (parent, _leaf) = split_input(&input);
         let parent_path = expand_path(parent, &home);
-
         let (entries, error) = read_dir_entries(&parent_path);
 
+        let existing: Vec<&str> = self
+            .state
+            .sessions
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        let name = auto_session_name(&existing, self.state.sessions.len());
+
         let mut ns = NewSessionState {
+            name_cursor: name.len(),
+            name,
+            focus: PickerFocus::Name,
             cursor: input.len(),
             input,
             entries,
             filtered: vec![],
             selected: 0,
             error,
-            ..NewSessionState::default()
         };
         ns.refilter();
         self.state.overlay.new_session = Some(ns);
     }
 
-    fn confirm_new_session(&mut self) -> Option<String> {
+    fn confirm_new_session(&mut self) -> Option<crate::state::CreateSessionRequest> {
         use crate::new_session::expand_path;
 
-        let Some(ns) = self.state.overlay.new_session.as_mut() else {
-            return None;
+        // Read name first (immutable borrow on overlay)
+        let name = {
+            let ns = self.state.overlay.new_session.as_ref()?;
+            ns.name.trim().to_string()
         };
+
+        // Validate name.
+        if let Some(err) = validate_session_name(&name, &self.state.sessions) {
+            if let Some(ns) = self.state.overlay.new_session.as_mut() {
+                ns.error = Some(err.to_string());
+            }
+            return None;
+        }
+
+        // Now resolve and validate dir.
+        let input = self.state.overlay.new_session.as_ref()?.input.clone();
         let home = std::path::PathBuf::from(
             std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
         );
-        let resolved = expand_path(&ns.input, &home);
+        let resolved = expand_path(&input, &home);
         match std::fs::metadata(&resolved) {
             Ok(m) if m.is_dir() => {
                 let dir = resolved.to_string_lossy().to_string();
                 self.state.overlay.new_session = None;
-                Some(dir)
+                Some(crate::state::CreateSessionRequest { name, dir })
             }
             Ok(_) => {
-                ns.error = Some("not a directory".into());
+                if let Some(ns) = self.state.overlay.new_session.as_mut() {
+                    ns.error = Some("not a directory".into());
+                }
                 None
             }
             Err(e) => {
-                ns.error = Some(match e.kind() {
-                    std::io::ErrorKind::NotFound => "not found".into(),
-                    std::io::ErrorKind::PermissionDenied => "permission denied".into(),
-                    _ => "cannot stat".into(),
-                });
+                if let Some(ns) = self.state.overlay.new_session.as_mut() {
+                    ns.error = Some(match e.kind() {
+                        std::io::ErrorKind::NotFound => "not found".into(),
+                        std::io::ErrorKind::PermissionDenied => "permission denied".into(),
+                        _ => "cannot stat".into(),
+                    });
+                }
                 None
             }
         }
