@@ -1,0 +1,120 @@
+//! Async spawner for remote tmux PTYs.
+//!
+//! For each configured remote host, deck wants a long-lived
+//! `ssh -tt host tmux attach` PTY ready to be swapped into the main
+//! view when the user selects a remote session. Spawning that ssh +
+//! tmux can take a second or two on a cold connection — we don't want
+//! to block app startup on it, so each host gets its own worker
+//! thread that drops a result onto a shared channel when ready.
+//!
+//! Lifecycle:
+//! 1. `RemoteSpawner::start(hosts, size)` kicks off one thread per
+//!    host. The threads do not own any shared state beyond the
+//!    response channel.
+//! 2. Each tick the main loop calls `try_recv` to drain pending
+//!    events without blocking; the app inserts the `TerminalPane`
+//!    into `remote_terminals` or stamps a failure status.
+//! 3. Threads exit when their spawn is done. Reconnect is not yet
+//!    automatic; step 5 will trigger respawns on user action.
+
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::thread;
+
+use portable_pty::PtySize;
+
+use crate::pty::Pty;
+
+use super::TerminalPane;
+
+/// One result per spawn attempt.
+pub(super) enum RemoteSpawnEvent {
+    Spawned { host: String, pane: TerminalPane },
+    Failed { host: String, reason: String },
+}
+
+/// Owns the receiver end of the spawn channel. Senders live inside the
+/// worker threads, which finish on their own after delivering one
+/// event. Dropping this struct closes the channel; any still-pending
+/// worker's `send` will fail quietly.
+pub(super) struct RemoteSpawner {
+    rx: Receiver<RemoteSpawnEvent>,
+}
+
+impl RemoteSpawner {
+    pub fn start(hosts: &[String], size: PtySize) -> Self {
+        let (tx, rx) = mpsc::channel();
+        for host in hosts {
+            spawn_one(host.clone(), tx.clone(), size);
+        }
+        drop(tx); // any future sender is cloned from the workers
+        Self { rx }
+    }
+
+    pub fn try_recv(&self) -> Option<RemoteSpawnEvent> {
+        match self.rx.try_recv() {
+            Ok(ev) => Some(ev),
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => None,
+        }
+    }
+
+    /// Kick off a fresh spawn attempt for a single host. Used by the
+    /// reconnect path (step 5).
+    #[allow(dead_code)]
+    pub fn respawn(&self, host: String, size: PtySize) {
+        // We need a fresh sender; pull one from a side channel via the
+        // existing receiver. Because we kept the only Sender clones
+        // inside the workers, the simplest path is to spawn a new
+        // channel-sender pair and pipe it. For now this method is
+        // unused; step 5 will plumb a persistent sender.
+        let _ = (host, size);
+    }
+}
+
+fn spawn_one(host: String, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
+    let _ = thread::Builder::new()
+        .name(format!("deck-pty-spawn-{host}"))
+        .spawn(move || {
+            let host_for_args = host.clone();
+            // The user is responsible for setting up passwordless auth
+            // (deck remote add nudges them toward ControlMaster + keys).
+            // `BatchMode=yes` keeps ssh from blocking on a hidden
+            // password prompt — we'd never see it from the spawn
+            // thread anyway, and it would deadlock the PTY.
+            let argv: Vec<&str> = vec![
+                "-tt",
+                "-o",
+                "ControlMaster=auto",
+                "-o",
+                "ControlPath=~/.ssh/cm-%r@%h:%p",
+                "-o",
+                "ControlPersist=10m",
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "ServerAliveInterval=30",
+                "-o",
+                "BatchMode=yes",
+                host_for_args.as_str(),
+                "tmux",
+                "attach",
+            ];
+            let event = match Pty::spawn("ssh", &argv, size) {
+                Ok(pty) => {
+                    let parser = vt100::Parser::new(size.rows, size.cols, 0);
+                    RemoteSpawnEvent::Spawned {
+                        host,
+                        pane: TerminalPane {
+                            pty,
+                            parser,
+                            alive: true,
+                        },
+                    }
+                }
+                Err(e) => RemoteSpawnEvent::Failed {
+                    host,
+                    reason: format!("spawn ssh: {e}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
+}

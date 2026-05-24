@@ -4,6 +4,7 @@ mod dispatch;
 mod lifecycle;
 mod pty;
 mod refresh;
+mod remote_spawn;
 mod render;
 mod update;
 
@@ -48,12 +49,35 @@ pub(super) struct TerminalPane {
     pub alive: bool,
 }
 
+/// Liveness of the persistent `ssh -t host tmux attach` PTY for a
+/// configured remote host. This is distinct from whether `list_sessions`
+/// over a one-shot ssh call succeeds — those use independent SSH
+/// channels (though both ride the same ControlMaster).
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // status fields are read once step 5 wires selection
+pub(super) enum RemoteConnStatus {
+    /// The spawn thread hasn't reported back yet.
+    Connecting,
+    /// The persistent PTY is alive and ready to be swapped into view.
+    Connected,
+    /// Spawn failed, or the child exited (auth denied, tmux missing,
+    /// network gone). The string is a short reason for the sidebar.
+    Failed(String),
+}
+
 pub struct App {
     state: AppState,
     /// The always-present local tmux PTY.
     local_terminal: TerminalPane,
-    /// One PTY per configured remote host, populated lazily by step 4.
+    /// One PTY per configured remote host, populated asynchronously as
+    /// the background spawner finishes for each host.
     remote_terminals: HashMap<String, TerminalPane>,
+    /// Per-host connection state. Populated for every host in
+    /// `self.remotes` from app startup onward.
+    remote_status: HashMap<String, RemoteConnStatus>,
+    /// Background worker that spawns `ssh tmux attach` PTYs without
+    /// blocking the UI.
+    remote_spawner: remote_spawn::RemoteSpawner,
     /// `None` = the local terminal drives the main pane; `Some(host)`
     /// = the remote terminal for that host does. Switched by selecting
     /// a session in the sidebar (step 5).
@@ -144,10 +168,25 @@ impl App {
             alive: true,
         };
 
+        let remotes: Vec<String> = cfg.remotes.iter().map(|r| r.host.clone()).collect();
+        let pty_size = portable_pty::PtySize {
+            rows: pty_rows,
+            cols: pty_cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let remote_spawner = remote_spawn::RemoteSpawner::start(&remotes, pty_size);
+        let remote_status: HashMap<String, RemoteConnStatus> = remotes
+            .iter()
+            .map(|h| (h.clone(), RemoteConnStatus::Connecting))
+            .collect();
+
         let mut app = App {
             state,
             local_terminal,
             remote_terminals: HashMap::new(),
+            remote_status,
+            remote_spawner,
             active_remote: None,
             spinner: rattles::presets::braille::dots(),
             nesting_guard,
@@ -158,7 +197,7 @@ impl App {
             update_checker,
             upgrade_instance: None,
             last_update_request,
-            remotes: cfg.remotes.iter().map(|r| r.host.clone()).collect(),
+            remotes,
             needs_full_redraw: false,
         };
 
@@ -212,16 +251,50 @@ impl App {
                     PtyEvent::Exited => self.local_terminal.alive = false,
                 }
             }
+            // Pull any newly-spawned remote PTYs into the map.
+            while let Some(ev) = self.remote_spawner.try_recv() {
+                match ev {
+                    remote_spawn::RemoteSpawnEvent::Spawned { host, pane } => {
+                        self.remote_status
+                            .insert(host.clone(), RemoteConnStatus::Connected);
+                        self.remote_terminals.insert(host, pane);
+                    }
+                    remote_spawn::RemoteSpawnEvent::Failed { host, reason } => {
+                        self.remote_status
+                            .insert(host, RemoteConnStatus::Failed(reason));
+                    }
+                }
+            }
             // Drain every remote terminal too, even the inactive ones.
             // tmux on the remote keeps producing output (status bar
             // ticks, idle redraws); if we stopped reading, the kernel
             // pipe buffer would fill and block the child.
-            for pane in self.remote_terminals.values_mut() {
+            let mut died_hosts: Vec<String> = Vec::new();
+            for (host, pane) in self.remote_terminals.iter_mut() {
                 for event in pane.pty.drain() {
                     match event {
                         PtyEvent::Output(data) => pane.parser.process(&data),
                         PtyEvent::Exited => pane.alive = false,
                     }
+                }
+                if !pane.alive {
+                    died_hosts.push(host.clone());
+                }
+            }
+            for host in died_hosts {
+                // Drop the dead pane so its child process is reaped;
+                // surface the loss as a Failed status so the user sees
+                // why selecting that remote no longer works.
+                self.remote_terminals.remove(&host);
+                self.remote_status.insert(
+                    host.clone(),
+                    RemoteConnStatus::Failed("ssh exited".to_string()),
+                );
+                // If the user was looking at this remote pane, snap
+                // them back to local so the screen doesn't freeze.
+                if self.active_remote.as_deref() == Some(host.as_str()) {
+                    self.active_remote = None;
+                    self.needs_full_redraw = true;
                 }
             }
             // `pty_alive` mirrors the local terminal's liveness; the
