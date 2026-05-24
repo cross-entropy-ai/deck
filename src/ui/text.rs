@@ -119,12 +119,6 @@ pub(super) fn shorten_dir(dir: &str) -> String {
     }
 }
 
-pub(super) fn scroll_offset(focused: usize, visible_height: u16, ch: usize) -> usize {
-    let focused_bottom = (focused + 1) * ch;
-    let visible = visible_height as usize;
-    focused_bottom.saturating_sub(visible)
-}
-
 pub(super) fn format_idle_badge(seconds: u64) -> Option<String> {
     if seconds < 60 {
         return None;

@@ -82,13 +82,24 @@ impl App {
         self.state.recompute_filter();
 
         if self.state.current_session != current {
-            if let Some(pos) = self
-                .state
-                .filtered
-                .iter()
-                .position(|&i| self.state.sessions[i].is_current)
-            {
-                self.state.focused = pos;
+            // Only snap focus to the new local current-session when the
+            // user is already focused on a local row. If they navigated
+            // into a remote group, a local current-session change (e.g.
+            // last switch_client respawn) must NOT pull focus back to
+            // the local section.
+            let user_on_local = matches!(
+                self.state.focus_target(),
+                Some(crate::state::FocusTarget::Local(_)) | None
+            );
+            if user_on_local {
+                if let Some(pos) = self
+                    .state
+                    .filtered
+                    .iter()
+                    .position(|&i| self.state.sessions[i].is_current)
+                {
+                    self.state.focused = pos;
+                }
             }
         }
 

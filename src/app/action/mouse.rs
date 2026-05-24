@@ -1,8 +1,18 @@
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
-use crate::state::{AppState, LayoutMode, MainView};
+use crate::state::{AppState, FocusTarget, LayoutMode, MainView};
 
 use super::Action;
+
+/// Convert a `FocusTarget` back into the flat focus index used by
+/// `state.focused` and `Action::FocusIndex`. Mirrors the encoding in
+/// `AppState::focus_target` (local rows first, then remotes).
+fn flatten_focus(state: &AppState, target: FocusTarget) -> usize {
+    match target {
+        FocusTarget::Local(pos) => pos,
+        FocusTarget::Remote(idx) => state.filtered.len() + idx,
+    }
+}
 
 pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     if mouse.kind == MouseEventKind::Down(MouseButton::Left)
@@ -88,17 +98,24 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     }
 
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) && in_sidebar {
-        let idx = match state.layout_mode {
-            LayoutMode::Horizontal => state.session_at_row(mouse.row),
+        let flat = match state.layout_mode {
+            LayoutMode::Horizontal => state
+                .focus_at_row(mouse.row)
+                .map(|t| flatten_focus(state, t)),
+            // Vertical/tabs mode doesn't surface remotes yet — the
+            // existing local-only path is fine here.
             LayoutMode::Vertical => state.session_at_col(mouse.column, mouse.row),
         };
-        if let Some(idx) = idx {
+        if let Some(idx) = flat {
             return Action::SidebarClickSession(idx);
         }
         return Action::SetFocusSidebar;
     }
 
     if mouse.kind == MouseEventKind::Down(MouseButton::Right) && in_sidebar {
+        // Context menu (rename/kill/etc.) only makes sense for local
+        // rows for now — operations on remote sessions land in a
+        // later phase. Use `session_at_row` (local-only) directly.
         let idx = match state.layout_mode {
             LayoutMode::Horizontal => state.session_at_row(mouse.row),
             LayoutMode::Vertical => state.session_at_col(mouse.column, mouse.row),

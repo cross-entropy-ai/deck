@@ -70,8 +70,11 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::FocusIndex(idx) => {
-            // Number-key shortcuts only target local sessions.
-            if idx < state.filtered.len() {
+            // Mouse clicks pass a unified flat index (local rows then
+            // remotes); number-key shortcuts use the same action but
+            // their reachable values are always inside the local
+            // range. Either way `focusable_count` is the right bound.
+            if idx < state.focusable_count() {
                 state.focused = idx;
             }
         }

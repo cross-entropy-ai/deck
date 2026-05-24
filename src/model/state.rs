@@ -165,6 +165,120 @@ pub enum FocusTarget {
     Remote(usize),
 }
 
+/// Logical sidebar group. Renderers use the group identity to pick
+/// the bg color and the layout to decide where headers go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupKind {
+    Local,
+    /// Position of the host in the rendered list (NOT in the config
+    /// list — the order matches the sequence of distinct hosts in
+    /// `state.remote_sessions`). Used to pick a per-host bg tint.
+    Remote(usize),
+}
+
+/// One renderable item in the sidebar layout — either a non-focusable
+/// group header or a focusable session row. Both `SidebarLayout`
+/// consumers — the sidebar renderer and `session_at_row` — walk the
+/// same list, so highlight, scroll, and mouse hit-testing agree about
+/// where every row lives.
+#[derive(Debug, Clone)]
+pub struct SidebarItem {
+    pub kind: SidebarItemKind,
+    pub group: GroupKind,
+    /// Number of terminal rows this item occupies.
+    pub height: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum SidebarItemKind {
+    /// Group header (label). Not focusable.
+    Header { label: String },
+    /// A local session at `filtered_pos` in `state.filtered`. The flat
+    /// focus index equals `filtered_pos`.
+    LocalSession { filtered_pos: usize },
+    /// A remote session at `remote_idx` in `state.remote_sessions`.
+    /// Flat focus index = `state.filtered.len() + remote_idx`.
+    RemoteSession { remote_idx: usize },
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SidebarLayout {
+    pub items: Vec<SidebarItem>,
+}
+
+/// Compute the scroll offset (in terminal rows) so the focused item
+/// is fully visible inside a viewport `visible_height` rows tall.
+/// Returns 0 if nothing is focused or the focused item already fits
+/// without scrolling.
+pub fn scroll_for_layout(
+    layout: &SidebarLayout,
+    target: Option<FocusTarget>,
+    visible_height: usize,
+) -> usize {
+    let Some(target) = target else {
+        return 0;
+    };
+    let Some((y_top, item)) = layout.locate(target) else {
+        return 0;
+    };
+    let y_bottom = y_top + item.height;
+    if y_bottom <= visible_height {
+        // Whole item fits from the top with no scroll.
+        return 0;
+    }
+    // Scroll just enough that the focused item's bottom is at the
+    // viewport's bottom edge.
+    y_bottom - visible_height
+}
+
+impl SidebarLayout {
+    /// Walk the items, yielding the top y-offset (in terminal rows)
+    /// for each item alongside the item itself.
+    pub fn iter_with_y(&self) -> impl Iterator<Item = (usize, &SidebarItem)> {
+        let mut y = 0usize;
+        self.items.iter().map(move |it| {
+            let cur = y;
+            y += it.height;
+            (cur, it)
+        })
+    }
+
+    /// Find the layout item that matches the given focus target,
+    /// returning its top y and the item itself. `None` if focus is
+    /// out of range.
+    pub fn locate(&self, target: FocusTarget) -> Option<(usize, &SidebarItem)> {
+        self.iter_with_y().find(|(_, it)| match (&it.kind, target) {
+            (SidebarItemKind::LocalSession { filtered_pos }, FocusTarget::Local(pos)) => {
+                *filtered_pos == pos
+            }
+            (SidebarItemKind::RemoteSession { remote_idx }, FocusTarget::Remote(idx)) => {
+                *remote_idx == idx
+            }
+            _ => false,
+        })
+    }
+
+    /// Map a vertical offset (in rows, relative to the sidebar's
+    /// scrollable area top) to a FocusTarget if it falls on a
+    /// session row. Header rows return None.
+    pub fn target_at_y(&self, y: usize) -> Option<FocusTarget> {
+        for (top, it) in self.iter_with_y() {
+            if y >= top && y < top + it.height {
+                return match it.kind {
+                    SidebarItemKind::LocalSession { filtered_pos } => {
+                        Some(FocusTarget::Local(filtered_pos))
+                    }
+                    SidebarItemKind::RemoteSession { remote_idx } => {
+                        Some(FocusTarget::Remote(remote_idx))
+                    }
+                    SidebarItemKind::Header { .. } => None,
+                };
+            }
+        }
+        None
+    }
+}
+
 // --- Side effects ---
 
 #[derive(Debug, Default)]
@@ -203,6 +317,9 @@ impl SideEffect {
     pub fn merge(&mut self, other: SideEffect) {
         if other.switch_session.is_some() {
             self.switch_session = other.switch_session;
+        }
+        if other.switch_remote.is_some() {
+            self.switch_remote = other.switch_remote;
         }
         if other.kill_session.is_some() {
             self.kill_session = other.kill_session;
@@ -621,8 +738,10 @@ impl AppState {
         3 + banner_visible as u16 + plugin_block_rows(self.plugins.len())
     }
 
-    /// Map a screen row to a filtered session index (horizontal/card mode).
-    pub fn session_at_row(&self, row: u16) -> Option<usize> {
+    /// Map a screen row to a sidebar focus target. Walks the unified
+    /// layout (local cards + remote groups + headers) so variable-
+    /// height rows hit-test correctly.
+    pub fn focus_at_row(&self, row: u16) -> Option<FocusTarget> {
         let b = if self.show_borders { 1u16 } else { 0 };
         let sidebar_h = match self.layout_mode {
             LayoutMode::Horizontal => self.term_height,
@@ -635,17 +754,24 @@ impl AppState {
         if row < sessions_top || row >= sessions_bottom {
             return None;
         }
-        let visible_height = sessions_bottom - sessions_top;
-        let ch = card_height(self.view_mode);
-        let focused_bottom = (self.focused + 1) * ch;
-        let visible = visible_height as usize;
-        let scroll = focused_bottom.saturating_sub(visible);
-        let clicked_row = row as usize - sessions_top as usize + scroll;
-        let idx = clicked_row / ch;
-        if idx < self.filtered.len() {
-            Some(idx)
-        } else {
-            None
+        let visible_height = (sessions_bottom - sessions_top) as usize;
+
+        let layout = self.sidebar_layout(self.view_mode);
+        // Compute the same scroll offset the renderer uses (see
+        // `scroll_for_layout`) so click coordinates and rendered
+        // positions agree.
+        let scroll = scroll_for_layout(&layout, self.focus_target(), visible_height);
+        let clicked_y = row as usize - sessions_top as usize + scroll;
+        layout.target_at_y(clicked_y)
+    }
+
+    /// Back-compat shim for callers that only expect a local index.
+    /// Returns `None` for remote rows so existing dispatch arms (kill,
+    /// rename, click-to-switch) don't accidentally act on a remote.
+    pub fn session_at_row(&self, row: u16) -> Option<usize> {
+        match self.focus_at_row(row) {
+            Some(FocusTarget::Local(pos)) => Some(pos),
+            _ => None,
         }
     }
 
@@ -674,6 +800,59 @@ impl AppState {
     /// (after filtering) followed by remote sessions.
     pub fn focusable_count(&self) -> usize {
         self.filtered.len() + self.remote_sessions.len()
+    }
+
+    /// Build the unified sidebar layout: a flat list of header /
+    /// session items in render order. Renderers and the mouse
+    /// hit-tester share this so they can't disagree about which row
+    /// lives where.
+    pub fn sidebar_layout(&self, view_mode: ViewMode) -> SidebarLayout {
+        let card_h = card_height(view_mode);
+        let mut items = Vec::with_capacity(self.filtered.len() + self.remote_sessions.len() + 4);
+
+        // Local group: no header, the fixed "Projects (N)" banner at
+        // the top of the sidebar already labels this section.
+        for pos in 0..self.filtered.len() {
+            items.push(SidebarItem {
+                kind: SidebarItemKind::LocalSession { filtered_pos: pos },
+                group: GroupKind::Local,
+                height: card_h,
+            });
+        }
+
+        // Remote groups: detect host transitions in render order
+        // (which matches focus order — `remote_sessions` is already
+        // grouped by host because the refresh worker emits hosts in
+        // config order, one block at a time).
+        let mut host_idx: usize = 0;
+        let mut prev_host: Option<&str> = None;
+        for (remote_idx, r) in self.remote_sessions.iter().enumerate() {
+            let new_host = Some(r.host.as_str()) != prev_host;
+            if new_host {
+                if prev_host.is_some() {
+                    host_idx += 1;
+                }
+                items.push(SidebarItem {
+                    kind: SidebarItemKind::Header {
+                        label: format!("  @{}", r.host),
+                    },
+                    group: GroupKind::Remote(host_idx),
+                    height: 1,
+                });
+                prev_host = Some(r.host.as_str());
+            }
+            // Match the local card height so groups visually align
+            // (5 rows in Expanded, 2 in Compact). The renderer pads
+            // the bottom of each remote row with blank lines on the
+            // group bg to fill the card.
+            items.push(SidebarItem {
+                kind: SidebarItemKind::RemoteSession { remote_idx },
+                group: GroupKind::Remote(host_idx),
+                height: card_h,
+            });
+        }
+
+        SidebarLayout { items }
     }
 
     /// Decode the current `focused` index into a structured target.

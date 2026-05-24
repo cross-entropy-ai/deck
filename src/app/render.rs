@@ -32,7 +32,6 @@ impl App {
         }
         let s = &self.state;
         let sidebar_active = s.focus_mode == FocusMode::Sidebar;
-        let focused = s.focused;
         let theme = &THEMES[s.theme_index];
         let confirm_kill = s.overlay.confirm_kill;
         let show_help = s.overlay.show_help;
@@ -201,18 +200,15 @@ impl App {
                 .map(|d| (d.as_millis() / 500) % 2 == 0)
                 .unwrap_or(true);
 
-            // Decode the unified focus index into "is it a remote
-            // row?" for the sidebar so it knows what to highlight.
-            let focused_remote = focused
-                .checked_sub(self.state.filtered.len())
-                .filter(|&idx| idx < self.state.remote_sessions.len());
+            let layout = self.state.sidebar_layout(view_mode);
+            let focus_target = self.state.focus_target();
             captured_banner_bounds = ui::draw_sidebar(
                 frame,
                 sidebar_area,
                 &views,
                 &remote_views,
-                focused_remote,
-                focused,
+                &layout,
+                focus_target,
                 sidebar_active,
                 theme,
                 show_help,

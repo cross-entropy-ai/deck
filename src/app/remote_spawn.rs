@@ -80,6 +80,12 @@ fn spawn_one(host: String, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
             // `BatchMode=yes` keeps ssh from blocking on a hidden
             // password prompt — we'd never see it from the spawn
             // thread anyway, and it would deadlock the PTY.
+            // `-tt` forces TTY allocation (required for the remote
+            // tmux client). Multiplexing flags match the one-shot ssh
+            // calls in `remote_tmux` so they share a ControlMaster
+            // connection. The `PATH=...` prefix makes tmux discoverable
+            // when the remote user's tmux isn't on the default
+            // non-interactive PATH (e.g. Homebrew on macOS).
             let argv: Vec<&str> = vec![
                 "-tt",
                 "-o",
@@ -95,6 +101,7 @@ fn spawn_one(host: String, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
                 "-o",
                 "BatchMode=yes",
                 host_for_args.as_str(),
+                crate::remote_tmux::REMOTE_PATH_PREFIX,
                 "tmux",
                 "attach",
             ];

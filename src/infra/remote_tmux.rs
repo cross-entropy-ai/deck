@@ -32,7 +32,7 @@ fn default_runner() -> &'static dyn CommandRunner {
 /// ssh from prompting interactively from inside a background worker
 /// (it would just block forever); a misconfigured host fails fast
 /// instead, which surfaces in the UI as a disconnected remote.
-fn base_ssh_args() -> Vec<&'static str> {
+pub(crate) fn base_ssh_args() -> Vec<&'static str> {
     vec![
         "-o",
         "ControlMaster=auto",
@@ -49,6 +49,20 @@ fn base_ssh_args() -> Vec<&'static str> {
     ]
 }
 
+/// Extra path prefix prepended to every remote command. SSH runs
+/// commands in a non-interactive shell, which on most setups means
+/// only `~/.zshenv` (zsh) or `~/.bashrc` for forced-load configs is
+/// sourced — `~/.zshrc` / `~/.profile` are skipped, so anything in a
+/// non-default location (Homebrew on macOS, linuxbrew on Linux,
+/// per-user installs) is invisible. Prepending these paths via
+/// `PATH=... cmd ...` makes deck work out-of-the-box without asking
+/// the user to edit remote shell startup files.
+///
+/// The trailing `$PATH` is expanded by the remote shell, so the
+/// user's existing path stays intact and just gets extended.
+pub(crate) const REMOTE_PATH_PREFIX: &str =
+    "PATH=/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$PATH";
+
 fn run_ssh(
     runner: &dyn CommandRunner,
     host: &str,
@@ -56,6 +70,7 @@ fn run_ssh(
 ) -> Result<String, CommandError> {
     let mut args = base_ssh_args();
     args.push(host);
+    args.push(REMOTE_PATH_PREFIX);
     args.extend_from_slice(remote_argv);
     runner
         .run("ssh", &args, REMOTE_TIMEOUT)

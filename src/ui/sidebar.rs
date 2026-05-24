@@ -1,5 +1,5 @@
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
@@ -8,17 +8,20 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::keybindings::{Command, Keybindings};
 use crate::layout::{
-    card_height, plugin_block_rows, BANNER_MIN_WIDTH, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR,
+    plugin_block_rows, BANNER_MIN_WIDTH, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR,
 };
-use crate::state::ViewMode;
+use crate::state::{
+    scroll_for_layout, FocusTarget, GroupKind, SidebarItem, SidebarItemKind, SidebarLayout,
+    ViewMode,
+};
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
 
 use super::overlays::{draw_confirm_kill, draw_help, draw_rename_input};
 use super::text::{
     build_status_spans, build_tab_status, format_activity_compact, format_git_status,
-    format_idle_badge, idle_color, pack_hint_lines, pad_line, primary_key_string, scroll_offset,
-    shorten_dir, status_color, status_icon, status_icon_compact, truncate,
+    format_idle_badge, idle_color, pack_hint_lines, pad_line, primary_key_string, shorten_dir,
+    status_color, status_icon, status_icon_compact, truncate,
 };
 use super::{PluginStatus, PluginView, RemoteSessionView, SessionView};
 use crate::state::SessionStatus;
@@ -30,9 +33,8 @@ pub fn draw_sidebar(
     area: Rect,
     sessions: &[SessionView],
     remote_sessions: &[RemoteSessionView],
-    // `Some(remote_idx)` when keyboard focus is on a remote row.
-    focused_remote: Option<usize>,
-    focused: usize,
+    layout: &SidebarLayout,
+    focus_target: Option<FocusTarget>,
     sidebar_active: bool,
     theme: &Theme,
     show_help: bool,
@@ -48,11 +50,18 @@ pub fn draw_sidebar(
     update_available: Option<&UpdateStatus>,
 ) -> Option<Rect> {
     if tabs_mode {
+        // Tabs mode currently shows only local sessions; map focus
+        // back to a plain local index, defaulting to 0 when focus is
+        // on a remote row (those just aren't reachable here).
+        let focused_local = match focus_target {
+            Some(FocusTarget::Local(pos)) => pos,
+            _ => 0,
+        };
         return draw_sidebar_tabs(
             frame,
             area,
             sessions,
-            focused,
+            focused_local,
             sidebar_active,
             theme,
             show_borders,
@@ -105,8 +114,8 @@ pub fn draw_sidebar(
             sessions_area,
             sessions,
             remote_sessions,
-            focused_remote,
-            focused,
+            layout,
+            focus_target,
             spinner_frame,
             blink_on,
             theme,
@@ -153,8 +162,8 @@ fn draw_sessions(
     area: Rect,
     sessions: &[SessionView],
     remote_sessions: &[RemoteSessionView],
-    focused_remote: Option<usize>,
-    focused: usize,
+    layout: &SidebarLayout,
+    focus_target: Option<FocusTarget>,
     spinner_frame: &str,
     blink_on: bool,
     theme: &Theme,
@@ -168,344 +177,78 @@ fn draw_sessions(
         return;
     }
 
-    match view_mode {
-        ViewMode::Expanded => {
-            let width = area.width as usize;
-            let mut lines: Vec<Line> = Vec::new();
-
-            for (i, session) in sessions.iter().enumerate() {
-                let is_focused = i == focused;
-                let is_emphasized = is_focused;
-
-                let accent_color = if is_focused { theme.green } else { theme.bg };
-                let accent = if is_focused { "▌" } else { " " };
-                let name_style = if is_focused {
-                    Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(theme.secondary)
-                };
-                let index_style = if is_focused {
-                    Style::default().fg(theme.secondary)
-                } else {
-                    Style::default().fg(theme.dim)
-                };
-                let bg = if is_focused { theme.surface } else { theme.bg };
-
-                let activity_icon = status_icon(
-                    session.status,
-                    session.is_current,
-                    theme,
-                    spinner_frame,
-                    blink_on,
-                    is_emphasized,
-                    bg,
-                );
-                let idx_str = format!("{:>2}", i + 1);
-                let text_width = width.saturating_sub(6);
-                let name_display = truncate(session.name, text_width);
-                lines.push(pad_line(
-                    vec![
-                        Span::styled(accent, Style::default().fg(accent_color).bg(bg)),
-                        activity_icon,
-                        Span::styled(idx_str, index_style.bg(bg)),
-                        Span::styled("  ", Style::default().bg(bg)),
-                        Span::styled(name_display, name_style.bg(bg)),
-                    ],
-                    bg,
-                    width,
-                ));
-
-                let dir_display = truncate(&shorten_dir(session.dir), text_width.saturating_sub(2));
-                let dir_color = if is_focused { theme.teal } else { theme.muted };
-                let badge = format_idle_badge(session.idle_seconds)
-                    .map(|text| format!("{text:^6}"))
-                    .unwrap_or_else(|| " ".repeat(6));
-                lines.push(pad_line(
-                    vec![
-                        Span::styled(
-                            badge,
-                            Style::default()
-                                .fg(idle_color(theme, session.idle_seconds, is_emphasized))
-                                .bg(bg),
-                        ),
-                        Span::styled("", Style::default().fg(dir_color).bg(bg)),
-                        Span::styled(dir_display, Style::default().fg(dir_color).bg(bg)),
-                    ],
-                    bg,
-                    width,
-                ));
-
-                if session.branch.is_empty() {
-                    lines.push(pad_line(
-                        vec![
-                            Span::styled("      ", Style::default().bg(bg)),
-                            Span::styled(
-                                "\u{e725}  no git",
-                                Style::default()
-                                    .fg(if is_emphasized {
-                                        theme.dim
-                                    } else {
-                                        theme.muted
-                                    })
-                                    .bg(bg),
-                            ),
-                        ],
-                        bg,
-                        width,
-                    ));
-                } else {
-                    let branch_color = if is_focused { theme.pink } else { theme.muted };
-                    let branch_display = truncate(session.branch, text_width.saturating_sub(2));
-                    lines.push(pad_line(
-                        vec![
-                            Span::styled("      ", Style::default().bg(bg)),
-                            Span::styled("\u{e725} ", Style::default().fg(branch_color).bg(bg)),
-                            Span::styled(branch_display, Style::default().fg(branch_color).bg(bg)),
-                        ],
-                        bg,
-                        width,
-                    ));
-                }
-
-                let status_spans =
-                    build_status_spans(session, is_emphasized, bg, theme, text_width);
-                let mut row4 = vec![Span::styled("      ", Style::default().bg(bg))];
-                if status_spans.is_empty() {
-                    row4.push(Span::styled(
-                        "—",
-                        Style::default()
-                            .fg(if is_emphasized {
-                                theme.dim
-                            } else {
-                                theme.muted
-                            })
-                            .bg(bg),
-                    ));
-                } else {
-                    row4.extend(status_spans);
-                }
-                lines.push(pad_line(row4, bg, width));
-
-                lines.push(Line::from(Span::styled(" ", Style::default().bg(theme.bg))));
-            }
-
-            append_remote_section(&mut lines, remote_sessions, focused_remote, width, theme);
-
-            let scroll = scroll_offset(focused, area.height, card_height(view_mode));
-            frame.render_widget(
-                Paragraph::new(lines)
-                    .style(Style::default().bg(theme.bg))
-                    .scroll((scroll as u16, 0)),
-                area,
-            );
-        }
-        ViewMode::Compact => {
-            draw_sessions_compact(
-                frame,
-                area,
-                sessions,
-                remote_sessions,
-                focused_remote,
-                focused,
-                spinner_frame,
-                blink_on,
-                theme,
-            );
-        }
-    }
-}
-
-/// Append a simple "Remote" section to the sidebar lines. Read-only in
-/// Phase 2 — these rows aren't selectable yet, just visible. Each row
-/// is rendered as `host/name` on one line with an optional second line
-/// for the path; unreachable hosts get a muted style and a brief tag.
-fn append_remote_section(
-    lines: &mut Vec<Line<'_>>,
-    remote_sessions: &[RemoteSessionView],
-    focused_remote: Option<usize>,
-    width: usize,
-    theme: &Theme,
-) {
-    if remote_sessions.is_empty() {
-        return;
-    }
-    lines.push(pad_line(
-        vec![Span::styled(
-            "  Remote",
-            Style::default().fg(theme.dim).add_modifier(Modifier::BOLD),
-        )],
-        theme.bg,
-        width,
-    ));
-    for (i, r) in remote_sessions.iter().enumerate() {
-        let is_focused = focused_remote == Some(i);
-        let bg = if is_focused { theme.surface } else { theme.bg };
-        let accent_color = if is_focused { theme.green } else { theme.bg };
-        let accent = if is_focused { "▌" } else { " " };
-
-        let label = if r.unreachable {
-            format!(" {}/{}", r.host, r.name)
-        } else {
-            format!(" {}/{}", r.host, r.name)
-        };
-        let fg = if r.unreachable {
-            theme.muted
-        } else if is_focused {
-            theme.text
-        } else {
-            theme.secondary
-        };
-        let mut name_style = Style::default().fg(fg).bg(bg);
-        if is_focused {
-            name_style = name_style.add_modifier(Modifier::BOLD);
-        }
-        lines.push(pad_line(
-            vec![
-                Span::styled(accent, Style::default().fg(accent_color).bg(bg)),
-                Span::styled(truncate(&label, width.saturating_sub(1)), name_style),
-            ],
-            bg,
-            width,
-        ));
-        if !r.dir.is_empty() {
-            lines.push(pad_line(
-                vec![
-                    Span::styled(" ", Style::default().bg(bg)),
-                    Span::styled(
-                        truncate(&format!("   {}", shorten_dir(r.dir)), width.saturating_sub(1)),
-                        Style::default().fg(theme.muted).bg(bg),
-                    ),
-                ],
-                bg,
-                width,
-            ));
-        }
-    }
-    lines.push(pad_line(vec![Span::raw("")], theme.bg, width));
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_sessions_compact(
-    frame: &mut Frame,
-    area: Rect,
-    sessions: &[SessionView],
-    remote_sessions: &[RemoteSessionView],
-    focused_remote: Option<usize>,
-    focused: usize,
-    spinner_frame: &str,
-    blink_on: bool,
-    theme: &Theme,
-) {
     let width = area.width as usize;
     let mut lines: Vec<Line> = Vec::new();
 
-    for (i, session) in sessions.iter().enumerate() {
-        let is_focused = i == focused;
-        let is_emphasized = is_focused;
-
-        let accent_color = if is_focused { theme.green } else { theme.bg };
-        let accent = if is_focused { "▌" } else { " " };
-        let name_style = if is_focused {
-            Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme.secondary)
-        };
-        let index_style = if is_focused {
-            Style::default().fg(theme.secondary)
-        } else {
-            Style::default().fg(theme.dim)
-        };
-        let bg = if is_focused { theme.surface } else { theme.bg };
-
-        // Compact layout uses status glyphs only — no idle time badge.
-        // Working: spinner; Waiting: bell; Idle: moon (or spinner for
-        // the first few seconds after a transition, for visual
-        // continuity).
-        let activity_text = if session.is_current {
-            status_icon_compact(session.status, true, spinner_frame)
-        } else {
-            match session.status {
-                SessionStatus::Working => spinner_frame.to_string(),
-                SessionStatus::Waiting => {
-                    status_icon_compact(session.status, false, spinner_frame)
-                }
-                SessionStatus::Idle => {
-                    if session.idle_seconds < 3 {
-                        spinner_frame.to_string()
-                    } else {
-                        "󰒲".to_string()
+    for (i, item) in layout.items.iter().enumerate() {
+        let is_focused = is_item_focused(item, focus_target);
+        let group_bg = group_bg(theme, item.group);
+        // Focused rows get a single uniform surface tint so they pop
+        // regardless of which group they're in; unfocused rows keep
+        // the group's bg.
+        let row_bg = if is_focused { theme.surface } else { group_bg };
+        // The card's bottom gutter should bleed the group's bg only
+        // when another row from the SAME group follows. At the last
+        // item of a group (or the very last item), fall back to
+        // theme.bg so the separator between groups stays neutral.
+        let is_last_in_group = layout
+            .items
+            .get(i + 1)
+            .map(|next| next.group != item.group)
+            .unwrap_or(true);
+        let gutter_bg = if is_last_in_group { theme.bg } else { group_bg };
+        match &item.kind {
+            SidebarItemKind::Header { label } => {
+                render_group_header(&mut lines, label, group_bg, width, theme);
+            }
+            SidebarItemKind::LocalSession { filtered_pos } => {
+                if let Some(session) = sessions.get(*filtered_pos) {
+                    match view_mode {
+                        ViewMode::Expanded => render_local_card_expanded(
+                            &mut lines,
+                            session,
+                            *filtered_pos,
+                            is_focused,
+                            row_bg,
+                            gutter_bg,
+                            spinner_frame,
+                            blink_on,
+                            theme,
+                            width,
+                        ),
+                        ViewMode::Compact => render_local_card_compact(
+                            &mut lines,
+                            session,
+                            *filtered_pos,
+                            is_focused,
+                            row_bg,
+                            spinner_frame,
+                            blink_on,
+                            theme,
+                            width,
+                        ),
                     }
                 }
             }
-        };
-        let activity_color = if session.is_current {
-            status_color(session.status, true, theme, blink_on, is_emphasized)
-        } else {
-            match session.status {
-                SessionStatus::Idle => idle_color(theme, session.idle_seconds, is_emphasized),
-                _ => status_color(session.status, false, theme, blink_on, is_emphasized),
-            }
-        };
-        let idx_str = format!("{:>2}", i + 1);
-
-        let mut spans = vec![
-            Span::styled(accent, Style::default().fg(accent_color).bg(bg)),
-            Span::styled(activity_text, Style::default().fg(activity_color).bg(bg)),
-            Span::styled(idx_str, index_style.bg(bg)),
-            Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(
-                truncate(session.name, width.saturating_sub(6)),
-                name_style.bg(bg),
-            ),
-        ];
-
-        if !session.branch.is_empty() {
-            let branch_color = if is_focused { theme.pink } else { theme.muted };
-            spans.push(Span::styled("  ", Style::default().bg(bg)));
-            spans.push(Span::styled(
-                truncate(session.branch, width.saturating_sub(20)),
-                Style::default().fg(branch_color).bg(bg),
-            ));
-
-            let status = format_git_status(session, true);
-            if !status.is_empty() {
-                let status_color = if status == "✓" {
-                    if is_emphasized {
-                        theme.green
-                    } else {
-                        theme.muted
-                    }
-                } else if is_emphasized {
-                    theme.yellow
-                } else {
-                    theme.dim
-                };
-                spans.push(Span::styled(" ", Style::default().bg(bg)));
-                spans.push(Span::styled(
-                    status,
-                    Style::default().fg(status_color).bg(bg),
-                ));
+            SidebarItemKind::RemoteSession { remote_idx } => {
+                if let Some(row) = remote_sessions.get(*remote_idx) {
+                    render_remote_row(
+                        &mut lines,
+                        row,
+                        is_focused,
+                        row_bg,
+                        gutter_bg,
+                        theme,
+                        width,
+                        item.height,
+                    );
+                }
             }
         }
-
-        lines.push(pad_line(spans, bg, width));
-
-        let text_width = width.saturating_sub(6);
-        let dir_display = truncate(&shorten_dir(session.dir), text_width);
-        let dir_color = if is_focused { theme.teal } else { theme.muted };
-        lines.push(pad_line(
-            vec![
-                Span::styled("      ", Style::default().bg(bg)),
-                Span::styled(dir_display, Style::default().fg(dir_color).bg(bg)),
-            ],
-            bg,
-            width,
-        ));
     }
 
-    append_remote_section(&mut lines, remote_sessions, focused_remote, width, theme);
-
-    let scroll = scroll_offset(focused, area.height, card_height(ViewMode::Compact));
+    let visible_height = area.height as usize;
+    let scroll = scroll_for_layout(layout, focus_target, visible_height);
     frame.render_widget(
         Paragraph::new(lines)
             .style(Style::default().bg(theme.bg))
@@ -513,6 +256,368 @@ fn draw_sessions_compact(
         area,
     );
 }
+
+fn is_item_focused(item: &SidebarItem, focus_target: Option<FocusTarget>) -> bool {
+    matches!(
+        (&item.kind, focus_target),
+        (SidebarItemKind::LocalSession { filtered_pos }, Some(FocusTarget::Local(pos)))
+            if *filtered_pos == pos
+    ) || matches!(
+        (&item.kind, focus_target),
+        (SidebarItemKind::RemoteSession { remote_idx }, Some(FocusTarget::Remote(idx)))
+            if *remote_idx == idx
+    )
+}
+
+/// Pick a background color for a group. Local stays on the default
+/// theme bg; each remote host gets a subtle tint from a small palette
+/// so they read as visually distinct rows without overwhelming the
+/// existing card design.
+fn group_bg(theme: &Theme, group: GroupKind) -> Color {
+    match group {
+        GroupKind::Local => theme.bg,
+        GroupKind::Remote(idx) => {
+            let tints = [theme.teal, theme.pink, theme.yellow, theme.accent];
+            let tint = tints[idx % tints.len()];
+            blend(theme.bg, tint, 0.10)
+        }
+    }
+}
+
+fn blend(a: Color, b: Color, t: f32) -> Color {
+    let to_rgb = |c| match c {
+        Color::Rgb(r, g, bl) => (r, g, bl),
+        _ => (0, 0, 0),
+    };
+    let (ar, ag, ab) = to_rgb(a);
+    let (br, bg_g, bb) = to_rgb(b);
+    let lerp = |x: u8, y: u8| -> u8 {
+        ((x as f32) * (1.0 - t) + (y as f32) * t)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    Color::Rgb(lerp(ar, br), lerp(ag, bg_g), lerp(ab, bb))
+}
+
+fn render_group_header(
+    lines: &mut Vec<Line<'_>>,
+    label: &str,
+    bg: Color,
+    width: usize,
+    theme: &Theme,
+) {
+    lines.push(pad_line(
+        vec![Span::styled(
+            label.to_string(),
+            Style::default()
+                .fg(theme.dim)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        )],
+        bg,
+        width,
+    ));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_local_card_expanded(
+    lines: &mut Vec<Line<'_>>,
+    session: &SessionView,
+    sidebar_idx: usize,
+    is_focused: bool,
+    bg: Color,
+    gutter_bg: Color,
+    spinner_frame: &str,
+    blink_on: bool,
+    theme: &Theme,
+    width: usize,
+) {
+    let is_emphasized = is_focused;
+    let accent_color = if is_focused { theme.green } else { bg };
+    let accent = if is_focused { "▌" } else { " " };
+    let name_style = if is_focused {
+        Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.secondary)
+    };
+    let index_style = if is_focused {
+        Style::default().fg(theme.secondary)
+    } else {
+        Style::default().fg(theme.dim)
+    };
+
+    let activity_icon = status_icon(
+        session.status,
+        session.is_current,
+        theme,
+        spinner_frame,
+        blink_on,
+        is_emphasized,
+        bg,
+    );
+    let idx_str = format!("{:>2}", sidebar_idx + 1);
+    let text_width = width.saturating_sub(6);
+    let name_display = truncate(session.name, text_width);
+    lines.push(pad_line(
+        vec![
+            Span::styled(accent, Style::default().fg(accent_color).bg(bg)),
+            activity_icon,
+            Span::styled(idx_str, index_style.bg(bg)),
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(name_display, name_style.bg(bg)),
+        ],
+        bg,
+        width,
+    ));
+
+    let dir_display = truncate(&shorten_dir(session.dir), text_width.saturating_sub(2));
+    let dir_color = if is_focused { theme.teal } else { theme.muted };
+    let badge = format_idle_badge(session.idle_seconds)
+        .map(|text| format!("{text:^6}"))
+        .unwrap_or_else(|| " ".repeat(6));
+    lines.push(pad_line(
+        vec![
+            Span::styled(
+                badge,
+                Style::default()
+                    .fg(idle_color(theme, session.idle_seconds, is_emphasized))
+                    .bg(bg),
+            ),
+            Span::styled("", Style::default().fg(dir_color).bg(bg)),
+            Span::styled(dir_display, Style::default().fg(dir_color).bg(bg)),
+        ],
+        bg,
+        width,
+    ));
+
+    if session.branch.is_empty() {
+        lines.push(pad_line(
+            vec![
+                Span::styled("      ", Style::default().bg(bg)),
+                Span::styled(
+                    "\u{e725}  no git",
+                    Style::default()
+                        .fg(if is_emphasized { theme.dim } else { theme.muted })
+                        .bg(bg),
+                ),
+            ],
+            bg,
+            width,
+        ));
+    } else {
+        let branch_color = if is_focused { theme.pink } else { theme.muted };
+        let branch_display = truncate(session.branch, text_width.saturating_sub(2));
+        lines.push(pad_line(
+            vec![
+                Span::styled("      ", Style::default().bg(bg)),
+                Span::styled("\u{e725} ", Style::default().fg(branch_color).bg(bg)),
+                Span::styled(branch_display, Style::default().fg(branch_color).bg(bg)),
+            ],
+            bg,
+            width,
+        ));
+    }
+
+    let status_spans = build_status_spans(session, is_emphasized, bg, theme, text_width);
+    let mut row4 = vec![Span::styled("      ", Style::default().bg(bg))];
+    if status_spans.is_empty() {
+        row4.push(Span::styled(
+            "—",
+            Style::default()
+                .fg(if is_emphasized { theme.dim } else { theme.muted })
+                .bg(bg),
+        ));
+    } else {
+        row4.extend(status_spans);
+    }
+    lines.push(pad_line(row4, bg, width));
+
+    // 5th line is the inter-card gutter. The caller decides what
+    // color it should be: inside a group it's the group bg so the
+    // tint flows continuously between cards; at the last card of a
+    // group it's theme.bg so the separator to the next group reads
+    // as neutral negative space.
+    lines.push(pad_line(
+        vec![Span::styled(" ", Style::default().bg(gutter_bg))],
+        gutter_bg,
+        width,
+    ));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_local_card_compact(
+    lines: &mut Vec<Line<'_>>,
+    session: &SessionView,
+    sidebar_idx: usize,
+    is_focused: bool,
+    bg: Color,
+    spinner_frame: &str,
+    blink_on: bool,
+    theme: &Theme,
+    width: usize,
+) {
+    let is_emphasized = is_focused;
+    let accent_color = if is_focused { theme.green } else { bg };
+    let accent = if is_focused { "▌" } else { " " };
+    let name_style = if is_focused {
+        Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.secondary)
+    };
+    let index_style = if is_focused {
+        Style::default().fg(theme.secondary)
+    } else {
+        Style::default().fg(theme.dim)
+    };
+
+    let activity_text = if session.is_current {
+        status_icon_compact(session.status, true, spinner_frame)
+    } else {
+        match session.status {
+            SessionStatus::Working => spinner_frame.to_string(),
+            SessionStatus::Waiting => status_icon_compact(session.status, false, spinner_frame),
+            SessionStatus::Idle => {
+                if session.idle_seconds < 3 {
+                    spinner_frame.to_string()
+                } else {
+                    "󰒲".to_string()
+                }
+            }
+        }
+    };
+    let activity_color = if session.is_current {
+        status_color(session.status, true, theme, blink_on, is_emphasized)
+    } else {
+        match session.status {
+            SessionStatus::Idle => idle_color(theme, session.idle_seconds, is_emphasized),
+            _ => status_color(session.status, false, theme, blink_on, is_emphasized),
+        }
+    };
+    let idx_str = format!("{:>2}", sidebar_idx + 1);
+
+    let mut spans = vec![
+        Span::styled(accent, Style::default().fg(accent_color).bg(bg)),
+        Span::styled(activity_text, Style::default().fg(activity_color).bg(bg)),
+        Span::styled(idx_str, index_style.bg(bg)),
+        Span::styled("  ", Style::default().bg(bg)),
+        Span::styled(
+            truncate(session.name, width.saturating_sub(6)),
+            name_style.bg(bg),
+        ),
+    ];
+
+    if !session.branch.is_empty() {
+        let branch_color = if is_focused { theme.pink } else { theme.muted };
+        spans.push(Span::styled("  ", Style::default().bg(bg)));
+        spans.push(Span::styled(
+            truncate(session.branch, width.saturating_sub(20)),
+            Style::default().fg(branch_color).bg(bg),
+        ));
+
+        let status = format_git_status(session, true);
+        if !status.is_empty() {
+            let status_color = if status == "✓" {
+                if is_emphasized { theme.green } else { theme.muted }
+            } else if is_emphasized {
+                theme.yellow
+            } else {
+                theme.dim
+            };
+            spans.push(Span::styled(" ", Style::default().bg(bg)));
+            spans.push(Span::styled(
+                status,
+                Style::default().fg(status_color).bg(bg),
+            ));
+        }
+    }
+
+    lines.push(pad_line(spans, bg, width));
+
+    let text_width = width.saturating_sub(6);
+    let dir_display = truncate(&shorten_dir(session.dir), text_width);
+    let dir_color = if is_focused { theme.teal } else { theme.muted };
+    lines.push(pad_line(
+        vec![
+            Span::styled("      ", Style::default().bg(bg)),
+            Span::styled(dir_display, Style::default().fg(dir_color).bg(bg)),
+        ],
+        bg,
+        width,
+    ));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_remote_row(
+    lines: &mut Vec<Line<'_>>,
+    row: &RemoteSessionView,
+    is_focused: bool,
+    bg: Color,
+    gutter_bg: Color,
+    theme: &Theme,
+    width: usize,
+    target_height: usize,
+) {
+    let accent_color = if is_focused { theme.green } else { bg };
+    let accent = if is_focused { "▌" } else { " " };
+    let name_fg = if row.unreachable {
+        theme.muted
+    } else if is_focused {
+        theme.text
+    } else {
+        theme.secondary
+    };
+    let mut name_style = Style::default().fg(name_fg).bg(bg);
+    if is_focused {
+        name_style = name_style.add_modifier(Modifier::BOLD);
+    }
+    let before = lines.len();
+    lines.push(pad_line(
+        vec![
+            Span::styled(accent, Style::default().fg(accent_color).bg(bg)),
+            Span::styled(
+                truncate(&format!("  {}", row.name), width.saturating_sub(1)),
+                name_style,
+            ),
+        ],
+        bg,
+        width,
+    ));
+    if !row.dir.is_empty() {
+        lines.push(pad_line(
+            vec![Span::styled(
+                truncate(
+                    &format!("    {}", shorten_dir(row.dir)),
+                    width.saturating_sub(1),
+                ),
+                Style::default().fg(theme.muted).bg(bg),
+            )],
+            bg,
+            width,
+        ));
+    }
+    // Pad to the target height so each remote row occupies the same
+    // vertical space as a local card. Intermediate rows use the row
+    // bg (group tint, or surface when focused) so the focused card's
+    // highlight is solid; the LAST row uses the group bg so the
+    // group's continuous background extends across the gutter
+    // between adjacent remote cards (matching the local-card behavior
+    // where the gutter sits on the group's bg).
+    while lines.len() - before < target_height.saturating_sub(1) {
+        lines.push(pad_line(
+            vec![Span::styled(" ", Style::default().bg(bg))],
+            bg,
+            width,
+        ));
+    }
+    if lines.len() - before < target_height {
+        lines.push(pad_line(
+            vec![Span::styled(" ", Style::default().bg(gutter_bg))],
+            gutter_bg,
+            width,
+        ));
+    }
+}
+
 
 fn plugin_dot_style(status: PluginStatus, blink_on: bool, theme: &Theme) -> Style {
     match status {

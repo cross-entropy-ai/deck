@@ -54,12 +54,16 @@ pub struct SessionView<'a> {
     pub is_current: bool,
 }
 
-/// Minimal data needed to render one remote (read-only) session row.
+/// Minimal data needed to render one remote session row. `host` is
+/// kept for symmetry with the data model and future use (e.g. status
+/// indicators per host); the sidebar currently shows host names only
+/// in group headers, not on every row.
 pub struct RemoteSessionView<'a> {
+    #[allow(dead_code)]
     pub host: &'a str,
     pub name: &'a str,
     pub dir: &'a str,
-    #[allow(dead_code)] // used once remote rows become selectable (Phase 2 step 5)
+    #[allow(dead_code)]
     pub idle_seconds: u64,
     pub unreachable: bool,
 }
