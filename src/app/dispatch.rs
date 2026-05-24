@@ -257,6 +257,45 @@ impl App {
         }
     }
 
+    /// Switch the main view to a session on a remote host.
+    ///
+    /// Cheap path: if the persistent ssh+tmux PTY for this host is
+    /// already alive (status = Connected), we just fire an out-of-band
+    /// `ssh host tmux switch-client -t name` on a worker thread and
+    /// flip `active_remote`. The PTY itself stays put; its tmux client
+    /// gets re-pointed at the requested session and the next read
+    /// produces the new screen.
+    ///
+    /// If the PTY isn't ready yet — Connecting or Failed — we don't
+    /// switch the view (would just show a blank pane). A Failed status
+    /// triggers nothing here; reconnection lives in step 5 follow-ups.
+    fn switch_to_remote(&mut self, host: &str, name: &str) {
+        use crate::app::RemoteConnStatus;
+        let connected = matches!(
+            self.remote_status.get(host),
+            Some(RemoteConnStatus::Connected)
+        ) && self.remote_terminals.contains_key(host);
+        if !connected {
+            return;
+        }
+
+        // Fire-and-forget switch-client. Background thread because the
+        // call (even over a warm ControlMaster) costs ~10–30 ms — small
+        // but enough to noticeably stall j/k scrolling if we ran it
+        // inline.
+        let host_owned = host.to_string();
+        let name_owned = name.to_string();
+        std::thread::Builder::new()
+            .name(format!("deck-switch-{host_owned}"))
+            .spawn(move || {
+                crate::remote_tmux::switch_client(&host_owned, &name_owned);
+            })
+            .ok();
+
+        self.active_remote = Some(host.to_string());
+        self.needs_full_redraw = true;
+    }
+
     fn switch_to_session_if_safe(&mut self, session: &str) -> bool {
         if let Some(warning) = self.nesting_guard.warning_for_switch(session) {
             self.warning_state = Some(warning);
@@ -273,6 +312,10 @@ impl App {
 
         if let Some(ref name) = fx.switch_session {
             self.switch_to_session_if_safe(name);
+        }
+
+        if let Some(ref req) = fx.switch_remote {
+            self.switch_to_remote(&req.host, &req.name);
         }
 
         if let Some(ref rename) = fx.rename_session {

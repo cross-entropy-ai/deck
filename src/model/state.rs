@@ -153,11 +153,26 @@ pub struct RemoteSessionRow {
     pub unreachable: bool,
 }
 
+/// Identifies a sidebar row in the unified focus model. Local rows
+/// follow the existing `filtered` order; remote rows pick up where
+/// local ones end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusTarget {
+    /// Index into `state.filtered` (which itself indexes into
+    /// `state.sessions`).
+    Local(usize),
+    /// Index into `state.remote_sessions`.
+    Remote(usize),
+}
+
 // --- Side effects ---
 
 #[derive(Debug, Default)]
 pub struct SideEffect {
     pub switch_session: Option<String>,
+    /// Switch the main view to a remote session. Carries (host, name)
+    /// — App's dispatch layer routes the `tmux switch-client` over ssh.
+    pub switch_remote: Option<RemoteSwitchRequest>,
     pub kill_session: Option<KillRequest>,
     pub rename_session: Option<RenameRequest>,
     /// `Some(req)` means: create a new tmux session with `req.name` at
@@ -228,6 +243,13 @@ pub struct RenameRequest {
 pub struct CreateSessionRequest {
     pub name: String,
     pub dir: String,
+}
+
+/// Info needed to switch the main view to a remote tmux session.
+#[derive(Debug)]
+pub struct RemoteSwitchRequest {
+    pub host: String,
+    pub name: String,
 }
 
 /// UI state for an in-progress rename.
@@ -648,6 +670,27 @@ impl AppState {
         None
     }
 
+    /// Total number of focusable rows in the sidebar: local sessions
+    /// (after filtering) followed by remote sessions.
+    pub fn focusable_count(&self) -> usize {
+        self.filtered.len() + self.remote_sessions.len()
+    }
+
+    /// Decode the current `focused` index into a structured target.
+    /// Returns `None` if nothing is focusable (empty sidebar).
+    pub fn focus_target(&self) -> Option<FocusTarget> {
+        if self.focused < self.filtered.len() {
+            Some(FocusTarget::Local(self.focused))
+        } else {
+            let remote_idx = self.focused - self.filtered.len();
+            if remote_idx < self.remote_sessions.len() {
+                Some(FocusTarget::Remote(remote_idx))
+            } else {
+                None
+            }
+        }
+    }
+
     /// Map a screen position to a context menu item index.
     pub fn menu_item_at(&self, col: u16, row: u16) -> Option<usize> {
         let menu = self.overlay.context_menu.as_ref()?;
@@ -669,8 +712,13 @@ impl AppState {
 
     pub fn recompute_filter(&mut self) {
         self.filtered = (0..self.sessions.len()).collect();
-        if !self.filtered.is_empty() && self.focused >= self.filtered.len() {
-            self.focused = self.filtered.len() - 1;
+        // Clamp focused to the unified focusable range (local + remote).
+        // Without remotes this collapses to the original local-only
+        // behavior; with remotes it keeps focus inside the remote
+        // section after the local list shrinks.
+        let total = self.focusable_count();
+        if total > 0 && self.focused >= total {
+            self.focused = total - 1;
         }
     }
 

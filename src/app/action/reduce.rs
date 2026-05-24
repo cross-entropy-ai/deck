@@ -1,67 +1,84 @@
 use crate::state::{
-    AppState, ContextMenu, FocusMode, KillRequest, LayoutMode, MainView, MenuKind,
-    RenameRequest, RenameState, SideEffect, ViewMode, SETTINGS_ITEM_COUNT,
+    AppState, ContextMenu, FocusMode, FocusTarget, KillRequest, LayoutMode, MainView, MenuKind,
+    RemoteSwitchRequest, RenameRequest, RenameState, SideEffect, ViewMode, SETTINGS_ITEM_COUNT,
 };
 use crate::theme::THEMES;
 
 use super::Action;
+
+/// Fill the appropriate `SideEffect` field based on the currently
+/// focused row — `switch_session` for a local row, `switch_remote`
+/// for a remote one. Used by every nav action so they don't each
+/// have to re-implement the local/remote branching.
+fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) {
+    match state.focus_target() {
+        Some(FocusTarget::Local(pos)) => {
+            if let Some(&session_idx) = state.filtered.get(pos) {
+                fx.switch_session = Some(state.sessions[session_idx].name.clone());
+            }
+        }
+        Some(FocusTarget::Remote(idx)) => {
+            if let Some(row) = state.remote_sessions.get(idx) {
+                if !row.unreachable {
+                    fx.switch_remote = Some(RemoteSwitchRequest {
+                        host: row.host.clone(),
+                        name: row.name.clone(),
+                    });
+                }
+            }
+        }
+        None => {}
+    }
+}
 
 pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
     let mut fx = SideEffect::default();
 
     match action {
         Action::FocusNext => {
-            if !state.filtered.is_empty() {
+            let total = state.focusable_count();
+            if total > 0 {
                 let old = state.focused;
-                state.focused = (state.focused + 1).min(state.filtered.len() - 1);
+                state.focused = (state.focused + 1).min(total - 1);
                 if state.focused != old {
-                    if let Some(&session_idx) = state.filtered.get(state.focused) {
-                        fx.switch_session = Some(state.sessions[session_idx].name.clone());
-                    }
+                    fill_switch_effect(state, &mut fx);
                 }
             }
         }
         Action::FocusPrev => {
             if state.focused > 0 {
                 state.focused -= 1;
-                if let Some(&session_idx) = state.filtered.get(state.focused) {
-                    fx.switch_session = Some(state.sessions[session_idx].name.clone());
-                }
+                fill_switch_effect(state, &mut fx);
             }
         }
         Action::ScrollUp => {
             state.last_scroll = std::time::Instant::now();
             if state.focused > 0 {
                 state.focused -= 1;
-                if let Some(&session_idx) = state.filtered.get(state.focused) {
-                    fx.switch_session = Some(state.sessions[session_idx].name.clone());
-                }
+                fill_switch_effect(state, &mut fx);
             }
         }
         Action::ScrollDown => {
             state.last_scroll = std::time::Instant::now();
-            if !state.filtered.is_empty() {
+            let total = state.focusable_count();
+            if total > 0 {
                 let old = state.focused;
-                state.focused = (state.focused + 1).min(state.filtered.len() - 1);
+                state.focused = (state.focused + 1).min(total - 1);
                 if state.focused != old {
-                    if let Some(&session_idx) = state.filtered.get(state.focused) {
-                        fx.switch_session = Some(state.sessions[session_idx].name.clone());
-                    }
+                    fill_switch_effect(state, &mut fx);
                 }
             }
         }
         Action::FocusIndex(idx) => {
+            // Number-key shortcuts only target local sessions.
             if idx < state.filtered.len() {
                 state.focused = idx;
             }
         }
 
         Action::SwitchProject => {
-            if let Some(&session_idx) = state.filtered.get(state.focused) {
-                let name = state.sessions[session_idx].name.clone();
-                fx.switch_session = Some(name);
-                fx.refresh_sessions = true;
-            }
+            fill_switch_effect(state, &mut fx);
+            fx.refresh_sessions = true;
         }
         Action::KillSession => {
             if state.sessions.len() > 1 && state.filtered.get(state.focused).is_some() {

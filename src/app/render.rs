@@ -201,11 +201,17 @@ impl App {
                 .map(|d| (d.as_millis() / 500) % 2 == 0)
                 .unwrap_or(true);
 
+            // Decode the unified focus index into "is it a remote
+            // row?" for the sidebar so it knows what to highlight.
+            let focused_remote = focused
+                .checked_sub(self.state.filtered.len())
+                .filter(|&idx| idx < self.state.remote_sessions.len());
             captured_banner_bounds = ui::draw_sidebar(
                 frame,
                 sidebar_area,
                 &views,
                 &remote_views,
+                focused_remote,
                 focused,
                 sidebar_active,
                 theme,

@@ -30,6 +30,8 @@ pub fn draw_sidebar(
     area: Rect,
     sessions: &[SessionView],
     remote_sessions: &[RemoteSessionView],
+    // `Some(remote_idx)` when keyboard focus is on a remote row.
+    focused_remote: Option<usize>,
     focused: usize,
     sidebar_active: bool,
     theme: &Theme,
@@ -103,6 +105,7 @@ pub fn draw_sidebar(
             sessions_area,
             sessions,
             remote_sessions,
+            focused_remote,
             focused,
             spinner_frame,
             blink_on,
@@ -150,6 +153,7 @@ fn draw_sessions(
     area: Rect,
     sessions: &[SessionView],
     remote_sessions: &[RemoteSessionView],
+    focused_remote: Option<usize>,
     focused: usize,
     spinner_frame: &str,
     blink_on: bool,
@@ -285,7 +289,7 @@ fn draw_sessions(
                 lines.push(Line::from(Span::styled(" ", Style::default().bg(theme.bg))));
             }
 
-            append_remote_section(&mut lines, remote_sessions, width, theme);
+            append_remote_section(&mut lines, remote_sessions, focused_remote, width, theme);
 
             let scroll = scroll_offset(focused, area.height, card_height(view_mode));
             frame.render_widget(
@@ -301,6 +305,7 @@ fn draw_sessions(
                 area,
                 sessions,
                 remote_sessions,
+                focused_remote,
                 focused,
                 spinner_frame,
                 blink_on,
@@ -317,6 +322,7 @@ fn draw_sessions(
 fn append_remote_section(
     lines: &mut Vec<Line<'_>>,
     remote_sessions: &[RemoteSessionView],
+    focused_remote: Option<usize>,
     width: usize,
     theme: &Theme,
 ) {
@@ -331,29 +337,46 @@ fn append_remote_section(
         theme.bg,
         width,
     ));
-    for r in remote_sessions {
+    for (i, r) in remote_sessions.iter().enumerate() {
+        let is_focused = focused_remote == Some(i);
+        let bg = if is_focused { theme.surface } else { theme.bg };
+        let accent_color = if is_focused { theme.green } else { theme.bg };
+        let accent = if is_focused { "▌" } else { " " };
+
         let label = if r.unreachable {
-            format!("  {}/  {}", r.host, r.name)
+            format!(" {}/{}", r.host, r.name)
         } else {
-            format!("  {}/{}", r.host, r.name)
+            format!(" {}/{}", r.host, r.name)
         };
         let fg = if r.unreachable {
             theme.muted
+        } else if is_focused {
+            theme.text
         } else {
             theme.secondary
         };
+        let mut name_style = Style::default().fg(fg).bg(bg);
+        if is_focused {
+            name_style = name_style.add_modifier(Modifier::BOLD);
+        }
         lines.push(pad_line(
-            vec![Span::styled(truncate(&label, width), Style::default().fg(fg))],
-            theme.bg,
+            vec![
+                Span::styled(accent, Style::default().fg(accent_color).bg(bg)),
+                Span::styled(truncate(&label, width.saturating_sub(1)), name_style),
+            ],
+            bg,
             width,
         ));
         if !r.dir.is_empty() {
             lines.push(pad_line(
-                vec![Span::styled(
-                    truncate(&format!("    {}", shorten_dir(r.dir)), width),
-                    Style::default().fg(theme.muted),
-                )],
-                theme.bg,
+                vec![
+                    Span::styled(" ", Style::default().bg(bg)),
+                    Span::styled(
+                        truncate(&format!("   {}", shorten_dir(r.dir)), width.saturating_sub(1)),
+                        Style::default().fg(theme.muted).bg(bg),
+                    ),
+                ],
+                bg,
                 width,
             ));
         }
@@ -367,6 +390,7 @@ fn draw_sessions_compact(
     area: Rect,
     sessions: &[SessionView],
     remote_sessions: &[RemoteSessionView],
+    focused_remote: Option<usize>,
     focused: usize,
     spinner_frame: &str,
     blink_on: bool,
@@ -479,7 +503,7 @@ fn draw_sessions_compact(
         ));
     }
 
-    append_remote_section(&mut lines, remote_sessions, width, theme);
+    append_remote_section(&mut lines, remote_sessions, focused_remote, width, theme);
 
     let scroll = scroll_offset(focused, area.height, card_height(ViewMode::Compact));
     frame.render_widget(
