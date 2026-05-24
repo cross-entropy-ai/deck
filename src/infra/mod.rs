@@ -8,5 +8,6 @@ pub mod proc_status;
 pub mod pty;
 pub mod refresh;
 pub mod shutdown;
+pub mod ssh;
 pub mod tmux;
 pub mod update;

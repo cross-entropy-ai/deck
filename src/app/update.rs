@@ -10,6 +10,10 @@ use super::{App, UPDATE_CHECK_INTERVAL};
 
 impl App {
     pub(super) fn save_config(&self) {
+        // Remotes are managed only by the `deck remote` CLI, not the UI.
+        // Re-read the on-disk list so saving UI-side settings doesn't
+        // clobber whatever the user configured via the CLI.
+        let remotes = Config::load().remotes;
         Config {
             theme: THEMES[self.state.theme_index].name.to_string(),
             layout: self.state.layout_mode,
@@ -21,6 +25,7 @@ impl App {
             plugins: self.state.plugins.clone(),
             keybindings: self.raw_keybindings.clone(),
             update_check: self.state.update_check_mode,
+            remotes,
         }
         .save();
     }

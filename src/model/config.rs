@@ -15,6 +15,14 @@ pub struct PluginConfig {
     pub key: char,
 }
 
+/// A remote host whose tmux sessions deck should surface alongside local ones.
+/// The host string must resolve to an entry in the user's `~/.ssh/config`
+/// (or a directly-resolvable hostname); deck shells out to `ssh <host> ...`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteConfig {
+    pub host: String,
+}
+
 /// User-configurable binding value for a single command.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
@@ -67,6 +75,7 @@ pub struct Config {
     pub plugins: Vec<PluginConfig>,
     pub keybindings: BTreeMap<String, KeyBindingValue>,
     pub update_check: UpdateCheckMode,
+    pub remotes: Vec<RemoteConfig>,
 }
 
 impl Default for Config {
@@ -82,6 +91,7 @@ impl Default for Config {
             plugins: Vec::new(),
             keybindings: BTreeMap::new(),
             update_check: UpdateCheckMode::Enabled,
+            remotes: Vec::new(),
         }
     }
 }

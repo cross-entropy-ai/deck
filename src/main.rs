@@ -6,13 +6,15 @@ mod ui;
 pub(crate) use app::action;
 pub(crate) use infra::{
     claude_state, git, hooks, instance_guard, nesting_guard, proc_status, pty, refresh, shutdown,
-    tmux, update,
+    ssh, tmux, update,
 };
 pub(crate) use model::{config, keybindings, new_session, state};
 pub(crate) use ui::{bridge, layout, theme};
 
-use std::io;
+use std::io::{self, Write};
 use std::process::Command;
+
+use config::{Config, RemoteConfig};
 
 use crossterm::event::{
     DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
@@ -33,6 +35,9 @@ enum ParsedCommand {
     Run(ParsedArgs),
     HooksInstall,
     HooksUninstall,
+    RemoteAdd(String),
+    RemoteList,
+    RemoteRemove(String),
 }
 
 fn main() -> io::Result<()> {
@@ -51,6 +56,16 @@ fn main() -> io::Result<()> {
                 std::process::exit(1);
             }
             return Ok(());
+        }
+        Ok(Some(ParsedCommand::RemoteAdd(host))) => {
+            std::process::exit(run_remote_add(&host));
+        }
+        Ok(Some(ParsedCommand::RemoteList)) => {
+            run_remote_list();
+            return Ok(());
+        }
+        Ok(Some(ParsedCommand::RemoteRemove(host))) => {
+            std::process::exit(run_remote_remove(&host));
         }
         Ok(None) => return Ok(()),
         Err(code) => std::process::exit(code),
@@ -157,6 +172,10 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<ParsedCo
             iter.next();
             return parse_hooks_args(iter);
         }
+        if first == "remote" {
+            iter.next();
+            return parse_remote_args(iter);
+        }
     }
 
     let mut force = false;
@@ -235,9 +254,151 @@ fn parse_hooks_args<I: Iterator<Item = String>>(mut iter: I) -> Result<Option<Pa
     }
 }
 
+fn parse_remote_args<I: Iterator<Item = String>>(
+    mut iter: I,
+) -> Result<Option<ParsedCommand>, i32> {
+    let Some(sub) = iter.next() else {
+        eprintln!("deck: `remote` requires a subcommand (add|list|remove).");
+        eprintln!("Run `deck --help` for usage.");
+        return Err(2);
+    };
+    match sub.as_str() {
+        "list" => {
+            if let Some(extra) = iter.next() {
+                eprintln!("deck: unexpected argument '{extra}' after `remote list`.");
+                return Err(2);
+            }
+            Ok(Some(ParsedCommand::RemoteList))
+        }
+        "add" | "remove" => {
+            let Some(host) = iter.next() else {
+                eprintln!("deck: `remote {sub}` requires a host argument.");
+                return Err(2);
+            };
+            if host.starts_with('-') {
+                eprintln!("deck: expected a host name after `remote {sub}`, got '{host}'");
+                return Err(2);
+            }
+            if let Some(extra) = iter.next() {
+                eprintln!("deck: unexpected argument '{extra}' after `remote {sub} {host}`.");
+                return Err(2);
+            }
+            Ok(Some(if sub == "add" {
+                ParsedCommand::RemoteAdd(host)
+            } else {
+                ParsedCommand::RemoteRemove(host)
+            }))
+        }
+        "--help" | "-h" => {
+            print_help();
+            Ok(None)
+        }
+        other => {
+            eprintln!("deck: unknown `remote` subcommand '{other}'. Expected add|list|remove.");
+            Err(2)
+        }
+    }
+}
+
+/// Prompt the user with `question` and return true on yes. Defaults to no
+/// when stdin isn't a TTY or on read errors.
+fn prompt_yes_no(question: &str) -> bool {
+    print!("{question} (y/N) ");
+    if io::stdout().flush().is_err() {
+        return false;
+    }
+    let mut line = String::new();
+    if io::stdin().read_line(&mut line).is_err() {
+        return false;
+    }
+    matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+fn run_remote_add(host: &str) -> i32 {
+    let mut config = Config::load();
+    if config.remotes.iter().any(|r| r.host == host) {
+        eprintln!("deck: remote '{host}' is already configured");
+        return 1;
+    }
+
+    let cfg = match ssh::effective_config(host) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("deck: cannot read ssh config for '{host}': {e}");
+            return 1;
+        }
+    };
+
+    // `ssh -G` returns success even for unknown hosts (it falls through
+    // to defaults). Surface the resolved hostname so the user knows what
+    // deck will actually connect to.
+    if let Some(hostname) = cfg.get("hostname") {
+        println!("deck: resolved '{host}' -> {hostname}");
+    }
+
+    let status = ssh::MultiplexStatus::from_config(&cfg);
+    if !status.is_enabled() {
+        println!();
+        println!("Connection multiplexing is NOT enabled for '{host}'.");
+        println!("deck will run several ssh commands (list sessions, attach, refresh);");
+        println!("without multiplexing every call re-authenticates, which is slow and");
+        println!("may trigger repeated password / 2FA prompts.");
+        println!();
+        println!("Suggested ~/.ssh/config snippet:");
+        let snippet = ssh::suggested_snippet(host);
+        for line in snippet.lines() {
+            println!("  {line}");
+        }
+        if prompt_yes_no("Append this to ~/.ssh/config?") {
+            match ssh::append_to_ssh_config(&snippet) {
+                Ok(path) => println!("deck: appended snippet to {}", path.display()),
+                Err(e) => {
+                    eprintln!("deck: failed to write ~/.ssh/config: {e}");
+                    return 1;
+                }
+            }
+        } else {
+            println!("deck: skipped; you can add the snippet later by hand.");
+        }
+    } else {
+        println!("deck: ssh multiplexing already enabled for '{host}'.");
+    }
+
+    config.remotes.push(RemoteConfig {
+        host: host.to_string(),
+    });
+    config.save();
+    println!("deck: added remote '{host}'.");
+    0
+}
+
+fn run_remote_list() {
+    let config = Config::load();
+    if config.remotes.is_empty() {
+        println!("(no remotes configured)");
+        return;
+    }
+    for r in &config.remotes {
+        println!("{}", r.host);
+    }
+}
+
+fn run_remote_remove(host: &str) -> i32 {
+    let mut config = Config::load();
+    let before = config.remotes.len();
+    config.remotes.retain(|r| r.host != host);
+    if config.remotes.len() == before {
+        eprintln!("deck: no remote named '{host}'");
+        return 1;
+    }
+    config.save();
+    println!("deck: removed remote '{host}'.");
+    0
+}
+
 fn print_help() {
     println!(
-        "{name} {version}\n\nUsage:\n  {name}                     Launch the sidebar UI\n  {name} new <session>       Create a session named <session> in the current\n                             directory and attach to it\n  {name} --force             Terminate an existing deck instance and take over\n  {name} hooks install       Install Claude Code state hooks into ~/.claude/settings.json\n  {name} hooks uninstall     Remove deck's Claude Code hooks\n  {name} --version           Print version\n  {name} --help              Show this help",
+        "{name} {version}\n\nUsage:\n  {name}                     Launch the sidebar UI\n  {name} new <session>       Create a session named <session> in the current\n                             directory and attach to it\n  {name} --force             Terminate an existing deck instance and take over\n  {name} hooks install       Install Claude Code state hooks into ~/.claude/settings.json\n  {name} hooks uninstall     Remove deck's Claude Code hooks\n  {name} remote add <host>   Register an SSH host whose tmux sessions deck should surface\n  {name} remote list         List configured remote hosts\n  {name} remote remove <host>  Remove a remote host\n  {name} --version           Print version\n  {name} --help              Show this help",
         name = env!("CARGO_PKG_NAME"),
         version = env!("CARGO_PKG_VERSION"),
     );
