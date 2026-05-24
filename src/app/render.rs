@@ -121,6 +121,18 @@ impl App {
                     is_current: r.is_current,
                 })
                 .collect();
+            let remote_views: Vec<ui::RemoteSessionView> = self
+                .state
+                .remote_sessions
+                .iter()
+                .map(|r| ui::RemoteSessionView {
+                    host: r.host.as_str(),
+                    name: r.name.as_str(),
+                    dir: r.dir.as_str(),
+                    idle_seconds: r.idle_seconds,
+                    unreachable: r.unreachable,
+                })
+                .collect();
 
             let full = frame.area();
             let reload_height = ui::reload_row_count(reload_status.as_ref(), full.width);
@@ -193,6 +205,7 @@ impl App {
                 frame,
                 sidebar_area,
                 &views,
+                &remote_views,
                 focused,
                 sidebar_active,
                 theme,

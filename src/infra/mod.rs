@@ -7,6 +7,7 @@ pub mod nesting_guard;
 pub mod proc_status;
 pub mod pty;
 pub mod refresh;
+pub mod remote_tmux;
 pub mod shutdown;
 pub mod ssh;
 pub mod tmux;

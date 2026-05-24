@@ -24,12 +24,16 @@ use crate::claude_state;
 use crate::config::{self, ExcludePattern};
 use crate::git;
 use crate::proc_status;
+use crate::remote_tmux;
 use crate::state::SessionStatus;
 use crate::tmux::{self, TmuxPane};
 
 pub struct RefreshRequest {
     pub slave_tty: String,
     pub exclude_patterns: Vec<String>,
+    /// Hosts to query for remote tmux sessions. Empty (the common
+    /// case) skips the remote path entirely.
+    pub remotes: Vec<String>,
 }
 
 pub struct SnapshotRow {
@@ -46,9 +50,20 @@ pub struct SnapshotRow {
     pub status_event_ts_ms: Option<u64>,
 }
 
+/// One row from a remote host. Mirrors the subset of `SnapshotRow`
+/// fields we can cheaply produce over ssh — no git, no Claude status.
+pub struct RemoteSnapshotRow {
+    pub host: String,
+    pub name: String,
+    pub dir: String,
+    pub idle_seconds: u64,
+    pub unreachable: bool,
+}
+
 pub struct SessionSnapshot {
     pub current_session: String,
     pub rows: Vec<SnapshotRow>,
+    pub remote_rows: Vec<RemoteSnapshotRow>,
 }
 
 pub struct RefreshWorker {
@@ -169,10 +184,87 @@ fn collect(req: &RefreshRequest) -> SessionSnapshot {
         })
         .collect();
 
+    let remote_rows = collect_remotes(&req.remotes, now);
+
     SessionSnapshot {
         current_session: current,
         rows,
+        remote_rows,
     }
+}
+
+/// Query each remote host in parallel for its tmux sessions. Each host
+/// gets its own thread (one at a time, joined sequentially); this is
+/// fine because the per-host SSH call itself takes a few hundred ms
+/// and we'd rather max out at N parallel TCP roundtrips than serialize
+/// them. The thread join is bounded by the underlying ssh timeout in
+/// `remote_tmux` (5s), so a dead host can stall this call by at most
+/// that much.
+fn collect_remotes(remotes: &[String], now: u64) -> Vec<RemoteSnapshotRow> {
+    if remotes.is_empty() {
+        return Vec::new();
+    }
+    let handles: Vec<_> = remotes
+        .iter()
+        .cloned()
+        .map(|host| {
+            thread::Builder::new()
+                .name(format!("deck-remote-{host}"))
+                .spawn(move || {
+                    let result = remote_tmux::list_sessions(&host);
+                    (host, result)
+                })
+                .ok()
+        })
+        .collect();
+
+    let mut out = Vec::new();
+    for (host, handle) in remotes.iter().zip(handles) {
+        match handle.and_then(|h| h.join().ok()) {
+            Some((host_name, Some(sessions))) if !sessions.is_empty() => {
+                for s in sessions {
+                    let idle = now.saturating_sub(s.activity);
+                    out.push(RemoteSnapshotRow {
+                        host: host_name.clone(),
+                        name: s.name,
+                        dir: s.dir,
+                        idle_seconds: idle,
+                        unreachable: false,
+                    });
+                }
+            }
+            Some((host_name, Some(_empty))) => {
+                out.push(RemoteSnapshotRow {
+                    host: host_name,
+                    name: String::from("(no sessions)"),
+                    dir: String::new(),
+                    idle_seconds: 0,
+                    unreachable: false,
+                });
+            }
+            Some((host_name, None)) => {
+                out.push(RemoteSnapshotRow {
+                    host: host_name,
+                    name: String::from("(unreachable)"),
+                    dir: String::new(),
+                    idle_seconds: 0,
+                    unreachable: true,
+                });
+            }
+            None => {
+                // Thread spawn or join failed — rare. Fall back to the
+                // original host string.
+                out.push(RemoteSnapshotRow {
+                    host: host.clone(),
+                    name: String::from("(unreachable)"),
+                    dir: String::new(),
+                    idle_seconds: 0,
+                    unreachable: true,
+                });
+            }
+        }
+    }
+    out
 }
 
 /// Returns (status, event_ts_ms) for one session. Claude state — when

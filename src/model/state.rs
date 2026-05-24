@@ -136,6 +136,23 @@ pub struct SessionRow {
     pub status_event_ts_ms: Option<u64>,
 }
 
+/// One tmux session living on a remote host. Modeled separately from
+/// `SessionRow` so the existing local-only invariants (session_order,
+/// notification ack maps, validate_session_name, kill/rename dispatch)
+/// don't have to grow an `origin` discriminator on every touchpoint.
+/// Phase 2 step 5 will revisit this once remote operations land.
+#[derive(Debug, Clone)]
+pub struct RemoteSessionRow {
+    pub host: String,
+    pub name: String,
+    pub dir: String,
+    pub idle_seconds: u64,
+    /// True if reaching this host failed (timeout, auth error, etc.).
+    /// The row is still rendered but greyed out and the name column
+    /// shows a brief reason.
+    pub unreachable: bool,
+}
+
 // --- Side effects ---
 
 #[derive(Debug, Default)]
@@ -332,6 +349,10 @@ pub struct AppState {
     pub focused: usize,
     pub current_session: String,
     pub session_order: Vec<String>,
+    /// Tmux sessions discovered on configured remote hosts. Rendered
+    /// in the sidebar below local sessions; not part of `filtered` /
+    /// `focused` until Phase 2 step 5 wires real selection.
+    pub remote_sessions: Vec<RemoteSessionRow>,
 
     // UI state
     pub main_view: MainView,
@@ -424,6 +445,7 @@ impl AppState {
             focused: 0,
             current_session: String::new(),
             session_order: Vec::new(),
+            remote_sessions: Vec::new(),
             main_view: MainView::Terminal,
             focus_mode: FocusMode::Main,
             theme_index,

@@ -54,6 +54,16 @@ pub struct SessionView<'a> {
     pub is_current: bool,
 }
 
+/// Minimal data needed to render one remote (read-only) session row.
+pub struct RemoteSessionView<'a> {
+    pub host: &'a str,
+    pub name: &'a str,
+    pub dir: &'a str,
+    #[allow(dead_code)] // used once remote rows become selectable (Phase 2 step 5)
+    pub idle_seconds: u64,
+    pub unreachable: bool,
+}
+
 pub struct ExcludeEditorView<'a> {
     pub patterns: &'a [String],
     pub selected: usize,

@@ -1,6 +1,6 @@
 use crate::nesting_guard::WarningState;
 use crate::refresh::{RefreshRequest, SessionSnapshot};
-use crate::state::SessionRow;
+use crate::state::{RemoteSessionRow, SessionRow};
 
 use super::App;
 
@@ -21,6 +21,7 @@ impl App {
         RefreshRequest {
             slave_tty: self.pty.slave_tty.clone(),
             exclude_patterns: self.state.exclude_patterns.clone(),
+            remotes: self.remotes.clone(),
         }
     }
 
@@ -40,6 +41,18 @@ impl App {
         } else if matches!(self.warning_state, Some(WarningState::Detected(_))) {
             self.warning_state = None;
         }
+
+        self.state.remote_sessions = snap
+            .remote_rows
+            .into_iter()
+            .map(|r| RemoteSessionRow {
+                host: r.host,
+                name: r.name,
+                dir: r.dir,
+                idle_seconds: r.idle_seconds,
+                unreachable: r.unreachable,
+            })
+            .collect();
 
         self.state.sessions = snap
             .rows

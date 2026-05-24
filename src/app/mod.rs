@@ -50,6 +50,10 @@ pub struct App {
     update_checker: Option<crate::update::UpdateChecker>,
     upgrade_instance: Option<PluginInstance>,
     last_update_request: Option<Instant>,
+    /// Configured remote SSH hosts whose tmux sessions are surfaced
+    /// alongside local ones. Captured once at startup from
+    /// `config.remotes`; the `deck remote` CLI is the only writer.
+    remotes: Vec<String>,
     /// Set to true after a session switch (PTY respawn) so the next
     /// render call wipes the terminal before drawing — bypasses
     /// ratatui's frame-to-frame diff in case it misses any cells.
@@ -131,6 +135,7 @@ impl App {
             update_checker,
             upgrade_instance: None,
             last_update_request,
+            remotes: cfg.remotes.iter().map(|r| r.host.clone()).collect(),
             needs_full_redraw: false,
         };
 

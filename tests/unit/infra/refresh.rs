@@ -10,6 +10,7 @@ fn worker_coalesces_pending_requests() {
         worker.request(RefreshRequest {
             slave_tty: String::new(),
             exclude_patterns: vec![],
+            remotes: vec![],
         });
     }
 

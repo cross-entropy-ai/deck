@@ -20,14 +20,16 @@ use super::text::{
     format_idle_badge, idle_color, pack_hint_lines, pad_line, primary_key_string, scroll_offset,
     shorten_dir, status_color, status_icon, status_icon_compact, truncate,
 };
-use super::{PluginStatus, PluginView, SessionView};
+use super::{PluginStatus, PluginView, RemoteSessionView, SessionView};
 use crate::state::SessionStatus;
 
+#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 pub fn draw_sidebar(
     frame: &mut Frame,
     area: Rect,
     sessions: &[SessionView],
+    remote_sessions: &[RemoteSessionView],
     focused: usize,
     sidebar_active: bool,
     theme: &Theme,
@@ -100,6 +102,7 @@ pub fn draw_sidebar(
             frame,
             sessions_area,
             sessions,
+            remote_sessions,
             focused,
             spinner_frame,
             blink_on,
@@ -146,13 +149,14 @@ fn draw_sessions(
     frame: &mut Frame,
     area: Rect,
     sessions: &[SessionView],
+    remote_sessions: &[RemoteSessionView],
     focused: usize,
     spinner_frame: &str,
     blink_on: bool,
     theme: &Theme,
     view_mode: ViewMode,
 ) {
-    if sessions.is_empty() {
+    if sessions.is_empty() && remote_sessions.is_empty() {
         frame.render_widget(
             Paragraph::new("  No projects").style(Style::default().fg(theme.muted).bg(theme.bg)),
             area,
@@ -281,6 +285,8 @@ fn draw_sessions(
                 lines.push(Line::from(Span::styled(" ", Style::default().bg(theme.bg))));
             }
 
+            append_remote_section(&mut lines, remote_sessions, width, theme);
+
             let scroll = scroll_offset(focused, area.height, card_height(view_mode));
             frame.render_widget(
                 Paragraph::new(lines)
@@ -290,9 +296,69 @@ fn draw_sessions(
             );
         }
         ViewMode::Compact => {
-            draw_sessions_compact(frame, area, sessions, focused, spinner_frame, blink_on, theme);
+            draw_sessions_compact(
+                frame,
+                area,
+                sessions,
+                remote_sessions,
+                focused,
+                spinner_frame,
+                blink_on,
+                theme,
+            );
         }
     }
+}
+
+/// Append a simple "Remote" section to the sidebar lines. Read-only in
+/// Phase 2 — these rows aren't selectable yet, just visible. Each row
+/// is rendered as `host/name` on one line with an optional second line
+/// for the path; unreachable hosts get a muted style and a brief tag.
+fn append_remote_section(
+    lines: &mut Vec<Line<'_>>,
+    remote_sessions: &[RemoteSessionView],
+    width: usize,
+    theme: &Theme,
+) {
+    if remote_sessions.is_empty() {
+        return;
+    }
+    lines.push(pad_line(
+        vec![Span::styled(
+            "  Remote",
+            Style::default().fg(theme.dim).add_modifier(Modifier::BOLD),
+        )],
+        theme.bg,
+        width,
+    ));
+    for r in remote_sessions {
+        let label = if r.unreachable {
+            format!("  {}/  {}", r.host, r.name)
+        } else {
+            format!("  {}/{}", r.host, r.name)
+        };
+        let fg = if r.unreachable {
+            theme.muted
+        } else {
+            theme.secondary
+        };
+        lines.push(pad_line(
+            vec![Span::styled(truncate(&label, width), Style::default().fg(fg))],
+            theme.bg,
+            width,
+        ));
+        if !r.dir.is_empty() {
+            lines.push(pad_line(
+                vec![Span::styled(
+                    truncate(&format!("    {}", shorten_dir(r.dir)), width),
+                    Style::default().fg(theme.muted),
+                )],
+                theme.bg,
+                width,
+            ));
+        }
+    }
+    lines.push(pad_line(vec![Span::raw("")], theme.bg, width));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -300,6 +366,7 @@ fn draw_sessions_compact(
     frame: &mut Frame,
     area: Rect,
     sessions: &[SessionView],
+    remote_sessions: &[RemoteSessionView],
     focused: usize,
     spinner_frame: &str,
     blink_on: bool,
@@ -411,6 +478,8 @@ fn draw_sessions_compact(
             width,
         ));
     }
+
+    append_remote_section(&mut lines, remote_sessions, width, theme);
 
     let scroll = scroll_offset(focused, area.height, card_height(ViewMode::Compact));
     frame.render_widget(
