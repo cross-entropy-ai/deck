@@ -77,7 +77,7 @@ impl App {
                         }
                     }
                     _ => {
-                        let _ = self.pty.write(bytes);
+                        let _ = self.active_terminal_mut().pty.write(bytes);
                     }
                 }
                 false
@@ -95,7 +95,7 @@ impl App {
                         }
                     }
                     _ => {
-                        let _ = self.pty.write(bytes);
+                        let _ = self.active_terminal_mut().pty.write(bytes);
                     }
                 }
                 self.state.focus_mode = FocusMode::Main;
@@ -234,18 +234,24 @@ impl App {
         let (rows, cols) = self.state.pty_size();
         match Self::spawn_tmux_pty((rows, cols), &self.nesting_guard, Some(session)) {
             Ok(pty) => {
-                self.pty = pty;
-                self.parser = vt100::Parser::new(rows, cols, 0);
+                self.local_terminal = crate::app::TerminalPane {
+                    pty,
+                    parser: vt100::Parser::new(rows, cols, 0),
+                    alive: true,
+                };
+                // Selecting a local session implies returning to the
+                // local view if we were watching a remote one.
+                self.active_remote = None;
                 self.needs_full_redraw = true;
             }
             Err(_) => {
                 // Spawn failed (no tmux? no target?). Fall back to the
                 // legacy switch-client path so at least the switch is
                 // attempted — residue may persist.
-                if self.pty.slave_tty.is_empty() {
+                if self.local_terminal.pty.slave_tty.is_empty() {
                     tmux::switch_session(session);
                 } else {
-                    tmux::switch_client_for_tty(&self.pty.slave_tty, session);
+                    tmux::switch_client_for_tty(&self.local_terminal.pty.slave_tty, session);
                 }
             }
         }

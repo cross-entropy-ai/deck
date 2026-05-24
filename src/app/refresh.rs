@@ -19,7 +19,11 @@ fn notify_waiting(session_name: &str) {
 impl App {
     fn build_refresh_request(&self) -> RefreshRequest {
         RefreshRequest {
-            slave_tty: self.pty.slave_tty.clone(),
+            // The refresh worker always tracks the LOCAL tmux server's
+            // current-session — that's what drives sidebar highlighting
+            // for local rows. Remote rows aren't subject to ack/current
+            // logic, so we don't need to plumb their slave_ttys.
+            slave_tty: self.local_terminal.pty.slave_tty.clone(),
             exclude_patterns: self.state.exclude_patterns.clone(),
             remotes: self.remotes.clone(),
         }

@@ -30,21 +30,27 @@ impl App {
 
     pub(super) fn resize_pty(&mut self) {
         let (pty_rows, pty_cols) = self.state.pty_size();
-        self.parser.screen_mut().set_size(pty_rows, pty_cols);
-        let _ = self.pty.resize(PtySize {
+        let size = PtySize {
             rows: pty_rows,
             cols: pty_cols,
             pixel_width: 0,
             pixel_height: 0,
-        });
+        };
+        // Resize every PTY-backed pane, active or not — when the user
+        // switches to a remote pane later we don't want it to inherit
+        // a stale size.
+        self.local_terminal
+            .parser
+            .screen_mut()
+            .set_size(pty_rows, pty_cols);
+        let _ = self.local_terminal.pty.resize(size);
+        for pane in self.remote_terminals.values_mut() {
+            pane.parser.screen_mut().set_size(pty_rows, pty_cols);
+            let _ = pane.pty.resize(size);
+        }
         for inst in self.plugin_instances.iter_mut().flatten() {
             inst.parser.screen_mut().set_size(pty_rows, pty_cols);
-            let _ = inst.pty.resize(PtySize {
-                rows: pty_rows,
-                cols: pty_cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            });
+            let _ = inst.pty.resize(size);
         }
     }
 
@@ -77,8 +83,12 @@ impl App {
     pub(super) fn respawn_pty(&mut self) -> io::Result<()> {
         let (pty_rows, pty_cols) = self.state.pty_size();
         self.nesting_guard.refresh();
-        self.pty = Self::spawn_tmux_pty((pty_rows, pty_cols), &self.nesting_guard, None)?;
-        self.parser = vt100::Parser::new(pty_rows, pty_cols, 0);
+        let pty = Self::spawn_tmux_pty((pty_rows, pty_cols), &self.nesting_guard, None)?;
+        self.local_terminal = crate::app::TerminalPane {
+            pty,
+            parser: vt100::Parser::new(pty_rows, pty_cols, 0),
+            alive: true,
+        };
         Ok(())
     }
 

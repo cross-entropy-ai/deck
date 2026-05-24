@@ -236,7 +236,7 @@ impl App {
                 }
             }
 
-            let screen = self.parser.screen();
+            let screen = self.active_terminal().parser.screen();
             let plugin_screen = match main_view {
                 MainView::Plugin(idx) => self
                     .plugin_instances

@@ -7,7 +7,7 @@ mod refresh;
 mod render;
 mod update;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -37,10 +37,27 @@ struct PluginInstance {
     alive: bool,
 }
 
+/// A PTY-backed terminal view in the main pane. Both the local
+/// `tmux attach` and each remote `ssh -t host tmux attach` are
+/// modeled with this struct — the render / input / resize code
+/// doesn't care which is which. Step 5 will use `active_remote` to
+/// pick which one drives the main pane.
+pub(super) struct TerminalPane {
+    pub pty: Pty,
+    pub parser: vt100::Parser,
+    pub alive: bool,
+}
+
 pub struct App {
     state: AppState,
-    pty: Pty,
-    parser: vt100::Parser,
+    /// The always-present local tmux PTY.
+    local_terminal: TerminalPane,
+    /// One PTY per configured remote host, populated lazily by step 4.
+    remote_terminals: HashMap<String, TerminalPane>,
+    /// `None` = the local terminal drives the main pane; `Some(host)`
+    /// = the remote terminal for that host does. Switched by selecting
+    /// a session in the sidebar (step 5).
+    active_remote: Option<String>,
     spinner: rattles::Rattler<rattles::presets::braille::Dots>,
     nesting_guard: NestingGuard,
     warning_state: Option<WarningState>,
@@ -121,11 +138,17 @@ impl App {
             attach_override.as_deref(),
         )?;
         let parser = vt100::Parser::new(pty_rows, pty_cols, 0);
+        let local_terminal = TerminalPane {
+            pty,
+            parser,
+            alive: true,
+        };
 
         let mut app = App {
             state,
-            pty,
-            parser,
+            local_terminal,
+            remote_terminals: HashMap::new(),
+            active_remote: None,
             spinner: rattles::presets::braille::dots(),
             nesting_guard,
             warning_state: None,
@@ -145,20 +168,67 @@ impl App {
         Ok(app)
     }
 
+    /// The terminal pane that owns the main view: local by default, or
+    /// the remote pane for the active host. Falls back to local if the
+    /// active host's pane has been dropped (e.g. connection died and
+    /// hasn't been re-spawned yet).
+    pub(super) fn active_terminal(&self) -> &TerminalPane {
+        match &self.active_remote {
+            Some(host) => self
+                .remote_terminals
+                .get(host)
+                .unwrap_or(&self.local_terminal),
+            None => &self.local_terminal,
+        }
+    }
+
+    pub(super) fn active_terminal_mut(&mut self) -> &mut TerminalPane {
+        // Decide which pane to return without holding a borrow on
+        // `self.remote_terminals` so we can fall back to local.
+        let key = self
+            .active_remote
+            .as_ref()
+            .filter(|h| self.remote_terminals.contains_key(h.as_str()))
+            .cloned();
+        match key {
+            Some(host) => self.remote_terminals.get_mut(&host).expect("checked above"),
+            None => &mut self.local_terminal,
+        }
+    }
+
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         let mut last_refresh = Instant::now();
-        let mut pty_alive = true;
 
         loop {
-            for event in self.pty.drain() {
+            // Drain the local terminal. OSC52 (clipboard) is only
+            // forwarded from the local PTY — we never want remote
+            // sessions to silently copy to the user's clipboard.
+            for event in self.local_terminal.pty.drain() {
                 match event {
                     PtyEvent::Output(data) => {
                         Self::forward_osc52(&data);
-                        self.parser.process(&data);
+                        self.local_terminal.parser.process(&data);
                     }
-                    PtyEvent::Exited => pty_alive = false,
+                    PtyEvent::Exited => self.local_terminal.alive = false,
                 }
             }
+            // Drain every remote terminal too, even the inactive ones.
+            // tmux on the remote keeps producing output (status bar
+            // ticks, idle redraws); if we stopped reading, the kernel
+            // pipe buffer would fill and block the child.
+            for pane in self.remote_terminals.values_mut() {
+                for event in pane.pty.drain() {
+                    match event {
+                        PtyEvent::Output(data) => pane.parser.process(&data),
+                        PtyEvent::Exited => pane.alive = false,
+                    }
+                }
+            }
+            // `pty_alive` mirrors the local terminal's liveness; the
+            // local PTY exiting (e.g. its tmux client got detached) is
+            // the only condition that should rebuild the main view, so
+            // remote panes don't factor in.
+            let pty_alive = self.local_terminal.alive;
             for inst in self.plugin_instances.iter_mut().flatten() {
                 for event in inst.pty.drain() {
                     match event {
@@ -240,7 +310,7 @@ impl App {
                             bytes.extend_from_slice(b"\x1b[201~");
                             match self.state.main_view {
                                 MainView::Terminal => {
-                                    let _ = self.pty.write(&bytes);
+                                    let _ = self.active_terminal_mut().pty.write(&bytes);
                                 }
                                 MainView::Plugin(idx) => {
                                     if let Some(ref mut inst) =
@@ -292,7 +362,8 @@ impl App {
                 }
                 match self.respawn_pty() {
                     Ok(()) => {
-                        pty_alive = true;
+                        // respawn_pty rebuilt the local TerminalPane
+                        // with `alive: true`; no separate flag to reset.
                         self.request_refresh();
                     }
                     Err(_) => break,
