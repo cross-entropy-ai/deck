@@ -5,24 +5,18 @@ mod ui;
 
 pub(crate) use app::action;
 pub(crate) use infra::{
-    claude_state, git, hooks, instance_guard, nesting_guard, proc_status, pty, refresh,
-    remote_tmux, self_update, shutdown, ssh, tmux, update,
+    claude_state, git, hooks, instance_guard, nesting_guard, preflight_guard, proc_status, pty,
+    refresh, remote_tmux, self_update, shutdown, ssh, terminal_guard, tmux, update,
 };
 pub(crate) use model::{config, keybindings, new_session, state};
 pub(crate) use ui::{bridge, layout, theme};
 
 use std::io::{self, Write};
-use std::process::Command;
 
 use config::{Config, RemoteConfig};
-
-use crossterm::event::{
-    DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
-    EnableFocusChange, EnableMouseCapture, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
-};
-use crossterm::execute;
 use instance_guard::{AcquireError, InstanceGuard};
+use preflight_guard::PreflightGuard;
+use terminal_guard::TerminalGuard;
 
 #[derive(Debug, PartialEq, Eq)]
 struct ParsedArgs {
@@ -78,13 +72,7 @@ fn main() -> io::Result<()> {
         eprintln!("deck: failed to install SIGTERM handler: {err}");
     }
 
-    let acquire_result = if args.force {
-        InstanceGuard::acquire_forcing(std::process::id())
-    } else {
-        InstanceGuard::acquire(std::process::id())
-    };
-
-    let _instance_guard = match acquire_result {
+    let _instance_guard = match acquire_instance_guard(args.force) {
         Ok(guard) => guard,
         Err(AcquireError::AlreadyRunning { pid: Some(pid) }) => {
             eprintln!("deck: another instance is already running (pid {pid})");
@@ -103,65 +91,27 @@ fn main() -> io::Result<()> {
         Err(AcquireError::Io(err)) => return Err(err),
     };
 
-    // Preflight: is tmux available?
-    let tmux_ok = Command::new("tmux").arg("-V").output().is_ok();
-    if !tmux_ok {
-        eprintln!("deck: tmux not found in PATH");
+    if let Err(err) = PreflightGuard::run(args.attach_override.as_deref()) {
+        eprintln!("deck: {err}");
         std::process::exit(1);
     }
 
-    // `deck new <name>`: create the requested session up front, in the
-    // caller's current directory. Duplicate-name is a hard error; this
-    // is checked before the create so we don't silently coalesce with an
-    // existing session that happens to share the name.
-    if let Some(name) = &args.attach_override {
-        if tmux::list_sessions().iter().any(|s| &s.name == name) {
-            eprintln!("deck: session '{name}' already exists");
-            std::process::exit(1);
-        }
-        let cwd = match std::env::current_dir() {
-            Ok(path) => path,
-            Err(err) => {
-                eprintln!("deck: cannot determine current directory: {err}");
-                std::process::exit(1);
-            }
-        };
-        if tmux::new_session(name, &cwd.to_string_lossy()).is_none() {
-            eprintln!("deck: failed to create session '{name}'");
-            std::process::exit(1);
-        }
-    }
-
-    // Ensure at least one session exists (no-op for the `new` path,
-    // since we just created one above).
-    if tmux::list_sessions().is_empty() {
-        let _ = Command::new("tmux")
-            .args(["new-session", "-d", "-s", "default"])
-            .status();
-    }
-
     ratatui::run(|terminal| {
-        execute!(
-            io::stdout(),
-            EnableMouseCapture,
-            EnableBracketedPaste,
-            EnableFocusChange,
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-        )?;
+        let _terminal_guard = TerminalGuard::enter()?;
         let size = terminal.size()?;
         let mut app = app::App::new(size.width, size.height, args.attach_override.clone())?;
-        let result = app.run(terminal);
-        execute!(
-            io::stdout(),
-            DisableMouseCapture,
-            DisableBracketedPaste,
-            DisableFocusChange,
-            PopKeyboardEnhancementFlags
-        )?;
-        result
+        app.run(terminal)
     })?;
 
     Ok(())
+}
+
+fn acquire_instance_guard(force: bool) -> Result<InstanceGuard, AcquireError> {
+    if force {
+        InstanceGuard::acquire_forcing(std::process::id())
+    } else {
+        InstanceGuard::acquire(std::process::id())
+    }
 }
 
 fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<ParsedCommand>, i32> {
