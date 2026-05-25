@@ -694,7 +694,7 @@ impl AppState {
         layout.target_at_y(clicked_y)
     }
 
-/// Map a screen column to a tab index in vertical/tabs mode.
+    /// Map a screen column to a tab index in vertical/tabs mode.
     pub fn session_at_col(&self, col: u16, row: u16) -> Option<usize> {
         let b = if self.show_borders { 1u16 } else { 0 };
         if row != b {
