@@ -397,10 +397,50 @@ fn run_remote_remove(host: &str) -> i32 {
 }
 
 fn print_help() {
+    let name = env!("CARGO_PKG_NAME");
+    let version = env!("CARGO_PKG_VERSION");
     println!(
-        "{name} {version}\n\nUsage:\n  {name}                     Launch the sidebar UI\n  {name} new <session>       Create a session named <session> in the current\n                             directory and attach to it\n  {name} --force             Terminate an existing deck instance and take over\n  {name} hooks install       Install Claude Code state hooks into ~/.claude/settings.json\n  {name} hooks uninstall     Remove deck's Claude Code hooks\n  {name} remote add <host>   Register an SSH host whose tmux sessions deck should surface\n  {name} remote list         List configured remote hosts\n  {name} remote remove <host>  Remove a remote host\n  {name} --version           Print version\n  {name} --help              Show this help",
-        name = env!("CARGO_PKG_NAME"),
-        version = env!("CARGO_PKG_VERSION"),
+        "{name} {version}
+
+Usage:
+  {name}                       Launch the sidebar UI
+  {name} new <session>         Create a session named <session> in the current
+                               directory and attach to it
+  {name} --force               Terminate an existing deck instance and take over
+  {name} --version             Print version
+  {name} --help                Show this help
+
+Claude Code hooks:
+  {name} hooks install         Install Claude Code state hooks into
+                               ~/.claude/settings.json (used to drive the
+                               Working / Waiting indicators in the sidebar)
+  {name} hooks uninstall       Remove deck's Claude Code hooks
+
+Remote hosts:
+  {name} remote add <host>     Register an SSH host whose tmux sessions deck
+                               should surface alongside local ones. <host> must
+                               resolve via `ssh -G` — i.e. either an entry in
+                               ~/.ssh/config or a directly-resolvable hostname.
+                               The command then checks whether SSH connection
+                               multiplexing (ControlMaster + ControlPath +
+                               ControlPersist) is enabled for that host, and if
+                               not, offers to append a recommended block to
+                               ~/.ssh/config. Without multiplexing every deck
+                               action would re-authenticate, which is slow and
+                               can trigger repeated password / 2FA prompts.
+
+                               On startup deck spawns a background
+                               `ssh -tt <host> tmux attach` PTY per configured
+                               host and lists its sessions in the sidebar.
+                               Authentication must be non-interactive
+                               (`BatchMode=yes` is forced) — set up ssh keys
+                               or an agent in advance. tmux must be on the
+                               remote PATH for non-interactive shells; deck
+                               prepends common Homebrew / linuxbrew paths so
+                               the typical macOS / Linux installs Just Work.
+
+  {name} remote list           List configured remote hosts.
+  {name} remote remove <host>  Remove a remote host from the config.",
     );
 }
 
