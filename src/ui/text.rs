@@ -1,4 +1,4 @@
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -149,7 +149,7 @@ pub(super) fn format_activity_compact(seconds: u64, spinner_frame: &str) -> Stri
 /// attached session. Whatever the underlying status, this beats it.
 const FOCUS_GLYPH: &str = "\u{276f}";
 
-/// Icon + color for the three-state session indicator.
+/// Icon + color for the two-state session indicator.
 ///
 /// `is_current` overrides everything: the attached session always
 /// shows a teal `❯` so you know where your tmux focus is. The actual
@@ -157,15 +157,13 @@ const FOCUS_GLYPH: &str = "\u{276f}";
 /// would just be redundant. For background sessions:
 ///
 /// - `Working`: spinner frame in green.
-/// - `Waiting`: bell glyph alternating yellow/pink on the 1 Hz blink
-///   tick — drag the user's eye to a session asking for attention.
 /// - `Idle`: moon glyph, muted — nothing happening here.
 pub(super) fn status_icon<'a>(
     status: SessionStatus,
     is_current: bool,
     theme: &Theme,
     spinner_frame: &str,
-    blink_on: bool,
+    _blink_on: bool,
     emphasized: bool,
     bg: Color,
 ) -> Span<'a> {
@@ -173,21 +171,10 @@ pub(super) fn status_icon<'a>(
         return Span::styled(FOCUS_GLYPH, Style::default().fg(theme.teal).bg(bg));
     }
     match status {
-        SessionStatus::Working => {
-            Span::styled(spinner_frame.to_string(), Style::default().fg(theme.green).bg(bg))
-        }
-        SessionStatus::Waiting => {
-            // Strong visibility pulse: bell flips between bright yellow
-            // (with bold) and dim. Same-hue alternation is more obvious
-            // than yellow↔pink, which read as "lit up" against most
-            // backgrounds and don't actually look like blinking.
-            let style = if blink_on {
-                Style::default().fg(theme.yellow).bg(bg).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.dim).bg(bg)
-            };
-            Span::styled("\u{f0f3}", style)
-        }
+        SessionStatus::Working => Span::styled(
+            spinner_frame.to_string(),
+            Style::default().fg(theme.green).bg(bg),
+        ),
         SessionStatus::Idle => {
             let fg = if emphasized { theme.dim } else { theme.muted };
             Span::styled("\u{f186}", Style::default().fg(fg).bg(bg))
@@ -206,7 +193,6 @@ pub(super) fn status_icon_compact(
     }
     match status {
         SessionStatus::Working => spinner_frame.to_string(),
-        SessionStatus::Waiting => "\u{f0f3}".to_string(),
         SessionStatus::Idle => "\u{f186}".to_string(),
     }
 }
@@ -215,7 +201,7 @@ pub(super) fn status_color(
     status: SessionStatus,
     is_current: bool,
     theme: &Theme,
-    blink_on: bool,
+    _blink_on: bool,
     emphasized: bool,
 ) -> Color {
     if is_current {
@@ -223,13 +209,6 @@ pub(super) fn status_color(
     }
     match status {
         SessionStatus::Working => theme.green,
-        SessionStatus::Waiting => {
-            if blink_on {
-                theme.yellow
-            } else {
-                theme.dim
-            }
-        }
         SessionStatus::Idle => {
             if emphasized {
                 theme.dim

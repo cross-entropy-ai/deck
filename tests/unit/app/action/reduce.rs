@@ -16,7 +16,6 @@ fn make_session(name: &str, idle: u64) -> SessionRow {
         is_current: false,
         idle_seconds: idle,
         status: SessionStatus::default(),
-        status_event_ts_ms: None,
     }
 }
 
@@ -513,8 +512,7 @@ fn new_session_delete_segment_goes_back_to_slash() {
 fn new_session_switch_focus_toggles_field() {
     let mut state = picker_state_with("~/foo/", vec![]);
     // picker_state_with sets focus to Dir; switch to Name first
-    state.overlay.new_session.as_mut().unwrap().focus =
-        crate::new_session::PickerFocus::Name;
+    state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
 
     apply_action(&mut state, Action::NewSessionSwitchFocus);
     assert_eq!(
@@ -532,8 +530,7 @@ fn new_session_switch_focus_toggles_field() {
 #[test]
 fn new_session_input_routes_to_name_when_focused_on_name() {
     let mut state = picker_state_with("~/foo/", vec![]);
-    state.overlay.new_session.as_mut().unwrap().focus =
-        crate::new_session::PickerFocus::Name;
+    state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
 
     apply_action(&mut state, Action::NewSessionInput('x'));
     let ns = state.overlay.new_session.as_ref().unwrap();

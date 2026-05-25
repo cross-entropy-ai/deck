@@ -5,8 +5,7 @@ mod ui;
 
 pub(crate) use app::action;
 pub(crate) use infra::{
-    claude_state, git, hooks, instance_guard, nesting_guard, proc_status, pty, refresh, shutdown,
-    tmux, update,
+    git, instance_guard, nesting_guard, proc_status, pty, refresh, shutdown, tmux, update,
 };
 pub(crate) use model::{config, keybindings, new_session, state};
 pub(crate) use ui::{bridge, layout, theme};
@@ -31,27 +30,11 @@ struct ParsedArgs {
 #[derive(Debug, PartialEq, Eq)]
 enum ParsedCommand {
     Run(ParsedArgs),
-    HooksInstall,
-    HooksUninstall,
 }
 
 fn main() -> io::Result<()> {
     let args = match parse_args(std::env::args().skip(1)) {
         Ok(Some(ParsedCommand::Run(args))) => args,
-        Ok(Some(ParsedCommand::HooksInstall)) => {
-            if let Err(e) = hooks::run_install() {
-                eprintln!("deck: hook install failed: {e}");
-                std::process::exit(1);
-            }
-            return Ok(());
-        }
-        Ok(Some(ParsedCommand::HooksUninstall)) => {
-            if let Err(e) = hooks::run_uninstall() {
-                eprintln!("deck: hook uninstall failed: {e}");
-                std::process::exit(1);
-            }
-            return Ok(());
-        }
         Ok(None) => return Ok(()),
         Err(code) => std::process::exit(code),
     };
@@ -152,13 +135,6 @@ fn main() -> io::Result<()> {
 fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<ParsedCommand>, i32> {
     let mut iter = args.into_iter().peekable();
 
-    if let Some(first) = iter.peek() {
-        if first == "hooks" {
-            iter.next();
-            return parse_hooks_args(iter);
-        }
-    }
-
     let mut force = false;
     let mut attach_override: Option<String> = None;
 
@@ -211,33 +187,9 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<ParsedCo
     })))
 }
 
-fn parse_hooks_args<I: Iterator<Item = String>>(mut iter: I) -> Result<Option<ParsedCommand>, i32> {
-    let Some(sub) = iter.next() else {
-        eprintln!("deck: `hooks` requires a subcommand (install|uninstall).");
-        eprintln!("Run `deck --help` for usage.");
-        return Err(2);
-    };
-    if let Some(extra) = iter.next() {
-        eprintln!("deck: unexpected argument '{extra}' after `hooks {sub}`.");
-        return Err(2);
-    }
-    match sub.as_str() {
-        "install" => Ok(Some(ParsedCommand::HooksInstall)),
-        "uninstall" => Ok(Some(ParsedCommand::HooksUninstall)),
-        "--help" | "-h" => {
-            print_help();
-            Ok(None)
-        }
-        other => {
-            eprintln!("deck: unknown `hooks` subcommand '{other}'. Expected install|uninstall.");
-            Err(2)
-        }
-    }
-}
-
 fn print_help() {
     println!(
-        "{name} {version}\n\nUsage:\n  {name}                     Launch the sidebar UI\n  {name} new <session>       Create a session named <session> in the current\n                             directory and attach to it\n  {name} --force             Terminate an existing deck instance and take over\n  {name} hooks install       Install Claude Code state hooks into ~/.claude/settings.json\n  {name} hooks uninstall     Remove deck's Claude Code hooks\n  {name} --version           Print version\n  {name} --help              Show this help",
+        "{name} {version}\n\nUsage:\n  {name}                     Launch the sidebar UI\n  {name} new <session>       Create a session named <session> in the current\n                             directory and attach to it\n  {name} --force             Terminate an existing deck instance and take over\n  {name} --version           Print version\n  {name} --help              Show this help",
         name = env!("CARGO_PKG_NAME"),
         version = env!("CARGO_PKG_VERSION"),
     );
@@ -277,7 +229,9 @@ mod tests {
 
     #[test]
     fn force_before_new_combines() {
-        let result = parse_args(args(&["--force", "new", "foo"])).unwrap().unwrap();
+        let result = parse_args(args(&["--force", "new", "foo"]))
+            .unwrap()
+            .unwrap();
         assert_eq!(
             result,
             ParsedCommand::Run(ParsedArgs {
@@ -289,7 +243,9 @@ mod tests {
 
     #[test]
     fn force_after_new_combines() {
-        let result = parse_args(args(&["new", "foo", "--force"])).unwrap().unwrap();
+        let result = parse_args(args(&["new", "foo", "--force"]))
+            .unwrap()
+            .unwrap();
         assert_eq!(
             result,
             ParsedCommand::Run(ParsedArgs {

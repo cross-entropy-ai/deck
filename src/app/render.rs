@@ -64,7 +64,7 @@ impl App {
             .iter()
             .map(|&i| {
                 let row = &s.sessions[i];
-                (row.clone(), s.effective_status(row))
+                (row.clone(), row.status)
             })
             .collect();
 
