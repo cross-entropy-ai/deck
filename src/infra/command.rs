@@ -70,17 +70,6 @@ pub enum CommandError {
     Timeout { program: String, elapsed: Duration },
 }
 
-impl CommandError {
-    #[allow(dead_code)]
-    pub fn program(&self) -> &str {
-        match self {
-            Self::Spawn { program, .. }
-            | Self::NonZero { program, .. }
-            | Self::Timeout { program, .. } => program,
-        }
-    }
-}
-
 impl std::fmt::Display for CommandError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

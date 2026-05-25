@@ -100,28 +100,18 @@ fn parse_sessions_empty_input() {
 
 #[test]
 fn parse_panes_handles_normal_output() {
-    let raw = "alpha\t%1\t1234\tvim\t/tmp/alpha\nbeta\t%2\t5678\tzsh\t/tmp/beta";
+    let raw = "alpha\tvim\nbeta\tzsh";
     let got = parse_panes(raw);
     assert_eq!(got.len(), 2);
     assert_eq!(got[0].session, "alpha");
-    assert_eq!(got[0].pane_id, "%1");
-    assert_eq!(got[0].pid, 1234);
     assert_eq!(got[0].current_command, "vim");
-    assert_eq!(got[0].current_path, "/tmp/alpha");
+    assert_eq!(got[1].session, "beta");
+    assert_eq!(got[1].current_command, "zsh");
 }
 
 #[test]
-fn parse_panes_tolerates_missing_path() {
-    // 4 tabs => current_path empty (unwrap_or)
-    let raw = "alpha\t%1\t1234\tvim\t";
-    let got = parse_panes(raw);
-    assert_eq!(got.len(), 1);
-    assert_eq!(got[0].current_path, "");
-}
-
-#[test]
-fn parse_panes_skips_malformed_pid() {
-    let raw = "alpha\t%1\tNOT_A_PID\tvim\t/tmp/alpha\nbeta\t%2\t9\tzsh\t/tmp/beta";
+fn parse_panes_skips_lines_missing_command() {
+    let raw = "alpha\nbeta\tzsh";
     let got = parse_panes(raw);
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].session, "beta");
@@ -212,9 +202,9 @@ fn list_panes_with_runner_returns_parsed_rows() {
             "list-panes",
             "-a",
             "-F",
-            "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}",
+            "#{session_name}\t#{pane_current_command}",
         ],
-        FakeResponse::Ok("a\t%1\t1\tvim\t/x".to_string()),
+        FakeResponse::Ok("a\tvim".to_string()),
     );
     let got = list_panes_with(&runner);
     assert_eq!(got.len(), 1);
@@ -229,7 +219,7 @@ fn list_panes_with_runner_returns_empty_on_timeout() {
             "list-panes",
             "-a",
             "-F",
-            "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}",
+            "#{session_name}\t#{pane_current_command}",
         ],
         FakeResponse::Timeout,
     );

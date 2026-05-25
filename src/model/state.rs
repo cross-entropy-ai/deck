@@ -138,13 +138,11 @@ pub struct SessionRow {
 /// `SessionRow` so the existing local-only invariants (session_order,
 /// notification ack maps, validate_session_name, kill/rename dispatch)
 /// don't have to grow an `origin` discriminator on every touchpoint.
-/// Phase 2 step 5 will revisit this once remote operations land.
 #[derive(Debug, Clone)]
 pub struct RemoteSessionRow {
     pub host: String,
     pub name: String,
     pub dir: String,
-    pub idle_seconds: u64,
     /// True if reaching this host failed (timeout, auth error, etc.).
     /// The row is still rendered but greyed out and the name column
     /// shows a brief reason.
@@ -182,7 +180,7 @@ pub enum GroupKind {
 
 /// One renderable item in the sidebar layout — either a non-focusable
 /// group header or a focusable session row. Both `SidebarLayout`
-/// consumers — the sidebar renderer and `session_at_row` — walk the
+/// consumers — the sidebar renderer and `focus_at_row` — walk the
 /// same list, so highlight, scroll, and mouse hit-testing agree about
 /// where every row lives.
 #[derive(Debug, Clone)]
@@ -454,8 +452,8 @@ pub struct AppState {
     pub current_session: String,
     pub session_order: Vec<String>,
     /// Tmux sessions discovered on configured remote hosts. Rendered
-    /// in the sidebar below local sessions; not part of `filtered` /
-    /// `focused` until Phase 2 step 5 wires real selection.
+    /// in the sidebar below local sessions. Focus into them goes via
+    /// `FocusTarget::Remote`, not the local `filtered` index.
     pub remote_sessions: Vec<RemoteSessionRow>,
 
     // UI state
@@ -694,18 +692,6 @@ impl AppState {
         let scroll = scroll_for_layout(&layout, self.focus_target(), visible_height);
         let clicked_y = row as usize - sessions_top as usize + scroll;
         layout.target_at_y(clicked_y)
-    }
-
-    /// Back-compat shim for callers that only expect a local index.
-    /// Returns `None` for remote rows so existing dispatch arms that
-    /// haven't grown a remote branch yet (e.g. vertical/tabs mode)
-    /// fall through to safe defaults.
-    #[allow(dead_code)]
-    pub fn session_at_row(&self, row: u16) -> Option<usize> {
-        match self.focus_at_row(row) {
-            Some(FocusTarget::Local(pos)) => Some(pos),
-            _ => None,
-        }
     }
 
     /// Map a screen column to a tab index in vertical/tabs mode.

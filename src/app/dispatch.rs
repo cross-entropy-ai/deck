@@ -308,8 +308,8 @@ impl App {
     /// produces the new screen.
     ///
     /// If the PTY isn't ready yet — Connecting or Failed — we don't
-    /// switch the view (would just show a blank pane). A Failed status
-    /// triggers nothing here; reconnection lives in step 5 follow-ups.
+    /// switch the view (would just show a blank pane). Reconnect on
+    /// failure isn't wired yet.
     fn switch_to_remote(&mut self, host: &str, name: &str) {
         use crate::app::RemoteConnStatus;
         let connected = matches!(

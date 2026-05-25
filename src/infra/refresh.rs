@@ -55,7 +55,6 @@ pub struct RemoteSnapshotRow {
     pub host: String,
     pub name: String,
     pub dir: String,
-    pub idle_seconds: u64,
     pub unreachable: bool,
 }
 
@@ -163,11 +162,7 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
             let _ = thread::Builder::new()
                 .name("deck-refresh-remote".into())
                 .spawn(move || {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    let rows = collect_remotes(&remotes, now);
+                    let rows = collect_remotes(&remotes);
                     let _ = tx.send(RefreshUpdate::Remote { rows });
                     flag.store(false, Ordering::Release);
                 });
@@ -237,7 +232,7 @@ fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>) {
 /// them. The thread join is bounded by the underlying ssh timeout in
 /// `remote_tmux` (5s), so a dead host can stall this call by at most
 /// that much.
-fn collect_remotes(remotes: &[String], now: u64) -> Vec<RemoteSnapshotRow> {
+fn collect_remotes(remotes: &[String]) -> Vec<RemoteSnapshotRow> {
     if remotes.is_empty() {
         return Vec::new();
     }
@@ -260,12 +255,10 @@ fn collect_remotes(remotes: &[String], now: u64) -> Vec<RemoteSnapshotRow> {
         match handle.and_then(|h| h.join().ok()) {
             Some((host_name, Some(sessions))) if !sessions.is_empty() => {
                 for s in sessions {
-                    let idle = now.saturating_sub(s.activity);
                     out.push(RemoteSnapshotRow {
                         host: host_name.clone(),
                         name: s.name,
                         dir: s.dir,
-                        idle_seconds: idle,
                         unreachable: false,
                     });
                 }
@@ -275,7 +268,6 @@ fn collect_remotes(remotes: &[String], now: u64) -> Vec<RemoteSnapshotRow> {
                     host: host_name,
                     name: String::from("(no sessions)"),
                     dir: String::new(),
-                    idle_seconds: 0,
                     unreachable: false,
                 });
             }
@@ -284,7 +276,6 @@ fn collect_remotes(remotes: &[String], now: u64) -> Vec<RemoteSnapshotRow> {
                     host: host_name,
                     name: String::from("(unreachable)"),
                     dir: String::new(),
-                    idle_seconds: 0,
                     unreachable: true,
                 });
             }
@@ -295,7 +286,6 @@ fn collect_remotes(remotes: &[String], now: u64) -> Vec<RemoteSnapshotRow> {
                     host: host.clone(),
                     name: String::from("(unreachable)"),
                     dir: String::new(),
-                    idle_seconds: 0,
                     unreachable: true,
                 });
             }

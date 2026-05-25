@@ -40,7 +40,6 @@ impl App {
                 host: r.host,
                 name: r.name,
                 dir: r.dir,
-                idle_seconds: r.idle_seconds,
                 unreachable: r.unreachable,
                 loading: false,
             })

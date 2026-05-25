@@ -351,13 +351,11 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.settings.theme_picker_open = false;
         }
         Action::ThemePickerNext => {
-            if !THEMES.is_empty() {
-                state.settings.theme_picker_selected =
-                    (state.settings.theme_picker_selected + 1).min(THEMES.len() - 1);
-                state.theme_index = state.settings.theme_picker_selected;
-                fx.save_config = true;
-                fx.apply_tmux_theme = true;
-            }
+            state.settings.theme_picker_selected =
+                (state.settings.theme_picker_selected + 1).min(THEMES.len() - 1);
+            state.theme_index = state.settings.theme_picker_selected;
+            fx.save_config = true;
+            fx.apply_tmux_theme = true;
         }
         Action::ThemePickerPrev => {
             if state.settings.theme_picker_selected > 0 {

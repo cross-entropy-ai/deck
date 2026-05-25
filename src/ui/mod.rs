@@ -53,17 +53,11 @@ pub struct SessionView<'a> {
     pub is_current: bool,
 }
 
-/// Minimal data needed to render one remote session row. `host` is
-/// kept for symmetry with the data model and future use (e.g. status
-/// indicators per host); the sidebar currently shows host names only
-/// in group headers, not on every row.
+/// Minimal data needed to render one remote session row. Host names
+/// are shown only in group headers, not per-row.
 pub struct RemoteSessionView<'a> {
-    #[allow(dead_code)]
-    pub host: &'a str,
     pub name: &'a str,
     pub dir: &'a str,
-    #[allow(dead_code)]
-    pub idle_seconds: u64,
     pub unreachable: bool,
     /// True for the synthetic placeholder row shown before the first
     /// remote refresh completes. The sidebar paints these with a
