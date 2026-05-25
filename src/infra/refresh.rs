@@ -15,14 +15,12 @@
 //! further requests are no-ops rather than silently queuing forever.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread;
 
-use std::collections::HashMap;
-
-use crate::claude_state;
 use crate::config::{self, ExcludePattern};
 use crate::git;
 use crate::proc_status;
@@ -49,7 +47,6 @@ pub struct SnapshotRow {
     pub untracked: u32,
     pub idle_seconds: u64,
     pub status: SessionStatus,
-    pub status_event_ts_ms: Option<u64>,
 }
 
 /// One row from a remote host. Mirrors the subset of `SnapshotRow`
@@ -194,9 +191,8 @@ fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>) {
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    // Gather the data needed to derive SessionStatus once per refresh.
-    // Panes are grouped by session so the Claude matcher and the proc
-    // heuristic can both iterate in O(1) per session.
+    // Gather panes once per refresh so the proc heuristic can derive
+    // SessionStatus without repeatedly shelling out per session.
     let panes_by_session: HashMap<String, Vec<TmuxPane>> = {
         let mut map: HashMap<String, Vec<TmuxPane>> = HashMap::new();
         for pane in tmux::list_panes() {
@@ -204,19 +200,17 @@ fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>) {
         }
         map
     };
-    let claude_states = claude_state::filter_live(claude_state::read_all());
-    let claude_by_session = claude_state::match_to_sessions(&claude_states, &panes_by_session);
-
     let rows = sessions
         .into_iter()
         .filter(|s| !config::session_excluded(&s.name, &compiled))
         .map(|s| {
             let git_info = git::get_git_info(&s.dir);
             let idle_seconds = now.saturating_sub(s.activity);
-            let (status, status_event_ts_ms) = compute_status(
-                &s.name,
-                &claude_by_session,
-                panes_by_session.get(&s.name).map(|v| v.as_slice()).unwrap_or(&[]),
+            let status = compute_status(
+                panes_by_session
+                    .get(&s.name)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]),
             );
             SnapshotRow {
                 name: s.name,
@@ -229,7 +223,6 @@ fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>) {
                 untracked: git_info.untracked,
                 idle_seconds,
                 status,
-                status_event_ts_ms,
             }
         })
         .collect();
@@ -311,30 +304,9 @@ fn collect_remotes(remotes: &[String], now: u64) -> Vec<RemoteSnapshotRow> {
     out
 }
 
-/// Returns (status, event_ts_ms) for one session. Claude state — when
-/// present — takes precedence over the proc heuristic because it's the
-/// only signal that can distinguish Waiting from Working.
-fn compute_status(
-    session_name: &str,
-    claude_by_session: &HashMap<String, claude_state::ClaudeState>,
-    panes: &[TmuxPane],
-) -> (SessionStatus, Option<u64>) {
-    if let Some(claude) = claude_by_session.get(session_name) {
-        let status = match claude.status.as_str() {
-            "working" => SessionStatus::Working,
-            "waiting" => SessionStatus::Waiting,
-            _ => SessionStatus::Idle,
-        };
-        return (status, Some(claude.ts_ms));
-    }
-    // The proc heuristic only ever returns Working or Idle (it has no
-    // way to know about Claude state). Waiting collapses to Idle
-    // defensively in case `status_for_session` grows later.
-    let status = match proc_status::status_for_session(panes) {
-        SessionStatus::Working => SessionStatus::Working,
-        SessionStatus::Idle | SessionStatus::Waiting => SessionStatus::Idle,
-    };
-    (status, None)
+/// Returns the proc-derived status for one session.
+fn compute_status(panes: &[TmuxPane]) -> SessionStatus {
+    proc_status::status_for_session(panes)
 }
 
 #[cfg(test)]

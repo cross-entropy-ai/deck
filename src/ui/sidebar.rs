@@ -475,7 +475,6 @@ fn render_local_card_compact(
     } else {
         match session.status {
             SessionStatus::Working => spinner_frame.to_string(),
-            SessionStatus::Waiting => status_icon_compact(session.status, false, spinner_frame),
             SessionStatus::Idle => {
                 if session.idle_seconds < 3 {
                     spinner_frame.to_string()
@@ -627,8 +626,7 @@ fn plugin_dot_style(status: PluginStatus, blink_on: bool, theme: &Theme) -> Styl
         // Strong visibility pulse: bright yellow + bold when on, dim
         // when off. `dim` is defined to be close-to-bg in every theme
         // (both dark and light), so the off-phase reads as "fading
-        // out" rather than "turning a different color". Mirrors the
-        // Waiting blink used in the session row.
+        // out" rather than "turning a different color".
         PluginStatus::Background => {
             if blink_on {
                 Style::default()
@@ -681,7 +679,9 @@ fn append_plugin_rows(
             PluginStatus::Inactive => theme.muted,
         };
         let name_style = match p.status {
-            PluginStatus::Foreground => Style::default().fg(name_color).add_modifier(Modifier::BOLD),
+            PluginStatus::Foreground => {
+                Style::default().fg(name_color).add_modifier(Modifier::BOLD)
+            }
             _ => Style::default().fg(name_color),
         };
         rows.push(Line::from(vec![

@@ -5,8 +5,8 @@ mod ui;
 
 pub(crate) use app::action;
 pub(crate) use infra::{
-    claude_state, git, hooks, instance_guard, nesting_guard, preflight_guard, proc_status, pty,
-    refresh, remote_tmux, self_update, shutdown, ssh, terminal_guard, tmux, update,
+    git, instance_guard, nesting_guard, preflight_guard, proc_status, pty, refresh, remote_tmux,
+    self_update, shutdown, ssh, terminal_guard, tmux, update,
 };
 pub(crate) use model::{config, keybindings, new_session, state};
 pub(crate) use ui::{bridge, layout, theme};
@@ -27,8 +27,6 @@ struct ParsedArgs {
 #[derive(Debug, PartialEq, Eq)]
 enum ParsedCommand {
     Run(ParsedArgs),
-    HooksInstall,
-    HooksUninstall,
     RemoteAdd(String),
     RemoteList,
     RemoteRemove(String),
@@ -37,20 +35,6 @@ enum ParsedCommand {
 fn main() -> io::Result<()> {
     let args = match parse_args(std::env::args().skip(1)) {
         Ok(Some(ParsedCommand::Run(args))) => args,
-        Ok(Some(ParsedCommand::HooksInstall)) => {
-            if let Err(e) = hooks::run_install() {
-                eprintln!("deck: hook install failed: {e}");
-                std::process::exit(1);
-            }
-            return Ok(());
-        }
-        Ok(Some(ParsedCommand::HooksUninstall)) => {
-            if let Err(e) = hooks::run_uninstall() {
-                eprintln!("deck: hook uninstall failed: {e}");
-                std::process::exit(1);
-            }
-            return Ok(());
-        }
         Ok(Some(ParsedCommand::RemoteAdd(host))) => {
             std::process::exit(run_remote_add(&host));
         }
@@ -118,10 +102,6 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<ParsedCo
     let mut iter = args.into_iter().peekable();
 
     if let Some(first) = iter.peek() {
-        if first == "hooks" {
-            iter.next();
-            return parse_hooks_args(iter);
-        }
         if first == "remote" {
             iter.next();
             return parse_remote_args(iter);
@@ -178,30 +158,6 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<ParsedCo
         force,
         attach_override,
     })))
-}
-
-fn parse_hooks_args<I: Iterator<Item = String>>(mut iter: I) -> Result<Option<ParsedCommand>, i32> {
-    let Some(sub) = iter.next() else {
-        eprintln!("deck: `hooks` requires a subcommand (install|uninstall).");
-        eprintln!("Run `deck --help` for usage.");
-        return Err(2);
-    };
-    if let Some(extra) = iter.next() {
-        eprintln!("deck: unexpected argument '{extra}' after `hooks {sub}`.");
-        return Err(2);
-    }
-    match sub.as_str() {
-        "install" => Ok(Some(ParsedCommand::HooksInstall)),
-        "uninstall" => Ok(Some(ParsedCommand::HooksUninstall)),
-        "--help" | "-h" => {
-            print_help();
-            Ok(None)
-        }
-        other => {
-            eprintln!("deck: unknown `hooks` subcommand '{other}'. Expected install|uninstall.");
-            Err(2)
-        }
-    }
 }
 
 fn parse_remote_args<I: Iterator<Item = String>>(
@@ -360,12 +316,6 @@ Usage:
   {name} --version             Print version
   {name} --help                Show this help
 
-Claude Code hooks:
-  {name} hooks install         Install Claude Code state hooks into
-                               ~/.claude/settings.json (used to drive the
-                               Working / Waiting indicators in the sidebar)
-  {name} hooks uninstall       Remove deck's Claude Code hooks
-
 Remote hosts:
   {name} remote add <host>     Register an SSH host whose tmux sessions deck
                                should surface alongside local ones. <host> must
@@ -428,7 +378,9 @@ mod tests {
 
     #[test]
     fn force_before_new_combines() {
-        let result = parse_args(args(&["--force", "new", "foo"])).unwrap().unwrap();
+        let result = parse_args(args(&["--force", "new", "foo"]))
+            .unwrap()
+            .unwrap();
         assert_eq!(
             result,
             ParsedCommand::Run(ParsedArgs {
@@ -440,7 +392,9 @@ mod tests {
 
     #[test]
     fn force_after_new_combines() {
-        let result = parse_args(args(&["new", "foo", "--force"])).unwrap().unwrap();
+        let result = parse_args(args(&["new", "foo", "--force"]))
+            .unwrap()
+            .unwrap();
         assert_eq!(
             result,
             ParsedCommand::Run(ParsedArgs {

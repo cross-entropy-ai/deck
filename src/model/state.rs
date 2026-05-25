@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::time::Instant;
 
 use ratatui::layout::Rect;
@@ -6,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::PluginConfig;
 use crate::keybindings::Keybindings;
-use crate::layout::{card_height, context_menu_width, plugin_block_rows, tab_col_ranges, BANNER_MIN_WIDTH};
+use crate::layout::{
+    card_height, context_menu_width, plugin_block_rows, tab_col_ranges, BANNER_MIN_WIDTH,
+};
 use crate::new_session::NewSessionState;
 use crate::update::{UpdateCheckMode, UpdateStatus};
 
@@ -70,21 +71,15 @@ pub enum ViewMode {
     Compact,
 }
 
-/// Three-state session activity model.
+/// Two-state session activity model.
 ///
-/// - `Idle`: nothing demanding attention — shell at prompt, or a
-///   Claude agent between turns whose last Waiting has been acked.
-/// - `Working`: something is actively running in the pane, or Claude
-///   is executing a tool / processing a turn.
-/// - `Waiting`: Claude fired Stop or Notification and the user hasn't
-///   visited the session since. Non-Claude programs never produce
-///   `Waiting` in this version.
+/// - `Idle`: nothing demanding attention — shell at prompt or a passive program.
+/// - `Working`: something is actively running in the pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SessionStatus {
     #[default]
     Idle,
     Working,
-    Waiting,
 }
 
 pub const SETTINGS_ITEM_COUNT: usize = 7;
@@ -137,10 +132,6 @@ pub struct SessionRow {
     pub idle_seconds: u64,
     /// Raw activity status, pre-ack.
     pub status: SessionStatus,
-    /// Unix-ms timestamp of the hook event that produced `status`. Only
-    /// set when the status came from a Claude state file; used by the
-    /// ack-on-detach override to decide whether a Waiting has been seen.
-    pub status_event_ts_ms: Option<u64>,
 }
 
 /// One tmux session living on a remote host. Modeled separately from
@@ -453,56 +444,6 @@ pub struct SettingsState {
     pub keybindings_view_scroll: u16,
 }
 
-// --- Notification state ---
-
-/// Desktop-notification dedup state plus terminal focus tracking. Lives
-/// in its own struct because it's the slice of `AppState` with the
-/// weakest coupling to session-list logic — only `app/refresh.rs` and
-/// `effective_status` touch it.
-#[derive(Debug, Default)]
-pub struct NotificationState {
-    /// Unix-ms timestamp at which the user last detached from each
-    /// session. Used by the Waiting-ack override: if the latest Claude
-    /// hook event for session S is older than `acked_ts_ms[S]`, the
-    /// Waiting status is downgraded to Idle in the UI. In-memory only,
-    /// so ack resets on deck restart.
-    pub acked_ts_ms: HashMap<String, u64>,
-
-    /// Per-session ts of the most recent Waiting event we already fired
-    /// a desktop notification for. Stops us from re-notifying every
-    /// refresh cycle while a session sits in Waiting.
-    pub last_notified_ts_ms: HashMap<String, u64>,
-
-    /// First snapshot is used to seed `last_notified_ts_ms` without
-    /// firing notifications — otherwise restarting deck while any
-    /// session was already Waiting would dump a notification per
-    /// session into the user's tray.
-    pub notifications_armed: bool,
-
-    /// Whether the host terminal (Ghostty / iTerm2 / etc.) currently
-    /// has OS-level keyboard focus. Updated from crossterm's
-    /// `FocusGained` / `FocusLost` events. Used to gate the "you're
-    /// already attached, no notification needed" check — if you're
-    /// attached but looking at another macOS app, we still notify.
-    ///
-    /// Defaults to true: assume focused until the terminal tells us
-    /// otherwise. A `false` default would race the first FocusGained
-    /// event and could fire spurious notifications immediately after
-    /// launch.
-    pub terminal_focused: bool,
-}
-
-impl NotificationState {
-    pub fn new() -> Self {
-        Self {
-            acked_ts_ms: HashMap::new(),
-            last_notified_ts_ms: HashMap::new(),
-            notifications_armed: false,
-            terminal_focused: true,
-        }
-    }
-}
-
 // --- AppState ---
 
 pub struct AppState {
@@ -560,10 +501,6 @@ pub struct AppState {
     /// TTL — see `RELOAD_STATUS_OK_TTL` / `RELOAD_STATUS_ERR_TTL`.
     pub reload_status: Option<ReloadStatus>,
     pub reload_status_at: Option<Instant>,
-
-    /// Desktop-notification dedup state plus terminal focus tracking.
-    /// See `NotificationState` for field-by-field commentary.
-    pub notification: NotificationState,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -638,35 +575,6 @@ impl AppState {
             banner_upgrade_bounds: None,
             reload_status: None,
             reload_status_at: None,
-            notification: NotificationState::new(),
-        }
-    }
-
-    /// Apply the activity-ack override. A Waiting or Working status whose
-    /// underlying hook event is older than the user's last visit to that
-    /// session is downgraded to Idle — the user has seen it, so stop
-    /// drawing attention until a fresh hook event bumps the timestamp.
-    ///
-    /// Symmetric for Working because Claude Code can leave a session
-    /// pinned as Working when a turn ends without a Stop hook (e.g. the
-    /// user hits Esc mid-turn, or a plugin Stop hook eats the event).
-    /// Attaching to that session and seeing Claude sit idle is itself
-    /// the acknowledgement.
-    pub fn effective_status(&self, row: &SessionRow) -> SessionStatus {
-        if row.status == SessionStatus::Idle {
-            return SessionStatus::Idle;
-        }
-        let event_ts = row.status_event_ts_ms.unwrap_or(0);
-        let ack_ts = self
-            .notification
-            .acked_ts_ms
-            .get(&row.name)
-            .copied()
-            .unwrap_or(0);
-        if event_ts <= ack_ts {
-            SessionStatus::Idle
-        } else {
-            row.status
         }
     }
 
@@ -757,8 +665,7 @@ impl AppState {
             LayoutMode::Horizontal => self.sidebar_width.saturating_sub(b),
             LayoutMode::Vertical => self.term_width.saturating_sub(b),
         };
-        let banner_visible =
-            self.update_available.is_some() && content_width >= BANNER_MIN_WIDTH;
+        let banner_visible = self.update_available.is_some() && content_width >= BANNER_MIN_WIDTH;
         3 + banner_visible as u16 + plugin_block_rows(self.plugins.len())
     }
 

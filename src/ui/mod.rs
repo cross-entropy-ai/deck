@@ -44,8 +44,7 @@ pub struct SessionView<'a> {
     pub modified: u32,
     pub untracked: u32,
     pub idle_seconds: u64,
-    /// Effective status: the raw `SessionRow.status` after applying
-    /// the Waiting-ack override (see `AppState::effective_status`).
+    /// Proc-derived status for this session.
     pub status: SessionStatus,
     /// True iff this session is the one tmux is currently attached to.
     /// The status icon is overridden to a "you are here" marker for

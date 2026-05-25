@@ -1,7 +1,5 @@
-pub mod claude_state;
 pub mod command;
 pub mod git;
-pub mod hooks;
 pub mod instance_guard;
 pub mod nesting_guard;
 pub mod preflight_guard;
