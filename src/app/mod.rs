@@ -256,12 +256,19 @@ impl App {
 
         loop {
             // Drain the local terminal. OSC52 (clipboard) is only
-            // forwarded from the local PTY — we never want remote
-            // sessions to silently copy to the user's clipboard.
+            // forwarded from the pane the user is *actively viewing*
+            // — never from a background pane. The selection that
+            // produced the sequence happened where the user is
+            // looking, so the clipboard write follows the user's
+            // gaze; an inactive remote can't silently overwrite the
+            // user's clipboard.
+            let local_is_active = self.active_remote.is_none();
             for event in self.local_terminal.pty.drain() {
                 match event {
                     PtyEvent::Output(data) => {
-                        Self::forward_osc52(&data);
+                        if local_is_active {
+                            Self::forward_osc52(&data);
+                        }
                         self.local_terminal.parser.process(&data);
                     }
                     PtyEvent::Exited => self.local_terminal.alive = false,
@@ -285,11 +292,18 @@ impl App {
             // tmux on the remote keeps producing output (status bar
             // ticks, idle redraws); if we stopped reading, the kernel
             // pipe buffer would fill and block the child.
+            let active_host = self.active_remote.clone();
             let mut died_hosts: Vec<String> = Vec::new();
             for (host, pane) in self.remote_terminals.iter_mut() {
+                let host_is_active = active_host.as_deref() == Some(host.as_str());
                 for event in pane.pty.drain() {
                     match event {
-                        PtyEvent::Output(data) => pane.parser.process(&data),
+                        PtyEvent::Output(data) => {
+                            if host_is_active {
+                                Self::forward_osc52(&data);
+                            }
+                            pane.parser.process(&data);
+                        }
                         PtyEvent::Exited => pane.alive = false,
                     }
                 }
