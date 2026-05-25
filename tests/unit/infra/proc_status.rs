@@ -4,10 +4,7 @@ use crate::tmux::TmuxPane;
 fn pane(cmd: &str) -> TmuxPane {
     TmuxPane {
         session: "s".to_string(),
-        pane_id: "%1".to_string(),
-        pid: 1,
         current_command: cmd.to_string(),
-        current_path: "/tmp".to_string(),
     }
 }
 

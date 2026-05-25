@@ -54,7 +54,7 @@ pub(super) struct TerminalPane {
 /// over a one-shot ssh call succeeds — those use independent SSH
 /// channels (though both ride the same ControlMaster).
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // status fields are read once step 5 wires selection
+#[allow(dead_code)] // payload on Failed(String) is for future UI surfacing
 pub(super) enum RemoteConnStatus {
     /// The spawn thread hasn't reported back yet.
     Connecting,
@@ -80,7 +80,7 @@ pub struct App {
     remote_spawner: remote_spawn::RemoteSpawner,
     /// `None` = the local terminal drives the main pane; `Some(host)`
     /// = the remote terminal for that host does. Switched by selecting
-    /// a session in the sidebar (step 5).
+    /// a session in the sidebar.
     active_remote: Option<String>,
     spinner: rattles::Rattler<rattles::presets::braille::Dots>,
     nesting_guard: NestingGuard,
@@ -191,7 +191,6 @@ impl App {
                 host: host.clone(),
                 name: String::new(),
                 dir: String::new(),
-                idle_seconds: 0,
                 unreachable: false,
                 loading: true,
             })

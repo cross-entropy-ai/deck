@@ -23,11 +23,7 @@ pub struct SessionInfo {
 #[derive(Debug, Clone)]
 pub struct TmuxPane {
     pub session: String,
-    /// Pane ID (e.g. "%42") — stable within a tmux server lifetime.
-    pub pane_id: String,
-    pub pid: u32,
     pub current_command: String,
-    pub current_path: String,
 }
 
 /// Process-wide runner. Module-private so callers can't override it;
@@ -80,15 +76,13 @@ fn parse_sessions(raw: &str, window_activity: &HashMap<String, u64>) -> Vec<Sess
 }
 
 /// List every pane across every session, with the info deck needs to
-/// derive session status (pane_id for Claude hook matching, pid for
-/// process-tree walks, current_command for the proc heuristic).
+/// derive session status (current_command for the proc heuristic).
 pub fn list_panes() -> Vec<TmuxPane> {
     list_panes_with(default_runner())
 }
 
 fn list_panes_with(runner: &dyn CommandRunner) -> Vec<TmuxPane> {
-    let format =
-        "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}";
+    let format = "#{session_name}\t#{pane_current_command}";
     let Ok(raw) = tmux_with(runner, &["list-panes", "-a", "-F", format]) else {
         return Vec::new();
     };
@@ -98,18 +92,12 @@ fn list_panes_with(runner: &dyn CommandRunner) -> Vec<TmuxPane> {
 fn parse_panes(raw: &str) -> Vec<TmuxPane> {
     raw.lines()
         .filter_map(|line| {
-            let mut parts = line.splitn(5, '\t');
+            let mut parts = line.splitn(2, '\t');
             let session = parts.next()?.to_string();
-            let pane_id = parts.next()?.to_string();
-            let pid = parts.next()?.parse::<u32>().ok()?;
             let current_command = parts.next()?.to_string();
-            let current_path = parts.next().unwrap_or("").to_string();
             Some(TmuxPane {
                 session,
-                pane_id,
-                pid,
                 current_command,
-                current_path,
             })
         })
         .collect()

@@ -125,10 +125,8 @@ impl App {
                 .remote_sessions
                 .iter()
                 .map(|r| ui::RemoteSessionView {
-                    host: r.host.as_str(),
                     name: r.name.as_str(),
                     dir: r.dir.as_str(),
-                    idle_seconds: r.idle_seconds,
                     unreachable: r.unreachable,
                     loading: r.loading,
                 })

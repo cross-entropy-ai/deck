@@ -25,7 +25,7 @@ pub const BANNER_MIN_WIDTH: u16 = 8;
 /// one row per plugin + trailing separator. Zero when no plugins are
 /// configured so the sidebar keeps its original layout for users
 /// without any extensions. Shared so mouse hit-testing in
-/// `AppState::session_at_row` stays in sync with the sidebar renderer.
+/// `AppState::focus_at_row` stays in sync with the sidebar renderer.
 pub const fn plugin_block_rows(count: usize) -> u16 {
     if count == 0 {
         0

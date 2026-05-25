@@ -15,9 +15,10 @@
 //!    events without blocking; the app inserts the `TerminalPane`
 //!    into `remote_terminals` or stamps a failure status.
 //! 3. Threads exit when their spawn is done. Reconnect is not yet
-//!    automatic; step 5 will trigger respawns on user action.
+//!    automatic — a future change will trigger respawns on user
+//!    action.
 
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use portable_pty::PtySize;
@@ -51,23 +52,9 @@ impl RemoteSpawner {
     }
 
     pub fn try_recv(&self) -> Option<RemoteSpawnEvent> {
-        match self.rx.try_recv() {
-            Ok(ev) => Some(ev),
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => None,
-        }
+        self.rx.try_recv().ok()
     }
 
-    /// Kick off a fresh spawn attempt for a single host. Used by the
-    /// reconnect path (step 5).
-    #[allow(dead_code)]
-    pub fn respawn(&self, host: String, size: PtySize) {
-        // We need a fresh sender; pull one from a side channel via the
-        // existing receiver. Because we kept the only Sender clones
-        // inside the workers, the simplest path is to spawn a new
-        // channel-sender pair and pipe it. For now this method is
-        // unused; step 5 will plumb a persistent sender.
-        let _ = (host, size);
-    }
 }
 
 fn spawn_one(host: String, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
