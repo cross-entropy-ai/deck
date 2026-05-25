@@ -92,11 +92,18 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn spawn_upgrade_pty(&mut self) -> io::Result<()> {
+    /// Spawn the upgrade PTY. `program` + `args` is the command to
+    /// run — caller picks brew vs. a self-download shell pipeline
+    /// based on `infra::self_update::detect_install_method`.
+    pub(super) fn spawn_upgrade_pty(
+        &mut self,
+        program: &str,
+        args: &[&str],
+    ) -> io::Result<()> {
         let (rows, cols) = self.state.pty_size();
         let pty = Pty::spawn_with_env(
-            "brew",
-            &["upgrade", "cross-entropy-ai/tap/deck"],
+            program,
+            args,
             PtySize {
                 rows,
                 cols,

@@ -4,7 +4,6 @@ use crate::keybindings::{self, Keybindings};
 use crate::state::{FocusMode, MainView, ReloadStatus, SideEffect, SIDEBAR_MAX, SIDEBAR_MIN};
 use crate::theme::THEMES;
 use crate::tmux;
-use crate::update;
 
 use super::App;
 
@@ -168,19 +167,61 @@ impl App {
                 fx.quit
             }
             Action::TriggerUpgrade => {
-                if self.state.update_available.is_none() {
+                use crate::self_update::{
+                    detect_install_method, direct_upgrade_command, manual_upgrade_command,
+                    target_triple, InstallMethod,
+                };
+                let Some(latest) = self
+                    .state
+                    .update_available
+                    .as_ref()
+                    .map(|u| u.latest_version.clone())
+                else {
                     return false;
-                }
-                if !update::has_brew() {
-                    self.warning_state = Some(crate::nesting_guard::WarningState::Proactive {
-                        text: "Homebrew not found",
-                        detail: "Install from https://brew.sh, then retry.\n\
-                                 Alternatively: cargo install --git https://github.com/cross-entropy-ai/deck"
-                            .to_string(),
-                    });
-                    return false;
-                }
-                if let Err(e) = self.spawn_upgrade_pty() {
+                };
+                let (program, args_owned): (&str, Vec<String>) = match detect_install_method() {
+                    InstallMethod::Brew => (
+                        "brew",
+                        vec!["upgrade".to_string(), "cross-entropy-ai/tap/deck".to_string()],
+                    ),
+                    InstallMethod::DirectDownload { dest } => {
+                        let Some(target) = target_triple() else {
+                            self.warning_state =
+                                Some(crate::nesting_guard::WarningState::Proactive {
+                                    text: "Unsupported platform",
+                                    detail: "deck doesn't ship a prebuilt binary for this \
+                                             platform. Rebuild from source via \
+                                             `cargo install --git https://github.com/cross-entropy-ai/deck`."
+                                        .to_string(),
+                                });
+                            return false;
+                        };
+                        let cmd = direct_upgrade_command(&latest, &dest, target);
+                        ("sh", vec!["-c".to_string(), cmd])
+                    }
+                    InstallMethod::Manual => {
+                        // We can't write to where deck lives (e.g.
+                        // /usr/local/bin without brew). Hand the user
+                        // the exact command for their platform.
+                        let dest = std::env::current_exe()
+                            .and_then(std::fs::canonicalize)
+                            .unwrap_or_else(|_| std::path::PathBuf::from("/path/to/deck"));
+                        let detail = match target_triple() {
+                            Some(target) => manual_upgrade_command(&latest, &dest, target),
+                            None => "Rebuild from source: `cargo install --git \
+                                     https://github.com/cross-entropy-ai/deck`."
+                                .to_string(),
+                        };
+                        self.warning_state =
+                            Some(crate::nesting_guard::WarningState::Proactive {
+                                text: "deck can't self-update from this location",
+                                detail,
+                            });
+                        return false;
+                    }
+                };
+                let args_ref: Vec<&str> = args_owned.iter().map(String::as_str).collect();
+                if let Err(e) = self.spawn_upgrade_pty(program, &args_ref) {
                     eprintln!("deck: failed to spawn upgrade: {}", e);
                     return false;
                 }

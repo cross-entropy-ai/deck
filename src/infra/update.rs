@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -196,17 +195,9 @@ impl UpdateCache {
     }
 }
 
-// --- Brew detection ---
-
-pub fn has_brew() -> bool {
-    Command::new("which")
-        .arg("brew")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
+// Brew detection moved to `infra::self_update::detect_install_method`,
+// which routes the upgrade flow across brew / direct-download /
+// manual fallbacks.
 
 #[cfg(test)]
 #[path = "../../tests/unit/infra/update.rs"]
