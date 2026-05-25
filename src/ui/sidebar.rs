@@ -559,7 +559,7 @@ fn render_remote_row(
 ) {
     let accent_color = if is_focused { theme.green } else { bg };
     let accent = if is_focused { "▌" } else { " " };
-    let name_fg = if row.unreachable {
+    let name_fg = if row.loading || row.unreachable {
         theme.muted
     } else if is_focused {
         theme.text
@@ -567,22 +567,24 @@ fn render_remote_row(
         theme.secondary
     };
     let mut name_style = Style::default().fg(name_fg).bg(bg);
-    if is_focused {
+    if is_focused && !row.loading {
         name_style = name_style.add_modifier(Modifier::BOLD);
     }
+    let label_text = if row.loading {
+        "  (connecting…)".to_string()
+    } else {
+        format!("  {}", row.name)
+    };
     let before = lines.len();
     lines.push(pad_line(
         vec![
             Span::styled(accent, Style::default().fg(accent_color).bg(bg)),
-            Span::styled(
-                truncate(&format!("  {}", row.name), width.saturating_sub(1)),
-                name_style,
-            ),
+            Span::styled(truncate(&label_text, width.saturating_sub(1)), name_style),
         ],
         bg,
         width,
     ));
-    if !row.dir.is_empty() {
+    if !row.dir.is_empty() && !row.loading {
         lines.push(pad_line(
             vec![Span::styled(
                 truncate(

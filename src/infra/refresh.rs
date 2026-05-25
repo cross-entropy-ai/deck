@@ -15,7 +15,9 @@
 //! further requests are no-ops rather than silently queuing forever.
 
 use std::cell::Cell;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::Arc;
 use std::thread;
 
 use std::collections::HashMap;
@@ -60,29 +62,39 @@ pub struct RemoteSnapshotRow {
     pub unreachable: bool,
 }
 
-pub struct SessionSnapshot {
-    pub current_session: String,
-    pub rows: Vec<SnapshotRow>,
-    pub remote_rows: Vec<RemoteSnapshotRow>,
+/// An update from the refresh worker. Decoupled into Local + Remote
+/// because remote queries can take seconds (ssh + tmux roundtrip) and
+/// must not stall the local refresh that's expected to tick every 1s.
+/// Each request the worker receives produces exactly one `Local`
+/// update synchronously and at most one `Remote` update (sent
+/// asynchronously from a detached thread when its queries finish).
+pub enum RefreshUpdate {
+    Local {
+        current_session: String,
+        rows: Vec<SnapshotRow>,
+    },
+    Remote {
+        rows: Vec<RemoteSnapshotRow>,
+    },
 }
 
 pub struct RefreshWorker {
     req_tx: Sender<RefreshRequest>,
-    snap_rx: Receiver<SessionSnapshot>,
+    update_rx: Receiver<RefreshUpdate>,
     alive: Cell<bool>,
 }
 
 impl RefreshWorker {
     pub fn spawn() -> Self {
         let (req_tx, req_rx) = mpsc::channel::<RefreshRequest>();
-        let (snap_tx, snap_rx) = mpsc::channel::<SessionSnapshot>();
+        let (update_tx, update_rx) = mpsc::channel::<RefreshUpdate>();
         thread::Builder::new()
             .name("deck-refresh".into())
-            .spawn(move || worker_loop(req_rx, snap_tx))
+            .spawn(move || worker_loop(req_rx, update_tx))
             .expect("spawn refresh worker");
         Self {
             req_tx,
-            snap_rx,
+            update_rx,
             alive: Cell::new(true),
         }
     }
@@ -96,9 +108,9 @@ impl RefreshWorker {
         }
     }
 
-    pub fn try_recv(&self) -> Option<SessionSnapshot> {
-        match self.snap_rx.try_recv() {
-            Ok(snap) => Some(snap),
+    pub fn try_recv(&self) -> Option<RefreshUpdate> {
+        match self.update_rx.try_recv() {
+            Ok(u) => Some(u),
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => {
                 self.mark_dead();
@@ -114,21 +126,59 @@ impl RefreshWorker {
     }
 }
 
-fn worker_loop(req_rx: Receiver<RefreshRequest>, snap_tx: Sender<SessionSnapshot>) {
+fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate>) {
+    // Single-flight gate for remote queries: each remote round can
+    // take up to N hosts × 5s. If new refresh ticks arrive while a
+    // remote round is still running, we skip dispatching another so
+    // we don't pile up threads racing to update the same state.
+    let remote_in_flight = Arc::new(AtomicBool::new(false));
+
     while let Ok(mut req) = req_rx.recv() {
-        // Coalesce: if more requests queued up while we were idle, keep
-        // only the most recent one.
+        // Coalesce: pick up the latest queued request before doing
+        // any work.
         while let Ok(newer) = req_rx.try_recv() {
             req = newer;
         }
-        let snap = collect(&req);
-        if snap_tx.send(snap).is_err() {
+
+        // Local update synchronously — fast (~ms), users see the
+        // sidebar populate immediately on startup.
+        let (current, local_rows) = collect_local(&req);
+        if update_tx
+            .send(RefreshUpdate::Local {
+                current_session: current,
+                rows: local_rows,
+            })
+            .is_err()
+        {
             break;
+        }
+
+        // Remote update asynchronously — runs in a detached thread,
+        // gated by `remote_in_flight` so back-to-back refresh ticks
+        // don't dispatch overlapping ssh storms. The next tick that
+        // arrives after this finishes is free to start its own round.
+        if !req.remotes.is_empty()
+            && !remote_in_flight.swap(true, Ordering::Acquire)
+        {
+            let remotes = req.remotes.clone();
+            let tx = update_tx.clone();
+            let flag = remote_in_flight.clone();
+            let _ = thread::Builder::new()
+                .name("deck-refresh-remote".into())
+                .spawn(move || {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let rows = collect_remotes(&remotes, now);
+                    let _ = tx.send(RefreshUpdate::Remote { rows });
+                    flag.store(false, Ordering::Release);
+                });
         }
     }
 }
 
-fn collect(req: &RefreshRequest) -> SessionSnapshot {
+fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>) {
     let current = if req.slave_tty.is_empty() {
         tmux::current_session()
     } else {
@@ -184,13 +234,7 @@ fn collect(req: &RefreshRequest) -> SessionSnapshot {
         })
         .collect();
 
-    let remote_rows = collect_remotes(&req.remotes, now);
-
-    SessionSnapshot {
-        current_session: current,
-        rows,
-        remote_rows,
-    }
+    (current, rows)
 }
 
 /// Query each remote host in parallel for its tmux sessions. Each host

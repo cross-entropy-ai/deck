@@ -24,6 +24,12 @@ const MIN_MAIN_HEIGHT: u16 = 1;
 
 const SESSION_MENU_ITEMS: &'static [&'static str] =
     &["Switch", "Rename", "Kill", "Move up", "Move down"];
+// Remote sessions live on a different tmux server, so the
+// deck-side `session_order` (which drives Move up/down) doesn't
+// apply. Switch/Rename/Kill all map to `ssh <host> tmux <cmd>`
+// against the host's server, where `(host, name)` uniquely
+// identifies the session.
+const REMOTE_SESSION_MENU_ITEMS: &'static [&'static str] = &["Switch", "Rename", "Kill"];
 const GLOBAL_MENU_ITEMS: &'static [&'static str] = &[
     "New session",
     "Toggle layout",
@@ -87,14 +93,15 @@ pub const SETTINGS_ITEM_COUNT: usize = 7;
 
 #[derive(Debug, Clone)]
 pub enum MenuKind {
-    Session { filtered_idx: usize },
+    Session(FocusTarget),
     Global,
 }
 
 impl MenuKind {
     pub fn items(&self) -> &'static [&'static str] {
         match self {
-            MenuKind::Session { .. } => SESSION_MENU_ITEMS,
+            MenuKind::Session(FocusTarget::Local(_)) => SESSION_MENU_ITEMS,
+            MenuKind::Session(FocusTarget::Remote(_)) => REMOTE_SESSION_MENU_ITEMS,
             MenuKind::Global => GLOBAL_MENU_ITEMS,
         }
     }
@@ -151,6 +158,12 @@ pub struct RemoteSessionRow {
     /// The row is still rendered but greyed out and the name column
     /// shows a brief reason.
     pub unreachable: bool,
+    /// True for the synthetic placeholder rows seeded at app startup,
+    /// before the first remote refresh round completes. Renders as a
+    /// muted "(connecting...)" so the user sees the group section
+    /// appear immediately even if the ssh+tmux query takes a few
+    /// seconds. Cleared (false) when a real refresh update lands.
+    pub loading: bool,
 }
 
 /// Identifies a sidebar row in the unified focus model. Local rows
@@ -345,6 +358,13 @@ impl SideEffect {
 #[derive(Debug)]
 pub struct KillRequest {
     pub name: String,
+    /// `Some(host)` targets the remote tmux server on that host;
+    /// `None` targets the local tmux server.
+    pub host: Option<String>,
+    /// LOCAL session to switch to after the kill (only meaningful
+    /// when killing the user's currently attached local session).
+    /// For remote kills, dispatch returns the user to the local view
+    /// instead, and this field is `None`.
     pub switch_to: Option<String>,
 }
 
@@ -353,6 +373,8 @@ pub struct KillRequest {
 pub struct RenameRequest {
     pub old_name: String,
     pub new_name: String,
+    /// `Some(host)` targets the remote tmux server on that host.
+    pub host: Option<String>,
 }
 
 /// Info needed to execute "create a new tmux session".
@@ -375,6 +397,8 @@ pub struct RenameState {
     pub original_name: String,
     pub input: String,
     pub cursor: usize,
+    /// `Some(host)` when the rename targets a remote session.
+    pub host: Option<String>,
 }
 
 /// UI state for the exclude pattern editor popup.
@@ -766,8 +790,10 @@ impl AppState {
     }
 
     /// Back-compat shim for callers that only expect a local index.
-    /// Returns `None` for remote rows so existing dispatch arms (kill,
-    /// rename, click-to-switch) don't accidentally act on a remote.
+    /// Returns `None` for remote rows so existing dispatch arms that
+    /// haven't grown a remote branch yet (e.g. vertical/tabs mode)
+    /// fall through to safe defaults.
+    #[allow(dead_code)]
     pub fn session_at_row(&self, row: u16) -> Option<usize> {
         match self.focus_at_row(row) {
             Some(FocusTarget::Local(pos)) => Some(pos),

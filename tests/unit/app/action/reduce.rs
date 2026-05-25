@@ -258,7 +258,7 @@ fn open_and_navigate_context_menu() {
     apply_action(
         &mut state,
         Action::OpenSessionMenu {
-            filtered_idx: 1,
+            target: crate::state::FocusTarget::Local(1),
             x: 10,
             y: 5,
         },
@@ -376,6 +376,7 @@ fn renaming(input: &str, cursor: usize) -> RenameState {
         original_name: input.to_string(),
         input: input.to_string(),
         cursor,
+        host: None,
     }
 }
 

@@ -181,6 +181,22 @@ impl App {
             .map(|h| (h.clone(), RemoteConnStatus::Connecting))
             .collect();
 
+        // Seed one placeholder per remote host so the sidebar shows a
+        // `@host` group with a "(connecting...)" row from the very
+        // first frame — no waiting for the slow ssh+tmux roundtrip on
+        // startup. The first remote refresh update overwrites these.
+        state.remote_sessions = remotes
+            .iter()
+            .map(|host| crate::state::RemoteSessionRow {
+                host: host.clone(),
+                name: String::new(),
+                dir: String::new(),
+                idle_seconds: 0,
+                unreachable: false,
+                loading: true,
+            })
+            .collect();
+
         let mut app = App {
             state,
             local_terminal,
@@ -418,8 +434,8 @@ impl App {
                 }
             }
 
-            while let Some(snap) = self.refresh_worker.try_recv() {
-                self.apply_snapshot(snap);
+            while let Some(update) = self.refresh_worker.try_recv() {
+                self.apply_update(update);
             }
 
             if last_refresh.elapsed() >= REFRESH_INTERVAL {

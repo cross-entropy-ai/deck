@@ -83,7 +83,7 @@ pub enum Action {
     SetFocusSidebar,
     ToggleFocus,
 
-    OpenSessionMenu { filtered_idx: usize, x: u16, y: u16 },
+    OpenSessionMenu { target: crate::state::FocusTarget, x: u16, y: u16 },
     OpenGlobalMenu { x: u16, y: u16 },
     MenuNext,
     MenuPrev,

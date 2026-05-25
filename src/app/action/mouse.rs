@@ -113,16 +113,15 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     }
 
     if mouse.kind == MouseEventKind::Down(MouseButton::Right) && in_sidebar {
-        // Context menu (rename/kill/etc.) only makes sense for local
-        // rows for now — operations on remote sessions land in a
-        // later phase. Use `session_at_row` (local-only) directly.
-        let idx = match state.layout_mode {
-            LayoutMode::Horizontal => state.session_at_row(mouse.row),
-            LayoutMode::Vertical => state.session_at_col(mouse.column, mouse.row),
+        let target = match state.layout_mode {
+            LayoutMode::Horizontal => state.focus_at_row(mouse.row),
+            LayoutMode::Vertical => state
+                .session_at_col(mouse.column, mouse.row)
+                .map(FocusTarget::Local),
         };
-        return if let Some(idx) = idx {
+        return if let Some(target) = target {
             Action::OpenSessionMenu {
-                filtered_idx: idx,
+                target,
                 x: mouse.column,
                 y: mouse.row,
             }

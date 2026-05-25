@@ -130,6 +130,7 @@ impl App {
                     dir: r.dir.as_str(),
                     idle_seconds: r.idle_seconds,
                     unreachable: r.unreachable,
+                    loading: r.loading,
                 })
                 .collect();
 

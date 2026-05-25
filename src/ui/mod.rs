@@ -66,6 +66,10 @@ pub struct RemoteSessionView<'a> {
     #[allow(dead_code)]
     pub idle_seconds: u64,
     pub unreachable: bool,
+    /// True for the synthetic placeholder row shown before the first
+    /// remote refresh completes. The sidebar paints these with a
+    /// muted "(connecting...)" label instead of the session name.
+    pub loading: bool,
 }
 
 pub struct ExcludeEditorView<'a> {

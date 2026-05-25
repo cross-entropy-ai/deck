@@ -319,22 +319,54 @@ impl App {
         }
 
         if let Some(ref rename) = fx.rename_session {
-            tmux::rename_session(&rename.old_name, &rename.new_name);
-            if let Some(pos) = self
-                .state
-                .session_order
-                .iter()
-                .position(|n| n == &rename.old_name)
-            {
-                self.state.session_order[pos] = rename.new_name.clone();
+            match &rename.host {
+                None => {
+                    tmux::rename_session(&rename.old_name, &rename.new_name);
+                    if let Some(pos) = self
+                        .state
+                        .session_order
+                        .iter()
+                        .position(|n| n == &rename.old_name)
+                    {
+                        self.state.session_order[pos] = rename.new_name.clone();
+                    }
+                }
+                Some(host) => {
+                    // Remote rename: blocking ssh is acceptable here
+                    // because the user explicitly initiated it and
+                    // waits on the result.
+                    crate::remote_tmux::rename_session(
+                        host,
+                        &rename.old_name,
+                        &rename.new_name,
+                    );
+                }
             }
         }
 
         if let Some(ref kill) = fx.kill_session {
-            if let Some(ref alt_name) = kill.switch_to {
-                self.switch_to_session_if_safe(alt_name);
+            match &kill.host {
+                None => {
+                    if let Some(ref alt_name) = kill.switch_to {
+                        self.switch_to_session_if_safe(alt_name);
+                    }
+                    tmux::kill_session(&kill.name);
+                }
+                Some(host) => {
+                    // If the user was attached to this remote session,
+                    // snap them back to local first so the dying PTY
+                    // doesn't leave a frozen screen visible. The
+                    // persistent ssh PTY for this host stays open;
+                    // the remote tmux server will pick another
+                    // session for it on the next attach if any
+                    // remain.
+                    if self.active_remote.as_deref() == Some(host.as_str()) {
+                        self.active_remote = None;
+                        self.needs_full_redraw = true;
+                    }
+                    crate::remote_tmux::kill_session(host, &kill.name);
+                }
             }
-            tmux::kill_session(&kill.name);
         }
 
         if let Some(ref req) = fx.create_session {

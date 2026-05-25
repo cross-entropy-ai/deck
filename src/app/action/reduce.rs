@@ -6,6 +6,16 @@ use crate::theme::THEMES;
 
 use super::Action;
 
+/// Translate a typed FocusTarget back into the flat `state.focused`
+/// integer index. Mirrors `AppState::focus_target` — local rows come
+/// first, then remotes.
+fn flatten_focus(state: &AppState, target: FocusTarget) -> usize {
+    match target {
+        FocusTarget::Local(pos) => pos,
+        FocusTarget::Remote(idx) => state.filtered.len() + idx,
+    }
+}
+
 /// Fill the appropriate `SideEffect` field based on the currently
 /// focused row — `switch_session` for a local row, `switch_remote`
 /// for a remote one. Used by every nav action so they don't each
@@ -19,7 +29,9 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) {
         }
         Some(FocusTarget::Remote(idx)) => {
             if let Some(row) = state.remote_sessions.get(idx) {
-                if !row.unreachable {
+                // Placeholder rows (loading) and dead hosts have no
+                // session name to switch to. Skip silently.
+                if !row.unreachable && !row.loading {
                     fx.switch_remote = Some(RemoteSwitchRequest {
                         host: row.host.clone(),
                         name: row.name.clone(),
@@ -84,42 +96,80 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.refresh_sessions = true;
         }
         Action::KillSession => {
-            if state.sessions.len() > 1 && state.filtered.get(state.focused).is_some() {
-                state.overlay.confirm_kill = true;
+            match state.focus_target() {
+                Some(FocusTarget::Local(_)) => {
+                    // Refuse to kill the last local session — it'd
+                    // leave deck attached to nothing.
+                    if state.sessions.len() > 1 {
+                        state.overlay.confirm_kill = true;
+                    }
+                }
+                Some(FocusTarget::Remote(_)) => {
+                    // No "last session" guard for remote: deck doesn't
+                    // depend on the remote tmux server having any
+                    // sessions, the worst case is the persistent PTY
+                    // showing an empty server next refresh.
+                    state.overlay.confirm_kill = true;
+                }
+                None => {}
             }
         }
         Action::ConfirmKill => {
             state.overlay.confirm_kill = false;
-            if state.sessions.len() <= 1 {
-                return fx;
+            match state.focus_target() {
+                Some(FocusTarget::Local(_)) => {
+                    if state.sessions.len() <= 1 {
+                        return fx;
+                    }
+                    let Some(&session_idx) = state.filtered.get(state.focused) else {
+                        return fx;
+                    };
+                    let name = state.sessions[session_idx].name.clone();
+
+                    let next_focused = if state.focused + 1 < state.filtered.len() {
+                        state.focused
+                    } else {
+                        state.focused.saturating_sub(1)
+                    };
+
+                    let switch_to = {
+                        let alt_idx = if state.focused + 1 < state.filtered.len() {
+                            state.focused + 1
+                        } else if state.focused > 0 {
+                            state.focused - 1
+                        } else {
+                            return fx;
+                        };
+                        Some(state.sessions[state.filtered[alt_idx]].name.clone())
+                    };
+
+                    state.session_order.retain(|n| n != &name);
+                    state.focused = next_focused.min(state.filtered.len().saturating_sub(1));
+
+                    fx.kill_session = Some(KillRequest {
+                        name,
+                        host: None,
+                        switch_to,
+                    });
+                    fx.refresh_sessions = true;
+                }
+                Some(FocusTarget::Remote(idx)) => {
+                    let Some(row) = state.remote_sessions.get(idx) else {
+                        return fx;
+                    };
+                    let name = row.name.clone();
+                    let host = row.host.clone();
+                    fx.kill_session = Some(KillRequest {
+                        name,
+                        host: Some(host),
+                        // No local switch_to: dispatch returns the
+                        // user to local view after a remote kill.
+                        switch_to: None,
+                    });
+                    fx.refresh_sessions = true;
+                }
+                None => {}
             }
-            let Some(&session_idx) = state.filtered.get(state.focused) else {
-                return fx;
-            };
-            let name = state.sessions[session_idx].name.clone();
-
-            let next_focused = if state.focused + 1 < state.filtered.len() {
-                state.focused
-            } else {
-                state.focused.saturating_sub(1)
-            };
-
-            let switch_to = {
-                let alt_idx = if state.focused + 1 < state.filtered.len() {
-                    state.focused + 1
-                } else if state.focused > 0 {
-                    state.focused - 1
-                } else {
-                    return fx;
-                };
-                Some(state.sessions[state.filtered[alt_idx]].name.clone())
-            };
-
-            state.session_order.retain(|n| n != &name);
-            state.focused = next_focused.min(state.filtered.len().saturating_sub(1));
-
-            fx.kill_session = Some(KillRequest { name, switch_to });
-            fx.refresh_sessions = true;
         }
         Action::CancelKill => {
             state.overlay.confirm_kill = false;
@@ -148,15 +198,28 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::StartRename => {
-            if let Some(&session_idx) = state.filtered.get(state.focused) {
-                let name = state.sessions[session_idx].name.clone();
-                let len = name.len();
-                state.overlay.renaming = Some(RenameState {
-                    original_name: name.clone(),
-                    input: name,
-                    cursor: len,
-                });
-            }
+            let (name, host) = match state.focus_target() {
+                Some(FocusTarget::Local(_)) => {
+                    let Some(&session_idx) = state.filtered.get(state.focused) else {
+                        return fx;
+                    };
+                    (state.sessions[session_idx].name.clone(), None)
+                }
+                Some(FocusTarget::Remote(idx)) => {
+                    let Some(row) = state.remote_sessions.get(idx) else {
+                        return fx;
+                    };
+                    (row.name.clone(), Some(row.host.clone()))
+                }
+                None => return fx,
+            };
+            let len = name.len();
+            state.overlay.renaming = Some(RenameState {
+                original_name: name.clone(),
+                input: name,
+                cursor: len,
+                host,
+            });
         }
         Action::RenameInput(ch) => {
             if let Some(ref mut r) = state.overlay.renaming {
@@ -215,6 +278,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     fx.rename_session = Some(RenameRequest {
                         old_name: r.original_name,
                         new_name,
+                        host: r.host,
                     });
                     fx.refresh_sessions = true;
                 }
@@ -652,10 +716,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
 
-        Action::OpenSessionMenu { filtered_idx, x, y } => {
-            state.focused = filtered_idx;
+        Action::OpenSessionMenu { target, x, y } => {
+            // Move focus to whatever row the user right-clicked so
+            // subsequent keyboard actions (or menu confirmations)
+            // operate on it.
+            state.focused = flatten_focus(state, target);
             state.overlay.context_menu = Some(ContextMenu {
-                kind: MenuKind::Session { filtered_idx },
+                kind: MenuKind::Session(target),
                 x,
                 y,
                 selected: 0,
@@ -689,8 +756,8 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             };
             let selected_label = menu.items().get(menu.selected).copied();
             match menu.kind {
-                MenuKind::Session { filtered_idx } => {
-                    state.focused = filtered_idx;
+                MenuKind::Session(target) => {
+                    state.focused = flatten_focus(state, target);
                     let inner = match selected_label {
                         Some("Switch") => {
                             let inner = apply_action(state, Action::SwitchProject);

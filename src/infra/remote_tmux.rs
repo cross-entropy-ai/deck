@@ -135,10 +135,30 @@ fn parse_window_activity(raw: &str) -> HashMap<String, u64> {
 /// Tell the remote tmux server to switch its (only) attached client to
 /// `session`. Fire-and-forget: errors are swallowed because the user
 /// will see the failure to switch reflected in the UI anyway.
-#[allow(dead_code)] // wired up in Phase 2 step 5
 pub fn switch_client(host: &str, session: &str) {
     let runner = default_runner();
     let _ = run_ssh(runner, host, &["tmux", "switch-client", "-t", session]);
+}
+
+/// Kill a session on the remote tmux server. The `(host, name)` tuple
+/// uniquely identifies the session — within a single tmux server
+/// `name` is unique by tmux's own constraint, and `host` picks the
+/// server. Errors are swallowed; the next refresh will surface the
+/// session's continued existence (or absence) regardless.
+pub fn kill_session(host: &str, name: &str) {
+    let runner = default_runner();
+    let _ = run_ssh(runner, host, &["tmux", "kill-session", "-t", name]);
+}
+
+/// Rename a session on the remote tmux server. As with `kill_session`,
+/// `(host, old_name)` uniquely identifies the target.
+pub fn rename_session(host: &str, old_name: &str, new_name: &str) {
+    let runner = default_runner();
+    let _ = run_ssh(
+        runner,
+        host,
+        &["tmux", "rename-session", "-t", old_name, new_name],
+    );
 }
 
 #[cfg(test)]
