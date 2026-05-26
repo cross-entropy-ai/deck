@@ -353,12 +353,9 @@ fn group_bg(theme: &Theme, group: GroupKind) -> Color {
 }
 
 fn blend(a: Color, b: Color, t: f32) -> Color {
-    let to_rgb = |c| match c {
-        Color::Rgb(r, g, bl) => (r, g, bl),
-        _ => (0, 0, 0),
+    let (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg_g, bb)) = (a, b) else {
+        return a;
     };
-    let (ar, ag, ab) = to_rgb(a);
-    let (br, bg_g, bb) = to_rgb(b);
     let lerp = |x: u8, y: u8| -> u8 {
         ((x as f32) * (1.0 - t) + (y as f32) * t)
             .round()
@@ -534,6 +531,40 @@ fn render_local_card_expanded(
     ));
 }
 
+fn compact_activity(
+    session: &SessionView<'_>,
+    theme: &Theme,
+    spinner_frame: &str,
+    blink_on: bool,
+    is_focused: bool,
+) -> (String, Color) {
+    let text = if session.is_current {
+        status_icon_compact(session.status, true, spinner_frame)
+    } else {
+        match session.status {
+            SessionStatus::Working => spinner_frame.to_string(),
+            SessionStatus::Idle => {
+                if session.idle_seconds < 3 {
+                    spinner_frame.to_string()
+                } else {
+                    "󰒲".to_string()
+                }
+            }
+        }
+    };
+
+    let color = if session.is_current {
+        status_color(session.status, true, theme, blink_on, is_focused)
+    } else {
+        match session.status {
+            SessionStatus::Idle => idle_color(theme, session.idle_seconds, is_focused),
+            _ => status_color(session.status, false, theme, blink_on, is_focused),
+        }
+    };
+
+    (text, color)
+}
+
 fn render_local_card_compact(
     lines: &mut Vec<Line<'_>>,
     ctx: &SidebarRenderCtx<'_>,
@@ -550,28 +581,8 @@ fn render_local_card_compact(
     let base = local_row_base(ctx.theme, is_focused, bg, sidebar_idx);
     let theme = base.theme;
 
-    let activity_text = if session.is_current {
-        status_icon_compact(session.status, true, ctx.spinner_frame)
-    } else {
-        match session.status {
-            SessionStatus::Working => ctx.spinner_frame.to_string(),
-            SessionStatus::Idle => {
-                if session.idle_seconds < 3 {
-                    ctx.spinner_frame.to_string()
-                } else {
-                    "󰒲".to_string()
-                }
-            }
-        }
-    };
-    let activity_color = if session.is_current {
-        status_color(session.status, true, theme, ctx.blink_on, is_focused)
-    } else {
-        match session.status {
-            SessionStatus::Idle => idle_color(theme, session.idle_seconds, is_focused),
-            _ => status_color(session.status, false, theme, ctx.blink_on, is_focused),
-        }
-    };
+    let (activity_text, activity_color) =
+        compact_activity(session, theme, ctx.spinner_frame, ctx.blink_on, is_focused);
     let mut spans = vec![
         Span::styled(base.accent, base.accent_style),
         Span::styled(activity_text, Style::default().fg(activity_color).bg(bg)),
@@ -845,7 +856,7 @@ fn draw_footer(
         )])]
     };
 
-    let mut rows: Vec<Line> = Vec::with_capacity(5);
+    let mut rows: Vec<Line> = Vec::with_capacity(5 + props.plugins.len());
     rows.push(sep);
 
     append_plugin_rows(
