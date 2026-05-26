@@ -19,9 +19,8 @@ use crate::update::UpdateStatus;
 
 use super::overlays::{draw_confirm_kill, draw_help, draw_rename_input};
 use super::text::{
-    build_status_spans, build_tab_status, format_activity_compact, format_git_status,
-    format_idle_badge, idle_color, pack_hint_lines, pad_line, primary_key_string, shorten_dir,
-    status_color, status_icon, status_icon_compact, truncate,
+    format_activity_compact, format_idle_badge, idle_color, pack_hint_lines, pad_line,
+    primary_key_string, shorten_dir, status_color, status_icon, status_icon_compact, truncate,
 };
 use super::{PluginStatus, PluginView, RemoteSessionView, SessionView};
 use crate::state::SessionStatus;
@@ -477,53 +476,10 @@ fn render_local_card_expanded(
         width,
     ));
 
-    if session.branch.is_empty() {
-        lines.push(pad_line(
-            vec![
-                Span::styled("      ", Style::default().bg(bg)),
-                Span::styled(
-                    "\u{e725}  no git",
-                    Style::default()
-                        .fg(if is_focused { theme.dim } else { theme.muted })
-                        .bg(bg),
-                ),
-            ],
-            bg,
-            width,
-        ));
-    } else {
-        let branch_color = if is_focused { theme.pink } else { theme.muted };
-        let branch_display = truncate(session.branch, text_width.saturating_sub(2));
-        lines.push(pad_line(
-            vec![
-                Span::styled("      ", Style::default().bg(bg)),
-                Span::styled("\u{e725} ", Style::default().fg(branch_color).bg(bg)),
-                Span::styled(branch_display, Style::default().fg(branch_color).bg(bg)),
-            ],
-            bg,
-            width,
-        ));
-    }
-
-    let status_spans = build_status_spans(session, is_focused, bg, theme, text_width);
-    let mut row4 = vec![Span::styled("      ", Style::default().bg(bg))];
-    if status_spans.is_empty() {
-        row4.push(Span::styled(
-            "—",
-            Style::default()
-                .fg(if is_focused { theme.dim } else { theme.muted })
-                .bg(bg),
-        ));
-    } else {
-        row4.extend(status_spans);
-    }
-    lines.push(pad_line(row4, bg, width));
-
-    // 5th line is the inter-card gutter. The caller decides what
-    // color it should be: inside a group it's the group bg so the
-    // tint flows continuously between cards; at the last card of a
-    // group it's theme.bg so the separator to the next group reads
-    // as neutral negative space.
+    // Inter-card gutter. The caller decides what color it should be:
+    // inside a group it's the group bg so the tint flows continuously
+    // between cards; at the last card of a group it's theme.bg so the
+    // separator to the next group reads as neutral negative space.
     lines.push(pad_line(
         vec![Span::styled(" ", Style::default().bg(gutter_bg))],
         gutter_bg,
@@ -583,7 +539,7 @@ fn render_local_card_compact(
 
     let (activity_text, activity_color) =
         compact_activity(session, theme, ctx.spinner_frame, ctx.blink_on, is_focused);
-    let mut spans = vec![
+    let spans = vec![
         Span::styled(base.accent, base.accent_style),
         Span::styled(activity_text, Style::default().fg(activity_color).bg(bg)),
         Span::styled(base.idx_str, base.index_style.bg(bg)),
@@ -593,35 +549,6 @@ fn render_local_card_compact(
             base.name_style.bg(bg),
         ),
     ];
-
-    if !session.branch.is_empty() {
-        let branch_color = if is_focused { theme.pink } else { theme.muted };
-        spans.push(Span::styled("  ", Style::default().bg(bg)));
-        spans.push(Span::styled(
-            truncate(session.branch, width.saturating_sub(20)),
-            Style::default().fg(branch_color).bg(bg),
-        ));
-
-        let status = format_git_status(session, true);
-        if !status.is_empty() {
-            let status_color = if status == "✓" {
-                if is_focused {
-                    theme.green
-                } else {
-                    theme.muted
-                }
-            } else if is_focused {
-                theme.yellow
-            } else {
-                theme.dim
-            };
-            spans.push(Span::styled(" ", Style::default().bg(bg)));
-            spans.push(Span::styled(
-                status,
-                Style::default().fg(status_color).bg(bg),
-            ));
-        }
-    }
 
     lines.push(pad_line(spans, bg, width));
 
@@ -1084,7 +1011,6 @@ fn draw_sidebar_tabs(
         if let Some(session) = sessions.get(focused) {
             let avail = content.width as usize;
             let dir = shorten_dir(session.dir);
-            let git = build_tab_status(session);
             let activity = format_activity_compact(session.idle_seconds, ctx.spinner_frame);
             let status_text =
                 status_icon_compact(session.status, session.is_current, ctx.spinner_frame);
@@ -1097,12 +1023,6 @@ fn draw_sidebar_tabs(
             );
 
             let mut tail = format!("  {}", dir);
-            if !session.branch.is_empty() {
-                tail.push_str(&format!("  {}", session.branch));
-            }
-            if !git.is_empty() {
-                tail.push_str(&format!("  {}", git));
-            }
             tail.push_str(&format!("  {}", activity));
             let tail = truncate(&tail, avail.saturating_sub(status_text.width() + 2));
 

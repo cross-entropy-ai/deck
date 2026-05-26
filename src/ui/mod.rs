@@ -37,12 +37,6 @@ pub struct PluginView<'a> {
 pub struct SessionView<'a> {
     pub name: &'a str,
     pub dir: &'a str,
-    pub branch: &'a str,
-    pub ahead: u32,
-    pub behind: u32,
-    pub staged: u32,
-    pub modified: u32,
-    pub untracked: u32,
     pub idle_seconds: u64,
     /// Proc-derived status for this session.
     pub status: SessionStatus,

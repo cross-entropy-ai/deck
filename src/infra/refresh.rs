@@ -22,7 +22,6 @@ use std::sync::Arc;
 use std::thread;
 
 use crate::config::{self, ExcludePattern};
-use crate::git;
 use crate::proc_status;
 use crate::remote_tmux;
 use crate::state::SessionStatus;
@@ -39,18 +38,12 @@ pub struct RefreshRequest {
 pub struct SnapshotRow {
     pub name: String,
     pub dir: String,
-    pub branch: String,
-    pub ahead: u32,
-    pub behind: u32,
-    pub staged: u32,
-    pub modified: u32,
-    pub untracked: u32,
     pub idle_seconds: u64,
     pub status: SessionStatus,
 }
 
 /// One row from a remote host. Mirrors the subset of `SnapshotRow`
-/// fields we can cheaply produce over ssh — no git, no Claude status.
+/// fields we can cheaply produce over ssh — no Claude status.
 pub struct RemoteSnapshotRow {
     pub host: String,
     pub name: String,
@@ -199,7 +192,6 @@ fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>) {
         .into_iter()
         .filter(|s| !config::session_excluded(&s.name, &compiled))
         .map(|s| {
-            let git_info = git::get_git_info(&s.dir);
             let idle_seconds = now.saturating_sub(s.activity);
             let status = compute_status(
                 panes_by_session
@@ -210,12 +202,6 @@ fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>) {
             SnapshotRow {
                 name: s.name,
                 dir: s.dir,
-                branch: git_info.branch,
-                ahead: git_info.ahead,
-                behind: git_info.behind,
-                staged: git_info.staged,
-                modified: git_info.modified,
-                untracked: git_info.untracked,
                 idle_seconds,
                 status,
             }

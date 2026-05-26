@@ -66,12 +66,6 @@ impl App {
                 is_current: r.name == current,
                 name: r.name,
                 dir: r.dir,
-                branch: r.branch,
-                ahead: r.ahead,
-                behind: r.behind,
-                staged: r.staged,
-                modified: r.modified,
-                untracked: r.untracked,
                 idle_seconds: r.idle_seconds,
                 status: r.status,
             })

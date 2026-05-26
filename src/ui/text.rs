@@ -6,8 +6,6 @@ use crate::keybindings::{format_key, Command, Keybindings};
 use crate::state::SessionStatus;
 use crate::theme::Theme;
 
-use super::SessionView;
-
 pub(super) fn pad_line<'a>(
     spans: Vec<Span<'a>>,
     bg: ratatui::style::Color,
@@ -69,10 +67,6 @@ pub(super) fn pack_hint_lines(
     }
 
     lines
-}
-
-pub(super) fn build_tab_status(session: &SessionView) -> String {
-    format_git_status(session, false)
 }
 
 pub(super) fn format_keys_for(keybindings: &Keybindings, cmd: Command) -> String {
@@ -230,125 +224,6 @@ pub(super) fn idle_color(
     } else {
         theme.dim
     }
-}
-
-pub(super) fn format_git_status(session: &SessionView, compact: bool) -> String {
-    let mut parts: Vec<String> = Vec::new();
-
-    if session.ahead > 0 {
-        parts.push(format!("↑{}", session.ahead));
-    }
-    if session.behind > 0 {
-        parts.push(format!("↓{}", session.behind));
-    }
-    if session.staged > 0 {
-        parts.push(format!("+{}", session.staged));
-    }
-    if session.modified > 0 {
-        parts.push(format!("~{}", session.modified));
-    }
-    if session.untracked > 0 {
-        parts.push(format!("?{}", session.untracked));
-    }
-
-    if parts.is_empty() && !session.branch.is_empty() {
-        return "✓".to_string();
-    }
-    if compact {
-        parts.join("")
-    } else {
-        parts.join(" ")
-    }
-}
-
-fn build_status_spans_symbols<'a>(
-    session: &SessionView,
-    bg: ratatui::style::Color,
-    theme: &Theme,
-    emphasized: bool,
-    compact: bool,
-) -> Vec<Span<'a>> {
-    let mut spans: Vec<Span<'a>> = Vec::new();
-    let mut push = |text: String, color| {
-        if compact {
-            spans.push(Span::styled(text, Style::default().fg(color).bg(bg)));
-            return;
-        }
-        if !spans.is_empty() {
-            spans.push(Span::styled(" ", Style::default().bg(bg)));
-        }
-        spans.push(Span::styled(text, Style::default().fg(color).bg(bg)));
-    };
-    let ahead_color = if emphasized { theme.green } else { theme.muted };
-    let behind_color = if emphasized {
-        theme.yellow
-    } else {
-        theme.muted
-    };
-    let staged_color = if emphasized { theme.teal } else { theme.muted };
-    let modified_color = if emphasized {
-        theme.yellow
-    } else {
-        theme.muted
-    };
-    let untracked_color = theme.muted;
-    let clean_color = if emphasized { theme.green } else { theme.muted };
-
-    if session.ahead > 0 {
-        push(format!("↑{}", session.ahead), ahead_color);
-    }
-    if session.behind > 0 {
-        push(format!("↓{}", session.behind), behind_color);
-    }
-    if session.staged > 0 {
-        push(format!("+{}", session.staged), staged_color);
-    }
-    if session.modified > 0 {
-        push(format!("~{}", session.modified), modified_color);
-    }
-    if session.untracked > 0 {
-        push(format!("?{}", session.untracked), untracked_color);
-    }
-
-    if spans.is_empty() && !session.branch.is_empty() {
-        spans.push(Span::styled("✓", Style::default().fg(clean_color).bg(bg)));
-    }
-
-    spans
-}
-
-pub(super) fn build_status_spans<'a>(
-    session: &SessionView,
-    emphasized: bool,
-    bg: ratatui::style::Color,
-    theme: &Theme,
-    max_width: usize,
-) -> Vec<Span<'a>> {
-    let spaced = build_status_spans_symbols(session, bg, theme, emphasized, false);
-    if spaced.iter().map(|span| span.width()).sum::<usize>() <= max_width {
-        return spaced;
-    }
-
-    let compact = build_status_spans_symbols(session, bg, theme, emphasized, true);
-    if compact.iter().map(|span| span.width()).sum::<usize>() <= max_width {
-        return compact;
-    }
-
-    let text = truncate(&format_git_status(session, true), max_width);
-    if text.is_empty() {
-        return vec![];
-    }
-
-    let color = if text == "✓" {
-        if emphasized {
-            theme.green
-        } else {
-            theme.muted
-        }
-    } else {
-        theme.muted
-    };
-    vec![Span::styled(text, Style::default().fg(color).bg(bg))]
 }
 
 #[cfg(test)]

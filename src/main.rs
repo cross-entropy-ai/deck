@@ -5,7 +5,7 @@ mod ui;
 
 pub(crate) use app::action;
 pub(crate) use infra::{
-    git, instance_guard, nesting_guard, preflight_guard, proc_status, pty, refresh, remote_tmux,
+    instance_guard, nesting_guard, preflight_guard, proc_status, pty, refresh, remote_tmux,
     self_update, shutdown, ssh, terminal_guard, tmux, update,
 };
 pub(crate) use model::{config, keybindings, new_session, state};

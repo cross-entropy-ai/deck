@@ -36,7 +36,7 @@ pub const fn plugin_block_rows(count: usize) -> u16 {
 
 pub fn card_height(view_mode: ViewMode) -> usize {
     match view_mode {
-        ViewMode::Expanded => 5,
+        ViewMode::Expanded => 3,
         ViewMode::Compact => 2,
     }
 }

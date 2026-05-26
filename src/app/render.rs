@@ -109,12 +109,6 @@ impl App {
                 .map(|(r, status)| SessionView {
                     name: r.name.as_str(),
                     dir: r.dir.as_str(),
-                    branch: r.branch.as_str(),
-                    ahead: r.ahead,
-                    behind: r.behind,
-                    staged: r.staged,
-                    modified: r.modified,
-                    untracked: r.untracked,
                     idle_seconds: r.idle_seconds,
                     status: *status,
                     is_current: r.is_current,
