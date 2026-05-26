@@ -1,42 +1,34 @@
 use crate::state::{
-    AppState, ContextMenu, FocusMode, FocusTarget, KillRequest, LayoutMode, MainView, MenuKind,
-    RemoteSwitchRequest, RenameRequest, RenameState, SideEffect, ViewMode, SETTINGS_ITEM_COUNT,
+    AppState, ContextMenu, FocusMode, KillRequest, LayoutMode, MainView, MenuKind,
+    RemoteSwitchRequest, RenameRequest, RenameState, SessionTargetRef, SideEffect, ViewMode,
+    SETTINGS_ITEM_COUNT,
 };
 use crate::theme::THEMES;
 
 use super::Action;
 
-/// Translate a typed FocusTarget back into the flat `state.focused`
-/// integer index. Mirrors `AppState::focus_target` — local rows come
-/// first, then remotes.
-fn flatten_focus(state: &AppState, target: FocusTarget) -> usize {
-    match target {
-        FocusTarget::Local(pos) => pos,
-        FocusTarget::Remote(idx) => state.filtered.len() + idx,
-    }
-}
-
 /// Fill the appropriate `SideEffect` field based on the currently
 /// focused row — `switch_session` for a local row, `switch_remote`
-/// for a remote one. Used by every nav action so they don't each
-/// have to re-implement the local/remote branching.
+/// for a remote one. Local-vs-remote dispatch lives in
+/// `AppState::session_target`; every action that needs to route by
+/// origin goes through it instead of taking apart the flat focus
+/// index itself.
 fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) {
-    match state.focus_target() {
-        Some(FocusTarget::Local(pos)) => {
-            if let Some(&session_idx) = state.filtered.get(pos) {
-                fx.switch_session = Some(state.sessions[session_idx].name.clone());
-            }
+    let Some(target) = state.focus_target() else {
+        return;
+    };
+    match state.session_target(target) {
+        Some(SessionTargetRef::Local { row, .. }) => {
+            fx.switch_session = Some(row.name.clone());
         }
-        Some(FocusTarget::Remote(idx)) => {
-            if let Some(row) = state.remote_sessions.get(idx) {
-                // Placeholder rows (loading) and dead hosts have no
-                // session name to switch to. Skip silently.
-                if !row.unreachable && !row.loading {
-                    fx.switch_remote = Some(RemoteSwitchRequest {
-                        host: row.host.clone(),
-                        name: row.name.clone(),
-                    });
-                }
+        Some(SessionTargetRef::Remote { row, .. }) => {
+            // Placeholder rows (loading) and dead hosts have no
+            // session name to switch to. Skip silently.
+            if !row.unreachable && !row.loading {
+                fx.switch_remote = Some(RemoteSwitchRequest {
+                    host: row.host.clone(),
+                    name: row.name.clone(),
+                });
             }
         }
         None => {}
@@ -96,15 +88,18 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.refresh_sessions = true;
         }
         Action::KillSession => {
-            match state.focus_target() {
-                Some(FocusTarget::Local(_)) => {
+            let Some(target) = state.focus_target() else {
+                return fx;
+            };
+            match state.session_target(target) {
+                Some(SessionTargetRef::Local { .. }) => {
                     // Refuse to kill the last local session — it'd
                     // leave deck attached to nothing.
                     if state.sessions.len() > 1 {
                         state.overlay.confirm_kill = true;
                     }
                 }
-                Some(FocusTarget::Remote(_)) => {
+                Some(SessionTargetRef::Remote { .. }) => {
                     // No "last session" guard for remote: deck doesn't
                     // depend on the remote tmux server having any
                     // sessions, the worst case is the persistent PTY
@@ -116,8 +111,11 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::ConfirmKill => {
             state.overlay.confirm_kill = false;
-            match state.focus_target() {
-                Some(FocusTarget::Local(_)) => {
+            let Some(target) = state.focus_target() else {
+                return fx;
+            };
+            match state.session_target(target) {
+                Some(SessionTargetRef::Local { .. }) => {
                     if state.sessions.len() <= 1 {
                         return fx;
                     }
@@ -153,10 +151,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     });
                     fx.refresh_sessions = true;
                 }
-                Some(FocusTarget::Remote(idx)) => {
-                    let Some(row) = state.remote_sessions.get(idx) else {
-                        return fx;
-                    };
+                Some(SessionTargetRef::Remote { row, .. }) => {
                     let name = row.name.clone();
                     let host = row.host.clone();
                     fx.kill_session = Some(KillRequest {
@@ -198,17 +193,12 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::StartRename => {
-            let (name, host) = match state.focus_target() {
-                Some(FocusTarget::Local(_)) => {
-                    let Some(&session_idx) = state.filtered.get(state.focused) else {
-                        return fx;
-                    };
-                    (state.sessions[session_idx].name.clone(), None)
-                }
-                Some(FocusTarget::Remote(idx)) => {
-                    let Some(row) = state.remote_sessions.get(idx) else {
-                        return fx;
-                    };
+            let Some(target) = state.focus_target() else {
+                return fx;
+            };
+            let (name, host) = match state.session_target(target) {
+                Some(SessionTargetRef::Local { row, .. }) => (row.name.clone(), None),
+                Some(SessionTargetRef::Remote { row, .. }) => {
                     (row.name.clone(), Some(row.host.clone()))
                 }
                 None => return fx,
@@ -718,9 +708,17 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // Move focus to whatever row the user right-clicked so
             // subsequent keyboard actions (or menu confirmations)
             // operate on it.
-            state.focused = flatten_focus(state, target);
+            state.focused = target.0;
+            let kind = match state.session_target(target) {
+                Some(SessionTargetRef::Local { .. }) => MenuKind::LocalSession(target),
+                Some(SessionTargetRef::Remote { .. }) => MenuKind::RemoteSession(target),
+                // Index points outside any row — treat as a global
+                // right-click. Shouldn't happen since mouse hit-test
+                // only emits OpenSessionMenu on a real row.
+                None => MenuKind::Global,
+            };
             state.overlay.context_menu = Some(ContextMenu {
-                kind: MenuKind::Session(target),
+                kind,
                 x,
                 y,
                 selected: 0,
@@ -754,8 +752,8 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             };
             let selected_label = menu.items().get(menu.selected).copied();
             match menu.kind {
-                MenuKind::Session(target) => {
-                    state.focused = flatten_focus(state, target);
+                MenuKind::LocalSession(target) | MenuKind::RemoteSession(target) => {
+                    state.focused = target.0;
                     let inner = match selected_label {
                         Some("Switch") => {
                             let inner = apply_action(state, Action::SwitchProject);

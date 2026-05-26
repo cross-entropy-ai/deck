@@ -88,15 +88,18 @@ pub const SETTINGS_ITEM_COUNT: usize = 7;
 
 #[derive(Debug, Clone)]
 pub enum MenuKind {
-    Session(FocusTarget),
+    /// Right-clicked a local session row.
+    LocalSession(FocusTarget),
+    /// Right-clicked a remote session row.
+    RemoteSession(FocusTarget),
     Global,
 }
 
 impl MenuKind {
     pub fn items(&self) -> &'static [&'static str] {
         match self {
-            MenuKind::Session(FocusTarget::Local(_)) => SESSION_MENU_ITEMS,
-            MenuKind::Session(FocusTarget::Remote(_)) => REMOTE_SESSION_MENU_ITEMS,
+            MenuKind::LocalSession(_) => SESSION_MENU_ITEMS,
+            MenuKind::RemoteSession(_) => REMOTE_SESSION_MENU_ITEMS,
             MenuKind::Global => GLOBAL_MENU_ITEMS,
         }
     }
@@ -149,16 +152,35 @@ pub struct RemoteSessionRow {
     pub loading: bool,
 }
 
-/// Identifies a sidebar row in the unified focus model. Local rows
-/// follow the existing `filtered` order; remote rows pick up where
-/// local ones end.
+/// Identifies a focused sidebar row by its flat index.
+///
+/// The flat index walks the visible row list in render order: local
+/// rows first (`0..state.filtered.len()`), then remote rows
+/// (`filtered.len()..filtered.len() + remote_sessions.len()`).
+/// `AppState::session_target` decodes this back into the underlying
+/// storage for action dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FocusTarget {
-    /// Index into `state.filtered` (which itself indexes into
-    /// `state.sessions`).
-    Local(usize),
-    /// Index into `state.remote_sessions`.
-    Remote(usize),
+pub struct FocusTarget(pub usize);
+
+/// A resolved reference into one of the two backing stores. The
+/// renderer doesn't see this — it consumes the unified `SidebarSession`
+/// trait — but reducers/action layer use it to keep the local vs
+/// remote dispatch in exactly one place (`AppState::session_target`).
+/// `filtered_pos`/`remote_idx` are surfaced for callers that need to
+/// reach back into adjacent rows (e.g. picking a switch_to neighbor
+/// after a kill).
+#[derive(Debug)]
+pub enum SessionTargetRef<'a> {
+    Local {
+        #[allow(dead_code)]
+        filtered_pos: usize,
+        row: &'a SessionRow,
+    },
+    Remote {
+        #[allow(dead_code)]
+        remote_idx: usize,
+        row: &'a RemoteSessionRow,
+    },
 }
 
 /// Logical sidebar group. Renderers use the group identity to pick
@@ -189,12 +211,12 @@ pub struct SidebarItem {
 pub enum SidebarItemKind {
     /// Group header (label). Not focusable.
     Header { label: String },
-    /// A local session at `filtered_pos` in `state.filtered`. The flat
-    /// focus index equals `filtered_pos`.
-    LocalSession { filtered_pos: usize },
-    /// A remote session at `remote_idx` in `state.remote_sessions`.
-    /// Flat focus index = `state.filtered.len() + remote_idx`.
-    RemoteSession { remote_idx: usize },
+    /// A session row at the given flat index — matches the
+    /// `FocusTarget` numbering: local rows first, then remotes. The
+    /// renderer pairs this index with a `&[&dyn SidebarSession]` slice
+    /// built in render order; storage routing happens via
+    /// `AppState::session_target` in the action layer.
+    Session { session_idx: usize },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -243,14 +265,9 @@ impl SidebarLayout {
     /// returning its top y and the item itself. `None` if focus is
     /// out of range.
     pub fn locate(&self, target: FocusTarget) -> Option<(usize, &SidebarItem)> {
-        self.iter_with_y().find(|(_, it)| match (&it.kind, target) {
-            (SidebarItemKind::LocalSession { filtered_pos }, FocusTarget::Local(pos)) => {
-                *filtered_pos == pos
-            }
-            (SidebarItemKind::RemoteSession { remote_idx }, FocusTarget::Remote(idx)) => {
-                *remote_idx == idx
-            }
-            _ => false,
+        self.iter_with_y().find(|(_, it)| match &it.kind {
+            SidebarItemKind::Session { session_idx } => *session_idx == target.0,
+            SidebarItemKind::Header { .. } => false,
         })
     }
 
@@ -261,12 +278,7 @@ impl SidebarLayout {
         for (top, it) in self.iter_with_y() {
             if y >= top && y < top + it.height {
                 return match it.kind {
-                    SidebarItemKind::LocalSession { filtered_pos } => {
-                        Some(FocusTarget::Local(filtered_pos))
-                    }
-                    SidebarItemKind::RemoteSession { remote_idx } => {
-                        Some(FocusTarget::Remote(remote_idx))
-                    }
+                    SidebarItemKind::Session { session_idx } => Some(FocusTarget(session_idx)),
                     SidebarItemKind::Header { .. } => None,
                 };
             }
@@ -447,7 +459,8 @@ pub struct AppState {
     pub session_order: Vec<String>,
     /// Tmux sessions discovered on configured remote hosts. Rendered
     /// in the sidebar below local sessions. Focus into them goes via
-    /// `FocusTarget::Remote`, not the local `filtered` index.
+    /// `FocusTarget` flat index after `filtered.len()`, not the local
+    /// `filtered` index.
     pub remote_sessions: Vec<RemoteSessionRow>,
 
     // UI state
@@ -724,10 +737,11 @@ impl AppState {
         let mut items = Vec::with_capacity(self.filtered.len() + self.remote_sessions.len() + 4);
 
         // Local group: no header, the fixed "Projects (N)" banner at
-        // the top of the sidebar already labels this section.
+        // the top of the sidebar already labels this section. Flat
+        // index for a local row equals its filtered_pos.
         for pos in 0..self.filtered.len() {
             items.push(SidebarItem {
-                kind: SidebarItemKind::LocalSession { filtered_pos: pos },
+                kind: SidebarItemKind::Session { session_idx: pos },
                 group: GroupKind::Local,
                 height: card_h,
             });
@@ -736,7 +750,9 @@ impl AppState {
         // Remote groups: detect host transitions in render order
         // (which matches focus order — `remote_sessions` is already
         // grouped by host because the refresh worker emits hosts in
-        // config order, one block at a time).
+        // config order, one block at a time). Flat index for a remote
+        // row is filtered.len() + remote_idx.
+        let local_count = self.filtered.len();
         let mut host_idx: usize = 0;
         let mut prev_host: Option<&str> = None;
         let show_host_headers = matches!(view_mode, ViewMode::Expanded);
@@ -762,7 +778,9 @@ impl AppState {
             // the bottom of each remote row with blank lines on the
             // group bg to fill the card.
             items.push(SidebarItem {
-                kind: SidebarItemKind::RemoteSession { remote_idx },
+                kind: SidebarItemKind::Session {
+                    session_idx: local_count + remote_idx,
+                },
                 group: GroupKind::Remote(host_idx),
                 height: card_h,
             });
@@ -771,18 +789,33 @@ impl AppState {
         SidebarLayout { items }
     }
 
+    /// Resolve a focus target back to the backing row in either local
+    /// or remote storage. This is the *only* place the rest of the app
+    /// needs to do local-vs-remote dispatch — reducers and refresh
+    /// match on the returned `SessionTargetRef` instead of taking apart
+    /// the flat index themselves.
+    pub fn session_target(&self, target: FocusTarget) -> Option<SessionTargetRef<'_>> {
+        let idx = target.0;
+        let local_count = self.filtered.len();
+        if idx < local_count {
+            let filtered_pos = idx;
+            let row_idx = *self.filtered.get(filtered_pos)?;
+            let row = self.sessions.get(row_idx)?;
+            Some(SessionTargetRef::Local { filtered_pos, row })
+        } else {
+            let remote_idx = idx - local_count;
+            let row = self.remote_sessions.get(remote_idx)?;
+            Some(SessionTargetRef::Remote { remote_idx, row })
+        }
+    }
+
     /// Decode the current `focused` index into a structured target.
     /// Returns `None` if nothing is focusable (empty sidebar).
     pub fn focus_target(&self) -> Option<FocusTarget> {
-        if self.focused < self.filtered.len() {
-            Some(FocusTarget::Local(self.focused))
+        if self.focused < self.focusable_count() {
+            Some(FocusTarget(self.focused))
         } else {
-            let remote_idx = self.focused - self.filtered.len();
-            if remote_idx < self.remote_sessions.len() {
-                Some(FocusTarget::Remote(remote_idx))
-            } else {
-                None
-            }
+            None
         }
     }
 

@@ -22,15 +22,21 @@ use super::text::{
     format_activity_compact, format_idle_badge, idle_color, pack_hint_lines, pad_line,
     primary_key_string, shorten_dir, status_color, status_icon, status_icon_compact, truncate,
 };
-use super::{PluginStatus, PluginView, RemoteSessionView, SessionView};
+use super::{PluginStatus, PluginView, SessionActivity, SessionOrigin, SidebarSession};
 use crate::state::SessionStatus;
 
 /// Inputs needed to draw the sidebar. Grouping these into one props
 /// object keeps the public API readable as the sidebar gains display
 /// modes and optional adornments.
-pub struct SidebarProps<'a, 'view> {
-    pub sessions: &'a [SessionView<'view>],
-    pub remote_sessions: &'a [RemoteSessionView<'view>],
+///
+/// `sessions` is a single slice of trait objects: all rows the sidebar
+/// will render, in flat layout order (local first, then remote). The
+/// renderer never branches on concrete types — anything per-row goes
+/// through `SidebarSession`. `local_count` exists only for callers
+/// that need the local-only subset (the header banner, tabs mode).
+pub struct SidebarProps<'a> {
+    pub sessions: &'a [&'a dyn SidebarSession],
+    pub local_count: usize,
     pub layout: &'a SidebarLayout,
     pub focus_target: Option<FocusTarget>,
     pub sidebar_active: bool,
@@ -42,7 +48,7 @@ pub struct SidebarProps<'a, 'view> {
     pub tabs_mode: bool,
     pub spinner_frame: &'a str,
     pub view_mode: ViewMode,
-    pub plugins: &'a [PluginView<'view>],
+    pub plugins: &'a [PluginView<'a>],
     pub blink_on: bool,
     pub keybindings: &'a Keybindings,
     pub update_available: Option<&'a UpdateStatus>,
@@ -56,9 +62,8 @@ struct SidebarRenderCtx<'a> {
     keybindings: &'a Keybindings,
 }
 
-struct SessionsProps<'a, 'view> {
-    sessions: &'a [SessionView<'view>],
-    remote_sessions: &'a [RemoteSessionView<'view>],
+struct SessionsProps<'a> {
+    sessions: &'a [&'a dyn SidebarSession],
     layout: &'a SidebarLayout,
     focus_target: Option<FocusTarget>,
     view_mode: ViewMode,
@@ -72,38 +77,38 @@ struct RowChrome {
     width: usize,
 }
 
-struct LocalCardProps<'a, 'view> {
-    session: &'a SessionView<'view>,
-    sidebar_idx: usize,
+struct SessionCardProps<'a> {
+    session: &'a dyn SidebarSession,
+    /// Flat layout index; mirrors `FocusTarget.0`. The 1-based
+    /// keyboard hint shown on local rows is `session_idx + 1`.
+    session_idx: usize,
     chrome: RowChrome,
-}
-
-struct RemoteRowProps<'a, 'view> {
-    row: &'a RemoteSessionView<'view>,
-    chrome: RowChrome,
+    /// Target row count for this card. The renderer pads the bottom
+    /// with blank lines so every card in the same view mode aligns to
+    /// the same height.
     target_height: usize,
 }
 
-struct PluginRowsProps<'a, 'view> {
-    plugins: &'a [PluginView<'view>],
+struct PluginRowsProps<'a> {
+    plugins: &'a [PluginView<'a>],
     width: usize,
 }
 
-struct FooterProps<'a, 'view> {
+struct FooterProps<'a> {
     sidebar_active: bool,
     show_help: bool,
-    plugins: &'a [PluginView<'view>],
+    plugins: &'a [PluginView<'a>],
     update_available: Option<&'a UpdateStatus>,
 }
 
-struct TabsProps<'a, 'view> {
-    sessions: &'a [SessionView<'view>],
+struct TabsProps<'a> {
+    sessions: &'a [&'a dyn SidebarSession],
     focused: usize,
     sidebar_active: bool,
     show_borders: bool,
 }
 
-pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_, '_>) -> Option<Rect> {
+pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> Option<Rect> {
     let ctx = SidebarRenderCtx {
         theme: props.theme,
         spinner_frame: props.spinner_frame,
@@ -114,17 +119,19 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_, '_>) 
     if props.tabs_mode {
         // Tabs mode currently shows only local sessions; map focus
         // back to a plain local index, defaulting to 0 when focus is
-        // on a remote row (those just aren't reachable here).
+        // on a remote row (those just aren't reachable here). Local
+        // rows occupy the first `local_count` flat indices.
         let focused_local = match props.focus_target {
-            Some(FocusTarget::Local(pos)) => pos,
+            Some(t) if t.0 < props.local_count => t.0,
             _ => 0,
         };
+        let local_sessions = &props.sessions[..props.local_count];
         return draw_sidebar_tabs(
             frame,
             area,
             &ctx,
             TabsProps {
-                sessions: props.sessions,
+                sessions: local_sessions,
                 focused: focused_local,
                 sidebar_active: props.sidebar_active,
                 show_borders: props.show_borders,
@@ -150,7 +157,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_, '_>) 
     ])
     .areas(content);
 
-    draw_header(frame, header_area, props.sessions.len(), props.theme);
+    draw_header(frame, header_area, props.local_count, props.theme);
     if props.show_help {
         draw_help(frame, sessions_area, props.theme, props.keybindings);
     } else if let Some(name) = props.confirm_kill {
@@ -164,7 +171,6 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_, '_>) 
             &ctx,
             SessionsProps {
                 sessions: props.sessions,
-                remote_sessions: props.remote_sessions,
                 layout: props.layout,
                 focus_target: props.focus_target,
                 view_mode: props.view_mode,
@@ -231,13 +237,8 @@ fn draw_header(frame: &mut Frame, area: Rect, count: usize, theme: &Theme) {
     );
 }
 
-fn draw_sessions(
-    frame: &mut Frame,
-    area: Rect,
-    ctx: &SidebarRenderCtx<'_>,
-    props: SessionsProps<'_, '_>,
-) {
-    if props.sessions.is_empty() && props.remote_sessions.is_empty() {
+fn draw_sessions(frame: &mut Frame, area: Rect, ctx: &SidebarRenderCtx<'_>, props: SessionsProps<'_>) {
+    if props.sessions.is_empty() {
         frame.render_widget(
             Paragraph::new("  No projects")
                 .style(Style::default().fg(ctx.theme.muted).bg(ctx.theme.bg)),
@@ -267,30 +268,19 @@ fn draw_sessions(
                 let accent = group_accent(ctx.theme, item.group);
                 render_group_header(&mut lines, label, accent, width, ctx.theme);
             }
-            SidebarItemKind::LocalSession { filtered_pos } => {
-                if let Some(session) = props.sessions.get(*filtered_pos) {
-                    let card = LocalCardProps {
-                        session,
-                        sidebar_idx: *filtered_pos,
-                        chrome,
-                    };
-                    match props.view_mode {
-                        ViewMode::Expanded => render_local_card_expanded(&mut lines, ctx, card),
-                        ViewMode::Compact => render_local_card_compact(&mut lines, ctx, card),
-                    }
-                }
-            }
-            SidebarItemKind::RemoteSession { remote_idx } => {
-                if let Some(row) = props.remote_sessions.get(*remote_idx) {
-                    render_remote_row(
-                        &mut lines,
-                        ctx,
-                        RemoteRowProps {
-                            row,
-                            chrome,
-                            target_height: item.height,
-                        },
-                    );
+            SidebarItemKind::Session { session_idx } => {
+                let Some(&session) = props.sessions.get(*session_idx) else {
+                    continue;
+                };
+                let card = SessionCardProps {
+                    session,
+                    session_idx: *session_idx,
+                    chrome,
+                    target_height: item.height,
+                };
+                match props.view_mode {
+                    ViewMode::Expanded => render_session_card_expanded(&mut lines, ctx, card),
+                    ViewMode::Compact => render_session_card_compact(&mut lines, ctx, card),
                 }
             }
         }
@@ -307,15 +297,10 @@ fn draw_sessions(
 }
 
 fn is_item_focused(item: &SidebarItem, focus_target: Option<FocusTarget>) -> bool {
-    matches!(
-        (&item.kind, focus_target),
-        (SidebarItemKind::LocalSession { filtered_pos }, Some(FocusTarget::Local(pos)))
-            if *filtered_pos == pos
-    ) || matches!(
-        (&item.kind, focus_target),
-        (SidebarItemKind::RemoteSession { remote_idx }, Some(FocusTarget::Remote(idx)))
-            if *remote_idx == idx
-    )
+    match (&item.kind, focus_target) {
+        (SidebarItemKind::Session { session_idx }, Some(target)) => *session_idx == target.0,
+        _ => false,
+    }
 }
 
 /// Per-group accent color used to tint the group divider so adjacent
@@ -366,205 +351,33 @@ fn render_group_header(
     ));
 }
 
-struct LocalRowBase<'a> {
-    accent: &'static str,
-    accent_style: Style,
-    name_style: Style,
-    index_style: Style,
-    idx_str: String,
-    theme: &'a Theme,
-}
-
-fn local_row_base(
-    theme: &Theme,
-    is_focused: bool,
-    bg: Color,
-    sidebar_idx: usize,
-) -> LocalRowBase<'_> {
-    LocalRowBase {
-        accent: if is_focused { "▌" } else { " " },
-        accent_style: Style::default()
-            .fg(if is_focused { theme.green } else { bg })
-            .bg(bg),
-        name_style: if is_focused {
-            Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme.secondary)
-        },
-        index_style: if is_focused {
-            Style::default().fg(theme.secondary)
-        } else {
-            Style::default().fg(theme.dim)
-        },
-        idx_str: format!("{:>2}", sidebar_idx + 1),
-        theme,
+/// Visual treatment of the index hint at the start of a row. Local
+/// rows show a 1-based number (matches the number-key shortcut);
+/// remote rows leave the slot blank because the shortcut doesn't reach
+/// them.
+fn idx_hint(session: &dyn SidebarSession, session_idx: usize) -> String {
+    match session.origin() {
+        SessionOrigin::Local => format!("{:>2}", session_idx + 1),
+        SessionOrigin::Remote { .. } => "  ".to_string(),
     }
 }
 
-fn render_local_card_expanded(
-    lines: &mut Vec<Line<'_>>,
-    ctx: &SidebarRenderCtx<'_>,
-    props: LocalCardProps<'_, '_>,
-) {
-    let session = props.session;
-    let sidebar_idx = props.sidebar_idx;
-    let RowChrome {
-        is_focused,
-        bg,
-        gutter_bg,
-        width,
-    } = props.chrome;
-    let base = local_row_base(ctx.theme, is_focused, bg, sidebar_idx);
-    let theme = base.theme;
-
-    let activity_icon = status_icon(
-        session.status,
-        session.is_current,
-        theme,
-        ctx.spinner_frame,
-        ctx.blink_on,
-        is_focused,
-        bg,
-    );
-    let text_width = width.saturating_sub(6);
-    let name_display = truncate(session.name, text_width);
-    lines.push(pad_line(
-        vec![
-            Span::styled(base.accent, base.accent_style),
-            activity_icon,
-            Span::styled(base.idx_str, base.index_style.bg(bg)),
-            Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(name_display, base.name_style.bg(bg)),
-        ],
-        bg,
-        width,
-    ));
-
-    let dir_display = truncate(&shorten_dir(session.dir), text_width.saturating_sub(2));
-    let dir_color = if is_focused { theme.teal } else { theme.muted };
-    let badge = format_idle_badge(session.idle_seconds)
-        .map(|text| format!("{text:^6}"))
-        .unwrap_or_else(|| " ".repeat(6));
-    lines.push(pad_line(
-        vec![
-            Span::styled(
-                badge,
-                Style::default()
-                    .fg(idle_color(theme, session.idle_seconds, is_focused))
-                    .bg(bg),
-            ),
-            Span::styled(dir_display, Style::default().fg(dir_color).bg(bg)),
-        ],
-        bg,
-        width,
-    ));
-
-    // Inter-card gutter. The caller decides what color it should be:
-    // inside a group it's the group bg so the tint flows continuously
-    // between cards; at the last card of a group it's theme.bg so the
-    // separator to the next group reads as neutral negative space.
-    lines.push(pad_line(
-        vec![Span::styled(" ", Style::default().bg(gutter_bg))],
-        gutter_bg,
-        width,
-    ));
+/// Styled spans for the leading accent bar + name field. Shared
+/// between expanded/compact card renderers so the focus/loading/
+/// unreachable styling stays in one place.
+struct RowHead {
+    accent_span: (&'static str, Style),
+    name_style: Style,
+    index_style: Style,
+    /// Resolved label to show in the name slot — usually the session
+    /// name, but a `(connecting…)` placeholder for loading remote rows.
+    label: String,
 }
 
-fn compact_activity(
-    session: &SessionView<'_>,
-    theme: &Theme,
-    spinner_frame: &str,
-    blink_on: bool,
-    is_focused: bool,
-) -> (String, Color) {
-    let text = if session.is_current {
-        status_icon_compact(session.status, true, spinner_frame)
-    } else {
-        match session.status {
-            SessionStatus::Working => spinner_frame.to_string(),
-            SessionStatus::Idle => {
-                if session.idle_seconds < 3 {
-                    spinner_frame.to_string()
-                } else {
-                    "󰒲".to_string()
-                }
-            }
-        }
-    };
-
-    let color = if session.is_current {
-        status_color(session.status, true, theme, blink_on, is_focused)
-    } else {
-        match session.status {
-            SessionStatus::Idle => idle_color(theme, session.idle_seconds, is_focused),
-            _ => status_color(session.status, false, theme, blink_on, is_focused),
-        }
-    };
-
-    (text, color)
-}
-
-fn render_local_card_compact(
-    lines: &mut Vec<Line<'_>>,
-    ctx: &SidebarRenderCtx<'_>,
-    props: LocalCardProps<'_, '_>,
-) {
-    let session = props.session;
-    let sidebar_idx = props.sidebar_idx;
-    let RowChrome {
-        is_focused,
-        bg,
-        width,
-        ..
-    } = props.chrome;
-    let base = local_row_base(ctx.theme, is_focused, bg, sidebar_idx);
-    let theme = base.theme;
-
-    let (activity_text, activity_color) =
-        compact_activity(session, theme, ctx.spinner_frame, ctx.blink_on, is_focused);
-    let spans = vec![
-        Span::styled(base.accent, base.accent_style),
-        Span::styled(activity_text, Style::default().fg(activity_color).bg(bg)),
-        Span::styled(base.idx_str, base.index_style.bg(bg)),
-        Span::styled("  ", Style::default().bg(bg)),
-        Span::styled(
-            truncate(session.name, width.saturating_sub(6)),
-            base.name_style.bg(bg),
-        ),
-    ];
-
-    lines.push(pad_line(spans, bg, width));
-
-    let text_width = width.saturating_sub(6);
-    let dir_display = truncate(&shorten_dir(session.dir), text_width);
-    let dir_color = if is_focused { theme.teal } else { theme.muted };
-    lines.push(pad_line(
-        vec![
-            Span::styled("      ", Style::default().bg(bg)),
-            Span::styled(dir_display, Style::default().fg(dir_color).bg(bg)),
-        ],
-        bg,
-        width,
-    ));
-}
-
-fn render_remote_row(
-    lines: &mut Vec<Line<'_>>,
-    ctx: &SidebarRenderCtx<'_>,
-    props: RemoteRowProps<'_, '_>,
-) {
-    let theme = ctx.theme;
-    let row = props.row;
-    let target_height = props.target_height;
-    let RowChrome {
-        is_focused,
-        bg,
-        gutter_bg,
-        width,
-    } = props.chrome;
-    let accent_color = if is_focused { theme.green } else { bg };
-    let accent = if is_focused { "▌" } else { " " };
-    let name_fg = if row.loading || row.unreachable {
+fn row_head(theme: &Theme, session: &dyn SidebarSession, is_focused: bool, bg: Color) -> RowHead {
+    let loading = session.loading();
+    let unreachable = session.unreachable();
+    let name_fg = if loading || unreachable {
         theme.muted
     } else if is_focused {
         theme.text
@@ -572,57 +385,214 @@ fn render_remote_row(
         theme.secondary
     };
     let mut name_style = Style::default().fg(name_fg).bg(bg);
-    if is_focused && !row.loading {
+    if is_focused && !loading {
         name_style = name_style.add_modifier(Modifier::BOLD);
     }
-    let label_text = if row.loading {
-        "  (connecting…)".to_string()
-    } else {
-        format!("  {}", row.name)
+    RowHead {
+        accent_span: (
+            if is_focused { "▌" } else { " " },
+            Style::default()
+                .fg(if is_focused { theme.green } else { bg })
+                .bg(bg),
+        ),
+        name_style,
+        index_style: if is_focused {
+            Style::default().fg(theme.secondary).bg(bg)
+        } else {
+            Style::default().fg(theme.dim).bg(bg)
+        },
+        label: if loading {
+            "(connecting…)".to_string()
+        } else {
+            session.name().to_string()
+        },
+    }
+}
+
+fn render_session_card_expanded(
+    lines: &mut Vec<Line<'_>>,
+    ctx: &SidebarRenderCtx<'_>,
+    props: SessionCardProps<'_>,
+) {
+    let session = props.session;
+    let RowChrome {
+        is_focused,
+        bg,
+        gutter_bg,
+        width,
+    } = props.chrome;
+    let theme = ctx.theme;
+    let activity = session.activity();
+    let head = row_head(theme, session, is_focused, bg);
+
+    // Status icon slot: real glyph when activity is known, blank space
+    // of the same width when the backend doesn't collect activity yet.
+    // Keeping the slot reserved avoids name-column reflow between rows
+    // that do/don't have activity data.
+    let activity_icon = match activity {
+        Some(a) => status_icon(
+            a.status,
+            a.is_current,
+            theme,
+            ctx.spinner_frame,
+            ctx.blink_on,
+            is_focused,
+            bg,
+        ),
+        None => Span::styled(" ", Style::default().bg(bg)),
     };
+
+    let text_width = width.saturating_sub(6);
+    let name_display = truncate(&head.label, text_width);
     let before = lines.len();
     lines.push(pad_line(
         vec![
-            Span::styled(accent, Style::default().fg(accent_color).bg(bg)),
-            Span::styled(truncate(&label_text, width.saturating_sub(1)), name_style),
+            Span::styled(head.accent_span.0, head.accent_span.1),
+            activity_icon,
+            Span::styled(idx_hint(session, props.session_idx), head.index_style),
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(name_display, head.name_style),
         ],
         bg,
         width,
     ));
-    if !row.dir.is_empty() && !row.loading {
-        lines.push(pad_line(
-            vec![Span::styled(
-                truncate(
-                    &format!("    {}", shorten_dir(row.dir)),
-                    width.saturating_sub(1),
-                ),
-                Style::default().fg(theme.muted).bg(bg),
-            )],
-            bg,
-            width,
-        ));
-    }
-    // Pad to the target height so each remote row occupies the same
-    // vertical space as a local card. Intermediate rows use the row
-    // bg (group tint, or surface when focused) so the focused card's
-    // highlight is solid; the LAST row uses the group bg so the
-    // group's continuous background extends across the gutter
-    // between adjacent remote cards (matching the local-card behavior
-    // where the gutter sits on the group's bg).
-    while lines.len() - before < target_height.saturating_sub(1) {
+
+    // Dir + idle badge line. Skip the dir text for loading rows
+    // (placeholder name) and when the backend didn't report one.
+    let dir_text = if session.loading() || session.dir().is_empty() {
+        String::new()
+    } else {
+        truncate(&shorten_dir(session.dir()), text_width.saturating_sub(2)).to_string()
+    };
+    let dir_color = if is_focused { theme.teal } else { theme.muted };
+    let (badge_text, badge_color) = match activity {
+        Some(a) => {
+            let badge = format_idle_badge(a.idle_seconds)
+                .map(|t| format!("{t:^6}"))
+                .unwrap_or_else(|| " ".repeat(6));
+            (badge, idle_color(theme, a.idle_seconds, is_focused))
+        }
+        None => (" ".repeat(6), theme.dim),
+    };
+    lines.push(pad_line(
+        vec![
+            Span::styled(badge_text, Style::default().fg(badge_color).bg(bg)),
+            Span::styled(dir_text, Style::default().fg(dir_color).bg(bg)),
+        ],
+        bg,
+        width,
+    ));
+
+    // Pad to target_height - 1 with row-bg lines, then a final gutter
+    // line. The gutter uses gutter_bg so the separator between groups
+    // reads as neutral negative space (callers set gutter_bg = theme.bg
+    // when this is the last row of a group, otherwise the group's bg).
+    while lines.len() - before < props.target_height.saturating_sub(1) {
         lines.push(pad_line(
             vec![Span::styled(" ", Style::default().bg(bg))],
             bg,
             width,
         ));
     }
-    if lines.len() - before < target_height {
+    if lines.len() - before < props.target_height {
         lines.push(pad_line(
             vec![Span::styled(" ", Style::default().bg(gutter_bg))],
             gutter_bg,
             width,
         ));
     }
+}
+
+/// Compact-mode activity glyph + color. `None` activity returns
+/// `(" ", bg)` so the slot stays the same width across rows.
+fn compact_activity(
+    activity: Option<SessionActivity>,
+    theme: &Theme,
+    spinner_frame: &str,
+    blink_on: bool,
+    is_focused: bool,
+    bg: Color,
+) -> (String, Color) {
+    let Some(a) = activity else {
+        return (" ".to_string(), bg);
+    };
+    let text = if a.is_current {
+        status_icon_compact(a.status, true, spinner_frame)
+    } else {
+        match a.status {
+            SessionStatus::Working => spinner_frame.to_string(),
+            SessionStatus::Idle => {
+                if a.idle_seconds < 3 {
+                    spinner_frame.to_string()
+                } else {
+                    "󰒲".to_string()
+                }
+            }
+        }
+    };
+    let color = if a.is_current {
+        status_color(a.status, true, theme, blink_on, is_focused)
+    } else {
+        match a.status {
+            SessionStatus::Idle => idle_color(theme, a.idle_seconds, is_focused),
+            _ => status_color(a.status, false, theme, blink_on, is_focused),
+        }
+    };
+    (text, color)
+}
+
+fn render_session_card_compact(
+    lines: &mut Vec<Line<'_>>,
+    ctx: &SidebarRenderCtx<'_>,
+    props: SessionCardProps<'_>,
+) {
+    let session = props.session;
+    let RowChrome {
+        is_focused,
+        bg,
+        width,
+        ..
+    } = props.chrome;
+    let theme = ctx.theme;
+    let activity = session.activity();
+    let head = row_head(theme, session, is_focused, bg);
+
+    let (activity_text, activity_color) = compact_activity(
+        activity,
+        theme,
+        ctx.spinner_frame,
+        ctx.blink_on,
+        is_focused,
+        bg,
+    );
+
+    lines.push(pad_line(
+        vec![
+            Span::styled(head.accent_span.0, head.accent_span.1),
+            Span::styled(activity_text, Style::default().fg(activity_color).bg(bg)),
+            Span::styled(idx_hint(session, props.session_idx), head.index_style),
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(truncate(&head.label, width.saturating_sub(6)), head.name_style),
+        ],
+        bg,
+        width,
+    ));
+
+    let text_width = width.saturating_sub(6);
+    let dir_text = if session.loading() || session.dir().is_empty() {
+        String::new()
+    } else {
+        truncate(&shorten_dir(session.dir()), text_width).to_string()
+    };
+    let dir_color = if is_focused { theme.teal } else { theme.muted };
+    lines.push(pad_line(
+        vec![
+            Span::styled("      ", Style::default().bg(bg)),
+            Span::styled(dir_text, Style::default().fg(dir_color).bg(bg)),
+        ],
+        bg,
+        width,
+    ));
 }
 
 fn plugin_dot_style(status: PluginStatus, blink_on: bool, theme: &Theme) -> Style {
@@ -655,7 +625,7 @@ fn plugin_dot_glyph(status: PluginStatus) -> &'static str {
 fn append_plugin_rows(
     rows: &mut Vec<Line<'static>>,
     ctx: &SidebarRenderCtx<'_>,
-    props: PluginRowsProps<'_, '_>,
+    props: PluginRowsProps<'_>,
 ) {
     let theme = ctx.theme;
     let plugins = props.plugins;
@@ -710,7 +680,7 @@ fn draw_footer(
     frame: &mut Frame,
     area: Rect,
     ctx: &SidebarRenderCtx<'_>,
-    props: FooterProps<'_, '_>,
+    props: FooterProps<'_>,
 ) -> Option<Rect> {
     let theme = ctx.theme;
     let keybindings = ctx.keybindings;
@@ -877,7 +847,7 @@ fn draw_sidebar_tabs(
     frame: &mut Frame,
     area: Rect,
     ctx: &SidebarRenderCtx<'_>,
-    props: TabsProps<'_, '_>,
+    props: TabsProps<'_>,
 ) -> Option<Rect> {
     let theme = ctx.theme;
     let keybindings = ctx.keybindings;
@@ -920,7 +890,7 @@ fn draw_sidebar_tabs(
         ));
         spans.push(Span::styled(inner_pad.clone(), Style::default().bg(bg)));
         spans.push(Span::styled(
-            session.name,
+            session.name().to_string(),
             Style::default()
                 .fg(name_fg)
                 .bg(bg)
@@ -991,22 +961,30 @@ fn draw_sidebar_tabs(
             ..content
         };
 
-        if let Some(session) = sessions.get(focused) {
+        if let Some(&session) = sessions.get(focused) {
             let avail = content.width as usize;
-            let dir = shorten_dir(session.dir);
-            let activity = format_activity_compact(session.idle_seconds, ctx.spinner_frame);
+            let dir = shorten_dir(session.dir());
+            // Tabs mode is local-only today, so the activity is always
+            // Some(...) for the rows we're given. Fall back to neutral
+            // defaults if a non-local row ever slips in.
+            let activity = session.activity().unwrap_or(SessionActivity {
+                status: SessionStatus::Idle,
+                idle_seconds: 0,
+                is_current: false,
+            });
+            let dir_activity = format_activity_compact(activity.idle_seconds, ctx.spinner_frame);
             let status_text =
-                status_icon_compact(session.status, session.is_current, ctx.spinner_frame);
+                status_icon_compact(activity.status, activity.is_current, ctx.spinner_frame);
             let status_color = status_color(
-                session.status,
-                session.is_current,
+                activity.status,
+                activity.is_current,
                 theme,
                 ctx.blink_on,
                 true,
             );
 
             let mut tail = format!("  {}", dir);
-            tail.push_str(&format!("  {}", activity));
+            tail.push_str(&format!("  {}", dir_activity));
             let tail = truncate(&tail, avail.saturating_sub(status_text.width() + 2));
 
             let detail_line = pad_line(

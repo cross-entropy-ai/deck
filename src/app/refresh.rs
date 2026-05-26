@@ -81,10 +81,13 @@ impl App {
             // into a remote group, a local current-session change (e.g.
             // last switch_client respawn) must NOT pull focus back to
             // the local section.
-            let user_on_local = matches!(
-                self.state.focus_target(),
-                Some(crate::state::FocusTarget::Local(_)) | None
-            );
+            let user_on_local = match self.state.focus_target() {
+                None => true,
+                Some(t) => matches!(
+                    self.state.session_target(t),
+                    Some(crate::state::SessionTargetRef::Local { .. }) | None
+                ),
+            };
             if user_on_local {
                 if let Some(pos) = self
                     .state

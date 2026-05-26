@@ -126,6 +126,17 @@ impl App {
                     loading: r.loading,
                 })
                 .collect();
+            // Unified slice the sidebar consumes: local rows first
+            // (their flat index == filtered_pos), then remotes (flat
+            // index == local_count + remote_idx). The renderer never
+            // needs to know which kind a row is — it just goes through
+            // the SidebarSession trait.
+            let local_count = views.len();
+            let sessions_dyn: Vec<&dyn ui::SidebarSession> = views
+                .iter()
+                .map(|v| v as &dyn ui::SidebarSession)
+                .chain(remote_views.iter().map(|v| v as &dyn ui::SidebarSession))
+                .collect();
 
             let full = frame.area();
             let reload_height = ui::reload_row_count(reload_status.as_ref(), full.width);
@@ -200,8 +211,8 @@ impl App {
                 frame,
                 sidebar_area,
                 ui::SidebarProps {
-                    sessions: &views,
-                    remote_sessions: &remote_views,
+                    sessions: &sessions_dyn,
+                    local_count,
                     layout: &layout,
                     focus_target,
                     sidebar_active,

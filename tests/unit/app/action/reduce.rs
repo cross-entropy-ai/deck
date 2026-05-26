@@ -251,7 +251,7 @@ fn open_and_navigate_context_menu() {
     apply_action(
         &mut state,
         Action::OpenSessionMenu {
-            target: crate::state::FocusTarget::Local(1),
+            target: crate::state::FocusTarget(1),
             x: 10,
             y: 5,
         },
