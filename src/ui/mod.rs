@@ -33,6 +33,57 @@ pub struct PluginView<'a> {
     pub status: PluginStatus,
 }
 
+/// Where a sidebar session lives. The sidebar renderer is otherwise
+/// origin-agnostic; it only consults this to drive group dividers and
+/// (later) to dispatch row-level actions to the right backend.
+#[derive(Debug, Clone, Copy)]
+pub enum SessionOrigin<'a> {
+    Local,
+    Remote { host: &'a str },
+}
+
+/// Activity signal for a session. Bundled into one `Option` on the
+/// trait so backends that don't yet collect any of it return `None`
+/// (an explicit "unknown") rather than a misleading `Idle/0/false`.
+/// When real collection lands for a backend, flip its impl to `Some`
+/// and the renderer picks it up uniformly.
+#[derive(Debug, Clone, Copy)]
+pub struct SessionActivity {
+    pub status: SessionStatus,
+    pub idle_seconds: u64,
+    /// True iff this session is the one tmux is currently attached to.
+    /// The status icon is overridden to a "you are here" marker for
+    /// the current session — anything live there is already visible
+    /// in the main pane, so the icon's job is just to confirm focus.
+    pub is_current: bool,
+}
+
+/// The single abstraction the sidebar renderer consumes. Anything that
+/// can appear as a row — local tmux session, remote tmux session over
+/// ssh, future alternate-socket sources — implements this. The renderer
+/// must not branch on concrete types; if a row-level piece of info
+/// isn't on this trait, it doesn't belong in the per-row UI.
+pub trait SidebarSession {
+    fn origin(&self) -> SessionOrigin<'_>;
+    fn name(&self) -> &str;
+    fn dir(&self) -> &str;
+    /// `None` means the backend doesn't collect activity yet (renderer
+    /// draws a neutral placeholder, no indicator + no idle badge).
+    /// `Some` means render the indicator / idle badge from real data.
+    fn activity(&self) -> Option<SessionActivity>;
+    /// Synthetic placeholder shown before the first refresh round
+    /// completes; renderer paints a muted "(connecting...)" instead of
+    /// the session name.
+    fn loading(&self) -> bool {
+        false
+    }
+    /// Reaching this session's source failed (timeout, auth, ...).
+    /// Row is still drawn, just greyed out.
+    fn unreachable(&self) -> bool {
+        false
+    }
+}
+
 /// Minimal data needed to render one session row.
 pub struct SessionView<'a> {
     pub name: &'a str,
@@ -47,9 +98,30 @@ pub struct SessionView<'a> {
     pub is_current: bool,
 }
 
-/// Minimal data needed to render one remote session row. Host names
-/// are shown only in group headers, not per-row.
+impl<'a> SidebarSession for SessionView<'a> {
+    fn origin(&self) -> SessionOrigin<'_> {
+        SessionOrigin::Local
+    }
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn dir(&self) -> &str {
+        self.dir
+    }
+    fn activity(&self) -> Option<SessionActivity> {
+        Some(SessionActivity {
+            status: self.status,
+            idle_seconds: self.idle_seconds,
+            is_current: self.is_current,
+        })
+    }
+}
+
+/// Minimal data needed to render one remote session row. Host is
+/// surfaced via `SidebarSession::origin()` for group dividers; the row
+/// body itself doesn't repeat it.
 pub struct RemoteSessionView<'a> {
+    pub host: &'a str,
     pub name: &'a str,
     pub dir: &'a str,
     pub unreachable: bool,
@@ -57,6 +129,32 @@ pub struct RemoteSessionView<'a> {
     /// remote refresh completes. The sidebar paints these with a
     /// muted "(connecting...)" label instead of the session name.
     pub loading: bool,
+}
+
+impl<'a> SidebarSession for RemoteSessionView<'a> {
+    fn origin(&self) -> SessionOrigin<'_> {
+        SessionOrigin::Remote { host: self.host }
+    }
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn dir(&self) -> &str {
+        self.dir
+    }
+    // Remote refresh doesn't collect activity yet. Returning None
+    // (rather than fake Idle/0/false) means the renderer paints a
+    // neutral placeholder; once the refresh worker gathers real status
+    // we just return Some(...) here and the indicator/idle badge light
+    // up uniformly with local rows.
+    fn activity(&self) -> Option<SessionActivity> {
+        None
+    }
+    fn loading(&self) -> bool {
+        self.loading
+    }
+    fn unreachable(&self) -> bool {
+        self.unreachable
+    }
 }
 
 pub struct ExcludeEditorView<'a> {
