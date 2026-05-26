@@ -856,7 +856,9 @@ fn draw_footer(
         )])]
     };
 
-    let mut rows: Vec<Line> = Vec::with_capacity(5 + props.plugins.len());
+    let rows_capacity =
+        usize::from(3 + plugin_block_rows(props.plugins.len()) + props.update_available.is_some() as u16);
+    let mut rows: Vec<Line> = Vec::with_capacity(rows_capacity);
     rows.push(sep);
 
     append_plugin_rows(
