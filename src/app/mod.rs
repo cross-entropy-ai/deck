@@ -30,6 +30,7 @@ use self::update::bootstrap_update_check;
 
 const POLL_MS: u64 = 16;
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+const CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 3600);
 
 struct PluginInstance {
@@ -252,6 +253,11 @@ impl App {
 
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         let mut last_refresh = Instant::now();
+        // Watcher for ~/.config/deck/config.json: poll its mtime every
+        // ~2s so an out-of-band `deck remote add/remove` (or a manual
+        // edit) takes effect without the user pressing reload.
+        let mut last_config_poll = Instant::now();
+        let mut config_mtime_seen = crate::config::config_mtime();
 
         loop {
             // Drain the local terminal. OSC52 (clipboard) is only
@@ -444,6 +450,20 @@ impl App {
             if last_refresh.elapsed() >= REFRESH_INTERVAL {
                 self.request_refresh();
                 last_refresh = Instant::now();
+            }
+
+            if last_config_poll.elapsed() >= CONFIG_POLL_INTERVAL {
+                let current = crate::config::config_mtime();
+                // Only fire on a real change. First-run None→Some
+                // (user just wrote a config) and any later mtime bump
+                // both count; transient Some→None (file briefly gone
+                // during an atomic replace) is ignored so we don't
+                // double-fire.
+                if current.is_some() && current != config_mtime_seen {
+                    config_mtime_seen = current;
+                    self.dispatch(Action::ReloadConfig);
+                }
+                last_config_poll = Instant::now();
             }
 
             self.tick_update_check();
