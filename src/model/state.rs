@@ -166,21 +166,10 @@ pub struct FocusTarget(pub usize);
 /// renderer doesn't see this — it consumes the unified `SidebarSession`
 /// trait — but reducers/action layer use it to keep the local vs
 /// remote dispatch in exactly one place (`AppState::session_target`).
-/// `filtered_pos`/`remote_idx` are surfaced for callers that need to
-/// reach back into adjacent rows (e.g. picking a switch_to neighbor
-/// after a kill).
 #[derive(Debug)]
 pub enum SessionTargetRef<'a> {
-    Local {
-        #[allow(dead_code)]
-        filtered_pos: usize,
-        row: &'a SessionRow,
-    },
-    Remote {
-        #[allow(dead_code)]
-        remote_idx: usize,
-        row: &'a RemoteSessionRow,
-    },
+    Local(&'a SessionRow),
+    Remote(&'a RemoteSessionRow),
 }
 
 /// Logical sidebar group. Renderers use the group identity to pick
@@ -798,14 +787,12 @@ impl AppState {
         let idx = target.0;
         let local_count = self.filtered.len();
         if idx < local_count {
-            let filtered_pos = idx;
-            let row_idx = *self.filtered.get(filtered_pos)?;
-            let row = self.sessions.get(row_idx)?;
-            Some(SessionTargetRef::Local { filtered_pos, row })
+            let row_idx = *self.filtered.get(idx)?;
+            self.sessions.get(row_idx).map(SessionTargetRef::Local)
         } else {
-            let remote_idx = idx - local_count;
-            let row = self.remote_sessions.get(remote_idx)?;
-            Some(SessionTargetRef::Remote { remote_idx, row })
+            self.remote_sessions
+                .get(idx - local_count)
+                .map(SessionTargetRef::Remote)
         }
     }
 

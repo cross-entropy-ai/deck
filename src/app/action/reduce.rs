@@ -18,10 +18,10 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) {
         return;
     };
     match state.session_target(target) {
-        Some(SessionTargetRef::Local { row, .. }) => {
+        Some(SessionTargetRef::Local(row)) => {
             fx.switch_session = Some(row.name.clone());
         }
-        Some(SessionTargetRef::Remote { row, .. }) => {
+        Some(SessionTargetRef::Remote(row)) => {
             // Placeholder rows (loading) and dead hosts have no
             // session name to switch to. Skip silently.
             if !row.unreachable && !row.loading {
@@ -92,14 +92,14 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 return fx;
             };
             match state.session_target(target) {
-                Some(SessionTargetRef::Local { .. }) => {
+                Some(SessionTargetRef::Local(_)) => {
                     // Refuse to kill the last local session — it'd
                     // leave deck attached to nothing.
                     if state.sessions.len() > 1 {
                         state.overlay.confirm_kill = true;
                     }
                 }
-                Some(SessionTargetRef::Remote { .. }) => {
+                Some(SessionTargetRef::Remote(_)) => {
                     // No "last session" guard for remote: deck doesn't
                     // depend on the remote tmux server having any
                     // sessions, the worst case is the persistent PTY
@@ -115,7 +115,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 return fx;
             };
             match state.session_target(target) {
-                Some(SessionTargetRef::Local { .. }) => {
+                Some(SessionTargetRef::Local(_)) => {
                     if state.sessions.len() <= 1 {
                         return fx;
                     }
@@ -151,7 +151,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     });
                     fx.refresh_sessions = true;
                 }
-                Some(SessionTargetRef::Remote { row, .. }) => {
+                Some(SessionTargetRef::Remote(row)) => {
                     let name = row.name.clone();
                     let host = row.host.clone();
                     fx.kill_session = Some(KillRequest {
@@ -197,8 +197,8 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 return fx;
             };
             let (name, host) = match state.session_target(target) {
-                Some(SessionTargetRef::Local { row, .. }) => (row.name.clone(), None),
-                Some(SessionTargetRef::Remote { row, .. }) => {
+                Some(SessionTargetRef::Local(row)) => (row.name.clone(), None),
+                Some(SessionTargetRef::Remote(row)) => {
                     (row.name.clone(), Some(row.host.clone()))
                 }
                 None => return fx,
@@ -710,8 +710,8 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // operate on it.
             state.focused = target.0;
             let kind = match state.session_target(target) {
-                Some(SessionTargetRef::Local { .. }) => MenuKind::LocalSession(target),
-                Some(SessionTargetRef::Remote { .. }) => MenuKind::RemoteSession(target),
+                Some(SessionTargetRef::Local(_)) => MenuKind::LocalSession(target),
+                Some(SessionTargetRef::Remote(_)) => MenuKind::RemoteSession(target),
                 // Index points outside any row — treat as a global
                 // right-click. Shouldn't happen since mouse hit-test
                 // only emits OpenSessionMenu on a real row.

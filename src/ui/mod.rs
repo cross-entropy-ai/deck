@@ -39,12 +39,7 @@ pub struct PluginView<'a> {
 #[derive(Debug, Clone, Copy)]
 pub enum SessionOrigin<'a> {
     Local,
-    Remote {
-        // Surfaced for future per-row uses (e.g. action dispatch); the
-        // renderer currently only distinguishes Local vs Remote.
-        #[allow(dead_code)]
-        host: &'a str,
-    },
+    Remote { host: &'a str },
 }
 
 /// Activity signal for a session. Bundled into one `Option` on the

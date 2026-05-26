@@ -85,7 +85,7 @@ impl App {
                 None => true,
                 Some(t) => matches!(
                     self.state.session_target(t),
-                    Some(crate::state::SessionTargetRef::Local { .. }) | None
+                    Some(crate::state::SessionTargetRef::Local(_)) | None
                 ),
             };
             if user_on_local {
