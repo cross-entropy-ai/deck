@@ -88,20 +88,32 @@ pub const SETTINGS_ITEM_COUNT: usize = 7;
 
 #[derive(Debug, Clone)]
 pub enum MenuKind {
-    /// Right-clicked a local session row.
-    LocalSession(FocusTarget),
-    /// Right-clicked a remote session row.
-    RemoteSession(FocusTarget),
+    /// Right-clicked a session row. `items` is decided at construction
+    /// (e.g. local rows include `Move up/down`, remotes don't) so the
+    /// reducer doesn't have to redo that lookup on every keypress.
+    Session {
+        focus: FocusTarget,
+        items: &'static [&'static str],
+    },
     Global,
 }
 
 impl MenuKind {
     pub fn items(&self) -> &'static [&'static str] {
         match self {
-            MenuKind::LocalSession(_) => SESSION_MENU_ITEMS,
-            MenuKind::RemoteSession(_) => REMOTE_SESSION_MENU_ITEMS,
+            MenuKind::Session { items, .. } => items,
             MenuKind::Global => GLOBAL_MENU_ITEMS,
         }
+    }
+}
+
+/// Menu items shown after right-clicking a session row. The action
+/// layer reads `session_target` to decide which list applies; the
+/// renderer never needs to know.
+pub fn session_menu_items(target: &SessionTargetRef<'_>) -> &'static [&'static str] {
+    match target {
+        SessionTargetRef::Local(_) => SESSION_MENU_ITEMS,
+        SessionTargetRef::Remote(_) => REMOTE_SESSION_MENU_ITEMS,
     }
 }
 

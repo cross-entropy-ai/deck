@@ -1,7 +1,7 @@
 use crate::state::{
-    AppState, ContextMenu, FocusMode, KillRequest, LayoutMode, MainView, MenuKind,
-    RemoteSwitchRequest, RenameRequest, RenameState, SessionTargetRef, SideEffect, ViewMode,
-    SETTINGS_ITEM_COUNT,
+    session_menu_items, AppState, ContextMenu, FocusMode, KillRequest, LayoutMode, MainView,
+    MenuKind, RemoteSwitchRequest, RenameRequest, RenameState, SessionTargetRef, SideEffect,
+    ViewMode, SETTINGS_ITEM_COUNT,
 };
 use crate::theme::THEMES;
 
@@ -710,8 +710,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // operate on it.
             state.focused = target.0;
             let kind = match state.session_target(target) {
-                Some(SessionTargetRef::Local(_)) => MenuKind::LocalSession(target),
-                Some(SessionTargetRef::Remote(_)) => MenuKind::RemoteSession(target),
+                Some(ref tgt) => MenuKind::Session {
+                    focus: target,
+                    items: session_menu_items(tgt),
+                },
                 // Index points outside any row — treat as a global
                 // right-click. Shouldn't happen since mouse hit-test
                 // only emits OpenSessionMenu on a real row.
@@ -752,8 +754,8 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             };
             let selected_label = menu.items().get(menu.selected).copied();
             match menu.kind {
-                MenuKind::LocalSession(target) | MenuKind::RemoteSession(target) => {
-                    state.focused = target.0;
+                MenuKind::Session { focus, .. } => {
+                    state.focused = focus.0;
                     let inner = match selected_label {
                         Some("Switch") => {
                             let inner = apply_action(state, Action::SwitchProject);
