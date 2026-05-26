@@ -393,7 +393,6 @@ struct LocalRowBase<'a> {
     name_style: Style,
     index_style: Style,
     idx_str: String,
-    is_emphasized: bool,
     theme: &'a Theme,
 }
 
@@ -419,7 +418,6 @@ fn local_row_base(
             Style::default().fg(theme.dim)
         },
         idx_str: format!("{:>2}", sidebar_idx + 1),
-        is_emphasized: is_focused,
         theme,
     }
 }
@@ -439,7 +437,6 @@ fn render_local_card_expanded(
     } = props.chrome;
     let base = local_row_base(ctx.theme, is_focused, bg, sidebar_idx);
     let theme = base.theme;
-    let is_emphasized = base.is_emphasized;
 
     let activity_icon = status_icon(
         session.status,
@@ -447,7 +444,7 @@ fn render_local_card_expanded(
         theme,
         ctx.spinner_frame,
         ctx.blink_on,
-        is_emphasized,
+        is_focused,
         bg,
     );
     let text_width = width.saturating_sub(6);
@@ -474,10 +471,9 @@ fn render_local_card_expanded(
             Span::styled(
                 badge,
                 Style::default()
-                    .fg(idle_color(theme, session.idle_seconds, is_emphasized))
+                    .fg(idle_color(theme, session.idle_seconds, is_focused))
                     .bg(bg),
             ),
-            Span::styled("", Style::default().fg(dir_color).bg(bg)),
             Span::styled(dir_display, Style::default().fg(dir_color).bg(bg)),
         ],
         bg,
@@ -491,11 +487,7 @@ fn render_local_card_expanded(
                 Span::styled(
                     "\u{e725}  no git",
                     Style::default()
-                        .fg(if is_emphasized {
-                            theme.dim
-                        } else {
-                            theme.muted
-                        })
+                        .fg(if is_focused { theme.dim } else { theme.muted })
                         .bg(bg),
                 ),
             ],
@@ -516,17 +508,13 @@ fn render_local_card_expanded(
         ));
     }
 
-    let status_spans = build_status_spans(session, is_emphasized, bg, theme, text_width);
+    let status_spans = build_status_spans(session, is_focused, bg, theme, text_width);
     let mut row4 = vec![Span::styled("      ", Style::default().bg(bg))];
     if status_spans.is_empty() {
         row4.push(Span::styled(
             "—",
             Style::default()
-                .fg(if is_emphasized {
-                    theme.dim
-                } else {
-                    theme.muted
-                })
+                .fg(if is_focused { theme.dim } else { theme.muted })
                 .bg(bg),
         ));
     } else {
@@ -561,7 +549,6 @@ fn render_local_card_compact(
     } = props.chrome;
     let base = local_row_base(ctx.theme, is_focused, bg, sidebar_idx);
     let theme = base.theme;
-    let is_emphasized = base.is_emphasized;
 
     let activity_text = if session.is_current {
         status_icon_compact(session.status, true, ctx.spinner_frame)
@@ -578,11 +565,11 @@ fn render_local_card_compact(
         }
     };
     let activity_color = if session.is_current {
-        status_color(session.status, true, theme, ctx.blink_on, is_emphasized)
+        status_color(session.status, true, theme, ctx.blink_on, is_focused)
     } else {
         match session.status {
-            SessionStatus::Idle => idle_color(theme, session.idle_seconds, is_emphasized),
-            _ => status_color(session.status, false, theme, ctx.blink_on, is_emphasized),
+            SessionStatus::Idle => idle_color(theme, session.idle_seconds, is_focused),
+            _ => status_color(session.status, false, theme, ctx.blink_on, is_focused),
         }
     };
     let mut spans = vec![
@@ -607,12 +594,12 @@ fn render_local_card_compact(
         let status = format_git_status(session, true);
         if !status.is_empty() {
             let status_color = if status == "✓" {
-                if is_emphasized {
+                if is_focused {
                     theme.green
                 } else {
                     theme.muted
                 }
-            } else if is_emphasized {
+            } else if is_focused {
                 theme.yellow
             } else {
                 theme.dim
