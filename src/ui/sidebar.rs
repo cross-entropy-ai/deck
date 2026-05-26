@@ -249,41 +249,23 @@ fn draw_sessions(
     let width = area.width as usize;
     let mut lines: Vec<Line> = Vec::new();
 
-    for (i, item) in props.layout.items.iter().enumerate() {
+    for item in props.layout.items.iter() {
         let is_focused = is_item_focused(item, props.focus_target);
-        let group_bg = group_bg(ctx.theme, item.group);
-        // Focused rows get a single uniform surface tint so they pop
-        // regardless of which group they're in; unfocused rows keep
-        // the group's bg.
         let row_bg = if is_focused {
             ctx.theme.surface
         } else {
-            group_bg
-        };
-        // The card's bottom gutter should bleed the group's bg only
-        // when another row from the SAME group follows. At the last
-        // item of a group (or the very last item), fall back to
-        // theme.bg so the separator between groups stays neutral.
-        let is_last_in_group = props
-            .layout
-            .items
-            .get(i + 1)
-            .map(|next| next.group != item.group)
-            .unwrap_or(true);
-        let gutter_bg = if is_last_in_group {
             ctx.theme.bg
-        } else {
-            group_bg
         };
         let chrome = RowChrome {
             is_focused,
             bg: row_bg,
-            gutter_bg,
+            gutter_bg: ctx.theme.bg,
             width,
         };
         match &item.kind {
             SidebarItemKind::Header { label } => {
-                render_group_header(&mut lines, label, group_bg, width, ctx.theme);
+                let accent = group_accent(ctx.theme, item.group);
+                render_group_header(&mut lines, label, accent, width, ctx.theme);
             }
             SidebarItemKind::LocalSession { filtered_pos } => {
                 if let Some(session) = props.sessions.get(*filtered_pos) {
@@ -336,49 +318,50 @@ fn is_item_focused(item: &SidebarItem, focus_target: Option<FocusTarget>) -> boo
     )
 }
 
-/// Pick a background color for a group. Local stays on the default
-/// theme bg; each remote host gets a subtle tint from a small palette
-/// so they read as visually distinct rows without overwhelming the
-/// existing card design.
-fn group_bg(theme: &Theme, group: GroupKind) -> Color {
+/// Per-group accent color used to tint the group divider so adjacent
+/// remote hosts stay visually distinct without painting whole rows.
+fn group_accent(theme: &Theme, group: GroupKind) -> Color {
     match group {
-        GroupKind::Local => theme.bg,
+        GroupKind::Local => theme.accent,
         GroupKind::Remote(idx) => {
             let tints = [theme.teal, theme.pink, theme.yellow, theme.accent];
-            let tint = tints[idx % tints.len()];
-            blend(theme.bg, tint, 0.10)
+            tints[idx % tints.len()]
         }
     }
-}
-
-fn blend(a: Color, b: Color, t: f32) -> Color {
-    let (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg_g, bb)) = (a, b) else {
-        return a;
-    };
-    let lerp = |x: u8, y: u8| -> u8 {
-        ((x as f32) * (1.0 - t) + (y as f32) * t)
-            .round()
-            .clamp(0.0, 255.0) as u8
-    };
-    Color::Rgb(lerp(ar, br), lerp(ag, bg_g), lerp(ab, bb))
 }
 
 fn render_group_header(
     lines: &mut Vec<Line<'_>>,
     label: &str,
-    bg: Color,
+    accent: Color,
     width: usize,
     theme: &Theme,
 ) {
+    let label_text = label.trim_start().to_string();
+    let leading = "  ";
+    let leading_w = leading.width();
+    let label_w = label_text.as_str().width();
+    let spacer_w = 1;
+    let rule_w = width
+        .saturating_sub(leading_w)
+        .saturating_sub(label_w)
+        .saturating_sub(spacer_w);
+    let rule = "─".repeat(rule_w);
+
     lines.push(pad_line(
-        vec![Span::styled(
-            label.to_string(),
-            Style::default()
-                .fg(theme.dim)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-        )],
-        bg,
+        vec![
+            Span::styled(leading, Style::default().bg(theme.bg)),
+            Span::styled(
+                label_text,
+                Style::default()
+                    .fg(accent)
+                    .bg(theme.bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ", Style::default().bg(theme.bg)),
+            Span::styled(rule, Style::default().fg(accent).bg(theme.bg)),
+        ],
+        theme.bg,
         width,
     ));
 }
