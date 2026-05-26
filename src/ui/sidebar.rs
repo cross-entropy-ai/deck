@@ -132,27 +132,13 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_, '_>) 
             },
         );
     }
-    let content = if props.show_borders {
-        let border_color = if props.sidebar_active {
-            props.theme.accent
-        } else {
-            props.theme.dim
-        };
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_set(border::ROUNDED)
-            .border_style(Style::default().fg(border_color))
-            .style(Style::default().bg(props.theme.bg));
-        let c = block.inner(area);
-        frame.render_widget(block, area);
-        c
-    } else {
-        frame.render_widget(
-            Block::default().style(Style::default().bg(props.theme.bg)),
-            area,
-        );
-        area
-    };
+    let content = draw_sidebar_container(
+        frame,
+        area,
+        props.theme,
+        props.sidebar_active,
+        props.show_borders,
+    );
 
     let banner_visible = props.update_available.is_some() && content.width >= BANNER_MIN_WIDTH;
     let plugin_rows = plugin_block_rows(props.plugins.len());
@@ -201,6 +187,33 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_, '_>) 
             },
         },
     )
+}
+
+fn draw_sidebar_container(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    sidebar_active: bool,
+    show_borders: bool,
+) -> Rect {
+    if show_borders {
+        let border_color = if sidebar_active {
+            theme.accent
+        } else {
+            theme.dim
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_set(border::ROUNDED)
+            .border_style(Style::default().fg(border_color))
+            .style(Style::default().bg(theme.bg));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        inner
+    } else {
+        frame.render_widget(Block::default().style(Style::default().bg(theme.bg)), area);
+        area
+    }
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, count: usize, theme: &Theme) {
@@ -948,24 +961,8 @@ fn draw_sidebar_tabs(
     let keybindings = ctx.keybindings;
     let sessions = props.sessions;
     let focused = props.focused;
-    let content = if props.show_borders {
-        let border_color = if props.sidebar_active {
-            theme.accent
-        } else {
-            theme.dim
-        };
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_set(border::ROUNDED)
-            .border_style(Style::default().fg(border_color))
-            .style(Style::default().bg(theme.bg));
-        let c = block.inner(area);
-        frame.render_widget(block, area);
-        c
-    } else {
-        frame.render_widget(Block::default().style(Style::default().bg(theme.bg)), area);
-        area
-    };
+    let content =
+        draw_sidebar_container(frame, area, theme, props.sidebar_active, props.show_borders);
 
     if content.height == 0 {
         return None;
