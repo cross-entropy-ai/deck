@@ -176,7 +176,9 @@ fn parse_remote_args<I: Iterator<Item = String>>(
             }
             Ok(Some(ParsedCommand::RemoteList))
         }
-        "add" | "remove" => {
+        // `rm` / `del` / `delete` are aliases for `remove`; the
+        // diagnostics below echo back whatever the user typed.
+        "add" | "remove" | "rm" | "del" | "delete" => {
             let Some(host) = iter.next() else {
                 eprintln!("deck: `remote {sub}` requires a host argument.");
                 return Err(2);
@@ -340,7 +342,8 @@ Remote hosts:
                                the typical macOS / Linux installs Just Work.
 
   {name} remote list           List configured remote hosts.
-  {name} remote remove <host>  Remove a remote host from the config.",
+  {name} remote remove <host>  Remove a remote host from the config.
+                               Aliases: rm, del, delete.",
     );
 }
 
