@@ -323,7 +323,7 @@ fn render_group_header(
     theme: &Theme,
 ) {
     let label_text = label.trim_start().to_string();
-    let leading = "  ";
+    let leading = " ";
     let leading_w = leading.width();
     let label_w = label_text.as_str().width();
     let spacer_w = 1;
