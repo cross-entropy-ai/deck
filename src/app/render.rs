@@ -8,9 +8,9 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::DefaultTerminal;
 
 use crate::bridge;
-use crate::state::{FocusMode, LayoutMode, MainView, SessionRow};
+use crate::state::{FocusMode, LayoutMode, MainView};
 use crate::theme::THEMES;
-use crate::ui::{self, PluginStatus, PluginView, SessionView, SettingsView};
+use crate::ui::{self, PluginStatus, PluginView, SettingsView};
 use crate::update::UpdateCheckMode;
 
 use super::update::format_update_check_help;
@@ -58,15 +58,6 @@ impl App {
             None
         };
 
-        let views_owned: Vec<(SessionRow, crate::state::SessionStatus)> = s
-            .filtered
-            .iter()
-            .map(|&i| {
-                let row = &s.sessions[i];
-                (row.clone(), row.status)
-            })
-            .collect();
-
         let spinner_frame = self.spinner.current_frame().to_string();
         let update_check_help = format_update_check_help(s.update_last_checked_secs);
         let update_check_mode = s.update_check_mode;
@@ -104,38 +95,24 @@ impl App {
 
         let mut captured_banner_bounds: Option<Rect> = None;
         terminal.draw(|frame| {
-            let views: Vec<SessionView> = views_owned
-                .iter()
-                .map(|(r, status)| SessionView {
-                    name: r.name.as_str(),
-                    dir: r.dir.as_str(),
-                    idle_seconds: r.idle_seconds,
-                    status: *status,
-                    is_current: r.is_current,
-                })
-                .collect();
-            let remote_views: Vec<ui::RemoteSessionView> = self
-                .state
-                .remote_sessions
-                .iter()
-                .map(|r| ui::RemoteSessionView {
-                    host: r.host.as_str(),
-                    name: r.name.as_str(),
-                    dir: r.dir.as_str(),
-                    unreachable: r.unreachable,
-                    loading: r.loading,
-                })
-                .collect();
             // Unified slice the sidebar consumes: local rows first
-            // (their flat index == filtered_pos), then remotes (flat
-            // index == local_count + remote_idx). The renderer never
-            // needs to know which kind a row is — it just goes through
-            // the SidebarSession trait.
-            let local_count = views.len();
-            let sessions_dyn: Vec<&dyn ui::SidebarSession> = views
+            // (flat index == filtered_pos), then remotes (flat index
+            // == local_count + remote_idx). Both SessionRow and
+            // RemoteSessionRow impl SidebarSession directly, so the
+            // sidebar reads straight from storage — no per-frame
+            // borrowed-view shells needed.
+            let local_count = self.state.filtered.len();
+            let sessions_dyn: Vec<&dyn ui::SidebarSession> = self
+                .state
+                .filtered
                 .iter()
-                .map(|v| v as &dyn ui::SidebarSession)
-                .chain(remote_views.iter().map(|v| v as &dyn ui::SidebarSession))
+                .map(|&i| &self.state.sessions[i] as &dyn ui::SidebarSession)
+                .chain(
+                    self.state
+                        .remote_sessions
+                        .iter()
+                        .map(|r| r as &dyn ui::SidebarSession),
+                )
                 .collect();
 
             let full = frame.area();

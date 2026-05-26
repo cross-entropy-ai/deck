@@ -10,7 +10,7 @@ mod text;
 pub mod theme;
 
 use crate::keybindings::Keybindings;
-use crate::state::{LayoutMode, SessionStatus, ViewMode};
+use crate::state::{LayoutMode, RemoteSessionRow, SessionRow, SessionStatus, ViewMode};
 
 pub use menu::draw_context_menu;
 pub use new_session::draw_new_session;
@@ -84,29 +84,15 @@ pub trait SidebarSession {
     }
 }
 
-/// Minimal data needed to render one session row.
-pub struct SessionView<'a> {
-    pub name: &'a str,
-    pub dir: &'a str,
-    pub idle_seconds: u64,
-    /// Proc-derived status for this session.
-    pub status: SessionStatus,
-    /// True iff this session is the one tmux is currently attached to.
-    /// The status icon is overridden to a "you are here" marker for
-    /// the current session — anything live there is already visible
-    /// in the main pane, so the icon's job is just to confirm focus.
-    pub is_current: bool,
-}
-
-impl<'a> SidebarSession for SessionView<'a> {
+impl SidebarSession for SessionRow {
     fn origin(&self) -> SessionOrigin<'_> {
         SessionOrigin::Local
     }
     fn name(&self) -> &str {
-        self.name
+        &self.name
     }
     fn dir(&self) -> &str {
-        self.dir
+        &self.dir
     }
     fn activity(&self) -> Option<SessionActivity> {
         Some(SessionActivity {
@@ -117,29 +103,15 @@ impl<'a> SidebarSession for SessionView<'a> {
     }
 }
 
-/// Minimal data needed to render one remote session row. Host is
-/// surfaced via `SidebarSession::origin()` for group dividers; the row
-/// body itself doesn't repeat it.
-pub struct RemoteSessionView<'a> {
-    pub host: &'a str,
-    pub name: &'a str,
-    pub dir: &'a str,
-    pub unreachable: bool,
-    /// True for the synthetic placeholder row shown before the first
-    /// remote refresh completes. The sidebar paints these with a
-    /// muted "(connecting...)" label instead of the session name.
-    pub loading: bool,
-}
-
-impl<'a> SidebarSession for RemoteSessionView<'a> {
+impl SidebarSession for RemoteSessionRow {
     fn origin(&self) -> SessionOrigin<'_> {
-        SessionOrigin::Remote { host: self.host }
+        SessionOrigin::Remote { host: &self.host }
     }
     fn name(&self) -> &str {
-        self.name
+        &self.name
     }
     fn dir(&self) -> &str {
-        self.dir
+        &self.dir
     }
     // Remote refresh doesn't collect activity yet. Returning None
     // (rather than fake Idle/0/false) means the renderer paints a
