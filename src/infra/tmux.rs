@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::infra::command::{CommandError, CommandRunner, RealRunner};
+use crate::infra::tmux_parse::{parse_sessions, parse_window_activity};
 
 /// How long any single tmux invocation may take before we give up and
 /// treat it as a failure. tmux is local IPC; healthy calls finish in a
@@ -61,20 +62,6 @@ fn list_sessions_with(runner: &dyn CommandRunner) -> Vec<SessionInfo> {
     parse_sessions(&raw, &window_activity)
 }
 
-fn parse_sessions(raw: &str, window_activity: &HashMap<String, u64>) -> Vec<SessionInfo> {
-    raw.lines()
-        .filter_map(|line| {
-            let (name, dir) = line.split_once('\t')?;
-            let activity = window_activity.get(name).copied().unwrap_or(0);
-            Some(SessionInfo {
-                name: name.to_string(),
-                dir: dir.to_string(),
-                activity,
-            })
-        })
-        .collect()
-}
-
 /// List every pane across every session, with the info deck needs to
 /// derive session status (current_command for the proc heuristic).
 pub fn list_panes() -> Vec<TmuxPane> {
@@ -110,20 +97,6 @@ fn latest_window_activity_with(runner: &dyn CommandRunner) -> HashMap<String, u6
         return HashMap::new();
     };
     parse_window_activity(&raw)
-}
-
-fn parse_window_activity(raw: &str) -> HashMap<String, u64> {
-    let mut map: HashMap<String, u64> = HashMap::new();
-    for line in raw.lines() {
-        if let Some((name, ts_str)) = line.split_once('\t') {
-            let ts: u64 = ts_str.parse().unwrap_or(0);
-            let entry = map.entry(name.to_string()).or_insert(0);
-            if ts > *entry {
-                *entry = ts;
-            }
-        }
-    }
-    map
 }
 
 /// Get the current session name (from the first attached client).
