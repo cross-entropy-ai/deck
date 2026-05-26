@@ -387,12 +387,48 @@ fn render_group_header(
     ));
 }
 
+struct LocalRowBase<'a> {
+    accent: &'static str,
+    accent_style: Style,
+    name_style: Style,
+    index_style: Style,
+    idx_str: String,
+    is_emphasized: bool,
+    theme: &'a Theme,
+}
+
+fn local_row_base(
+    theme: &Theme,
+    is_focused: bool,
+    bg: Color,
+    sidebar_idx: usize,
+) -> LocalRowBase<'_> {
+    LocalRowBase {
+        accent: if is_focused { "▌" } else { " " },
+        accent_style: Style::default()
+            .fg(if is_focused { theme.green } else { bg })
+            .bg(bg),
+        name_style: if is_focused {
+            Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.secondary)
+        },
+        index_style: if is_focused {
+            Style::default().fg(theme.secondary)
+        } else {
+            Style::default().fg(theme.dim)
+        },
+        idx_str: format!("{:>2}", sidebar_idx + 1),
+        is_emphasized: is_focused,
+        theme,
+    }
+}
+
 fn render_local_card_expanded(
     lines: &mut Vec<Line<'_>>,
     ctx: &SidebarRenderCtx<'_>,
     props: LocalCardProps<'_, '_>,
 ) {
-    let theme = ctx.theme;
     let session = props.session;
     let sidebar_idx = props.sidebar_idx;
     let RowChrome {
@@ -401,19 +437,9 @@ fn render_local_card_expanded(
         gutter_bg,
         width,
     } = props.chrome;
-    let is_emphasized = is_focused;
-    let accent_color = if is_focused { theme.green } else { bg };
-    let accent = if is_focused { "▌" } else { " " };
-    let name_style = if is_focused {
-        Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(theme.secondary)
-    };
-    let index_style = if is_focused {
-        Style::default().fg(theme.secondary)
-    } else {
-        Style::default().fg(theme.dim)
-    };
+    let base = local_row_base(ctx.theme, is_focused, bg, sidebar_idx);
+    let theme = base.theme;
+    let is_emphasized = base.is_emphasized;
 
     let activity_icon = status_icon(
         session.status,
@@ -424,16 +450,15 @@ fn render_local_card_expanded(
         is_emphasized,
         bg,
     );
-    let idx_str = format!("{:>2}", sidebar_idx + 1);
     let text_width = width.saturating_sub(6);
     let name_display = truncate(session.name, text_width);
     lines.push(pad_line(
         vec![
-            Span::styled(accent, Style::default().fg(accent_color).bg(bg)),
+            Span::styled(base.accent, base.accent_style),
             activity_icon,
-            Span::styled(idx_str, index_style.bg(bg)),
+            Span::styled(base.idx_str, base.index_style.bg(bg)),
             Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(name_display, name_style.bg(bg)),
+            Span::styled(name_display, base.name_style.bg(bg)),
         ],
         bg,
         width,
@@ -526,7 +551,6 @@ fn render_local_card_compact(
     ctx: &SidebarRenderCtx<'_>,
     props: LocalCardProps<'_, '_>,
 ) {
-    let theme = ctx.theme;
     let session = props.session;
     let sidebar_idx = props.sidebar_idx;
     let RowChrome {
@@ -535,19 +559,9 @@ fn render_local_card_compact(
         width,
         ..
     } = props.chrome;
-    let is_emphasized = is_focused;
-    let accent_color = if is_focused { theme.green } else { bg };
-    let accent = if is_focused { "▌" } else { " " };
-    let name_style = if is_focused {
-        Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(theme.secondary)
-    };
-    let index_style = if is_focused {
-        Style::default().fg(theme.secondary)
-    } else {
-        Style::default().fg(theme.dim)
-    };
+    let base = local_row_base(ctx.theme, is_focused, bg, sidebar_idx);
+    let theme = base.theme;
+    let is_emphasized = base.is_emphasized;
 
     let activity_text = if session.is_current {
         status_icon_compact(session.status, true, ctx.spinner_frame)
@@ -571,16 +585,14 @@ fn render_local_card_compact(
             _ => status_color(session.status, false, theme, ctx.blink_on, is_emphasized),
         }
     };
-    let idx_str = format!("{:>2}", sidebar_idx + 1);
-
     let mut spans = vec![
-        Span::styled(accent, Style::default().fg(accent_color).bg(bg)),
+        Span::styled(base.accent, base.accent_style),
         Span::styled(activity_text, Style::default().fg(activity_color).bg(bg)),
-        Span::styled(idx_str, index_style.bg(bg)),
+        Span::styled(base.idx_str, base.index_style.bg(bg)),
         Span::styled("  ", Style::default().bg(bg)),
         Span::styled(
             truncate(session.name, width.saturating_sub(6)),
-            name_style.bg(bg),
+            base.name_style.bg(bg),
         ),
     ];
 
