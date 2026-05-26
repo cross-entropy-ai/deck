@@ -26,72 +26,136 @@ use super::text::{
 use super::{PluginStatus, PluginView, RemoteSessionView, SessionView};
 use crate::state::SessionStatus;
 
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
-pub fn draw_sidebar(
-    frame: &mut Frame,
-    area: Rect,
-    sessions: &[SessionView],
-    remote_sessions: &[RemoteSessionView],
-    layout: &SidebarLayout,
-    focus_target: Option<FocusTarget>,
-    sidebar_active: bool,
-    theme: &Theme,
-    show_help: bool,
-    confirm_kill: Option<&str>,
-    rename_input: Option<(&str, usize)>,
-    show_borders: bool,
-    tabs_mode: bool,
-    spinner_frame: &str,
-    view_mode: ViewMode,
-    plugins: &[PluginView],
+/// Inputs needed to draw the sidebar. Grouping these into one props
+/// object keeps the public API readable as the sidebar gains display
+/// modes and optional adornments.
+pub struct SidebarProps<'a, 'view> {
+    pub sessions: &'a [SessionView<'view>],
+    pub remote_sessions: &'a [RemoteSessionView<'view>],
+    pub layout: &'a SidebarLayout,
+    pub focus_target: Option<FocusTarget>,
+    pub sidebar_active: bool,
+    pub theme: &'a Theme,
+    pub show_help: bool,
+    pub confirm_kill: Option<&'a str>,
+    pub rename_input: Option<(&'a str, usize)>,
+    pub show_borders: bool,
+    pub tabs_mode: bool,
+    pub spinner_frame: &'a str,
+    pub view_mode: ViewMode,
+    pub plugins: &'a [PluginView<'view>],
+    pub blink_on: bool,
+    pub keybindings: &'a Keybindings,
+    pub update_available: Option<&'a UpdateStatus>,
+}
+
+#[derive(Clone, Copy)]
+struct SidebarRenderCtx<'a> {
+    theme: &'a Theme,
+    spinner_frame: &'a str,
     blink_on: bool,
-    keybindings: &Keybindings,
-    update_available: Option<&UpdateStatus>,
-) -> Option<Rect> {
-    if tabs_mode {
+    keybindings: &'a Keybindings,
+}
+
+struct SessionsProps<'a, 'view> {
+    sessions: &'a [SessionView<'view>],
+    remote_sessions: &'a [RemoteSessionView<'view>],
+    layout: &'a SidebarLayout,
+    focus_target: Option<FocusTarget>,
+    view_mode: ViewMode,
+}
+
+#[derive(Clone, Copy)]
+struct RowChrome {
+    is_focused: bool,
+    bg: Color,
+    gutter_bg: Color,
+    width: usize,
+}
+
+struct LocalCardProps<'a, 'view> {
+    session: &'a SessionView<'view>,
+    sidebar_idx: usize,
+    chrome: RowChrome,
+}
+
+struct RemoteRowProps<'a, 'view> {
+    row: &'a RemoteSessionView<'view>,
+    chrome: RowChrome,
+    target_height: usize,
+}
+
+struct PluginRowsProps<'a, 'view> {
+    plugins: &'a [PluginView<'view>],
+    width: usize,
+}
+
+struct FooterProps<'a, 'view> {
+    sidebar_active: bool,
+    show_help: bool,
+    plugins: &'a [PluginView<'view>],
+    update_available: Option<&'a UpdateStatus>,
+}
+
+struct TabsProps<'a, 'view> {
+    sessions: &'a [SessionView<'view>],
+    focused: usize,
+    sidebar_active: bool,
+    show_borders: bool,
+}
+
+pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_, '_>) -> Option<Rect> {
+    let ctx = SidebarRenderCtx {
+        theme: props.theme,
+        spinner_frame: props.spinner_frame,
+        blink_on: props.blink_on,
+        keybindings: props.keybindings,
+    };
+
+    if props.tabs_mode {
         // Tabs mode currently shows only local sessions; map focus
         // back to a plain local index, defaulting to 0 when focus is
         // on a remote row (those just aren't reachable here).
-        let focused_local = match focus_target {
+        let focused_local = match props.focus_target {
             Some(FocusTarget::Local(pos)) => pos,
             _ => 0,
         };
         return draw_sidebar_tabs(
             frame,
             area,
-            sessions,
-            focused_local,
-            sidebar_active,
-            theme,
-            show_borders,
-            spinner_frame,
-            blink_on,
-            keybindings,
-            update_available,
+            &ctx,
+            TabsProps {
+                sessions: props.sessions,
+                focused: focused_local,
+                sidebar_active: props.sidebar_active,
+                show_borders: props.show_borders,
+            },
         );
     }
-    let content = if show_borders {
-        let border_color = if sidebar_active {
-            theme.accent
+    let content = if props.show_borders {
+        let border_color = if props.sidebar_active {
+            props.theme.accent
         } else {
-            theme.dim
+            props.theme.dim
         };
         let block = Block::default()
             .borders(Borders::ALL)
             .border_set(border::ROUNDED)
             .border_style(Style::default().fg(border_color))
-            .style(Style::default().bg(theme.bg));
+            .style(Style::default().bg(props.theme.bg));
         let c = block.inner(area);
         frame.render_widget(block, area);
         c
     } else {
-        frame.render_widget(Block::default().style(Style::default().bg(theme.bg)), area);
+        frame.render_widget(
+            Block::default().style(Style::default().bg(props.theme.bg)),
+            area,
+        );
         area
     };
 
-    let banner_visible = update_available.is_some() && content.width >= BANNER_MIN_WIDTH;
-    let plugin_rows = plugin_block_rows(plugins.len());
+    let banner_visible = props.update_available.is_some() && content.width >= BANNER_MIN_WIDTH;
+    let plugin_rows = plugin_block_rows(props.plugins.len());
     let footer_height: u16 = 3 + banner_visible as u16 + plugin_rows;
 
     let [header_area, sessions_area, footer_area] = Layout::vertical([
@@ -101,41 +165,40 @@ pub fn draw_sidebar(
     ])
     .areas(content);
 
-    draw_header(frame, header_area, sessions.len(), theme);
-    if show_help {
-        draw_help(frame, sessions_area, theme, keybindings);
-    } else if let Some(name) = confirm_kill {
-        draw_confirm_kill(frame, sessions_area, theme, name);
-    } else if let Some((input, cursor)) = rename_input {
-        draw_rename_input(frame, sessions_area, theme, input, cursor);
+    draw_header(frame, header_area, props.sessions.len(), props.theme);
+    if props.show_help {
+        draw_help(frame, sessions_area, props.theme, props.keybindings);
+    } else if let Some(name) = props.confirm_kill {
+        draw_confirm_kill(frame, sessions_area, props.theme, name);
+    } else if let Some((input, cursor)) = props.rename_input {
+        draw_rename_input(frame, sessions_area, props.theme, input, cursor);
     } else {
         draw_sessions(
             frame,
             sessions_area,
-            sessions,
-            remote_sessions,
-            layout,
-            focus_target,
-            spinner_frame,
-            blink_on,
-            theme,
-            view_mode,
+            &ctx,
+            SessionsProps {
+                sessions: props.sessions,
+                remote_sessions: props.remote_sessions,
+                layout: props.layout,
+                focus_target: props.focus_target,
+                view_mode: props.view_mode,
+            },
         );
     }
     draw_footer(
         frame,
         footer_area,
-        sidebar_active,
-        theme,
-        footer_area.width,
-        show_help,
-        plugins,
-        blink_on,
-        keybindings,
-        if banner_visible {
-            update_available
-        } else {
-            None
+        &ctx,
+        FooterProps {
+            sidebar_active: props.sidebar_active,
+            show_help: props.show_help,
+            plugins: props.plugins,
+            update_available: if banner_visible {
+                props.update_available
+            } else {
+                None
+            },
         },
     )
 }
@@ -156,22 +219,16 @@ fn draw_header(frame: &mut Frame, area: Rect, count: usize, theme: &Theme) {
     );
 }
 
-#[allow(clippy::too_many_arguments)]
 fn draw_sessions(
     frame: &mut Frame,
     area: Rect,
-    sessions: &[SessionView],
-    remote_sessions: &[RemoteSessionView],
-    layout: &SidebarLayout,
-    focus_target: Option<FocusTarget>,
-    spinner_frame: &str,
-    blink_on: bool,
-    theme: &Theme,
-    view_mode: ViewMode,
+    ctx: &SidebarRenderCtx<'_>,
+    props: SessionsProps<'_, '_>,
 ) {
-    if sessions.is_empty() && remote_sessions.is_empty() {
+    if props.sessions.is_empty() && props.remote_sessions.is_empty() {
         frame.render_widget(
-            Paragraph::new("  No projects").style(Style::default().fg(theme.muted).bg(theme.bg)),
+            Paragraph::new("  No projects")
+                .style(Style::default().fg(ctx.theme.muted).bg(ctx.theme.bg)),
             area,
         );
         return;
@@ -180,67 +237,65 @@ fn draw_sessions(
     let width = area.width as usize;
     let mut lines: Vec<Line> = Vec::new();
 
-    for (i, item) in layout.items.iter().enumerate() {
-        let is_focused = is_item_focused(item, focus_target);
-        let group_bg = group_bg(theme, item.group);
+    for (i, item) in props.layout.items.iter().enumerate() {
+        let is_focused = is_item_focused(item, props.focus_target);
+        let group_bg = group_bg(ctx.theme, item.group);
         // Focused rows get a single uniform surface tint so they pop
         // regardless of which group they're in; unfocused rows keep
         // the group's bg.
-        let row_bg = if is_focused { theme.surface } else { group_bg };
+        let row_bg = if is_focused {
+            ctx.theme.surface
+        } else {
+            group_bg
+        };
         // The card's bottom gutter should bleed the group's bg only
         // when another row from the SAME group follows. At the last
         // item of a group (or the very last item), fall back to
         // theme.bg so the separator between groups stays neutral.
-        let is_last_in_group = layout
+        let is_last_in_group = props
+            .layout
             .items
             .get(i + 1)
             .map(|next| next.group != item.group)
             .unwrap_or(true);
-        let gutter_bg = if is_last_in_group { theme.bg } else { group_bg };
+        let gutter_bg = if is_last_in_group {
+            ctx.theme.bg
+        } else {
+            group_bg
+        };
+        let chrome = RowChrome {
+            is_focused,
+            bg: row_bg,
+            gutter_bg,
+            width,
+        };
         match &item.kind {
             SidebarItemKind::Header { label } => {
-                render_group_header(&mut lines, label, group_bg, width, theme);
+                render_group_header(&mut lines, label, group_bg, width, ctx.theme);
             }
             SidebarItemKind::LocalSession { filtered_pos } => {
-                if let Some(session) = sessions.get(*filtered_pos) {
-                    match view_mode {
-                        ViewMode::Expanded => render_local_card_expanded(
-                            &mut lines,
-                            session,
-                            *filtered_pos,
-                            is_focused,
-                            row_bg,
-                            gutter_bg,
-                            spinner_frame,
-                            blink_on,
-                            theme,
-                            width,
-                        ),
-                        ViewMode::Compact => render_local_card_compact(
-                            &mut lines,
-                            session,
-                            *filtered_pos,
-                            is_focused,
-                            row_bg,
-                            spinner_frame,
-                            blink_on,
-                            theme,
-                            width,
-                        ),
+                if let Some(session) = props.sessions.get(*filtered_pos) {
+                    let card = LocalCardProps {
+                        session,
+                        sidebar_idx: *filtered_pos,
+                        chrome,
+                    };
+                    match props.view_mode {
+                        ViewMode::Expanded => render_local_card_expanded(&mut lines, ctx, card),
+                        ViewMode::Compact => render_local_card_compact(&mut lines, ctx, card),
                     }
                 }
             }
             SidebarItemKind::RemoteSession { remote_idx } => {
-                if let Some(row) = remote_sessions.get(*remote_idx) {
+                if let Some(row) = props.remote_sessions.get(*remote_idx) {
                     render_remote_row(
                         &mut lines,
-                        row,
-                        is_focused,
-                        row_bg,
-                        gutter_bg,
-                        theme,
-                        width,
-                        item.height,
+                        ctx,
+                        RemoteRowProps {
+                            row,
+                            chrome,
+                            target_height: item.height,
+                        },
                     );
                 }
             }
@@ -248,10 +303,10 @@ fn draw_sessions(
     }
 
     let visible_height = area.height as usize;
-    let scroll = scroll_for_layout(layout, focus_target, visible_height);
+    let scroll = scroll_for_layout(props.layout, props.focus_target, visible_height);
     frame.render_widget(
         Paragraph::new(lines)
-            .style(Style::default().bg(theme.bg))
+            .style(Style::default().bg(ctx.theme.bg))
             .scroll((scroll as u16, 0)),
         area,
     );
@@ -319,19 +374,20 @@ fn render_group_header(
     ));
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_local_card_expanded(
     lines: &mut Vec<Line<'_>>,
-    session: &SessionView,
-    sidebar_idx: usize,
-    is_focused: bool,
-    bg: Color,
-    gutter_bg: Color,
-    spinner_frame: &str,
-    blink_on: bool,
-    theme: &Theme,
-    width: usize,
+    ctx: &SidebarRenderCtx<'_>,
+    props: LocalCardProps<'_, '_>,
 ) {
+    let theme = ctx.theme;
+    let session = props.session;
+    let sidebar_idx = props.sidebar_idx;
+    let RowChrome {
+        is_focused,
+        bg,
+        gutter_bg,
+        width,
+    } = props.chrome;
     let is_emphasized = is_focused;
     let accent_color = if is_focused { theme.green } else { bg };
     let accent = if is_focused { "▌" } else { " " };
@@ -350,8 +406,8 @@ fn render_local_card_expanded(
         session.status,
         session.is_current,
         theme,
-        spinner_frame,
-        blink_on,
+        ctx.spinner_frame,
+        ctx.blink_on,
         is_emphasized,
         bg,
     );
@@ -397,7 +453,11 @@ fn render_local_card_expanded(
                 Span::styled(
                     "\u{e725}  no git",
                     Style::default()
-                        .fg(if is_emphasized { theme.dim } else { theme.muted })
+                        .fg(if is_emphasized {
+                            theme.dim
+                        } else {
+                            theme.muted
+                        })
                         .bg(bg),
                 ),
             ],
@@ -424,7 +484,11 @@ fn render_local_card_expanded(
         row4.push(Span::styled(
             "—",
             Style::default()
-                .fg(if is_emphasized { theme.dim } else { theme.muted })
+                .fg(if is_emphasized {
+                    theme.dim
+                } else {
+                    theme.muted
+                })
                 .bg(bg),
         ));
     } else {
@@ -444,18 +508,20 @@ fn render_local_card_expanded(
     ));
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_local_card_compact(
     lines: &mut Vec<Line<'_>>,
-    session: &SessionView,
-    sidebar_idx: usize,
-    is_focused: bool,
-    bg: Color,
-    spinner_frame: &str,
-    blink_on: bool,
-    theme: &Theme,
-    width: usize,
+    ctx: &SidebarRenderCtx<'_>,
+    props: LocalCardProps<'_, '_>,
 ) {
+    let theme = ctx.theme;
+    let session = props.session;
+    let sidebar_idx = props.sidebar_idx;
+    let RowChrome {
+        is_focused,
+        bg,
+        width,
+        ..
+    } = props.chrome;
     let is_emphasized = is_focused;
     let accent_color = if is_focused { theme.green } else { bg };
     let accent = if is_focused { "▌" } else { " " };
@@ -471,13 +537,13 @@ fn render_local_card_compact(
     };
 
     let activity_text = if session.is_current {
-        status_icon_compact(session.status, true, spinner_frame)
+        status_icon_compact(session.status, true, ctx.spinner_frame)
     } else {
         match session.status {
-            SessionStatus::Working => spinner_frame.to_string(),
+            SessionStatus::Working => ctx.spinner_frame.to_string(),
             SessionStatus::Idle => {
                 if session.idle_seconds < 3 {
-                    spinner_frame.to_string()
+                    ctx.spinner_frame.to_string()
                 } else {
                     "󰒲".to_string()
                 }
@@ -485,11 +551,11 @@ fn render_local_card_compact(
         }
     };
     let activity_color = if session.is_current {
-        status_color(session.status, true, theme, blink_on, is_emphasized)
+        status_color(session.status, true, theme, ctx.blink_on, is_emphasized)
     } else {
         match session.status {
             SessionStatus::Idle => idle_color(theme, session.idle_seconds, is_emphasized),
-            _ => status_color(session.status, false, theme, blink_on, is_emphasized),
+            _ => status_color(session.status, false, theme, ctx.blink_on, is_emphasized),
         }
     };
     let idx_str = format!("{:>2}", sidebar_idx + 1);
@@ -516,7 +582,11 @@ fn render_local_card_compact(
         let status = format_git_status(session, true);
         if !status.is_empty() {
             let status_color = if status == "✓" {
-                if is_emphasized { theme.green } else { theme.muted }
+                if is_emphasized {
+                    theme.green
+                } else {
+                    theme.muted
+                }
             } else if is_emphasized {
                 theme.yellow
             } else {
@@ -545,17 +615,20 @@ fn render_local_card_compact(
     ));
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_remote_row(
     lines: &mut Vec<Line<'_>>,
-    row: &RemoteSessionView,
-    is_focused: bool,
-    bg: Color,
-    gutter_bg: Color,
-    theme: &Theme,
-    width: usize,
-    target_height: usize,
+    ctx: &SidebarRenderCtx<'_>,
+    props: RemoteRowProps<'_, '_>,
 ) {
+    let theme = ctx.theme;
+    let row = props.row;
+    let target_height = props.target_height;
+    let RowChrome {
+        is_focused,
+        bg,
+        gutter_bg,
+        width,
+    } = props.chrome;
     let accent_color = if is_focused { theme.green } else { bg };
     let accent = if is_focused { "▌" } else { " " };
     let name_fg = if row.loading || row.unreachable {
@@ -619,7 +692,6 @@ fn render_remote_row(
     }
 }
 
-
 fn plugin_dot_style(status: PluginStatus, blink_on: bool, theme: &Theme) -> Style {
     match status {
         PluginStatus::Foreground => Style::default().fg(theme.green),
@@ -649,11 +721,12 @@ fn plugin_dot_glyph(status: PluginStatus) -> &'static str {
 
 fn append_plugin_rows(
     rows: &mut Vec<Line<'static>>,
-    plugins: &[PluginView],
-    blink_on: bool,
-    width: usize,
-    theme: &Theme,
+    ctx: &SidebarRenderCtx<'_>,
+    props: PluginRowsProps<'_, '_>,
 ) {
+    let theme = ctx.theme;
+    let plugins = props.plugins;
+    let width = props.width;
     if plugins.is_empty() {
         return;
     }
@@ -668,7 +741,7 @@ fn append_plugin_rows(
     ]));
 
     for p in plugins {
-        let dot_style = plugin_dot_style(p.status, blink_on, theme);
+        let dot_style = plugin_dot_style(p.status, ctx.blink_on, theme);
         let key_color = match p.status {
             PluginStatus::Inactive => theme.dim,
             _ => theme.muted,
@@ -700,23 +773,18 @@ fn append_plugin_rows(
     )));
 }
 
-#[allow(clippy::too_many_arguments)]
 fn draw_footer(
     frame: &mut Frame,
     area: Rect,
-    sidebar_active: bool,
-    theme: &Theme,
-    width: u16,
-    show_help: bool,
-    plugins: &[PluginView],
-    blink_on: bool,
-    keybindings: &Keybindings,
-    update_available: Option<&UpdateStatus>,
+    ctx: &SidebarRenderCtx<'_>,
+    props: FooterProps<'_, '_>,
 ) -> Option<Rect> {
-    let w = width as usize;
+    let theme = ctx.theme;
+    let keybindings = ctx.keybindings;
+    let w = area.width as usize;
     let sep = Line::from(Span::styled("─".repeat(w), Style::default().fg(theme.dim)));
 
-    let hint_lines: Vec<Line> = if sidebar_active {
+    let hint_lines: Vec<Line> = if props.sidebar_active {
         let nav_key = {
             let next = primary_key_string(keybindings, Command::FocusNext);
             let prev = primary_key_string(keybindings, Command::FocusPrev);
@@ -768,10 +836,17 @@ fn draw_footer(
     let mut rows: Vec<Line> = Vec::with_capacity(5);
     rows.push(sep);
 
-    append_plugin_rows(&mut rows, plugins, blink_on, w, theme);
+    append_plugin_rows(
+        &mut rows,
+        ctx,
+        PluginRowsProps {
+            plugins: props.plugins,
+            width: w,
+        },
+    );
 
     let mut upgrade_bounds: Option<Rect> = None;
-    if let Some(status) = update_available {
+    if let Some(status) = props.update_available {
         let upgrade_label = "upgrade";
         let leading = 1u16;
         let gap = 3u16;
@@ -839,7 +914,7 @@ fn draw_footer(
 
     if overflow {
         rows.push(iter.next().unwrap_or_default());
-    } else if show_help {
+    } else if props.show_help {
         rows.push(Line::from(vec![
             Span::styled(" ", Style::default()),
             Span::styled(
@@ -863,22 +938,18 @@ fn draw_footer(
     upgrade_bounds
 }
 
-#[allow(clippy::too_many_arguments)]
 fn draw_sidebar_tabs(
     frame: &mut Frame,
     area: Rect,
-    sessions: &[SessionView],
-    focused: usize,
-    sidebar_active: bool,
-    theme: &Theme,
-    show_borders: bool,
-    spinner_frame: &str,
-    blink_on: bool,
-    keybindings: &Keybindings,
-    _update_available: Option<&UpdateStatus>,
+    ctx: &SidebarRenderCtx<'_>,
+    props: TabsProps<'_, '_>,
 ) -> Option<Rect> {
-    let content = if show_borders {
-        let border_color = if sidebar_active {
+    let theme = ctx.theme;
+    let keybindings = ctx.keybindings;
+    let sessions = props.sessions;
+    let focused = props.focused;
+    let content = if props.show_borders {
+        let border_color = if props.sidebar_active {
             theme.accent
         } else {
             theme.dim
@@ -952,7 +1023,7 @@ fn draw_sidebar_tabs(
 
     let tabs_width: usize = spans.iter().map(|s| s.width()).sum();
     let width = content.width as usize;
-    let hint_pairs: Vec<(String, String)> = if sidebar_active {
+    let hint_pairs: Vec<(String, String)> = if props.sidebar_active {
         vec![
             (
                 primary_key_string(keybindings, Command::ToggleHelp),
@@ -1005,11 +1076,16 @@ fn draw_sidebar_tabs(
             let avail = content.width as usize;
             let dir = shorten_dir(session.dir);
             let git = build_tab_status(session);
-            let activity = format_activity_compact(session.idle_seconds, spinner_frame);
+            let activity = format_activity_compact(session.idle_seconds, ctx.spinner_frame);
             let status_text =
-                status_icon_compact(session.status, session.is_current, spinner_frame);
-            let status_color =
-                status_color(session.status, session.is_current, theme, blink_on, true);
+                status_icon_compact(session.status, session.is_current, ctx.spinner_frame);
+            let status_color = status_color(
+                session.status,
+                session.is_current,
+                theme,
+                ctx.blink_on,
+                true,
+            );
 
             let mut tail = format!("  {}", dir);
             if !session.branch.is_empty() {
