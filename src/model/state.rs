@@ -739,19 +739,22 @@ impl AppState {
         // config order, one block at a time).
         let mut host_idx: usize = 0;
         let mut prev_host: Option<&str> = None;
+        let show_host_headers = matches!(view_mode, ViewMode::Expanded);
         for (remote_idx, r) in self.remote_sessions.iter().enumerate() {
             let new_host = Some(r.host.as_str()) != prev_host;
             if new_host {
                 if prev_host.is_some() {
                     host_idx += 1;
                 }
-                items.push(SidebarItem {
-                    kind: SidebarItemKind::Header {
-                        label: format!("  @{}", r.host),
-                    },
-                    group: GroupKind::Remote(host_idx),
-                    height: 1,
-                });
+                if show_host_headers {
+                    items.push(SidebarItem {
+                        kind: SidebarItemKind::Header {
+                            label: format!("  @{}", r.host),
+                        },
+                        group: GroupKind::Remote(host_idx),
+                        height: 1,
+                    });
+                }
                 prev_host = Some(r.host.as_str());
             }
             // Match the local card height so groups visually align
