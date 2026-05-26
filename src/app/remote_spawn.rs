@@ -30,7 +30,7 @@ use super::TerminalPane;
 /// One result per spawn attempt.
 pub(super) enum RemoteSpawnEvent {
     Spawned { host: String, pane: TerminalPane },
-    Failed { host: String, reason: String },
+    Failed { host: String },
 }
 
 /// Owns the receiver end of the spawn channel. Senders live inside the
@@ -104,10 +104,7 @@ fn spawn_one(host: String, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
                         },
                     }
                 }
-                Err(e) => RemoteSpawnEvent::Failed {
-                    host,
-                    reason: format!("spawn ssh: {e}"),
-                },
+                Err(_) => RemoteSpawnEvent::Failed { host },
             };
             let _ = tx.send(event);
         });

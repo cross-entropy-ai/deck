@@ -11,8 +11,7 @@ use crate::layout::{
     plugin_block_rows, BANNER_MIN_WIDTH, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR,
 };
 use crate::state::{
-    scroll_for_layout, FocusTarget, GroupKind, SidebarItem, SidebarItemKind, SidebarLayout,
-    ViewMode,
+    scroll_for_layout, FocusTarget, SidebarItem, SidebarItemKind, SidebarLayout, ViewMode,
 };
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
@@ -264,8 +263,8 @@ fn draw_sessions(frame: &mut Frame, area: Rect, ctx: &SidebarRenderCtx<'_>, prop
             width,
         };
         match &item.kind {
-            SidebarItemKind::Header { label } => {
-                let accent = group_accent(ctx.theme, item.group);
+            SidebarItemKind::Header { label, host_idx } => {
+                let accent = host_accent(ctx.theme, *host_idx);
                 render_group_header(&mut lines, label, accent, width, ctx.theme);
             }
             SidebarItemKind::Session { session_idx } => {
@@ -305,14 +304,11 @@ fn is_item_focused(item: &SidebarItem, focus_target: Option<FocusTarget>) -> boo
 
 /// Per-group accent color used to tint the group divider so adjacent
 /// remote hosts stay visually distinct without painting whole rows.
-fn group_accent(theme: &Theme, group: GroupKind) -> Color {
-    match group {
-        GroupKind::Local => theme.accent,
-        GroupKind::Remote(idx) => {
-            let tints = [theme.teal, theme.pink, theme.yellow, theme.accent];
-            tints[idx % tints.len()]
-        }
-    }
+/// Accent color cycled per distinct remote host so adjacent groups
+/// stay visually distinct without painting whole rows.
+fn host_accent(theme: &Theme, host_idx: usize) -> Color {
+    let tints = [theme.teal, theme.pink, theme.yellow, theme.accent];
+    tints[host_idx % tints.len()]
 }
 
 fn render_group_header(

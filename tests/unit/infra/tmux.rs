@@ -1,8 +1,6 @@
 use super::*;
 use crate::infra::command::{CommandError, CommandRunner, Output};
 use std::collections::HashMap;
-use std::os::unix::process::ExitStatusExt;
-use std::process::ExitStatus;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -44,19 +42,13 @@ impl CommandRunner for FakeRunner {
         let resp = map.get(&key);
         match resp {
             Some(FakeResponse::Ok(stdout)) => Ok(Output {
-                status: ExitStatus::from_raw(0),
                 stdout: stdout.as_bytes().to_vec(),
-                stderr: Vec::new(),
             }),
             Some(FakeResponse::Timeout) => Err(CommandError::Timeout {
                 program: program.to_string(),
                 elapsed: Duration::from_secs(1),
             }),
-            None => Ok(Output {
-                status: ExitStatus::from_raw(0),
-                stdout: Vec::new(),
-                stderr: Vec::new(),
-            }),
+            None => Ok(Output { stdout: Vec::new() }),
         }
     }
 }

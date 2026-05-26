@@ -32,17 +32,9 @@ use std::time::Duration;
 /// carries the fields infra layers actually use, and guarantees the
 /// process exited (it didn't time out).
 ///
-/// `status` and `stderr` are kept on the success type for symmetry
-/// with `CommandError::NonZero` and because the planned (out-of-scope)
-/// UI-surfacing work will want them; today only `stdout` is read by
-/// production callers.
 #[derive(Debug, Clone)]
 pub struct Output {
-    #[allow(dead_code)]
-    pub status: ExitStatus,
     pub stdout: Vec<u8>,
-    #[allow(dead_code)]
-    pub stderr: Vec<u8>,
 }
 
 impl Output {
@@ -158,11 +150,7 @@ fn wait_with_timeout(
     match rx.recv_timeout(timeout) {
         Ok(Ok(out)) => {
             if out.status.success() {
-                Ok(Output {
-                    status: out.status,
-                    stdout: out.stdout,
-                    stderr: out.stderr,
-                })
+                Ok(Output { stdout: out.stdout })
             } else {
                 Err(CommandError::NonZero {
                     program: program.to_string(),

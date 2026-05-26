@@ -7,7 +7,6 @@ fn real_runner_returns_stdout_on_success() {
     let out = runner
         .run("echo", &["hello"], Duration::from_secs(2))
         .expect("echo should succeed");
-    assert!(out.status.success());
     assert_eq!(out.stdout_trimmed(), "hello");
 }
 

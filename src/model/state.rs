@@ -184,17 +184,6 @@ pub enum SessionTargetRef<'a> {
     Remote(&'a RemoteSessionRow),
 }
 
-/// Logical sidebar group. Renderers use the group identity to pick
-/// the bg color and the layout to decide where headers go.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GroupKind {
-    Local,
-    /// Position of the host in the rendered list (NOT in the config
-    /// list — the order matches the sequence of distinct hosts in
-    /// `state.remote_sessions`). Used to pick a per-host bg tint.
-    Remote(usize),
-}
-
 /// One renderable item in the sidebar layout — either a non-focusable
 /// group header or a focusable session row. Both `SidebarLayout`
 /// consumers — the sidebar renderer and `focus_at_row` — walk the
@@ -203,15 +192,17 @@ pub enum GroupKind {
 #[derive(Debug, Clone)]
 pub struct SidebarItem {
     pub kind: SidebarItemKind,
-    pub group: GroupKind,
     /// Number of terminal rows this item occupies.
     pub height: usize,
 }
 
 #[derive(Debug, Clone)]
 pub enum SidebarItemKind {
-    /// Group header (label). Not focusable.
-    Header { label: String },
+    /// Group header (label). Not focusable. `host_idx` is the
+    /// position of the host among distinct remote hosts in render
+    /// order, used to cycle the divider accent color. Session rows
+    /// don't carry it because they don't read it.
+    Header { label: String, host_idx: usize },
     /// A session row at the given flat index — matches the
     /// `FocusTarget` numbering: local rows first, then remotes. The
     /// renderer pairs this index with a `&[&dyn SidebarSession]` slice
@@ -743,7 +734,6 @@ impl AppState {
         for pos in 0..self.filtered.len() {
             items.push(SidebarItem {
                 kind: SidebarItemKind::Session { session_idx: pos },
-                group: GroupKind::Local,
                 height: card_h,
             });
         }
@@ -767,22 +757,20 @@ impl AppState {
                     items.push(SidebarItem {
                         kind: SidebarItemKind::Header {
                             label: format!("  @{}", r.host),
+                            host_idx,
                         },
-                        group: GroupKind::Remote(host_idx),
                         height: 1,
                     });
                 }
                 prev_host = Some(r.host.as_str());
             }
             // Match the local card height so groups visually align
-            // (5 rows in Expanded, 2 in Compact). The renderer pads
-            // the bottom of each remote row with blank lines on the
-            // group bg to fill the card.
+            // (3 rows in Expanded, 1 in Compact). The renderer pads
+            // the bottom of each row with blank lines to fill the card.
             items.push(SidebarItem {
                 kind: SidebarItemKind::Session {
                     session_idx: local_count + remote_idx,
                 },
-                group: GroupKind::Remote(host_idx),
                 height: card_h,
             });
         }

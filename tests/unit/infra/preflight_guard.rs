@@ -19,9 +19,7 @@ impl FakeRunner {
         Self {
             calls: Mutex::new(Vec::new()),
             result: Mutex::new(Some(Ok(Output {
-                status: exit_status(0),
                 stdout: b"tmux 3.5".to_vec(),
-                stderr: Vec::new(),
             }))),
         }
     }

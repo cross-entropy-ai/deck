@@ -54,15 +54,15 @@ pub(super) struct TerminalPane {
 /// over a one-shot ssh call succeeds — those use independent SSH
 /// channels (though both ride the same ControlMaster).
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // payload on Failed(String) is for future UI surfacing
 pub(super) enum RemoteConnStatus {
     /// The spawn thread hasn't reported back yet.
     Connecting,
     /// The persistent PTY is alive and ready to be swapped into view.
     Connected,
     /// Spawn failed, or the child exited (auth denied, tmux missing,
-    /// network gone). The string is a short reason for the sidebar.
-    Failed(String),
+    /// network gone). The specific reason isn't surfaced anywhere
+    /// today; add a String payload back when a consumer reads it.
+    Failed,
 }
 
 pub struct App {
@@ -281,9 +281,8 @@ impl App {
                             .insert(host.clone(), RemoteConnStatus::Connected);
                         self.remote_terminals.insert(host, pane);
                     }
-                    remote_spawn::RemoteSpawnEvent::Failed { host, reason } => {
-                        self.remote_status
-                            .insert(host, RemoteConnStatus::Failed(reason));
+                    remote_spawn::RemoteSpawnEvent::Failed { host } => {
+                        self.remote_status.insert(host, RemoteConnStatus::Failed);
                     }
                 }
             }
@@ -315,10 +314,8 @@ impl App {
                 // surface the loss as a Failed status so the user sees
                 // why selecting that remote no longer works.
                 self.remote_terminals.remove(&host);
-                self.remote_status.insert(
-                    host.clone(),
-                    RemoteConnStatus::Failed("ssh exited".to_string()),
-                );
+                self.remote_status
+                    .insert(host.clone(), RemoteConnStatus::Failed);
                 // If the user was looking at this remote pane, snap
                 // them back to local so the screen doesn't freeze.
                 if self.active_remote.as_deref() == Some(host.as_str()) {
