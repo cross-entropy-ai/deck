@@ -61,41 +61,6 @@ impl CommandRunner for FakeRunner {
     }
 }
 
-// --- parse_sessions ---
-
-#[test]
-fn parse_sessions_handles_normal_output() {
-    let mut activity = HashMap::new();
-    activity.insert("alpha".to_string(), 100u64);
-    let raw = "alpha\t/tmp/alpha\nbeta\t/tmp/beta";
-    let got = parse_sessions(raw, &activity);
-    assert_eq!(got.len(), 2);
-    assert_eq!(got[0].name, "alpha");
-    assert_eq!(got[0].dir, "/tmp/alpha");
-    assert_eq!(got[0].activity, 100);
-    assert_eq!(got[1].name, "beta");
-    assert_eq!(got[1].activity, 0); // not in activity map
-}
-
-#[test]
-fn parse_sessions_skips_malformed_lines() {
-    let activity = HashMap::new();
-    let raw = "good\t/dir\nno_tab_here\nalso\tbad\textra";
-    let got = parse_sessions(raw, &activity);
-    // The last line still has a tab, so it parses with dir = "bad\textra"-prefix.
-    // The `no_tab_here` line is dropped.
-    assert_eq!(got.len(), 2);
-    assert_eq!(got[0].name, "good");
-    assert_eq!(got[1].name, "also");
-}
-
-#[test]
-fn parse_sessions_empty_input() {
-    let activity = HashMap::new();
-    let got = parse_sessions("", &activity);
-    assert!(got.is_empty());
-}
-
 // --- parse_panes ---
 
 #[test]
@@ -121,24 +86,6 @@ fn parse_panes_skips_lines_missing_command() {
 fn parse_panes_empty_input() {
     let got = parse_panes("");
     assert!(got.is_empty());
-}
-
-// --- parse_window_activity ---
-
-#[test]
-fn parse_window_activity_takes_max_per_session() {
-    let raw = "s1\t100\ns1\t300\ns1\t200\ns2\t50";
-    let got = parse_window_activity(raw);
-    assert_eq!(got.get("s1").copied(), Some(300));
-    assert_eq!(got.get("s2").copied(), Some(50));
-}
-
-#[test]
-fn parse_window_activity_ignores_malformed_lines() {
-    let raw = "s1\tabc\nbroken_line\ns2\t42";
-    let got = parse_window_activity(raw);
-    assert_eq!(got.get("s1").copied(), Some(0)); // unparseable -> 0
-    assert_eq!(got.get("s2").copied(), Some(42));
 }
 
 // --- parse_client_session_for_tty ---

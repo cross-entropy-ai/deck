@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use crate::infra::command::{CommandError, CommandRunner, RealRunner};
 use crate::infra::tmux::SessionInfo;
+use crate::infra::tmux_parse::{parse_sessions, parse_window_activity};
 
 /// Hard cap on a single remote ssh+tmux call. Generous compared to the
 /// local 1s budget because the first call to a host may have to wait
@@ -96,40 +97,12 @@ fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Sess
     Some(parse_sessions(&raw, &window_activity))
 }
 
-fn parse_sessions(raw: &str, window_activity: &HashMap<String, u64>) -> Vec<SessionInfo> {
-    raw.lines()
-        .filter_map(|line| {
-            let (name, dir) = line.split_once('\t')?;
-            let activity = window_activity.get(name).copied().unwrap_or(0);
-            Some(SessionInfo {
-                name: name.to_string(),
-                dir: dir.to_string(),
-                activity,
-            })
-        })
-        .collect()
-}
-
 fn latest_window_activity_with(runner: &dyn CommandRunner, host: &str) -> HashMap<String, u64> {
     let format = "$'#{session_name}\\t#{window_activity}'";
     let Ok(raw) = run_ssh(runner, host, &["tmux", "list-windows", "-a", "-F", format]) else {
         return HashMap::new();
     };
     parse_window_activity(&raw)
-}
-
-fn parse_window_activity(raw: &str) -> HashMap<String, u64> {
-    let mut map: HashMap<String, u64> = HashMap::new();
-    for line in raw.lines() {
-        if let Some((name, ts_str)) = line.split_once('\t') {
-            let ts: u64 = ts_str.parse().unwrap_or(0);
-            let entry = map.entry(name.to_string()).or_insert(0);
-            if ts > *entry {
-                *entry = ts;
-            }
-        }
-    }
-    map
 }
 
 /// Tell the remote tmux server to switch its (only) attached client to
@@ -164,26 +137,6 @@ pub fn rename_session(host: &str, old_name: &str, new_name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_session_lines() {
-        let raw = "alpha\t/home/me\nbeta\t/tmp";
-        let activity: HashMap<String, u64> = [("alpha".to_string(), 42u64)].into_iter().collect();
-        let got = parse_sessions(raw, &activity);
-        assert_eq!(got.len(), 2);
-        assert_eq!(got[0].name, "alpha");
-        assert_eq!(got[0].dir, "/home/me");
-        assert_eq!(got[0].activity, 42);
-        assert_eq!(got[1].activity, 0);
-    }
-
-    #[test]
-    fn window_activity_keeps_max_per_session() {
-        let raw = "a\t10\nb\t99\na\t50\nb\t1";
-        let got = parse_window_activity(raw);
-        assert_eq!(got.get("a"), Some(&50));
-        assert_eq!(got.get("b"), Some(&99));
-    }
 
     #[test]
     fn base_args_include_multiplexing() {
