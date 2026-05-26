@@ -541,6 +541,21 @@ fn compact_activity(
     (text, color)
 }
 
+/// Compact-mode label: prefix the session name with its origin so the
+/// reader can tell local/remote apart on a single line. Falls back to
+/// the loading placeholder for not-yet-refreshed remote rows.
+fn compact_label(session: &dyn SidebarSession) -> String {
+    let prefix = match session.origin() {
+        SessionOrigin::Local => "local",
+        SessionOrigin::Remote { host } => host,
+    };
+    if session.loading() {
+        format!("{prefix}:(connecting…)")
+    } else {
+        format!("{prefix}:{}", session.name())
+    }
+}
+
 fn render_session_card_compact(
     lines: &mut Vec<Line<'_>>,
     ctx: &SidebarRenderCtx<'_>,
@@ -566,29 +581,14 @@ fn render_session_card_compact(
         bg,
     );
 
+    let label = compact_label(session);
     lines.push(pad_line(
         vec![
             Span::styled(head.accent_span.0, head.accent_span.1),
             Span::styled(activity_text, Style::default().fg(activity_color).bg(bg)),
             Span::styled(idx_hint(session, props.session_idx), head.index_style),
             Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(truncate(&head.label, width.saturating_sub(6)), head.name_style),
-        ],
-        bg,
-        width,
-    ));
-
-    let text_width = width.saturating_sub(6);
-    let dir_text = if session.loading() || session.dir().is_empty() {
-        String::new()
-    } else {
-        truncate(&shorten_dir(session.dir()), text_width).to_string()
-    };
-    let dir_color = if is_focused { theme.teal } else { theme.muted };
-    lines.push(pad_line(
-        vec![
-            Span::styled("      ", Style::default().bg(bg)),
-            Span::styled(dir_text, Style::default().fg(dir_color).bg(bg)),
+            Span::styled(truncate(&label, width.saturating_sub(6)), head.name_style),
         ],
         bg,
         width,

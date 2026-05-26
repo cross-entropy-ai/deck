@@ -36,8 +36,11 @@ pub const fn plugin_block_rows(count: usize) -> u16 {
 
 pub fn card_height(view_mode: ViewMode) -> usize {
     match view_mode {
+        // Expanded: name+indicator line, idle+dir line, gutter.
         ViewMode::Expanded => 3,
-        ViewMode::Compact => 2,
+        // Compact: single line. Name is prefixed with origin
+        // (`local:` or `<host>:`) instead of a separate dir line.
+        ViewMode::Compact => 1,
     }
 }
 
