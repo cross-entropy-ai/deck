@@ -1,5 +1,4 @@
 pub mod command;
-pub mod git;
 pub mod instance_guard;
 pub mod nesting_guard;
 pub mod preflight_guard;

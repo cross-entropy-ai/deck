@@ -122,12 +122,6 @@ impl ContextMenu {
 pub struct SessionRow {
     pub name: String,
     pub dir: String,
-    pub branch: String,
-    pub ahead: u32,
-    pub behind: u32,
-    pub staged: u32,
-    pub modified: u32,
-    pub untracked: u32,
     pub is_current: bool,
     pub idle_seconds: u64,
     /// Raw activity status, pre-ack.
