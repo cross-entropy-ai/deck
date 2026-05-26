@@ -95,9 +95,9 @@ pub struct App {
     /// alongside local ones. Captured once at startup from
     /// `config.remotes`; the `deck remote` CLI is the only writer.
     remotes: Vec<String>,
-    /// Set to true after a session switch (PTY respawn) so the next
-    /// render call wipes the terminal before drawing — bypasses
-    /// ratatui's frame-to-frame diff in case it misses any cells.
+    /// Set to true after a session switch so the next render call
+    /// wipes the host terminal before drawing — clears any residue the
+    /// terminal emulator leaves from the previous session.
     pub(super) needs_full_redraw: bool,
 }
 

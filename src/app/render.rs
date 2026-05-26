@@ -19,14 +19,12 @@ use super::App;
 impl App {
     pub(super) fn render(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         if self.needs_full_redraw {
-            // After respawning the embedded tmux client on session
-            // switch, ratatui's frame-to-frame diff can leak stale
-            // characters from the previous session — see
-            // docs/bugs/2026-05-18-session-switch-residue.md for the
-            // full diagnosis. `terminal.clear()` issues an ANSI
-            // clear-screen to the host terminal AND resets ratatui's
-            // previous-frame buffer, forcing the next draw to emit
-            // every cell.
+            // On a session switch the host terminal emulator can leave
+            // stale characters from the previous session on screen.
+            // `terminal.clear()` issues an ANSI clear-screen to the
+            // host terminal AND resets ratatui's previous-frame buffer,
+            // forcing the next draw to emit every cell — a clean repaint
+            // that wipes any residue.
             terminal.clear()?;
             self.needs_full_redraw = false;
         }

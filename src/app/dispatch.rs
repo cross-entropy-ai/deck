@@ -257,45 +257,21 @@ impl App {
     }
 
     fn switch_client(&mut self, session: &str) {
-        // Respawn the embedded tmux client attached to the target
-        // session instead of asking the existing client to switch.
-        //
-        // Why: tmux maintains a per-client tty-cache for repaint
-        // optimization — after switch-client, that cache still
-        // reflects the previous session, so cells whose new content
-        // matches the old (most commonly bg space where the new
-        // session is sparse, but also any coincidental match) get
-        // skipped. The vt100 parser's screen has two buffers
-        // (primary + alt) and tmux may toggle between them on
-        // switch, making a simple parser-side clear unreliable.
-        //
-        // A fresh tmux client starts with an empty tty-cache, so
-        // tmux re-emits every cell of the target pane. Coupled with
-        // a fresh vt100 parser, no stale bytes can leak through.
-        let (rows, cols) = self.state.pty_size();
-        match Self::spawn_tmux_pty((rows, cols), &self.nesting_guard, Some(session)) {
-            Ok(pty) => {
-                self.local_terminal = crate::app::TerminalPane {
-                    pty,
-                    parser: vt100::Parser::new(rows, cols, 0),
-                    alive: true,
-                };
-                // Selecting a local session implies returning to the
-                // local view if we were watching a remote one.
-                self.active_remote = None;
-                self.needs_full_redraw = true;
-            }
-            Err(_) => {
-                // Spawn failed (no tmux? no target?). Fall back to the
-                // legacy switch-client path so at least the switch is
-                // attempted — residue may persist.
-                if self.local_terminal.pty.slave_tty.is_empty() {
-                    tmux::switch_session(session);
-                } else {
-                    tmux::switch_client_for_tty(&self.local_terminal.pty.slave_tty, session);
-                }
-            }
+        // Re-point the existing embedded tmux client at the target
+        // session. Target the client by its tty when we know it, so we
+        // don't accidentally switch some other attached client.
+        if self.local_terminal.pty.slave_tty.is_empty() {
+            tmux::switch_session(session);
+        } else {
+            tmux::switch_client_for_tty(&self.local_terminal.pty.slave_tty, session);
         }
+        // Selecting a local session implies returning to the local
+        // view if we were watching a remote one.
+        self.active_remote = None;
+        // Force a clean repaint after the switch — see the note on
+        // `needs_full_redraw` for why the host-terminal clear is the
+        // reliable fix for switch residue.
+        self.needs_full_redraw = true;
     }
 
     /// Switch the main view to a session on a remote host.
