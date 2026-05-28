@@ -111,15 +111,16 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, theme: &Theme) {
         )
     };
 
-    let mut lines: Vec<Line> = Vec::new();
-    lines.push(Line::raw(""));
-    lines.push(Line::from(vec![
-        Span::raw("  mode:        "),
-        mode_text(ForwardMode::Local, "local"),
-        mode_text(ForwardMode::Remote, "remote"),
-        mode_text(ForwardMode::Dynamic, "dynamic"),
-    ]));
-    lines.push(Line::raw(""));
+    let mut lines: Vec<Line> = vec![
+        Line::raw(""),
+        Line::from(vec![
+            Span::raw("  mode:        "),
+            mode_text(ForwardMode::Local, "local"),
+            mode_text(ForwardMode::Remote, "remote"),
+            mode_text(ForwardMode::Dynamic, "dynamic"),
+        ]),
+        Line::raw(""),
+    ];
     lines.push(field_line(
         theme,
         form,

@@ -728,6 +728,9 @@ impl App {
     }
 }
 
+// `push` and `retain` are called on `r.forwards` (a field), not on `remotes`
+// directly, but the Vec signature is needed to allow mutating elements.
+#[allow(clippy::ptr_arg)]
 fn persist_forward(
     remotes: &mut Vec<crate::config::RemoteConfig>,
     host: &str,

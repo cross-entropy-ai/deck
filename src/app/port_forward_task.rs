@@ -32,6 +32,9 @@ pub enum Op {
 pub enum OpKind {
     Master(String),
     Forward(String, ForwardSpec),
+    // ForwardSpec is structurally mirrored for symmetry with Forward; not
+    // destructured in the current reducer arm but kept for future use.
+    #[allow(dead_code)]
     Cancel(String, ForwardSpec),
     Exit(String),
 }

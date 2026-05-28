@@ -208,21 +208,21 @@ fn theme_picker_key_to_action(key: &KeyEvent) -> Action {
 
 fn pf_key(key: &KeyEvent, overlay: &PortForwardOverlay) -> Action {
     use KeyCode::*;
-    if overlay.add_form.is_some() {
+    if let Some(form) = overlay.add_form.as_ref() {
         match key.code {
             Esc => Action::PfAddCancel,
             Enter => Action::PfAddSubmit,
             Tab => Action::PfAddFieldNext,
             BackTab => Action::PfAddFieldPrev,
             Left => {
-                if matches!(overlay.add_form.as_ref().unwrap().focus, PfField::Mode) {
+                if matches!(form.focus, PfField::Mode) {
                     Action::PfAddModeLeft
                 } else {
                     Action::None
                 }
             }
             Right => {
-                if matches!(overlay.add_form.as_ref().unwrap().focus, PfField::Mode) {
+                if matches!(form.focus, PfField::Mode) {
                     Action::PfAddModeRight
                 } else {
                     Action::None
