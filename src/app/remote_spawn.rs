@@ -28,9 +28,19 @@ use crate::pty::Pty;
 use super::TerminalPane;
 
 /// One result per spawn attempt.
+///
+/// `pane` is boxed because `TerminalPane` carries a `vt100::Parser`
+/// (~768 bytes) — keeping it inline made the `Failed` variant pay the
+/// same cost. The box is short-lived: the consumer unboxes immediately
+/// and moves the pane into `remote_terminals`.
 pub(super) enum RemoteSpawnEvent {
-    Spawned { host: String, pane: TerminalPane },
-    Failed { host: String },
+    Spawned {
+        host: String,
+        pane: Box<TerminalPane>,
+    },
+    Failed {
+        host: String,
+    },
 }
 
 /// Owns the receiver end of the spawn channel. Senders live inside the
@@ -105,11 +115,11 @@ fn spawn_one(host: String, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
                     let parser = vt100::Parser::new(size.rows, size.cols, 0);
                     RemoteSpawnEvent::Spawned {
                         host,
-                        pane: TerminalPane {
+                        pane: Box::new(TerminalPane {
                             pty,
                             parser,
                             alive: true,
-                        },
+                        }),
                     }
                 }
                 Err(_) => RemoteSpawnEvent::Failed { host },

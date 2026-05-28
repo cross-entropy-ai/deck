@@ -26,18 +26,16 @@ const MIN_MAIN_HEIGHT: u16 = 1;
 
 // "Switch" is dropped — the focus already triggers the switch, so the
 // menu item was redundant.
-const SESSION_MENU_ITEMS: &'static [&'static str] =
-    &["Rename", "Kill", "Move up", "Move down"];
+const SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill", "Move up", "Move down"];
 // Remote sessions live on a different tmux server, so the
 // deck-side `session_order` (which drives Move up/down) doesn't
 // apply. Rename/Kill map to `ssh <host> tmux <cmd>` against the
 // host's server.
-const REMOTE_SESSION_MENU_ITEMS: &'static [&'static str] = &["Rename", "Kill"];
+const REMOTE_SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill"];
 // Host divider [...] menu acts on the whole remote *group*. "Remove
 // from list" is equivalent to `deck remote remove <host>`.
-const HOST_DIVIDER_MENU_ITEMS: &'static [&'static str] =
-    &["Port Forward", "Remove from list"];
-const GLOBAL_MENU_ITEMS: &'static [&'static str] = &[
+const HOST_DIVIDER_MENU_ITEMS: &[&str] = &["Port Forward", "Remove from list"];
+const GLOBAL_MENU_ITEMS: &[&str] = &[
     "New session",
     "Toggle layout",
     "Toggle borders",

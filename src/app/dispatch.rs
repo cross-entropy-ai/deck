@@ -249,9 +249,11 @@ impl App {
             }
             Action::NewSessionConfirm => {
                 if let Some(req) = self.confirm_new_session() {
-                    let mut fx = crate::state::SideEffect::default();
-                    fx.create_session = Some(req);
-                    fx.refresh_sessions = true;
+                    let fx = crate::state::SideEffect {
+                        create_session: Some(req),
+                        refresh_sessions: true,
+                        ..crate::state::SideEffect::default()
+                    };
                     self.execute_side_effects(&fx);
                 }
                 false

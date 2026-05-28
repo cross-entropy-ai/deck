@@ -140,10 +140,30 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, theme: &Theme) {
 
     // --- Field rows ------------------------------------------------------
     let target_active = !matches!(form.mode, ForwardMode::Dynamic);
-    render_field_row(buf, rows[3], form, PfField::BindAddr,   "  bind addr:   ", &form.bind_addr,   true,          theme);
-    render_field_row(buf, rows[4], form, PfField::ListenPort, "  listen port: ", &form.listen_port, true,          theme);
-    render_field_row(buf, rows[5], form, PfField::TargetHost, "  target host: ", &form.target_host, target_active, theme);
-    render_field_row(buf, rows[6], form, PfField::TargetPort, "  target port: ", &form.target_port, target_active, theme);
+    render_field_row(buf, rows[3], form, theme, FieldRow {
+        field: PfField::BindAddr,
+        label: "  bind addr:   ",
+        textarea: &form.bind_addr,
+        enabled: true,
+    });
+    render_field_row(buf, rows[4], form, theme, FieldRow {
+        field: PfField::ListenPort,
+        label: "  listen port: ",
+        textarea: &form.listen_port,
+        enabled: true,
+    });
+    render_field_row(buf, rows[5], form, theme, FieldRow {
+        field: PfField::TargetHost,
+        label: "  target host: ",
+        textarea: &form.target_host,
+        enabled: target_active,
+    });
+    render_field_row(buf, rows[6], form, theme, FieldRow {
+        field: PfField::TargetPort,
+        label: "  target port: ",
+        textarea: &form.target_port,
+        enabled: target_active,
+    });
 
     // --- Flow sketch + hint ---------------------------------------------
     Paragraph::new(flow_line(form, theme)).render(rows[8], buf);
@@ -154,37 +174,44 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, theme: &Theme) {
     .render(rows[10], buf);
 }
 
+/// Per-row inputs to `render_field_row`. Grouping these keeps the
+/// function's argument list short and the call sites readable when
+/// the form gains/loses fields.
+struct FieldRow<'a> {
+    field: PfField,
+    label: &'a str,
+    textarea: &'a TextArea<'static>,
+    enabled: bool,
+}
+
 fn render_field_row(
     buf: &mut Buffer,
     area: Rect,
     form: &PfAddForm,
-    field: PfField,
-    label: &str,
-    textarea: &TextArea<'static>,
-    enabled: bool,
     theme: &Theme,
+    row: FieldRow<'_>,
 ) {
-    let focused = form.focus == field && enabled;
+    let focused = form.focus == row.field && row.enabled;
 
     // Split the row: label takes its rendered width, textarea gets the rest.
-    let label_w = label.width() as u16;
+    let label_w = row.label.width() as u16;
     let cols = Layout::horizontal([Constraint::Length(label_w), Constraint::Min(0)]).split(area);
 
     let label_style = if focused {
         Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
-    } else if enabled {
+    } else if row.enabled {
         Style::default().fg(theme.text)
     } else {
         Style::default().fg(theme.dim)
     };
-    Paragraph::new(Span::styled(label.to_string(), label_style)).render(cols[0], buf);
+    Paragraph::new(Span::styled(row.label.to_string(), label_style)).render(cols[0], buf);
 
     // Clone the textarea per frame so we can apply focus-dependent styling
     // without mutating state. TextArea is cheap to clone (single-line, short
     // input). The focused field gets a visible cursor block; unfocused
     // fields match their surroundings so no stray block leaks across.
-    let mut ta = textarea.clone();
-    let fg = if enabled { theme.text } else { theme.dim };
+    let mut ta = row.textarea.clone();
+    let fg = if row.enabled { theme.text } else { theme.dim };
     ta.set_style(Style::default().fg(fg).bg(theme.surface));
     // tui-textarea highlights the cursor line by default — that bg leaks
     // across the entire row. Reset it to the modal surface.

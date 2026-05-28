@@ -323,7 +323,7 @@ impl App {
                     remote_spawn::RemoteSpawnEvent::Spawned { host, pane } => {
                         self.remote_status
                             .insert(host.clone(), RemoteConnStatus::Connected);
-                        self.remote_terminals.insert(host, pane);
+                        self.remote_terminals.insert(host, *pane);
                     }
                     remote_spawn::RemoteSpawnEvent::Failed { host } => {
                         self.remote_status.insert(host, RemoteConnStatus::Failed);
@@ -446,29 +446,27 @@ impl App {
                             break;
                         }
                     }
-                    Event::Paste(text) => {
-                        if self.state.focus_mode == FocusMode::Main {
-                            let mut bytes = b"\x1b[200~".to_vec();
-                            bytes.extend_from_slice(text.as_bytes());
-                            bytes.extend_from_slice(b"\x1b[201~");
-                            match self.state.main_view {
-                                MainView::Terminal => {
-                                    let _ = self.active_terminal_mut().pty.write(&bytes);
-                                }
-                                MainView::Plugin(idx) => {
-                                    if let Some(ref mut inst) =
-                                        self.plugin_instances.get_mut(idx).and_then(|o| o.as_mut())
-                                    {
-                                        let _ = inst.pty.write(&bytes);
-                                    }
-                                }
-                                MainView::Upgrade => {
-                                    if let Some(ref mut inst) = self.upgrade_instance {
-                                        let _ = inst.pty.write(&bytes);
-                                    }
-                                }
-                                _ => {}
+                    Event::Paste(text) if self.state.focus_mode == FocusMode::Main => {
+                        let mut bytes = b"\x1b[200~".to_vec();
+                        bytes.extend_from_slice(text.as_bytes());
+                        bytes.extend_from_slice(b"\x1b[201~");
+                        match self.state.main_view {
+                            MainView::Terminal => {
+                                let _ = self.active_terminal_mut().pty.write(&bytes);
                             }
+                            MainView::Plugin(idx) => {
+                                if let Some(ref mut inst) =
+                                    self.plugin_instances.get_mut(idx).and_then(|o| o.as_mut())
+                                {
+                                    let _ = inst.pty.write(&bytes);
+                                }
+                            }
+                            MainView::Upgrade => {
+                                if let Some(ref mut inst) = self.upgrade_instance {
+                                    let _ = inst.pty.write(&bytes);
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     Event::Resize(w, h) => {

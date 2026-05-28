@@ -22,17 +22,15 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) {
         Some(SessionTargetRef::Local(row)) => {
             fx.switch_session = Some(row.name.clone());
         }
-        Some(SessionTargetRef::Remote(row)) => {
-            // Placeholder rows (loading) and dead hosts have no
-            // session name to switch to. Skip silently.
-            if !row.unreachable && !row.loading {
-                fx.switch_remote = Some(RemoteSwitchRequest {
-                    host: row.host.clone(),
-                    name: row.name.clone(),
-                });
-            }
+        // Placeholder rows (loading) and dead hosts have no
+        // session name to switch to. Skip silently.
+        Some(SessionTargetRef::Remote(row)) if !row.unreachable && !row.loading => {
+            fx.switch_remote = Some(RemoteSwitchRequest {
+                host: row.host.clone(),
+                name: row.name.clone(),
+            });
         }
-        None => {}
+        Some(SessionTargetRef::Remote(_)) | None => {}
     }
 }
 
@@ -93,12 +91,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 return fx;
             };
             match state.session_target(target) {
-                Some(SessionTargetRef::Local(_)) => {
-                    // Refuse to kill the last local session — it'd
-                    // leave deck attached to nothing.
-                    if state.sessions.len() > 1 {
-                        state.overlay.confirm_kill = true;
-                    }
+                // Refuse to kill the last local session — it'd
+                // leave deck attached to nothing.
+                Some(SessionTargetRef::Local(_)) if state.sessions.len() > 1 => {
+                    state.overlay.confirm_kill = true;
                 }
                 Some(SessionTargetRef::Remote(_)) => {
                     // No "last session" guard for remote: deck doesn't
@@ -107,7 +103,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     // showing an empty server next refresh.
                     state.overlay.confirm_kill = true;
                 }
-                None => {}
+                Some(SessionTargetRef::Local(_)) | None => {}
             }
         }
         Action::ConfirmKill => {
