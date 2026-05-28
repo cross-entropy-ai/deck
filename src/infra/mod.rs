@@ -1,5 +1,6 @@
 pub mod command;
 pub mod instance_guard;
+pub mod port_forward;
 pub mod nesting_guard;
 pub mod preflight_guard;
 pub mod proc_status;
