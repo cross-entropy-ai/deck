@@ -12,11 +12,17 @@ use crate::config::ForwardSpec;
 
 /// The common ssh argument block: control options + host. Keep in sync
 /// with `app/remote_spawn.rs` so both code paths reach the same master.
+// TODO(post-feature): consolidate this with remote_tmux::base_ssh_args
+// and remote_spawn's ssh-options block (port-forward design doc, Open
+// Question 1). All three must stay in sync for ControlMaster sharing
+// to work.
 pub fn ssh_args_for_host(host: &str) -> Vec<String> {
     vec![
         "-o".into(), "ControlMaster=auto".into(),
         "-o".into(), "ControlPath=~/.ssh/cm-%r@%h:%p".into(),
         "-o".into(), "ControlPersist=10m".into(),
+        "-o".into(), "ConnectTimeout=5".into(),
+        "-o".into(), "ServerAliveInterval=30".into(),
         "-o".into(), "BatchMode=yes".into(),
         host.into(),
     ]
@@ -39,19 +45,10 @@ pub fn build_master_cmd(host: &str) -> Command {
     ssh_with(host, &["-f", "-N"])
 }
 
-fn spec_flag_pair(spec: &ForwardSpec) -> (String, String) {
-    // to_ssh_flag returns e.g. "-L 8080:localhost:80"; split into ("-L", value).
-    let s = spec.to_ssh_flag();
-    let mut it = s.splitn(2, ' ');
-    let flag = it.next().unwrap_or("").to_string();
-    let value = it.next().unwrap_or("").to_string();
-    (flag, value)
-}
-
 /// `ssh -O forward -L 8080:host:80 <opts> <host>` — add a forward to
 /// the existing master. Fails with non-zero exit if master isn't up.
 pub fn build_forward_cmd(host: &str, spec: &ForwardSpec) -> Command {
-    let (flag, value) = spec_flag_pair(spec);
+    let (flag, value) = spec.ssh_flag_and_value();
     let mut c = Command::new("ssh");
     c.arg("-O").arg("forward").arg(flag).arg(value);
     for a in ssh_args_for_host(host) {
@@ -62,7 +59,7 @@ pub fn build_forward_cmd(host: &str, spec: &ForwardSpec) -> Command {
 
 /// `ssh -O cancel -L 8080:host:80 <opts> <host>` — remove a forward.
 pub fn build_cancel_cmd(host: &str, spec: &ForwardSpec) -> Command {
-    let (flag, value) = spec_flag_pair(spec);
+    let (flag, value) = spec.ssh_flag_and_value();
     let mut c = Command::new("ssh");
     c.arg("-O").arg("cancel").arg(flag).arg(value);
     for a in ssh_args_for_host(host) {

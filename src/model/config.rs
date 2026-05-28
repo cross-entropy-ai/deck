@@ -52,9 +52,10 @@ pub enum ForwardMode {
 }
 
 impl ForwardSpec {
-    /// Render this rule as the corresponding `ssh -L/-R/-D` argument
-    /// pair. Caller splits on spaces to feed `Command::arg()`.
-    pub fn to_ssh_flag(&self) -> String {
+    /// The pair `("-L" | "-R" | "-D", "<bind?>:listen:<target_host:target_port?>")`
+    /// suitable for `Command::arg(flag).arg(value)`. Use this when you need the
+    /// flag and value as separate arg slots (e.g., `ssh -O forward -L 8080:host:80`).
+    pub fn ssh_flag_and_value(&self) -> (&'static str, String) {
         let flag = match self.mode {
             ForwardMode::Local => "-L",
             ForwardMode::Remote => "-R",
@@ -64,14 +65,22 @@ impl ForwardSpec {
             Some(b) => format!("{}:", b),
             None => String::new(),
         };
-        match self.mode {
-            ForwardMode::Dynamic => format!("{} {}{}", flag, bind_prefix, self.listen_port),
+        let value = match self.mode {
+            ForwardMode::Dynamic => format!("{}{}", bind_prefix, self.listen_port),
             ForwardMode::Local | ForwardMode::Remote => {
                 let th = self.target_host.as_deref().unwrap_or("");
                 let tp = self.target_port.unwrap_or(0);
-                format!("{} {}{}:{}:{}", flag, bind_prefix, self.listen_port, th, tp)
+                format!("{}{}:{}:{}", bind_prefix, self.listen_port, th, tp)
             }
-        }
+        };
+        (flag, value)
+    }
+
+    /// Render this rule as the corresponding `ssh -L/-R/-D` argument
+    /// string. Useful for human-readable display in the overlay.
+    pub fn to_ssh_flag(&self) -> String {
+        let (flag, value) = self.ssh_flag_and_value();
+        format!("{} {}", flag, value)
     }
 }
 

@@ -18,7 +18,7 @@ fn ssh_args_uses_shared_control_options() {
 }
 
 #[test]
-fn master_cmd_uses_fN_and_no_forwards() {
+fn master_cmd_uses_fn_and_no_forwards() {
     let cmd = build_master_cmd("server-1");
     let args = args_of(&cmd);
     let joined = args.join(" ");
@@ -48,7 +48,7 @@ fn forward_cmd_local() {
 }
 
 #[test]
-fn cancel_cmd_uses_O_cancel() {
+fn cancel_cmd_uses_o_cancel() {
     let spec = ForwardSpec {
         mode: ForwardMode::Dynamic,
         bind_addr: None,
@@ -65,7 +65,7 @@ fn cancel_cmd_uses_O_cancel() {
 }
 
 #[test]
-fn exit_cmd_uses_O_exit() {
+fn exit_cmd_uses_o_exit() {
     let cmd = build_exit_cmd("h");
     let args = args_of(&cmd);
     let oi = args.iter().position(|a| a == "-O").unwrap();
