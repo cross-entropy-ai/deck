@@ -234,6 +234,20 @@ impl App {
         tmux::apply_theme(&THEMES[theme_index]);
         app.request_refresh();
 
+        // Send Bootstrap once so the worker establishes ControlMasters and
+        // launches configured forwards eagerly at startup.
+        let hosts: Vec<(String, Vec<crate::config::ForwardSpec>)> = cfg
+            .remotes
+            .iter()
+            .filter(|r| !r.forwards.is_empty())
+            .map(|r| (r.host.clone(), r.forwards.clone()))
+            .collect();
+        if !hosts.is_empty() {
+            let _ = app
+                .port_forward_tx
+                .send(crate::app::port_forward_task::Op::Bootstrap { hosts });
+        }
+
         Ok(app)
     }
 
