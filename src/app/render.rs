@@ -40,6 +40,8 @@ impl App {
             .map(|r| (r.input.clone(), r.cursor));
         let context_menu = s.overlay.context_menu.clone();
         let new_session_overlay = s.overlay.new_session.clone();
+        let port_forward_overlay = s.overlay.port_forward.clone();
+        let config_remotes = s.config_remotes.clone();
         let show_borders = s.show_borders;
         let layout_mode = s.layout_mode;
         let view_mode = s.view_mode;
@@ -365,6 +367,17 @@ impl App {
                     error: ns.error.as_deref(),
                 };
                 ui::draw_new_session(frame, frame.area(), &view, theme);
+            }
+
+            if let Some(ref overlay) = port_forward_overlay {
+                let pf_area = frame.area();
+                crate::ui::overlays::port_forward::draw_port_forward(
+                    frame.buffer_mut(),
+                    pf_area,
+                    overlay,
+                    &config_remotes,
+                    theme,
+                );
             }
 
             // Overlay the reload bar last so it sits on top of the sidebar

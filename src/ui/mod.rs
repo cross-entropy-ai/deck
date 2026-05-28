@@ -2,7 +2,7 @@ pub mod bridge;
 pub mod layout;
 mod menu;
 mod new_session;
-mod overlays;
+pub mod overlays;
 mod reload;
 mod settings;
 mod sidebar;

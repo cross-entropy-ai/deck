@@ -1,3 +1,5 @@
+pub mod port_forward;
+
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
