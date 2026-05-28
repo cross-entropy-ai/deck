@@ -468,9 +468,9 @@ impl PfAddForm {
         Self {
             mode,
             focus: PfField::ListenPort,
-            bind_addr: String::new(),
+            bind_addr: "0.0.0.0".to_string(),
             listen_port: String::new(),
-            target_host: String::new(),
+            target_host: "127.0.0.1".to_string(),
             target_port: String::new(),
             submitting: false,
         }
