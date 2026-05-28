@@ -426,9 +426,29 @@ impl RenameState {
 pub struct ExcludeEditorState {
     pub selected: usize,
     pub adding: bool,
-    pub input: String,
-    pub cursor: usize,
+    pub input: TextArea<'static>,
     pub error: Option<String>,
+}
+
+impl ExcludeEditorState {
+    pub fn new() -> Self {
+        Self {
+            selected: 0,
+            adding: false,
+            input: make_textarea(""),
+            error: None,
+        }
+    }
+
+    /// Read current add-input text.
+    pub fn input_str(&self) -> &str {
+        self.input.lines().first().map(String::as_str).unwrap_or("")
+    }
+
+    /// Reset the add input to empty (called on StartAdd / CancelAdd / Confirm).
+    pub fn reset_input(&mut self) {
+        self.input = make_textarea("");
+    }
 }
 
 // --- Port forward overlay ---

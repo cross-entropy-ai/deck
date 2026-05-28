@@ -301,13 +301,14 @@ fn open_close_exclude_editor() {
 
 #[test]
 fn exclude_editor_add_pattern() {
+    use crossterm::event::KeyCode;
     let mut state = make_test_state(1);
     state.exclude_patterns = vec!["_*".to_string()];
     apply_action(&mut state, Action::OpenExcludeEditor);
     apply_action(&mut state, Action::ExcludeEditorStartAdd);
     assert!(state.overlay.exclude_editor.as_ref().unwrap().adding);
-    apply_action(&mut state, Action::ExcludeEditorInput('t'));
-    apply_action(&mut state, Action::ExcludeEditorInput('*'));
+    apply_action(&mut state, Action::ExcludeEditorInputKey(key(KeyCode::Char('t'))));
+    apply_action(&mut state, Action::ExcludeEditorInputKey(key(KeyCode::Char('*'))));
     let fx = apply_action(&mut state, Action::ExcludeEditorConfirm);
     assert_eq!(state.exclude_patterns, vec!["_*", "t*"]);
     assert!(fx.save_config);
@@ -329,12 +330,13 @@ fn exclude_editor_delete_pattern() {
 
 #[test]
 fn exclude_editor_invalid_regex_shows_error() {
+    use crossterm::event::KeyCode;
     let mut state = make_test_state(1);
     state.exclude_patterns = vec![];
     apply_action(&mut state, Action::OpenExcludeEditor);
     apply_action(&mut state, Action::ExcludeEditorStartAdd);
     for ch in "/[invalid/".chars() {
-        apply_action(&mut state, Action::ExcludeEditorInput(ch));
+        apply_action(&mut state, Action::ExcludeEditorInputKey(key(KeyCode::Char(ch))));
     }
     apply_action(&mut state, Action::ExcludeEditorConfirm);
     let editor = state.overlay.exclude_editor.as_ref().unwrap();

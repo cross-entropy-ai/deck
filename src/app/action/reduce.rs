@@ -338,13 +338,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::TriggerUpgrade | Action::AbortUpgrade => {}
 
         Action::OpenExcludeEditor => {
-            state.overlay.exclude_editor = Some(crate::state::ExcludeEditorState {
-                selected: 0,
-                adding: false,
-                input: String::new(),
-                cursor: 0,
-                error: None,
-            });
+            state.overlay.exclude_editor = Some(crate::state::ExcludeEditorState::new());
         }
         Action::CloseExcludeEditor => {
             state.overlay.exclude_editor = None;
@@ -366,16 +360,14 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::ExcludeEditorStartAdd => {
             if let Some(ref mut editor) = state.overlay.exclude_editor {
                 editor.adding = true;
-                editor.input.clear();
-                editor.cursor = 0;
+                editor.reset_input();
                 editor.error = None;
             }
         }
         Action::ExcludeEditorCancelAdd => {
             if let Some(ref mut editor) = state.overlay.exclude_editor {
                 editor.adding = false;
-                editor.input.clear();
-                editor.cursor = 0;
+                editor.reset_input();
                 editor.error = None;
             }
         }
@@ -391,25 +383,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 }
             }
         }
-        Action::ExcludeEditorInput(ch) => {
+        Action::ExcludeEditorInputKey(key) => {
             if let Some(ref mut editor) = state.overlay.exclude_editor {
                 if editor.adding {
-                    editor.input.insert(editor.cursor, ch);
-                    editor.cursor += ch.len_utf8();
-                    editor.error = None;
-                }
-            }
-        }
-        Action::ExcludeEditorBackspace => {
-            if let Some(ref mut editor) = state.overlay.exclude_editor {
-                if editor.adding && editor.cursor > 0 {
-                    let prev = editor.input[..editor.cursor]
-                        .chars()
-                        .last()
-                        .map(|c| c.len_utf8())
-                        .unwrap_or(0);
-                    editor.cursor -= prev;
-                    editor.input.remove(editor.cursor);
+                    editor.input.input(key);
                     editor.error = None;
                 }
             }
@@ -417,7 +394,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::ExcludeEditorConfirm => {
             if let Some(ref mut editor) = state.overlay.exclude_editor {
                 if editor.adding {
-                    let pattern = editor.input.trim().to_string();
+                    let pattern = editor.input_str().trim().to_string();
                     if pattern.is_empty() {
                         editor.adding = false;
                     } else if let Some(inner) =
@@ -427,8 +404,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                             Ok(_) => {
                                 state.exclude_patterns.push(pattern);
                                 editor.adding = false;
-                                editor.input.clear();
-                                editor.cursor = 0;
+                                editor.reset_input();
                                 editor.error = None;
                                 editor.selected = state.exclude_patterns.len().saturating_sub(1);
                                 fx.save_config = true;
@@ -441,8 +417,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     } else {
                         state.exclude_patterns.push(pattern);
                         editor.adding = false;
-                        editor.input.clear();
-                        editor.cursor = 0;
+                        editor.reset_input();
                         editor.error = None;
                         editor.selected = state.exclude_patterns.len().saturating_sub(1);
                         fx.save_config = true;

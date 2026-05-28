@@ -1,8 +1,8 @@
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 use ratatui::Frame;
 
 use crate::keybindings::{Command, Keybindings};
@@ -321,6 +321,7 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
     let content_lines = pattern_count
         + if editor.adding { 1 } else { 0 }
         + if editor.error.is_some() { 1 } else { 0 };
+    // content rows + blank + help row + top/bottom borders = +4
     let height = (content_lines as u16 + 4)
         .min(area.height.saturating_sub(2))
         .max(5);
@@ -341,20 +342,41 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    let mut lines: Vec<Line> = Vec::new();
+    // Build row constraints: one per content line + blank + help.
+    let mut constraints: Vec<Constraint> = Vec::new();
+    if pattern_count == 0 && !editor.adding {
+        constraints.push(Constraint::Length(1)); // "No patterns"
+    }
+    for _ in 0..pattern_count {
+        constraints.push(Constraint::Length(1));
+    }
+    if editor.adding {
+        constraints.push(Constraint::Length(1)); // textarea row
+    }
+    if editor.error.is_some() {
+        constraints.push(Constraint::Length(1));
+    }
+    constraints.push(Constraint::Length(1)); // blank
+    constraints.push(Constraint::Length(1)); // help
+    constraints.push(Constraint::Min(0));    // tail
+
+    let rows = Layout::vertical(constraints).split(inner);
+    let mut row_idx: usize = 0;
 
     if pattern_count == 0 && !editor.adding {
-        lines.push(Line::from(Span::styled(
+        Paragraph::new(Span::styled(
             "  No patterns defined",
             Style::default().fg(theme.dim),
-        )));
+        ))
+        .render(rows[row_idx], frame.buffer_mut());
+        row_idx += 1;
     }
 
     for (i, pattern) in editor.patterns.iter().enumerate() {
         let selected = !editor.adding && i == editor.selected;
         let row_bg = if selected { theme.surface } else { theme.bg };
         let marker = if selected { "▌" } else { " " };
-        lines.push(Line::from(vec![
+        Paragraph::new(Line::from(vec![
             Span::styled(
                 marker,
                 Style::default()
@@ -365,44 +387,46 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
                 format!(" {} ", pattern),
                 Style::default().fg(theme.text).bg(row_bg),
             ),
-        ]));
+        ]))
+        .render(rows[row_idx], frame.buffer_mut());
+        row_idx += 1;
     }
 
     if editor.adding {
-        let display_input = if editor.input.is_empty() {
-            "│"
-        } else {
-            editor.input
-        };
-        lines.push(Line::from(vec![
-            Span::styled("▌", Style::default().fg(theme.green).bg(theme.surface)),
-            Span::styled(
-                format!(" {} ", display_input),
-                Style::default().fg(theme.text).bg(theme.surface),
-            ),
-        ]));
+        // Split the row: marker (1 char) + textarea.
+        let ta_row = rows[row_idx];
+        let cols = Layout::horizontal([Constraint::Length(1), Constraint::Min(0)]).split(ta_row);
+        Paragraph::new(Span::styled(
+            "▌",
+            Style::default().fg(theme.green).bg(theme.surface),
+        ))
+        .render(cols[0], frame.buffer_mut());
+
+        let mut ta = editor.input.clone();
+        ta.set_style(Style::default().fg(theme.text).bg(theme.surface));
+        ta.set_cursor_line_style(Style::default().fg(theme.text).bg(theme.surface));
+        ta.set_cursor_style(Style::default().bg(theme.accent).fg(theme.bg));
+        ta.render(cols[1], frame.buffer_mut());
+        row_idx += 1;
     }
 
     if let Some(err) = editor.error {
-        lines.push(Line::from(Span::styled(
+        Paragraph::new(Span::styled(
             format!("  {}", err),
             Style::default().fg(theme.pink),
-        )));
+        ))
+        .render(rows[row_idx], frame.buffer_mut());
+        row_idx += 1;
     }
 
-    lines.push(Line::raw(""));
+    // blank row
+    row_idx += 1;
+
     let help = if editor.adding {
         "  Enter: confirm  Esc: cancel"
     } else {
         "  a: add  d: delete  Esc: close"
     };
-    lines.push(Line::from(Span::styled(
-        help,
-        Style::default().fg(theme.muted),
-    )));
-
-    frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(theme.bg)),
-        inner,
-    );
+    Paragraph::new(Span::styled(help, Style::default().fg(theme.muted)))
+        .render(rows[row_idx], frame.buffer_mut());
 }

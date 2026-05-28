@@ -54,8 +54,7 @@ pub enum Action {
     ExcludeEditorPrev,
     ExcludeEditorStartAdd,
     ExcludeEditorDelete,
-    ExcludeEditorInput(char),
-    ExcludeEditorBackspace,
+    ExcludeEditorInputKey(crossterm::event::KeyEvent),
     ExcludeEditorConfirm,
     ExcludeEditorCancelAdd,
 

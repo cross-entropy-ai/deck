@@ -133,7 +133,7 @@ pub struct ExcludeEditorView<'a> {
     pub patterns: &'a [String],
     pub selected: usize,
     pub adding: bool,
-    pub input: &'a str,
+    pub input: &'a ratatui_textarea::TextArea<'static>,
     pub error: Option<&'a str>,
 }
 

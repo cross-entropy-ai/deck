@@ -162,9 +162,7 @@ fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         return match key.code {
             KeyCode::Esc => Action::ExcludeEditorCancelAdd,
             KeyCode::Enter => Action::ExcludeEditorConfirm,
-            KeyCode::Backspace => Action::ExcludeEditorBackspace,
-            KeyCode::Char(ch) => Action::ExcludeEditorInput(ch),
-            _ => Action::None,
+            _ => Action::ExcludeEditorInputKey(*key),
         };
     }
 
