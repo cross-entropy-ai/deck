@@ -39,6 +39,11 @@ pub(super) enum RemoteSpawnEvent {
 /// worker's `send` will fail quietly.
 pub(super) struct RemoteSpawner {
     rx: Receiver<RemoteSpawnEvent>,
+    /// Kept alive so additional hosts (added via hot-reload) can be
+    /// spawned post-startup. Cloned per spawn so worker threads outlive
+    /// `tx` going out of scope on `RemoteSpawner` drop.
+    tx: Sender<RemoteSpawnEvent>,
+    size: PtySize,
 }
 
 impl RemoteSpawner {
@@ -47,14 +52,17 @@ impl RemoteSpawner {
         for host in hosts {
             spawn_one(host.clone(), tx.clone(), size);
         }
-        drop(tx); // any future sender is cloned from the workers
-        Self { rx }
+        Self { rx, tx, size }
+    }
+
+    /// Spawn a PTY for a host added after startup (hot-reload path).
+    pub fn spawn(&self, host: &str) {
+        spawn_one(host.to_string(), self.tx.clone(), self.size);
     }
 
     pub fn try_recv(&self) -> Option<RemoteSpawnEvent> {
         self.rx.try_recv().ok()
     }
-
 }
 
 fn spawn_one(host: String, tx: Sender<RemoteSpawnEvent>, size: PtySize) {

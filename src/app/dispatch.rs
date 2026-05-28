@@ -294,6 +294,46 @@ impl App {
     /// If the PTY isn't ready yet — Connecting or Failed — we don't
     /// switch the view (would just show a blank pane). Reconnect on
     /// failure isn't wired yet.
+    /// Seed per-host runtime state for a newly-added host (UI add or
+    /// hot-reload). The placeholder row gives the sidebar an immediate
+    /// `(connecting...)` section instead of waiting one full refresh
+    /// tick; the spawner kicks off the persistent ssh+tmux PTY.
+    fn onboard_remote_host(&mut self, host: &str) {
+        self.remote_status
+            .insert(host.to_string(), crate::app::RemoteConnStatus::Connecting);
+        self.remote_spawner.spawn(host);
+        // Avoid duplicating a placeholder if one is already there
+        // (e.g. add → remove → add in quick succession).
+        if !self
+            .state
+            .remote_sessions
+            .iter()
+            .any(|s| s.host == host)
+        {
+            self.state.remote_sessions.push(crate::state::RemoteSessionRow {
+                host: host.to_string(),
+                name: String::new(),
+                dir: String::new(),
+                unreachable: false,
+                loading: true,
+            });
+        }
+    }
+
+    /// Tear down per-host runtime state for a removed host. Drops the
+    /// PTY (`remote_terminals`), clears the connection status entry,
+    /// and resets `active_remote` if it was pointing at this host so
+    /// the main pane falls back to local instead of hanging on a
+    /// dangling reference.
+    fn offboard_remote_host(&mut self, host: &str) {
+        self.remote_terminals.remove(host);
+        self.remote_status.remove(host);
+        if self.active_remote.as_deref() == Some(host) {
+            self.active_remote = None;
+            self.needs_full_redraw = true;
+        }
+    }
+
     fn switch_to_remote(&mut self, host: &str, name: &str) {
         use crate::app::RemoteConnStatus;
         let connected = matches!(
@@ -418,6 +458,10 @@ impl App {
             let _ = self.port_forward_tx.send(
                 crate::app::port_forward_task::Op::StopHost { host: host.clone() },
             );
+            // Drop the per-host runtime state (PTY, conn status, active
+            // pointer) so a later re-add of the same host gets a fresh
+            // connection instead of inheriting stale `Failed` status.
+            self.offboard_remote_host(host);
         }
 
         if fx.apply_tmux_theme {
@@ -510,12 +554,22 @@ impl App {
         let old_remotes = std::mem::take(&mut self.state.config_remotes);
         let new_remotes = cfg.remotes.clone();
 
-        // Hosts only in old → stop master.
+        // Hosts only in old → stop master + offboard runtime state.
         for old in &old_remotes {
             if !new_remotes.iter().any(|n| n.host == old.host) {
                 let _ = self.port_forward_tx.send(
                     crate::app::port_forward_task::Op::StopHost { host: old.host.clone() },
                 );
+                self.offboard_remote_host(&old.host);
+            }
+        }
+
+        // Hosts only in new → seed runtime state + spawn the PTY so
+        // selecting the new section actually connects without a deck
+        // restart.
+        for n in &new_remotes {
+            if !old_remotes.iter().any(|o| o.host == n.host) {
+                self.onboard_remote_host(&n.host);
             }
         }
 

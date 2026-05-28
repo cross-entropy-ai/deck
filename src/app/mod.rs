@@ -302,8 +302,23 @@ impl App {
                     PtyEvent::Exited => self.local_terminal.alive = false,
                 }
             }
-            // Pull any newly-spawned remote PTYs into the map.
+            // Pull any newly-spawned remote PTYs into the map. Drop
+            // events for hosts that were removed while the spawn was
+            // in flight — otherwise the PTY would resurrect in
+            // `remote_terminals` after offboard cleaned up.
             while let Some(ev) = self.remote_spawner.try_recv() {
+                let event_host = match &ev {
+                    remote_spawn::RemoteSpawnEvent::Spawned { host, .. } => host,
+                    remote_spawn::RemoteSpawnEvent::Failed { host } => host,
+                };
+                let still_configured = self
+                    .state
+                    .config_remotes
+                    .iter()
+                    .any(|r| r.host == *event_host);
+                if !still_configured {
+                    continue;
+                }
                 match ev {
                     remote_spawn::RemoteSpawnEvent::Spawned { host, pane } => {
                         self.remote_status
