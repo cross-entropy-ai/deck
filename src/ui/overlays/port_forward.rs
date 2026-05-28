@@ -181,24 +181,21 @@ fn render_field_row(
 
     // Clone the textarea per frame so we can apply focus-dependent styling
     // without mutating state. TextArea is cheap to clone (single-line, short
-    // input). Cursor block is reversed-video only on the focused field;
-    // unfocused fields render their text but hide the cursor.
+    // input). The focused field gets a visible cursor block; unfocused
+    // fields match their surroundings so no stray block leaks across.
     let mut ta = textarea.clone();
     let fg = if enabled { theme.text } else { theme.dim };
     ta.set_style(Style::default().fg(fg).bg(theme.surface));
     // tui-textarea highlights the cursor line by default — that bg leaks
-    // across the entire row. Reset it to the modal surface so focused and
-    // unfocused fields look the same except for the cursor.
+    // across the entire row. Reset it to the modal surface.
     ta.set_cursor_line_style(Style::default().fg(fg).bg(theme.surface));
     if focused {
-        ta.set_cursor_style(
-            Style::default()
-                .bg(theme.accent)
-                .fg(theme.surface)
-                .add_modifier(Modifier::REVERSED),
-        );
+        // High-contrast accent block. Using explicit bg+fg (no REVERSED)
+        // so the cell paints even when the cursor sits past end-of-input
+        // (empty cell).
+        ta.set_cursor_style(Style::default().bg(theme.accent).fg(theme.bg));
     } else {
-        // Hide cursor by giving it the same style as the surrounding text.
+        // Match the surrounding cell so the cursor doesn't show.
         ta.set_cursor_style(Style::default().fg(fg).bg(theme.surface));
     }
     ta.render(cols[1], buf);
