@@ -212,8 +212,8 @@ fn pf_key(key: &KeyEvent, overlay: &PortForwardOverlay) -> Action {
         match key.code {
             Esc => Action::PfAddCancel,
             Enter => Action::PfAddSubmit,
-            Tab => Action::PfAddFieldNext,
-            BackTab => Action::PfAddFieldPrev,
+            Tab | Down => Action::PfAddFieldNext,
+            BackTab | Up => Action::PfAddFieldPrev,
             Left => {
                 if matches!(form.focus, PfField::Mode) {
                     Action::PfAddModeLeft
