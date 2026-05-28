@@ -787,7 +787,15 @@ fn remove_remote_from_list_drops_host_and_signals_stop() {
 }
 
 #[test]
-fn remote_menu_includes_remove_from_list_last() {
+fn host_divider_menu_has_remove_from_list_last() {
+    use crate::state::host_divider_menu_items;
+    let items = host_divider_menu_items();
+    assert_eq!(items.first().copied(), Some("Port Forward"));
+    assert_eq!(items.last().copied(), Some("Remove from list"));
+}
+
+#[test]
+fn remote_session_menu_has_no_switch_or_remove() {
     use crate::state::{session_menu_items, RemoteSessionRow, SessionTargetRef};
     let row = RemoteSessionRow {
         host: "h".into(),
@@ -797,8 +805,10 @@ fn remote_menu_includes_remove_from_list_last() {
         loading: false,
     };
     let items = session_menu_items(&SessionTargetRef::Remote(&row));
-    assert_eq!(items.last().copied(), Some("Remove from list"));
     assert!(!items.contains(&"Switch"));
+    // "Remove from list" lives on the host-divider menu, not the
+    // per-session menu.
+    assert!(!items.contains(&"Remove from list"));
 }
 
 #[test]

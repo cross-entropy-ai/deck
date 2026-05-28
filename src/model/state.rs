@@ -31,11 +31,12 @@ const SESSION_MENU_ITEMS: &'static [&'static str] =
 // Remote sessions live on a different tmux server, so the
 // deck-side `session_order` (which drives Move up/down) doesn't
 // apply. Rename/Kill map to `ssh <host> tmux <cmd>` against the
-// host's server; "Remove from list" detaches the host from deck's
-// config (equivalent to `deck remote remove <host>`).
-const REMOTE_SESSION_MENU_ITEMS: &'static [&'static str] =
-    &["Rename", "Kill", "Remove from list"];
-const HOST_DIVIDER_MENU_ITEMS: &'static [&'static str] = &["Port Forward"];
+// host's server.
+const REMOTE_SESSION_MENU_ITEMS: &'static [&'static str] = &["Rename", "Kill"];
+// Host divider [...] menu acts on the whole remote *group*. "Remove
+// from list" is equivalent to `deck remote remove <host>`.
+const HOST_DIVIDER_MENU_ITEMS: &'static [&'static str] =
+    &["Port Forward", "Remove from list"];
 const GLOBAL_MENU_ITEMS: &'static [&'static str] = &[
     "New session",
     "Toggle layout",

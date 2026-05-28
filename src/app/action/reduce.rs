@@ -634,17 +634,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                         Some("Kill") => apply_action(state, Action::KillSession),
                         Some("Move up") => apply_action(state, Action::ReorderSession(-1)),
                         Some("Move down") => apply_action(state, Action::ReorderSession(1)),
-                        Some("Remove from list") => {
-                            // Only remote rows expose this item; pull the
-                            // host from the focused target.
-                            match state.session_target(focus) {
-                                Some(SessionTargetRef::Remote(row)) => {
-                                    let host = row.host.clone();
-                                    apply_action(state, Action::RemoveRemoteFromList(host))
-                                }
-                                _ => SideEffect::default(),
-                            }
-                        }
                         _ => SideEffect::default(),
                     };
                     fx.merge(inner);
@@ -667,11 +656,16 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     fx.merge(inner);
                 }
                 MenuKind::HostDivider { host, .. } => {
-                    // Item 0 = "Port Forward"
-                    if menu.selected == 0 {
-                        let inner = apply_action(state, Action::OpenPortForward(host.clone()));
-                        fx.merge(inner);
-                    }
+                    let inner = match selected_label {
+                        Some("Port Forward") => {
+                            apply_action(state, Action::OpenPortForward(host.clone()))
+                        }
+                        Some("Remove from list") => {
+                            apply_action(state, Action::RemoveRemoteFromList(host.clone()))
+                        }
+                        _ => SideEffect::default(),
+                    };
+                    fx.merge(inner);
                 }
             }
         }
