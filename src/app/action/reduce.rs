@@ -1042,42 +1042,47 @@ fn apply_pf_task_result(
     use crate::app::port_forward_task::OpKind;
     let mut fx = SideEffect::default();
 
-    // Guard: overlay must exist and match the host.
-    {
-        let Some(overlay) = state.overlay.port_forward.as_ref() else {
-            return fx;
-        };
-        if overlay.host != host {
-            return fx;
+    // --- Side effects independent of overlay state ---
+    match op {
+        OpKind::Forward(_, spec) if ok => {
+            if let Some(r) = state.config_remotes.iter_mut().find(|r| r.host == host) {
+                if !r.forwards.contains(spec) {
+                    r.forwards.push(spec.clone());
+                }
+            }
+            fx.save_config = true;
         }
+        OpKind::Master(_) if !ok => {
+            for row in state.remote_sessions.iter_mut() {
+                if row.host == host {
+                    row.unreachable = true;
+                    row.loading = false;
+                }
+            }
+        }
+        _ => {}
     }
 
+    // --- Overlay UI updates (gated on overlay being open for this host) ---
+    let Some(overlay) = state.overlay.port_forward.as_mut() else {
+        return fx;
+    };
+    if overlay.host != host {
+        return fx;
+    }
     match op {
-        OpKind::Forward(_, spec) => {
+        OpKind::Forward(_, _) => {
             if ok {
-                // Drop overlay borrow before mutating config_remotes.
-                {
-                    let overlay = state.overlay.port_forward.as_mut().unwrap();
-                    overlay.add_form = None;
-                    overlay.status = Some("forward applied".into());
-                }
-                let spec = spec.clone();
-                if let Some(r) = state.config_remotes.iter_mut().find(|r| r.host == host) {
-                    if !r.forwards.contains(&spec) {
-                        r.forwards.push(spec);
-                    }
-                }
-                fx.save_config = true;
+                overlay.add_form = None;
+                overlay.status = Some("forward applied".into());
+            } else if let Some(f) = overlay.add_form.as_mut() {
+                f.submitting = false;
+                overlay.status = Some(format!("error: {}", message));
             } else {
-                let overlay = state.overlay.port_forward.as_mut().unwrap();
-                if let Some(f) = overlay.add_form.as_mut() {
-                    f.submitting = false;
-                }
                 overlay.status = Some(format!("error: {}", message));
             }
         }
         OpKind::Cancel(_, _) => {
-            let overlay = state.overlay.port_forward.as_mut().unwrap();
             overlay.status = Some(if ok {
                 "forward cancelled".into()
             } else {
@@ -1086,13 +1091,11 @@ fn apply_pf_task_result(
         }
         OpKind::Master(_) => {
             if !ok {
-                let overlay = state.overlay.port_forward.as_mut().unwrap();
                 overlay.status = Some(format!("master: {}", message));
             }
         }
         OpKind::Exit(_) => {
             if !ok {
-                let overlay = state.overlay.port_forward.as_mut().unwrap();
                 overlay.status = Some(format!("exit: {}", message));
             }
         }

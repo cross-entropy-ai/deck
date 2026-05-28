@@ -590,3 +590,62 @@ fn pf_add_open_creates_default_form() {
     assert_eq!(f.mode, crate::config::ForwardMode::Local);
     assert_eq!(f.focus, crate::state::PfField::ListenPort);
 }
+
+#[test]
+fn pf_task_result_persists_forward_when_overlay_closed() {
+    let mut state = make_test_state(0);
+    // Seed a host in config_remotes (no overlay open)
+    state.config_remotes = vec![crate::config::RemoteConfig {
+        host: "h1".into(),
+        forwards: vec![],
+    }];
+
+    let spec = crate::config::ForwardSpec {
+        mode: crate::config::ForwardMode::Local,
+        bind_addr: None,
+        listen_port: 8080,
+        target_host: Some("localhost".into()),
+        target_port: Some(80),
+    };
+
+    crate::action::apply_action(
+        &mut state,
+        Action::PfTaskResult {
+            host: "h1".into(),
+            op: crate::app::port_forward_task::OpKind::Forward("h1".into(), spec.clone()),
+            ok: true,
+            message: String::new(),
+        },
+    );
+
+    let remote = state.config_remotes.iter().find(|r| r.host == "h1").unwrap();
+    assert_eq!(remote.forwards.len(), 1);
+    assert_eq!(remote.forwards[0].listen_port, 8080);
+}
+
+#[test]
+fn pf_task_result_marks_host_unreachable_on_master_failure() {
+    use crate::state::RemoteSessionRow;
+    let mut state = make_test_state(0);
+    state.remote_sessions = vec![RemoteSessionRow {
+        host: "h1".into(),
+        name: "session-a".into(),
+        dir: "/tmp".into(),
+        unreachable: false,
+        loading: true,
+    }];
+
+    crate::action::apply_action(
+        &mut state,
+        Action::PfTaskResult {
+            host: "h1".into(),
+            op: crate::app::port_forward_task::OpKind::Master("h1".into()),
+            ok: false,
+            message: "connection refused".into(),
+        },
+    );
+
+    let row = &state.remote_sessions[0];
+    assert!(row.unreachable, "host should be flagged unreachable after master failure");
+    assert!(!row.loading, "loading should clear after master failure");
+}
