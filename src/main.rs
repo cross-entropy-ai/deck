@@ -274,6 +274,7 @@ fn run_remote_add(host: &str) -> i32 {
 
     config.remotes.push(RemoteConfig {
         host: host.to_string(),
+        forwards: vec![],
     });
     config.save();
     println!("deck: added remote '{host}'.");

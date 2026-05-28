@@ -21,6 +21,58 @@ pub struct PluginConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RemoteConfig {
     pub host: String,
+    /// Persisted SSH port forwards for this host. Applied at deck startup
+    /// (eager) and immediately on UI edits via `ssh -O forward/cancel`
+    /// against the host's ControlMaster.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forwards: Vec<ForwardSpec>,
+}
+
+/// One SSH port-forward rule. Maps to a single `-L`, `-R`, or `-D` flag.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForwardSpec {
+    pub mode: ForwardMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind_addr: Option<String>,
+    pub listen_port: u16,
+    /// Local/Remote: required (target endpoint on the other side).
+    /// Dynamic: must be `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ForwardMode {
+    Local,
+    Remote,
+    Dynamic,
+}
+
+impl ForwardSpec {
+    /// Render this rule as the corresponding `ssh -L/-R/-D` argument
+    /// pair. Caller splits on spaces to feed `Command::arg()`.
+    pub fn to_ssh_flag(&self) -> String {
+        let flag = match self.mode {
+            ForwardMode::Local => "-L",
+            ForwardMode::Remote => "-R",
+            ForwardMode::Dynamic => "-D",
+        };
+        let bind_prefix = match &self.bind_addr {
+            Some(b) => format!("{}:", b),
+            None => String::new(),
+        };
+        match self.mode {
+            ForwardMode::Dynamic => format!("{} {}{}", flag, bind_prefix, self.listen_port),
+            ForwardMode::Local | ForwardMode::Remote => {
+                let th = self.target_host.as_deref().unwrap_or("");
+                let tp = self.target_port.unwrap_or(0);
+                format!("{} {}{}:{}:{}", flag, bind_prefix, self.listen_port, th, tp)
+            }
+        }
+    }
 }
 
 /// User-configurable binding value for a single command.

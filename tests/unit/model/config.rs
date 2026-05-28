@@ -253,3 +253,95 @@ fn empty_keybindings_still_serialize() {
     let json = config.to_json();
     assert!(json.contains("\"keybindings\""));
 }
+
+#[test]
+fn forward_spec_local_to_flag_with_bind() {
+    let spec = ForwardSpec {
+        mode: ForwardMode::Local,
+        bind_addr: Some("127.0.0.1".into()),
+        listen_port: 8080,
+        target_host: Some("example.com".into()),
+        target_port: Some(80),
+    };
+    assert_eq!(spec.to_ssh_flag(), "-L 127.0.0.1:8080:example.com:80");
+}
+
+#[test]
+fn forward_spec_local_to_flag_no_bind() {
+    let spec = ForwardSpec {
+        mode: ForwardMode::Local,
+        bind_addr: None,
+        listen_port: 8080,
+        target_host: Some("example.com".into()),
+        target_port: Some(80),
+    };
+    assert_eq!(spec.to_ssh_flag(), "-L 8080:example.com:80");
+}
+
+#[test]
+fn forward_spec_remote_to_flag() {
+    let spec = ForwardSpec {
+        mode: ForwardMode::Remote,
+        bind_addr: Some("0.0.0.0".into()),
+        listen_port: 9090,
+        target_host: Some("localhost".into()),
+        target_port: Some(5432),
+    };
+    assert_eq!(spec.to_ssh_flag(), "-R 0.0.0.0:9090:localhost:5432");
+}
+
+#[test]
+fn forward_spec_dynamic_to_flag() {
+    let spec = ForwardSpec {
+        mode: ForwardMode::Dynamic,
+        bind_addr: None,
+        listen_port: 1080,
+        target_host: None,
+        target_port: None,
+    };
+    assert_eq!(spec.to_ssh_flag(), "-D 1080");
+}
+
+#[test]
+fn forward_spec_dynamic_with_bind_to_flag() {
+    let spec = ForwardSpec {
+        mode: ForwardMode::Dynamic,
+        bind_addr: Some("127.0.0.1".into()),
+        listen_port: 1080,
+        target_host: None,
+        target_port: None,
+    };
+    assert_eq!(spec.to_ssh_flag(), "-D 127.0.0.1:1080");
+}
+
+#[test]
+fn remote_config_without_forwards_field_deserializes() {
+    let json = r#"{ "host": "server-1" }"#;
+    let r: RemoteConfig = serde_json::from_str(json).unwrap();
+    assert_eq!(r.host, "server-1");
+    assert!(r.forwards.is_empty());
+}
+
+#[test]
+fn remote_config_empty_forwards_not_emitted() {
+    let r = RemoteConfig { host: "server-1".into(), forwards: vec![] };
+    let s = serde_json::to_string(&r).unwrap();
+    assert!(!s.contains("forwards"), "empty forwards should be skipped: {}", s);
+}
+
+#[test]
+fn remote_config_forwards_roundtrip() {
+    let r = RemoteConfig {
+        host: "h".into(),
+        forwards: vec![ForwardSpec {
+            mode: ForwardMode::Local,
+            bind_addr: None,
+            listen_port: 8080,
+            target_host: Some("localhost".into()),
+            target_port: Some(80),
+        }],
+    };
+    let s = serde_json::to_string(&r).unwrap();
+    let parsed: RemoteConfig = serde_json::from_str(&s).unwrap();
+    assert_eq!(parsed, r);
+}
