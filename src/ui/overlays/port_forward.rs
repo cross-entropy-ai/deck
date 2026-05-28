@@ -216,17 +216,17 @@ fn flow_line<'a>(form: &PfAddForm, theme: &Theme) -> Line<'a> {
     let text = match form.mode {
         // -L: local listener forwards through ssh to the server's view of target.
         ForwardMode::Local => format!(
-            "  you {}:{}  \u{2500}ssh\u{2500}\u{2192}  server  \u{2500}\u{2192}  {}:{}",
+            "  you {}:{} -- ssh --> server --> {}:{}",
             bind, listen, thost, tport
         ),
         // -R: remote listener tunnels back to client, which delivers to target.
         ForwardMode::Remote => format!(
-            "  server {}:{}  \u{2500}ssh\u{2500}\u{2192}  you  \u{2500}\u{2192}  {}:{}",
+            "  server {}:{} -- ssh --> you --> {}:{}",
             bind, listen, thost, tport
         ),
         // -D: local SOCKS proxy; client picks destination per connection.
         ForwardMode::Dynamic => format!(
-            "  you {}:{} (SOCKS)  \u{2500}ssh\u{2500}\u{2192}  *",
+            "  you {}:{} (SOCKS) -- ssh --> *",
             bind, listen
         ),
     };
