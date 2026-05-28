@@ -398,6 +398,120 @@ pub struct ExcludeEditorState {
     pub error: Option<String>,
 }
 
+// --- Port forward overlay ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PfField {
+    Mode,
+    BindAddr,
+    ListenPort,
+    TargetHost,
+    TargetPort,
+}
+
+#[derive(Debug, Clone)]
+pub struct PfAddForm {
+    pub mode: crate::config::ForwardMode,
+    pub focus: PfField,
+    pub bind_addr: String,
+    pub listen_port: String,
+    pub target_host: String,
+    pub target_port: String,
+    /// True while a validated spec is in flight to the worker. The
+    /// form stays rendered (read-only) until `PfTaskResult` for this
+    /// host's Forward op clears or fails the submission. Lazy
+    /// persist: config is only written when the worker reports
+    /// success.
+    pub submitting: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PfFormError {
+    ListenPortRange,
+    TargetPortRange,
+    TargetHostRequired,
+}
+
+impl PfFormError {
+    pub fn message(&self) -> &'static str {
+        match self {
+            PfFormError::ListenPortRange => "listen_port must be 1-65535",
+            PfFormError::TargetPortRange => "target_port must be 1-65535",
+            PfFormError::TargetHostRequired => "target_host required for -L/-R",
+        }
+    }
+}
+
+impl PfAddForm {
+    pub fn default_for(mode: crate::config::ForwardMode) -> Self {
+        Self {
+            mode,
+            focus: PfField::ListenPort,
+            bind_addr: String::new(),
+            listen_port: String::new(),
+            target_host: String::new(),
+            target_port: String::new(),
+            submitting: false,
+        }
+    }
+
+    pub fn validate(&self) -> Result<crate::config::ForwardSpec, PfFormError> {
+        use crate::config::{ForwardMode, ForwardSpec};
+        let listen_port: u16 = self
+            .listen_port
+            .trim()
+            .parse()
+            .map_err(|_| PfFormError::ListenPortRange)?;
+        if listen_port == 0 {
+            return Err(PfFormError::ListenPortRange);
+        }
+        let bind_addr = if self.bind_addr.trim().is_empty() {
+            None
+        } else {
+            Some(self.bind_addr.trim().to_string())
+        };
+
+        match self.mode {
+            ForwardMode::Dynamic => Ok(ForwardSpec {
+                mode: ForwardMode::Dynamic,
+                bind_addr,
+                listen_port,
+                target_host: None,
+                target_port: None,
+            }),
+            ForwardMode::Local | ForwardMode::Remote => {
+                let target_host = self.target_host.trim();
+                if target_host.is_empty() {
+                    return Err(PfFormError::TargetHostRequired);
+                }
+                let target_port: u16 = self
+                    .target_port
+                    .trim()
+                    .parse()
+                    .map_err(|_| PfFormError::TargetPortRange)?;
+                if target_port == 0 {
+                    return Err(PfFormError::TargetPortRange);
+                }
+                Ok(ForwardSpec {
+                    mode: self.mode,
+                    bind_addr,
+                    listen_port,
+                    target_host: Some(target_host.to_string()),
+                    target_port: Some(target_port),
+                })
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PortForwardOverlay {
+    pub host: String,
+    pub selected: usize,
+    pub add_form: Option<PfAddForm>,
+    pub status: Option<String>,
+}
+
 // --- Overlay state ---
 
 /// UI state for transient sidebar overlays — help screen, kill-confirm
