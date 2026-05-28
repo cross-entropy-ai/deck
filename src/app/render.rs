@@ -92,6 +92,7 @@ impl App {
         let dragging_sep = s.dragging_separator;
 
         let mut captured_banner_bounds: Option<Rect> = None;
+        let mut captured_divider_hits: Vec<crate::state::DividerHit> = Vec::new();
         terminal.draw(|frame| {
             // Unified slice the sidebar consumes: local rows first
             // (flat index == filtered_pos), then remotes (flat index
@@ -182,7 +183,7 @@ impl App {
 
             let layout = self.state.sidebar_layout(view_mode);
             let focus_target = self.state.focus_target();
-            captured_banner_bounds = ui::draw_sidebar(
+            let (banner_bounds, divider_hits) = ui::draw_sidebar(
                 frame,
                 sidebar_area,
                 ui::SidebarProps {
@@ -205,6 +206,8 @@ impl App {
                     update_available: update_available.as_ref(),
                 },
             );
+            captured_banner_bounds = banner_bounds;
+            captured_divider_hits = divider_hits;
 
             if let Some(gap) = gap_area {
                 let (sep_char, sep_fg) = if dragging_sep {
@@ -375,6 +378,7 @@ impl App {
         })?;
 
         self.state.banner_upgrade_bounds = captured_banner_bounds;
+        self.state.divider_hits = captured_divider_hits;
 
         Ok(())
     }
