@@ -88,6 +88,23 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     }
 
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) && in_sidebar {
+        // Check divider […] button hit regions before falling through to
+        // session-row dispatch so a click on the button isn't mistaken for
+        // a row selection.
+        for hit in &state.divider_hits {
+            if mouse.column >= hit.rect.x
+                && mouse.column < hit.rect.x + hit.rect.width
+                && mouse.row >= hit.rect.y
+                && mouse.row < hit.rect.y + hit.rect.height
+            {
+                return Action::OpenHostDividerMenu {
+                    host: hit.host.clone(),
+                    x: hit.rect.x,
+                    y: hit.rect.y + 1, // open just below the button
+                };
+            }
+        }
+
         let flat = match state.layout_mode {
             LayoutMode::Horizontal => state.focus_at_row(mouse.row).map(|t| t.0),
             // Vertical/tabs mode doesn't surface remotes yet — the
