@@ -910,7 +910,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if let Some(o) = state.overlay.port_forward.as_mut() {
                 if let Some(f) = o.add_form.as_mut() {
                     f.focus = next_field(f.focus, f.mode);
-                    f.cursor_to_end();
                 }
             }
         }
@@ -918,48 +917,18 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if let Some(o) = state.overlay.port_forward.as_mut() {
                 if let Some(f) = o.add_form.as_mut() {
                     f.focus = prev_field(f.focus, f.mode);
-                    f.cursor_to_end();
                 }
             }
         }
         Action::PfAddModeLeft => set_mode(&mut state.overlay.port_forward, -1),
         Action::PfAddModeRight => set_mode(&mut state.overlay.port_forward, 1),
-        Action::PfAddInput(c) => {
+        Action::PfAddInputKey(key) => {
             if let Some(o) = state.overlay.port_forward.as_mut() {
                 if let Some(f) = o.add_form.as_mut() {
-                    insert_at_cursor(f, c);
-                }
-            }
-        }
-        Action::PfAddBackspace => {
-            if let Some(o) = state.overlay.port_forward.as_mut() {
-                if let Some(f) = o.add_form.as_mut() {
-                    backspace_at_cursor(f);
-                }
-            }
-        }
-        Action::PfAddDelete => {
-            if let Some(o) = state.overlay.port_forward.as_mut() {
-                if let Some(f) = o.add_form.as_mut() {
-                    delete_at_cursor(f);
-                }
-            }
-        }
-        Action::PfAddCursorLeft => {
-            if let Some(o) = state.overlay.port_forward.as_mut() {
-                if let Some(f) = o.add_form.as_mut() {
-                    if f.cursor > 0 {
-                        f.cursor -= 1;
-                    }
-                }
-            }
-        }
-        Action::PfAddCursorRight => {
-            if let Some(o) = state.overlay.port_forward.as_mut() {
-                if let Some(f) = o.add_form.as_mut() {
-                    let len = f.focused_len();
-                    if f.cursor < len {
-                        f.cursor += 1;
+                    if should_forward_key(f, key) {
+                        if let Some(ta) = f.focused_textarea_mut() {
+                            ta.input(key);
+                        }
                     }
                 }
             }
@@ -1030,72 +999,21 @@ fn set_mode(o: &mut Option<PortForwardOverlay>, delta: i32) {
                 && matches!(f.focus, PfField::TargetHost | PfField::TargetPort)
             {
                 f.focus = PfField::ListenPort;
-                f.cursor_to_end();
             }
         }
     }
 }
 
-/// Borrow the focused String field (None for Mode).
-fn focused_field_mut(f: &mut PfAddForm) -> Option<&mut String> {
-    match f.focus {
-        PfField::Mode => None,
-        PfField::BindAddr => Some(&mut f.bind_addr),
-        PfField::ListenPort => Some(&mut f.listen_port),
-        PfField::TargetHost => Some(&mut f.target_host),
-        PfField::TargetPort => Some(&mut f.target_port),
-    }
-}
-
-/// Byte offset corresponding to the `cursor`-th char of `s`. Returns
-/// `s.len()` if cursor is past the end (i.e., clamps to append point).
-fn byte_offset_of_char(s: &str, char_idx: usize) -> usize {
-    s.char_indices()
-        .nth(char_idx)
-        .map(|(b, _)| b)
-        .unwrap_or(s.len())
-}
-
-fn insert_at_cursor(f: &mut PfAddForm, c: char) {
-    // Port fields only accept digits; non-digits are silently dropped
-    // so the user can't type values that will fail u16 parsing later.
-    if matches!(f.focus, PfField::ListenPort | PfField::TargetPort) && !c.is_ascii_digit() {
-        return;
-    }
-    let cursor = f.cursor;
-    if let Some(s) = focused_field_mut(f) {
-        let byte = byte_offset_of_char(s, cursor);
-        s.insert(byte, c);
-    } else {
-        return;
-    }
-    f.cursor += 1;
-}
-
-fn backspace_at_cursor(f: &mut PfAddForm) {
-    if f.cursor == 0 {
-        return;
-    }
-    let cursor = f.cursor;
-    if let Some(s) = focused_field_mut(f) {
-        let byte = byte_offset_of_char(s, cursor - 1);
-        s.remove(byte);
-    } else {
-        return;
-    }
-    f.cursor -= 1;
-}
-
-fn delete_at_cursor(f: &mut PfAddForm) {
-    let cursor = f.cursor;
-    if let Some(s) = focused_field_mut(f) {
-        // Cursor past end → nothing to delete.
-        if cursor >= s.chars().count() {
-            return;
-        }
-        let byte = byte_offset_of_char(s, cursor);
-        s.remove(byte);
-    }
+/// Returns false for keys we want to silently swallow before they
+/// reach the textarea — currently just non-digit Char input on the
+/// two port fields, so users can't type values that will fail u16
+/// parsing later. Backspace/Delete/arrows still go through.
+fn should_forward_key(f: &PfAddForm, key: crossterm::event::KeyEvent) -> bool {
+    use crossterm::event::KeyCode;
+    let is_port_field = matches!(f.focus, PfField::ListenPort | PfField::TargetPort);
+    let is_non_digit_char =
+        matches!(key.code, KeyCode::Char(c) if !c.is_ascii_digit());
+    !(is_port_field && is_non_digit_char)
 }
 
 /// Finalize an in-flight `AddForward` (lazy persist: only on worker

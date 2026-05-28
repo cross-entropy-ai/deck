@@ -16,6 +16,7 @@ serde_json = "1"
 libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 semver = "1"
+ratatui-textarea = "0.9.1"
 
 [patch.crates-io]
 # Track our long-lived `deck` branch on Junyi-99/vt100-rust, which

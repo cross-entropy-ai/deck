@@ -65,16 +65,20 @@ fn vertical_tab_hit_testing_only_uses_tab_row() {
 
 use crate::config::ForwardMode;
 use crate::state::{PfAddForm, PfField, PfFormError};
+use ratatui_textarea::TextArea;
+
+fn ta(text: &str) -> TextArea<'static> {
+    TextArea::new(vec![text.to_string()])
+}
 
 fn blank_form() -> PfAddForm {
     PfAddForm {
         mode: ForwardMode::Local,
         focus: PfField::ListenPort,
-        bind_addr: String::new(),
-        listen_port: String::new(),
-        target_host: String::new(),
-        target_port: String::new(),
-        cursor: 0,
+        bind_addr: ta(""),
+        listen_port: ta(""),
+        target_host: ta(""),
+        target_port: ta(""),
         submitting: false,
     }
 }
@@ -82,9 +86,9 @@ fn blank_form() -> PfAddForm {
 #[test]
 fn validate_local_ok() {
     let mut f = blank_form();
-    f.listen_port = "8080".into();
-    f.target_host = "localhost".into();
-    f.target_port = "80".into();
+    f.listen_port = ta("8080");
+    f.target_host = ta("localhost");
+    f.target_port = ta("80");
     let spec = f.validate().expect("should validate");
     assert_eq!(spec.listen_port, 8080);
     assert_eq!(spec.target_host.as_deref(), Some("localhost"));
@@ -95,26 +99,26 @@ fn validate_local_ok() {
 #[test]
 fn validate_local_missing_target_host() {
     let mut f = blank_form();
-    f.listen_port = "8080".into();
-    f.target_port = "80".into();
+    f.listen_port = ta("8080");
+    f.target_port = ta("80");
     assert_eq!(f.validate(), Err(PfFormError::TargetHostRequired));
 }
 
 #[test]
 fn validate_local_port_zero_rejected() {
     let mut f = blank_form();
-    f.listen_port = "0".into();
-    f.target_host = "h".into();
-    f.target_port = "80".into();
+    f.listen_port = ta("0");
+    f.target_host = ta("h");
+    f.target_port = ta("80");
     assert_eq!(f.validate(), Err(PfFormError::ListenPortRange));
 }
 
 #[test]
 fn validate_local_port_non_numeric_rejected() {
     let mut f = blank_form();
-    f.listen_port = "abc".into();
-    f.target_host = "h".into();
-    f.target_port = "80".into();
+    f.listen_port = ta("abc");
+    f.target_host = ta("h");
+    f.target_port = ta("80");
     assert_eq!(f.validate(), Err(PfFormError::ListenPortRange));
 }
 
@@ -122,9 +126,9 @@ fn validate_local_port_non_numeric_rejected() {
 fn validate_dynamic_clears_target() {
     let mut f = blank_form();
     f.mode = ForwardMode::Dynamic;
-    f.listen_port = "1080".into();
-    f.target_host = "stale".into();
-    f.target_port = "999".into();
+    f.listen_port = ta("1080");
+    f.target_host = ta("stale");
+    f.target_port = ta("999");
     let spec = f.validate().unwrap();
     assert_eq!(spec.target_host, None);
     assert_eq!(spec.target_port, None);
@@ -133,10 +137,10 @@ fn validate_dynamic_clears_target() {
 #[test]
 fn validate_bind_addr_passthrough() {
     let mut f = blank_form();
-    f.bind_addr = "127.0.0.1".into();
-    f.listen_port = "8080".into();
-    f.target_host = "h".into();
-    f.target_port = "80".into();
+    f.bind_addr = ta("127.0.0.1");
+    f.listen_port = ta("8080");
+    f.target_host = ta("h");
+    f.target_port = ta("80");
     let spec = f.validate().unwrap();
     assert_eq!(spec.bind_addr.as_deref(), Some("127.0.0.1"));
 }

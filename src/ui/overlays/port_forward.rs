@@ -1,8 +1,10 @@
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget};
+use ratatui_textarea::TextArea;
+use unicode_width::UnicodeWidthStr;
 
 use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
 use crate::state::{PfAddForm, PfField, PortForwardOverlay};
@@ -99,6 +101,24 @@ fn draw_list(
 }
 
 fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, theme: &Theme) {
+    // 12 rows: blank, mode, blank, 4 fields, blank, flow, blank, hint, fill.
+    let rows = Layout::vertical([
+        Constraint::Length(1), // 0: top pad
+        Constraint::Length(1), // 1: mode picker
+        Constraint::Length(1), // 2: pad
+        Constraint::Length(1), // 3: bind addr
+        Constraint::Length(1), // 4: listen port
+        Constraint::Length(1), // 5: target host
+        Constraint::Length(1), // 6: target port
+        Constraint::Length(1), // 7: pad
+        Constraint::Length(1), // 8: flow sketch
+        Constraint::Length(1), // 9: pad
+        Constraint::Length(1), // 10: hint bar
+        Constraint::Min(0),    // tail
+    ])
+    .split(area);
+
+    // --- Mode picker -----------------------------------------------------
     let mode_text = |m: ForwardMode, label: &str| -> Span {
         let marker = if form.mode == m { "(\u{2022})" } else { "( )" };
         Span::styled(
@@ -110,69 +130,92 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, theme: &Theme) {
             }),
         )
     };
+    Paragraph::new(Line::from(vec![
+        Span::raw("  mode:        "),
+        mode_text(ForwardMode::Local, "local"),
+        mode_text(ForwardMode::Remote, "remote"),
+        mode_text(ForwardMode::Dynamic, "dynamic"),
+    ]))
+    .render(rows[1], buf);
 
-    let mut lines: Vec<Line> = vec![
-        Line::raw(""),
-        Line::from(vec![
-            Span::raw("  mode:        "),
-            mode_text(ForwardMode::Local, "local"),
-            mode_text(ForwardMode::Remote, "remote"),
-            mode_text(ForwardMode::Dynamic, "dynamic"),
-        ]),
-        Line::raw(""),
-    ];
-    lines.push(field_line(
-        theme,
-        form,
-        PfField::BindAddr,
-        "  bind addr:   ",
-        &form.bind_addr,
-        true,
-    ));
-    lines.push(field_line(
-        theme,
-        form,
-        PfField::ListenPort,
-        "  listen port: ",
-        &form.listen_port,
-        true,
-    ));
+    // --- Field rows ------------------------------------------------------
     let target_active = !matches!(form.mode, ForwardMode::Dynamic);
-    lines.push(field_line(
-        theme,
-        form,
-        PfField::TargetHost,
-        "  target host: ",
-        &form.target_host,
-        target_active,
-    ));
-    lines.push(field_line(
-        theme,
-        form,
-        PfField::TargetPort,
-        "  target port: ",
-        &form.target_port,
-        target_active,
-    ));
-    lines.push(Line::raw(""));
-    lines.push(flow_line(form, theme));
-    lines.push(Line::raw(""));
-    lines.push(Line::styled(
+    render_field_row(buf, rows[3], form, PfField::BindAddr,   "  bind addr:   ", &form.bind_addr,   true,          theme);
+    render_field_row(buf, rows[4], form, PfField::ListenPort, "  listen port: ", &form.listen_port, true,          theme);
+    render_field_row(buf, rows[5], form, PfField::TargetHost, "  target host: ", &form.target_host, target_active, theme);
+    render_field_row(buf, rows[6], form, PfField::TargetPort, "  target port: ", &form.target_port, target_active, theme);
+
+    // --- Flow sketch + hint ---------------------------------------------
+    Paragraph::new(flow_line(form, theme)).render(rows[8], buf);
+    Paragraph::new(Line::styled(
         "  [tab] next   [enter] save   [esc] cancel",
         Style::default().fg(theme.subtle),
-    ));
+    ))
+    .render(rows[10], buf);
+}
 
-    Paragraph::new(lines).render(area, buf);
+fn render_field_row(
+    buf: &mut Buffer,
+    area: Rect,
+    form: &PfAddForm,
+    field: PfField,
+    label: &str,
+    textarea: &TextArea<'static>,
+    enabled: bool,
+    theme: &Theme,
+) {
+    let focused = form.focus == field && enabled;
+
+    // Split the row: label takes its rendered width, textarea gets the rest.
+    let label_w = label.width() as u16;
+    let cols = Layout::horizontal([Constraint::Length(label_w), Constraint::Min(0)]).split(area);
+
+    let label_style = if focused {
+        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+    } else if enabled {
+        Style::default().fg(theme.text)
+    } else {
+        Style::default().fg(theme.dim)
+    };
+    Paragraph::new(Span::styled(label.to_string(), label_style)).render(cols[0], buf);
+
+    // Clone the textarea per frame so we can apply focus-dependent styling
+    // without mutating state. TextArea is cheap to clone (single-line, short
+    // input). Cursor block is reversed-video only on the focused field;
+    // unfocused fields render their text but hide the cursor.
+    let mut ta = textarea.clone();
+    let fg = if enabled { theme.text } else { theme.dim };
+    ta.set_style(Style::default().fg(fg).bg(theme.surface));
+    // tui-textarea highlights the cursor line by default — that bg leaks
+    // across the entire row. Reset it to the modal surface so focused and
+    // unfocused fields look the same except for the cursor.
+    ta.set_cursor_line_style(Style::default().fg(fg).bg(theme.surface));
+    if focused {
+        ta.set_cursor_style(
+            Style::default()
+                .bg(theme.accent)
+                .fg(theme.surface)
+                .add_modifier(Modifier::REVERSED),
+        );
+    } else {
+        // Hide cursor by giving it the same style as the surrounding text.
+        ta.set_cursor_style(Style::default().fg(fg).bg(theme.surface));
+    }
+    ta.render(cols[1], buf);
 }
 
 /// One-line data-flow sketch under the form. Substitutes live form
 /// values; missing fields render as `?` so the shape is visible from
 /// the moment the form opens.
 fn flow_line<'a>(form: &PfAddForm, theme: &Theme) -> Line<'a> {
-    let bind = if form.bind_addr.is_empty() { "?" } else { form.bind_addr.as_str() };
-    let listen = if form.listen_port.is_empty() { "?" } else { form.listen_port.as_str() };
-    let thost = if form.target_host.is_empty() { "?" } else { form.target_host.as_str() };
-    let tport = if form.target_port.is_empty() { "?" } else { form.target_port.as_str() };
+    let read = |field: PfField| -> String {
+        let t = form.field_text(field);
+        if t.is_empty() { "?".into() } else { t.to_string() }
+    };
+    let bind = read(PfField::BindAddr);
+    let listen = read(PfField::ListenPort);
+    let thost = read(PfField::TargetHost);
+    let tport = read(PfField::TargetPort);
     let text = match form.mode {
         // -L: local listener forwards through ssh to the server's view of target.
         ForwardMode::Local => format!(
@@ -191,39 +234,6 @@ fn flow_line<'a>(form: &PfAddForm, theme: &Theme) -> Line<'a> {
         ),
     };
     Line::styled(text, Style::default().fg(theme.muted))
-}
-
-fn field_line<'a>(
-    theme: &Theme,
-    form: &PfAddForm,
-    field: PfField,
-    label: &'a str,
-    value: &str,
-    enabled: bool,
-) -> Line<'a> {
-    let focused = form.focus == field && enabled;
-    let label_style = if focused {
-        Style::default()
-            .fg(theme.accent)
-            .add_modifier(Modifier::BOLD)
-    } else if enabled {
-        Style::default().fg(theme.text)
-    } else {
-        Style::default().fg(theme.dim)
-    };
-    let body = if focused {
-        let chars: Vec<char> = value.chars().collect();
-        let pos = form.cursor.min(chars.len());
-        let left: String = chars[..pos].iter().collect();
-        let right: String = chars[pos..].iter().collect();
-        format!("[{}\u{2588}{}]", left, right)
-    } else {
-        format!("[{}]", value)
-    };
-    Line::from(vec![
-        Span::styled(label.to_string(), label_style),
-        Span::styled(body, label_style),
-    ])
 }
 
 fn format_forward(f: &ForwardSpec) -> String {

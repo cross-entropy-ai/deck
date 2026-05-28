@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use ratatui::layout::Rect;
+use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
 use crate::config::PluginConfig;
@@ -430,19 +431,17 @@ pub enum PfField {
     TargetPort,
 }
 
+/// One input field, backed by `ratatui-textarea`. Each field carries
+/// its own cursor and edit history; the keyboard dispatcher feeds key
+/// events to whichever one is focused.
 #[derive(Debug, Clone)]
 pub struct PfAddForm {
     pub mode: crate::config::ForwardMode,
     pub focus: PfField,
-    pub bind_addr: String,
-    pub listen_port: String,
-    pub target_host: String,
-    pub target_port: String,
-    /// Char-based cursor position within the focused text field.
-    /// On focus change it snaps to the new field's end; Left/Right
-    /// move within bounds; Char/Backspace/Del operate at this index.
-    /// Meaningless when `focus == PfField::Mode`.
-    pub cursor: usize,
+    pub bind_addr: TextArea<'static>,
+    pub listen_port: TextArea<'static>,
+    pub target_host: TextArea<'static>,
+    pub target_port: TextArea<'static>,
     /// True while a validated spec is in flight to the worker. The
     /// form stays rendered (read-only) until `PfTaskResult` for this
     /// host's Forward op clears or fails the submission. Lazy
@@ -468,52 +467,65 @@ impl PfFormError {
     }
 }
 
+/// Build a single-line `TextArea` pre-filled with `initial`, with the
+/// cursor placed at the end.
+fn make_textarea(initial: &str) -> TextArea<'static> {
+    let mut ta = TextArea::new(vec![initial.to_string()]);
+    // Move cursor to end of line so typing appends.
+    ta.move_cursor(ratatui_textarea::CursorMove::End);
+    ta
+}
+
 impl PfAddForm {
     pub fn default_for(mode: crate::config::ForwardMode) -> Self {
         Self {
             mode,
             focus: PfField::ListenPort,
-            bind_addr: "0.0.0.0".to_string(),
-            listen_port: String::new(),
-            target_host: "127.0.0.1".to_string(),
-            target_port: String::new(),
-            cursor: 0,
+            bind_addr: make_textarea("0.0.0.0"),
+            listen_port: make_textarea(""),
+            target_host: make_textarea("127.0.0.1"),
+            target_port: make_textarea(""),
             submitting: false,
         }
     }
 
-    /// Char count of the field currently in focus; 0 for `Mode`.
-    pub fn focused_len(&self) -> usize {
-        match self.focus {
-            PfField::Mode => 0,
-            PfField::BindAddr => self.bind_addr.chars().count(),
-            PfField::ListenPort => self.listen_port.chars().count(),
-            PfField::TargetHost => self.target_host.chars().count(),
-            PfField::TargetPort => self.target_port.chars().count(),
+    /// Read the current text of a field. Returns `""` for `Mode`.
+    pub fn field_text(&self, field: PfField) -> &str {
+        match field {
+            PfField::Mode => "",
+            PfField::BindAddr => textarea_line(&self.bind_addr),
+            PfField::ListenPort => textarea_line(&self.listen_port),
+            PfField::TargetHost => textarea_line(&self.target_host),
+            PfField::TargetPort => textarea_line(&self.target_port),
         }
     }
 
-    /// Snap cursor to the end of the focused field. Called on focus
-    /// change so the cursor never refers to a position past the new
-    /// field's length.
-    pub fn cursor_to_end(&mut self) {
-        self.cursor = self.focused_len();
+    /// Mutable handle to the focused field's textarea. `None` for `Mode`.
+    pub fn focused_textarea_mut(&mut self) -> Option<&mut TextArea<'static>> {
+        match self.focus {
+            PfField::Mode => None,
+            PfField::BindAddr => Some(&mut self.bind_addr),
+            PfField::ListenPort => Some(&mut self.listen_port),
+            PfField::TargetHost => Some(&mut self.target_host),
+            PfField::TargetPort => Some(&mut self.target_port),
+        }
     }
 
     pub fn validate(&self) -> Result<crate::config::ForwardSpec, PfFormError> {
         use crate::config::{ForwardMode, ForwardSpec};
-        let listen_port: u16 = self
-            .listen_port
+        let listen_raw = self.field_text(PfField::ListenPort);
+        let listen_port: u16 = listen_raw
             .trim()
             .parse()
             .map_err(|_| PfFormError::ListenPortRange)?;
         if listen_port == 0 {
             return Err(PfFormError::ListenPortRange);
         }
-        let bind_addr = if self.bind_addr.trim().is_empty() {
+        let bind_raw = self.field_text(PfField::BindAddr).trim();
+        let bind_addr = if bind_raw.is_empty() {
             None
         } else {
-            Some(self.bind_addr.trim().to_string())
+            Some(bind_raw.to_string())
         };
 
         match self.mode {
@@ -525,12 +537,12 @@ impl PfAddForm {
                 target_port: None,
             }),
             ForwardMode::Local | ForwardMode::Remote => {
-                let target_host = self.target_host.trim();
+                let target_host = self.field_text(PfField::TargetHost).trim();
                 if target_host.is_empty() {
                     return Err(PfFormError::TargetHostRequired);
                 }
                 let target_port: u16 = self
-                    .target_port
+                    .field_text(PfField::TargetPort)
                     .trim()
                     .parse()
                     .map_err(|_| PfFormError::TargetPortRange)?;
@@ -547,6 +559,11 @@ impl PfAddForm {
             }
         }
     }
+}
+
+/// First (only) line of a single-line `TextArea`, as a borrowed `&str`.
+fn textarea_line<'a>(ta: &'a TextArea<'a>) -> &'a str {
+    ta.lines().first().map(String::as_str).unwrap_or("")
 }
 
 #[derive(Debug, Clone)]

@@ -650,90 +650,74 @@ fn pf_task_result_marks_host_unreachable_on_master_failure() {
     assert!(!row.loading, "loading should clear after master failure");
 }
 
-fn open_form_with_focus(state: &mut crate::state::AppState, field: crate::state::PfField, value: &str) {
+fn open_form_with_focus(
+    state: &mut crate::state::AppState,
+    field: crate::state::PfField,
+    value: &str,
+) {
+    use ratatui_textarea::TextArea;
+    let ta = |s: &str| TextArea::new(vec![s.to_string()]);
     state.overlay.port_forward = Some(crate::state::PortForwardOverlay {
         host: "h".into(),
         selected: 0,
         add_form: Some(crate::state::PfAddForm {
             mode: crate::config::ForwardMode::Local,
             focus: field,
-            bind_addr: if matches!(field, crate::state::PfField::BindAddr) { value.into() } else { String::new() },
-            listen_port: if matches!(field, crate::state::PfField::ListenPort) { value.into() } else { String::new() },
-            target_host: if matches!(field, crate::state::PfField::TargetHost) { value.into() } else { String::new() },
-            target_port: if matches!(field, crate::state::PfField::TargetPort) { value.into() } else { String::new() },
-            cursor: value.chars().count(),
+            bind_addr: if matches!(field, crate::state::PfField::BindAddr) { ta(value) } else { ta("") },
+            listen_port: if matches!(field, crate::state::PfField::ListenPort) { ta(value) } else { ta("") },
+            target_host: if matches!(field, crate::state::PfField::TargetHost) { ta(value) } else { ta("") },
+            target_port: if matches!(field, crate::state::PfField::TargetPort) { ta(value) } else { ta("") },
             submitting: false,
         }),
         status: None,
     });
 }
 
-#[test]
-fn pf_add_cursor_left_then_input_inserts_mid_field() {
-    let mut state = make_test_state(0);
-    open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "808");
-    // Move cursor one left → between '0' and '8'
-    crate::action::apply_action(&mut state, Action::PfAddCursorLeft);
-    crate::action::apply_action(&mut state, Action::PfAddInput('1'));
-    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
-    assert_eq!(f.listen_port, "8018");
-    assert_eq!(f.cursor, 3);
+fn key(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
 }
 
 #[test]
-fn pf_add_backspace_deletes_char_before_cursor() {
+fn pf_add_input_key_appends_to_focused_textarea() {
+    use crossterm::event::KeyCode;
     let mut state = make_test_state(0);
-    open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "8080");
-    crate::action::apply_action(&mut state, Action::PfAddCursorLeft); // cursor at 3
-    crate::action::apply_action(&mut state, Action::PfAddBackspace);  // removes '8'
+    open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "");
+    for c in ['8', '0', '8', '0'] {
+        crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char(c))));
+    }
     let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
-    assert_eq!(f.listen_port, "800");
-    assert_eq!(f.cursor, 2);
-}
-
-#[test]
-fn pf_add_delete_removes_char_at_cursor() {
-    let mut state = make_test_state(0);
-    open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "8080");
-    crate::action::apply_action(&mut state, Action::PfAddCursorLeft); // cursor at 3
-    crate::action::apply_action(&mut state, Action::PfAddDelete);     // removes '0' at idx 3
-    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
-    assert_eq!(f.listen_port, "808");
-    assert_eq!(f.cursor, 3);
+    assert_eq!(f.field_text(crate::state::PfField::ListenPort), "8080");
 }
 
 #[test]
 fn pf_add_input_drops_non_digits_in_port_fields() {
+    use crossterm::event::KeyCode;
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "");
     for c in ['8', 'a', '0', '.', '8', '0'] {
-        crate::action::apply_action(&mut state, Action::PfAddInput(c));
+        crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char(c))));
     }
     let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
-    assert_eq!(f.listen_port, "8080");
-    assert_eq!(f.cursor, 4);
+    assert_eq!(f.field_text(crate::state::PfField::ListenPort), "8080");
 }
 
 #[test]
 fn pf_add_input_allows_non_digits_in_host_fields() {
+    use crossterm::event::KeyCode;
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::TargetHost, "");
     for c in ['h', '-', '1', '.', 'x'] {
-        crate::action::apply_action(&mut state, Action::PfAddInput(c));
+        crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char(c))));
     }
     let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
-    assert_eq!(f.target_host, "h-1.x");
+    assert_eq!(f.field_text(crate::state::PfField::TargetHost), "h-1.x");
 }
 
 #[test]
-fn pf_add_field_next_snaps_cursor_to_end_of_new_field() {
+fn pf_add_field_next_changes_focus() {
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "8");
-    // Bump cursor to 0, then tab forward. New focus is TargetHost (empty),
-    // so cursor should land at 0 (= length of empty string).
-    crate::action::apply_action(&mut state, Action::PfAddCursorLeft);
     crate::action::apply_action(&mut state, Action::PfAddFieldNext);
     let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
     assert_eq!(f.focus, crate::state::PfField::TargetHost);
-    assert_eq!(f.cursor, 0);
 }

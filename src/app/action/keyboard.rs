@@ -214,24 +214,17 @@ fn pf_key(key: &KeyEvent, overlay: &PortForwardOverlay) -> Action {
             Enter => Action::PfAddSubmit,
             Tab | Down => Action::PfAddFieldNext,
             BackTab | Up => Action::PfAddFieldPrev,
-            Left => {
+            // On the Mode row, Left/Right cycle modes. Elsewhere they
+            // fall through to the textarea for cursor movement.
+            Left if matches!(form.focus, PfField::Mode) => Action::PfAddModeLeft,
+            Right if matches!(form.focus, PfField::Mode) => Action::PfAddModeRight,
+            _ => {
                 if matches!(form.focus, PfField::Mode) {
-                    Action::PfAddModeLeft
+                    Action::None
                 } else {
-                    Action::PfAddCursorLeft
+                    Action::PfAddInputKey(*key)
                 }
             }
-            Right => {
-                if matches!(form.focus, PfField::Mode) {
-                    Action::PfAddModeRight
-                } else {
-                    Action::PfAddCursorRight
-                }
-            }
-            Backspace => Action::PfAddBackspace,
-            Delete => Action::PfAddDelete,
-            Char(c) => Action::PfAddInput(c),
-            _ => Action::None,
         }
     } else {
         match key.code {

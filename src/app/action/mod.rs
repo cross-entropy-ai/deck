@@ -130,11 +130,10 @@ pub enum Action {
     PfAddFieldPrev,
     PfAddModeLeft,
     PfAddModeRight,
-    PfAddInput(char),
-    PfAddBackspace,
-    PfAddDelete,
-    PfAddCursorLeft,
-    PfAddCursorRight,
+    /// Forward a raw key event to the focused textarea (insert/delete/
+    /// arrow within a field). Modal keys (Tab/Enter/Esc/Up/Down/etc.)
+    /// are mapped to their own actions before reaching this variant.
+    PfAddInputKey(crossterm::event::KeyEvent),
     PfTaskResult {
         host: String,
         op: crate::app::port_forward_task::OpKind,
