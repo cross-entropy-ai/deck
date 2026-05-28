@@ -1,4 +1,5 @@
 pub mod bridge;
+pub mod form;
 pub mod layout;
 mod menu;
 mod new_session;
@@ -8,6 +9,7 @@ mod settings;
 mod sidebar;
 mod text;
 pub mod theme;
+pub mod widgets;
 
 use crate::keybindings::Keybindings;
 use crate::state::{LayoutMode, RemoteSessionRow, SessionRow, SessionStatus, ViewMode};

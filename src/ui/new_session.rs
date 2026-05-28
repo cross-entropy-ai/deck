@@ -1,11 +1,13 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Paragraph, Widget};
 use ratatui::Frame;
 use ratatui_textarea::TextArea;
 
 use crate::theme::Theme;
+use crate::ui::form::field_row;
+use crate::ui::widgets::{popup_frame, PopupStyle, TextAreaColors};
 
 use super::NewSessionView;
 
@@ -26,15 +28,15 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
     let y = area.y + area.height.saturating_sub(height) / 2;
     let popup = Rect::new(x, y, width, height);
 
-    frame.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .title(" New session ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent))
-        .style(Style::default().bg(theme.bg));
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
+    let inner = popup_frame(
+        frame.buffer_mut(),
+        popup,
+        PopupStyle {
+            title: Some(" New session "),
+            border_fg: theme.accent,
+            bg: theme.bg,
+        },
+    );
 
     // inner row layout: name, path, blank, entries..., blank, [error,] footer
     let n_entry_rows = visible_entries.max(1) as u16;
@@ -155,29 +157,25 @@ fn render_input_row(
     focused: bool,
     theme: &Theme,
 ) {
-    use unicode_width::UnicodeWidthStr;
-
-    let label_w = label.width() as u16;
-    let cols =
-        Layout::horizontal([Constraint::Length(label_w), Constraint::Min(0)]).split(area);
-
     let label_style = if focused {
         Style::default().fg(theme.accent)
     } else {
         Style::default().fg(theme.dim)
     };
-    Paragraph::new(Span::styled(label.to_string(), label_style))
-        .render(cols[0], frame.buffer_mut());
-
-    let mut ta = textarea.clone();
-    ta.set_style(Style::default().fg(theme.text).bg(theme.bg));
-    ta.set_cursor_line_style(Style::default().fg(theme.text).bg(theme.bg));
-    if focused {
-        ta.set_cursor_style(Style::default().bg(theme.accent).fg(theme.bg));
-    } else {
-        ta.set_cursor_style(Style::default().fg(theme.text).bg(theme.bg));
-    }
-    ta.render(cols[1], frame.buffer_mut());
+    field_row(
+        frame.buffer_mut(),
+        area,
+        label,
+        label_style,
+        textarea,
+        focused,
+        TextAreaColors {
+            fg: theme.text,
+            bg: theme.bg,
+            cursor_fg: theme.bg,
+            cursor_bg: theme.accent,
+        },
+    );
 }
 
 /// Compute the first visible index so that `selected` stays in view.

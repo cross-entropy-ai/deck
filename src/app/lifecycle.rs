@@ -1,5 +1,3 @@
-use ratatui::layout::Rect;
-
 use crate::action::Action;
 use crate::nesting_guard::NestingGuard;
 use crate::tmux;
@@ -7,14 +5,6 @@ use crate::tmux;
 use super::App;
 
 impl App {
-    pub(super) fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
-        let popup_width = width.min(area.width);
-        let popup_height = height.min(area.height);
-        let x = area.x + area.width.saturating_sub(popup_width) / 2;
-        let y = area.y + area.height.saturating_sub(popup_height) / 2;
-        Rect::new(x, y, popup_width, popup_height)
-    }
-
     pub(super) fn warning_blocks_action(action: &Action) -> bool {
         matches!(
             action,

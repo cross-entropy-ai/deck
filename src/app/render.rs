@@ -341,7 +341,7 @@ impl App {
                     Block::default().style(Style::default().bg(theme.bg)),
                     main_inner,
                 );
-                let popup_area = Self::centered_rect(main_inner, 56, 8);
+                let popup_area = crate::ui::widgets::centered_rect(main_inner, 56, 8);
                 frame.render_widget(Clear, popup_area);
                 frame.render_widget(warning, popup_area);
             }

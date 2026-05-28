@@ -9,7 +9,7 @@ use crate::keybindings::Keybindings;
 use crate::layout::{
     card_height, context_menu_width, plugin_block_rows, tab_col_ranges, BANNER_MIN_WIDTH,
 };
-use crate::new_session::NewSessionState;
+use crate::new_session::{make_textarea, NewSessionState};
 use crate::update::{UpdateCheckMode, UpdateStatus};
 
 // --- Constants ---
@@ -434,15 +434,6 @@ impl PfFormError {
             PfFormError::TargetHostRequired => "target_host required for -L/-R",
         }
     }
-}
-
-/// Build a single-line `TextArea` pre-filled with `initial`, with the
-/// cursor placed at the end.
-fn make_textarea(initial: &str) -> TextArea<'static> {
-    let mut ta = TextArea::new(vec![initial.to_string()]);
-    // Move cursor to end of line so typing appends.
-    ta.move_cursor(ratatui_textarea::CursorMove::End);
-    ta
 }
 
 impl PfAddForm {

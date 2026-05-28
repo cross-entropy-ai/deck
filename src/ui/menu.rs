@@ -1,12 +1,12 @@
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::layout::context_menu_width;
 use crate::theme::Theme;
+use crate::ui::widgets::{popup_frame, PopupStyle};
 
 pub fn draw_context_menu(
     frame: &mut Frame,
@@ -24,15 +24,15 @@ pub fn draw_context_menu(
 
     let menu_area = Rect::new(x, y, w, h);
 
-    frame.render_widget(Clear, menu_area);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_set(border::ROUNDED)
-        .border_style(Style::default().fg(theme.dim))
-        .style(Style::default().bg(theme.surface));
-    let inner = block.inner(menu_area);
-    frame.render_widget(block, menu_area);
+    let inner = popup_frame(
+        frame.buffer_mut(),
+        menu_area,
+        PopupStyle {
+            title: None,
+            border_fg: theme.dim,
+            bg: theme.surface,
+        },
+    );
 
     let inner_w = inner.width as usize;
     let lines: Vec<Line> = items

@@ -1,13 +1,13 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Block, Paragraph, Widget};
 use ratatui::Frame;
 
 use crate::keybindings::{Command, Keybindings};
 use crate::state::{LayoutMode, ViewMode};
 use crate::theme::Theme;
+use crate::ui::widgets::{popup_frame, style_textarea, PopupStyle, TextAreaColors};
 
 use super::text::format_keys_for;
 use super::{ExcludeEditorView, SettingsView};
@@ -194,16 +194,15 @@ fn draw_keybindings_view(
     let y = area.y + area.height.saturating_sub(popup_height) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
-    frame.render_widget(Clear, popup_area);
-
-    let block = Block::default()
-        .title(" Keybindings ")
-        .borders(Borders::ALL)
-        .border_set(border::ROUNDED)
-        .border_style(Style::default().fg(theme.accent))
-        .style(Style::default().bg(theme.bg));
-    let inner = block.inner(popup_area);
-    frame.render_widget(block, popup_area);
+    let inner = popup_frame(
+        frame.buffer_mut(),
+        popup_area,
+        PopupStyle {
+            title: Some(" Keybindings "),
+            border_fg: theme.accent,
+            bg: theme.bg,
+        },
+    );
 
     let list_rows = inner.height.saturating_sub(3) as usize;
     let total = rows.len();
@@ -273,15 +272,15 @@ fn draw_theme_picker(frame: &mut Frame, area: Rect, settings: &SettingsView, the
     let y = area.y + area.height.saturating_sub(popup_height) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
-    frame.render_widget(Clear, popup_area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_set(border::ROUNDED)
-        .title(" Theme ")
-        .border_style(Style::default().fg(theme.accent))
-        .style(Style::default().bg(theme.surface));
-    let inner = block.inner(popup_area);
-    frame.render_widget(block, popup_area);
+    let inner = popup_frame(
+        frame.buffer_mut(),
+        popup_area,
+        PopupStyle {
+            title: Some(" Theme "),
+            border_fg: theme.accent,
+            bg: theme.surface,
+        },
+    );
 
     let inner_w = inner.width as usize;
     let lines: Vec<Line> = settings
@@ -332,15 +331,15 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
     let y = area.y + area.height.saturating_sub(height) / 2;
     let popup_area = Rect::new(x, y, width, height);
 
-    frame.render_widget(Clear, popup_area);
-
-    let block = Block::default()
-        .title(" Exclude Patterns ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent))
-        .style(Style::default().bg(theme.bg));
-    let inner = block.inner(popup_area);
-    frame.render_widget(block, popup_area);
+    let inner = popup_frame(
+        frame.buffer_mut(),
+        popup_area,
+        PopupStyle {
+            title: Some(" Exclude Patterns "),
+            border_fg: theme.accent,
+            bg: theme.bg,
+        },
+    );
 
     // Build row constraints: one per content line + blank + help.
     let mut constraints: Vec<Constraint> = Vec::new();
@@ -403,9 +402,16 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
         .render(cols[0], frame.buffer_mut());
 
         let mut ta = editor.input.clone();
-        ta.set_style(Style::default().fg(theme.text).bg(theme.surface));
-        ta.set_cursor_line_style(Style::default().fg(theme.text).bg(theme.surface));
-        ta.set_cursor_style(Style::default().bg(theme.accent).fg(theme.bg));
+        style_textarea(
+            &mut ta,
+            true,
+            TextAreaColors {
+                fg: theme.text,
+                bg: theme.surface,
+                cursor_fg: theme.bg,
+                cursor_bg: theme.accent,
+            },
+        );
         ta.render(cols[1], frame.buffer_mut());
         row_idx += 1;
     }

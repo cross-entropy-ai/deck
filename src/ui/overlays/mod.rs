@@ -9,6 +9,7 @@ use ratatui_textarea::TextArea;
 
 use crate::keybindings::{Command, Keybindings};
 use crate::theme::Theme;
+use crate::ui::widgets::{style_textarea, TextAreaColors};
 
 use super::text::format_keys_for;
 
@@ -124,9 +125,16 @@ pub(super) fn draw_rename_input(
     .split(field_area);
 
     let mut ta = textarea.clone();
-    ta.set_style(Style::default().fg(theme.accent).bg(theme.bg));
-    ta.set_cursor_line_style(Style::default().fg(theme.accent).bg(theme.bg));
-    ta.set_cursor_style(Style::default().bg(theme.accent).fg(theme.bg));
+    style_textarea(
+        &mut ta,
+        true,
+        TextAreaColors {
+            fg: theme.accent,
+            bg: theme.bg,
+            cursor_fg: theme.bg,
+            cursor_bg: theme.accent,
+        },
+    );
     ta.render(cols[1], frame.buffer_mut());
 
     Paragraph::new(Line::from(Span::styled(

@@ -2,13 +2,14 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Paragraph, Widget};
 use ratatui_textarea::TextArea;
-use unicode_width::UnicodeWidthStr;
 
 use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
 use crate::state::{PfAddForm, PfField, PortForwardOverlay};
 use crate::theme::Theme;
+use crate::ui::form::field_row;
+use crate::ui::widgets::{centered_rect, popup_frame, PopupStyle, TextAreaColors};
 
 const OVERLAY_WIDTH: u16 = 64;
 
@@ -33,20 +34,19 @@ pub fn draw_port_forward(
     let total_height = body_height + 4;
     let modal = centered_rect(area, OVERLAY_WIDTH, total_height);
 
-    Clear.render(modal, buf);
-
     let title = match &overlay.add_form {
         Some(_) => format!("Port Forward — {}  \u{25b8} add", overlay.host),
         None => format!("Port Forward — {}", overlay.host),
     };
-
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .style(Style::default().bg(theme.surface).fg(theme.text));
-    let inner = block.inner(modal);
-    block.render(modal, buf);
+    let inner = popup_frame(
+        buf,
+        modal,
+        PopupStyle {
+            title: Some(&title),
+            border_fg: theme.text,
+            bg: theme.surface,
+        },
+    );
 
     match &overlay.add_form {
         None => draw_list(buf, inner, forwards, overlay, theme),
@@ -192,11 +192,6 @@ fn render_field_row(
     row: FieldRow<'_>,
 ) {
     let focused = form.focus == row.field && row.enabled;
-
-    // Split the row: label takes its rendered width, textarea gets the rest.
-    let label_w = row.label.width() as u16;
-    let cols = Layout::horizontal([Constraint::Length(label_w), Constraint::Min(0)]).split(area);
-
     let label_style = if focused {
         Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
     } else if row.enabled {
@@ -204,28 +199,23 @@ fn render_field_row(
     } else {
         Style::default().fg(theme.dim)
     };
-    Paragraph::new(Span::styled(row.label.to_string(), label_style)).render(cols[0], buf);
-
-    // Clone the textarea per frame so we can apply focus-dependent styling
-    // without mutating state. TextArea is cheap to clone (single-line, short
-    // input). The focused field gets a visible cursor block; unfocused
-    // fields match their surroundings so no stray block leaks across.
-    let mut ta = row.textarea.clone();
+    // Disabled fields render dim with no cursor; enabled use the modal
+    // surface as the field background.
     let fg = if row.enabled { theme.text } else { theme.dim };
-    ta.set_style(Style::default().fg(fg).bg(theme.surface));
-    // tui-textarea highlights the cursor line by default — that bg leaks
-    // across the entire row. Reset it to the modal surface.
-    ta.set_cursor_line_style(Style::default().fg(fg).bg(theme.surface));
-    if focused {
-        // High-contrast accent block. Using explicit bg+fg (no REVERSED)
-        // so the cell paints even when the cursor sits past end-of-input
-        // (empty cell).
-        ta.set_cursor_style(Style::default().bg(theme.accent).fg(theme.bg));
-    } else {
-        // Match the surrounding cell so the cursor doesn't show.
-        ta.set_cursor_style(Style::default().fg(fg).bg(theme.surface));
-    }
-    ta.render(cols[1], buf);
+    field_row(
+        buf,
+        area,
+        row.label,
+        label_style,
+        row.textarea,
+        focused,
+        TextAreaColors {
+            fg,
+            bg: theme.surface,
+            cursor_fg: theme.bg,
+            cursor_bg: theme.accent,
+        },
+    );
 }
 
 /// One-line data-flow sketch under the form. Substitutes live form
@@ -282,16 +272,5 @@ fn format_forward(f: &ForwardSpec) -> String {
             f.target_port.unwrap_or(0)
         ),
         ForwardMode::Dynamic => format!("-D {}{}", bind, f.listen_port),
-    }
-}
-
-fn centered_rect(area: Rect, w: u16, h: u16) -> Rect {
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
-    Rect {
-        x,
-        y,
-        width: w.min(area.width),
-        height: h.min(area.height),
     }
 }
