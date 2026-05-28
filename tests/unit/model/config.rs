@@ -345,3 +345,48 @@ fn remote_config_forwards_roundtrip() {
     let parsed: RemoteConfig = serde_json::from_str(&s).unwrap();
     assert_eq!(parsed, r);
 }
+
+fn fwd(port: u16) -> ForwardSpec {
+    ForwardSpec {
+        mode: ForwardMode::Local,
+        bind_addr: None,
+        listen_port: port,
+        target_host: Some("localhost".into()),
+        target_port: Some(80),
+    }
+}
+
+#[test]
+fn diff_forwards_added() {
+    let old: Vec<ForwardSpec> = vec![];
+    let new = vec![fwd(8080)];
+    let ops = diff_forwards(&old, &new);
+    assert_eq!(ops.len(), 1);
+    assert!(matches!(&ops[0], ForwardOp::Add(s) if s.listen_port == 8080));
+}
+
+#[test]
+fn diff_forwards_removed() {
+    let old = vec![fwd(8080)];
+    let new: Vec<ForwardSpec> = vec![];
+    let ops = diff_forwards(&old, &new);
+    assert_eq!(ops.len(), 1);
+    assert!(matches!(&ops[0], ForwardOp::Cancel(s) if s.listen_port == 8080));
+}
+
+#[test]
+fn diff_forwards_unchanged_emits_nothing() {
+    let v = vec![fwd(8080)];
+    let ops = diff_forwards(&v, &v);
+    assert!(ops.is_empty());
+}
+
+#[test]
+fn diff_forwards_mixed() {
+    let old = vec![fwd(8080), fwd(9090)];
+    let new = vec![fwd(8080), fwd(7070)];
+    let ops = diff_forwards(&old, &new);
+    assert_eq!(ops.len(), 2);
+    assert!(ops.iter().any(|o| matches!(o, ForwardOp::Cancel(s) if s.listen_port == 9090)));
+    assert!(ops.iter().any(|o| matches!(o, ForwardOp::Add(s) if s.listen_port == 7070)));
+}

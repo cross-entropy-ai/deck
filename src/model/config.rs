@@ -234,6 +234,31 @@ impl Config {
     }
 }
 
+/// Difference between two `Vec<ForwardSpec>` slices: which to add and
+/// which to cancel. Order-insensitive; equal specs (by all fields) are
+/// considered the same. Used by both UI edits (single-item ops) and
+/// hot-reload (bulk).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForwardOp {
+    Add(ForwardSpec),
+    Cancel(ForwardSpec),
+}
+
+pub fn diff_forwards(old: &[ForwardSpec], new: &[ForwardSpec]) -> Vec<ForwardOp> {
+    let mut ops = Vec::new();
+    for o in old {
+        if !new.contains(o) {
+            ops.push(ForwardOp::Cancel(o.clone()));
+        }
+    }
+    for n in new {
+        if !old.contains(n) {
+            ops.push(ForwardOp::Add(n.clone()));
+        }
+    }
+    ops
+}
+
 /// A compiled exclude pattern — either a glob or a regex.
 pub enum ExcludePattern {
     Glob(String),
