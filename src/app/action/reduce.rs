@@ -925,11 +925,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::PfAddInputKey(key) => {
             if let Some(o) = state.overlay.port_forward.as_mut() {
                 if let Some(f) = o.add_form.as_mut() {
-                    if should_forward_key(f, key) {
-                        if let Some(ta) = f.focused_textarea_mut() {
-                            ta.input(key);
-                        }
-                    }
+                    handle_pf_input(f, key);
                 }
             }
         }
@@ -1004,16 +1000,40 @@ fn set_mode(o: &mut Option<PortForwardOverlay>, delta: i32) {
     }
 }
 
-/// Returns false for keys we want to silently swallow before they
-/// reach the textarea — currently just non-digit Char input on the
-/// two port fields, so users can't type values that will fail u16
-/// parsing later. Backspace/Delete/arrows still go through.
-fn should_forward_key(f: &PfAddForm, key: crossterm::event::KeyEvent) -> bool {
+/// Feed a key event to the focused field. Filters non-digit input on
+/// port fields and whitespace on every field; rolls back input that
+/// would push a port outside `u16` range so the user never sees an
+/// invalid value sitting in the form.
+fn handle_pf_input(f: &mut PfAddForm, key: crossterm::event::KeyEvent) {
     use crossterm::event::KeyCode;
-    let is_port_field = matches!(f.focus, PfField::ListenPort | PfField::TargetPort);
-    let is_non_digit_char =
-        matches!(key.code, KeyCode::Char(c) if !c.is_ascii_digit());
-    !(is_port_field && is_non_digit_char)
+    if let KeyCode::Char(c) = key.code {
+        let port_field = matches!(f.focus, PfField::ListenPort | PfField::TargetPort);
+        if port_field && !c.is_ascii_digit() {
+            return;
+        }
+        // Whitespace is never valid in any field — it'd just get trimmed
+        // on save anyway. Block at input so the value the user sees is
+        // the value that's persisted.
+        if c.is_whitespace() {
+            return;
+        }
+    }
+    let port_field = matches!(f.focus, PfField::ListenPort | PfField::TargetPort);
+    let Some(ta) = f.focused_textarea_mut() else { return; };
+    let snapshot = ta.clone();
+    ta.input(key);
+
+    // Rollback if a port field was driven outside `u16` by this keystroke.
+    // Empty is fine (in-progress typing); anything that parses as u16
+    // (0–65535) is fine; everything else (e.g., "99999") is rejected.
+    if port_field {
+        let s = f.field_text(f.focus);
+        if !s.is_empty() && s.parse::<u16>().is_err() {
+            if let Some(ta) = f.focused_textarea_mut() {
+                *ta = snapshot;
+            }
+        }
+    }
 }
 
 /// Finalize an in-flight `AddForward` (lazy persist: only on worker

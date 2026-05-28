@@ -460,8 +460,8 @@ pub enum PfFormError {
 impl PfFormError {
     pub fn message(&self) -> &'static str {
         match self {
-            PfFormError::ListenPortRange => "listen_port must be 1-65535",
-            PfFormError::TargetPortRange => "target_port must be 1-65535",
+            PfFormError::ListenPortRange => "listen_port must be 0-65535",
+            PfFormError::TargetPortRange => "target_port must be 0-65535",
             PfFormError::TargetHostRequired => "target_host required for -L/-R",
         }
     }
@@ -513,14 +513,16 @@ impl PfAddForm {
 
     pub fn validate(&self) -> Result<crate::config::ForwardSpec, PfFormError> {
         use crate::config::{ForwardMode, ForwardSpec};
-        let listen_raw = self.field_text(PfField::ListenPort);
-        let listen_port: u16 = listen_raw
+        // Belt-and-braces: input filtering already blocks whitespace, but
+        // trim defensively so any value that somehow made it through is
+        // persisted clean. Port range is 0..=65535 — `u16::parse` already
+        // enforces the upper bound; port 0 means "let kernel pick" and is
+        // accepted.
+        let listen_port: u16 = self
+            .field_text(PfField::ListenPort)
             .trim()
             .parse()
             .map_err(|_| PfFormError::ListenPortRange)?;
-        if listen_port == 0 {
-            return Err(PfFormError::ListenPortRange);
-        }
         let bind_raw = self.field_text(PfField::BindAddr).trim();
         let bind_addr = if bind_raw.is_empty() {
             None
@@ -546,9 +548,6 @@ impl PfAddForm {
                     .trim()
                     .parse()
                     .map_err(|_| PfFormError::TargetPortRange)?;
-                if target_port == 0 {
-                    return Err(PfFormError::TargetPortRange);
-                }
                 Ok(ForwardSpec {
                     mode: self.mode,
                     bind_addr,

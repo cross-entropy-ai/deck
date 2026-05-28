@@ -105,12 +105,15 @@ fn validate_local_missing_target_host() {
 }
 
 #[test]
-fn validate_local_port_zero_rejected() {
+fn validate_accepts_port_zero() {
+    // SSH treats port 0 as "kernel picks an ephemeral port"; the user
+    // asked for 0-65535 to be valid.
     let mut f = blank_form();
     f.listen_port = ta("0");
     f.target_host = ta("h");
     f.target_port = ta("80");
-    assert_eq!(f.validate(), Err(PfFormError::ListenPortRange));
+    let spec = f.validate().expect("port 0 should be valid");
+    assert_eq!(spec.listen_port, 0);
 }
 
 #[test]

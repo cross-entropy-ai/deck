@@ -655,8 +655,12 @@ fn open_form_with_focus(
     field: crate::state::PfField,
     value: &str,
 ) {
-    use ratatui_textarea::TextArea;
-    let ta = |s: &str| TextArea::new(vec![s.to_string()]);
+    use ratatui_textarea::{CursorMove, TextArea};
+    let ta = |s: &str| {
+        let mut t = TextArea::new(vec![s.to_string()]);
+        t.move_cursor(CursorMove::End);
+        t
+    };
     state.overlay.port_forward = Some(crate::state::PortForwardOverlay {
         host: "h".into(),
         selected: 0,
@@ -711,6 +715,34 @@ fn pf_add_input_allows_non_digits_in_host_fields() {
     }
     let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
     assert_eq!(f.field_text(crate::state::PfField::TargetHost), "h-1.x");
+}
+
+#[test]
+fn pf_add_input_rejects_out_of_range_ports() {
+    use crossterm::event::KeyCode;
+    let mut state = make_test_state(0);
+    // "6553" is fine, but appending '6' would yield "65536" > u16::MAX.
+    open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "6553");
+    crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char('6'))));
+    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    assert_eq!(f.field_text(crate::state::PfField::ListenPort), "6553");
+
+    // "65535" should be acceptable.
+    crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char('5'))));
+    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    assert_eq!(f.field_text(crate::state::PfField::ListenPort), "65535");
+}
+
+#[test]
+fn pf_add_input_blocks_whitespace_in_host_fields() {
+    use crossterm::event::KeyCode;
+    let mut state = make_test_state(0);
+    open_form_with_focus(&mut state, crate::state::PfField::TargetHost, "");
+    for c in ['1', ' ', '2', '\t', '7'] {
+        crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char(c))));
+    }
+    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    assert_eq!(f.field_text(crate::state::PfField::TargetHost), "127");
 }
 
 #[test]

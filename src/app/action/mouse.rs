@@ -38,6 +38,12 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         return Action::None;
     }
 
+    if state.overlay.port_forward.is_some() {
+        // Same rationale as new_session: the modal owns keyboard focus,
+        // so swallow mouse so clicks don't punch through to the sidebar.
+        return Action::None;
+    }
+
     let (on_separator, in_sidebar) = match state.layout_mode {
         LayoutMode::Horizontal => {
             let gap_col = state.sidebar_width;
