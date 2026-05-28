@@ -1057,6 +1057,11 @@ fn byte_offset_of_char(s: &str, char_idx: usize) -> usize {
 }
 
 fn insert_at_cursor(f: &mut PfAddForm, c: char) {
+    // Port fields only accept digits; non-digits are silently dropped
+    // so the user can't type values that will fail u16 parsing later.
+    if matches!(f.focus, PfField::ListenPort | PfField::TargetPort) && !c.is_ascii_digit() {
+        return;
+    }
     let cursor = f.cursor;
     if let Some(s) = focused_field_mut(f) {
         let byte = byte_offset_of_char(s, cursor);

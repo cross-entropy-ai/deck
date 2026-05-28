@@ -703,6 +703,29 @@ fn pf_add_delete_removes_char_at_cursor() {
 }
 
 #[test]
+fn pf_add_input_drops_non_digits_in_port_fields() {
+    let mut state = make_test_state(0);
+    open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "");
+    for c in ['8', 'a', '0', '.', '8', '0'] {
+        crate::action::apply_action(&mut state, Action::PfAddInput(c));
+    }
+    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    assert_eq!(f.listen_port, "8080");
+    assert_eq!(f.cursor, 4);
+}
+
+#[test]
+fn pf_add_input_allows_non_digits_in_host_fields() {
+    let mut state = make_test_state(0);
+    open_form_with_focus(&mut state, crate::state::PfField::TargetHost, "");
+    for c in ['h', '-', '1', '.', 'x'] {
+        crate::action::apply_action(&mut state, Action::PfAddInput(c));
+    }
+    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    assert_eq!(f.target_host, "h-1.x");
+}
+
+#[test]
 fn pf_add_field_next_snaps_cursor_to_end_of_new_field() {
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "8");

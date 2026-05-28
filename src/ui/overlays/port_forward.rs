@@ -24,7 +24,7 @@ pub fn draw_port_forward(
         .unwrap_or_default();
 
     let body_height = if overlay.add_form.is_some() {
-        10
+        12
     } else {
         (forwards.len().max(1) as u16) + 4
     };
@@ -155,6 +155,7 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, theme: &Theme) {
         target_active,
     ));
     lines.push(Line::raw(""));
+    lines.push(flow_line(form, theme));
     lines.push(Line::raw(""));
     lines.push(Line::styled(
         "  [tab] next   [enter] save   [esc] cancel",
@@ -162,6 +163,34 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, theme: &Theme) {
     ));
 
     Paragraph::new(lines).render(area, buf);
+}
+
+/// One-line data-flow sketch under the form. Substitutes live form
+/// values; missing fields render as `?` so the shape is visible from
+/// the moment the form opens.
+fn flow_line<'a>(form: &PfAddForm, theme: &Theme) -> Line<'a> {
+    let bind = if form.bind_addr.is_empty() { "?" } else { form.bind_addr.as_str() };
+    let listen = if form.listen_port.is_empty() { "?" } else { form.listen_port.as_str() };
+    let thost = if form.target_host.is_empty() { "?" } else { form.target_host.as_str() };
+    let tport = if form.target_port.is_empty() { "?" } else { form.target_port.as_str() };
+    let text = match form.mode {
+        // -L: local listener forwards through ssh to the server's view of target.
+        ForwardMode::Local => format!(
+            "  you {}:{}  \u{2500}ssh\u{2500}\u{2192}  server  \u{2500}\u{2192}  {}:{}",
+            bind, listen, thost, tport
+        ),
+        // -R: remote listener tunnels back to client, which delivers to target.
+        ForwardMode::Remote => format!(
+            "  server {}:{}  \u{2500}ssh\u{2500}\u{2192}  you  \u{2500}\u{2192}  {}:{}",
+            bind, listen, thost, tport
+        ),
+        // -D: local SOCKS proxy; client picks destination per connection.
+        ForwardMode::Dynamic => format!(
+            "  you {}:{} (SOCKS)  \u{2500}ssh\u{2500}\u{2192}  *",
+            bind, listen
+        ),
+    };
+    Line::styled(text, Style::default().fg(theme.muted))
 }
 
 fn field_line<'a>(
