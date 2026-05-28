@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::keybindings::Command;
-use crate::state::{AppState, FocusMode, MainView};
+use crate::state::{AppState, FocusMode, MainView, PfField, PortForwardOverlay, SessionTargetRef};
 
 use super::Action;
 
@@ -32,6 +32,10 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
             KeyCode::Enter => Action::MenuConfirm,
             _ => Action::MenuDismiss,
         };
+    }
+
+    if let Some(overlay) = state.overlay.port_forward.as_ref() {
+        return pf_key(key, overlay);
     }
 
     if let Some(cmd) = state.keybindings.lookup(key) {
@@ -127,6 +131,15 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         }
     }
 
+    if key.code == KeyCode::Char('f') {
+        if let Some(target) = state.focus_target() {
+            if let Some(SessionTargetRef::Remote(r)) = state.session_target(target) {
+                return Action::OpenPortForward(r.host.clone());
+            }
+        }
+        return Action::None;
+    }
+
     Action::None
 }
 
@@ -190,6 +203,44 @@ fn theme_picker_key_to_action(key: &KeyEvent) -> Action {
         KeyCode::Char('l') | KeyCode::Right => Action::ThemePickerNext,
         KeyCode::Enter | KeyCode::Char(' ') => Action::ConfirmThemePicker,
         _ => Action::None,
+    }
+}
+
+fn pf_key(key: &KeyEvent, overlay: &PortForwardOverlay) -> Action {
+    use KeyCode::*;
+    if overlay.add_form.is_some() {
+        match key.code {
+            Esc => Action::PfAddCancel,
+            Enter => Action::PfAddSubmit,
+            Tab => Action::PfAddFieldNext,
+            BackTab => Action::PfAddFieldPrev,
+            Left => {
+                if matches!(overlay.add_form.as_ref().unwrap().focus, PfField::Mode) {
+                    Action::PfAddModeLeft
+                } else {
+                    Action::None
+                }
+            }
+            Right => {
+                if matches!(overlay.add_form.as_ref().unwrap().focus, PfField::Mode) {
+                    Action::PfAddModeRight
+                } else {
+                    Action::None
+                }
+            }
+            Backspace => Action::PfAddBackspace,
+            Char(c) => Action::PfAddInput(c),
+            _ => Action::None,
+        }
+    } else {
+        match key.code {
+            Esc => Action::PfClose,
+            Char('a') => Action::PfAddOpen,
+            Char('d') => Action::PfDelete,
+            Up | Char('k') => Action::PfFocusUp,
+            Down | Char('j') => Action::PfFocusDown,
+            _ => Action::None,
+        }
     }
 }
 
