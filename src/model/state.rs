@@ -404,10 +404,21 @@ pub struct RemoteSwitchRequest {
 #[derive(Debug, Clone)]
 pub struct RenameState {
     pub original_name: String,
-    pub input: String,
-    pub cursor: usize,
+    pub input: TextArea<'static>,
     /// `Some(host)` when the rename targets a remote session.
     pub host: Option<String>,
+}
+
+impl RenameState {
+    pub fn new(original_name: String, initial: String, host: Option<String>) -> Self {
+        let mut ta = TextArea::new(vec![initial]);
+        ta.move_cursor(ratatui_textarea::CursorMove::End);
+        Self {
+            original_name,
+            input: ta,
+            host,
+        }
+    }
 }
 
 /// UI state for the exclude pattern editor popup.

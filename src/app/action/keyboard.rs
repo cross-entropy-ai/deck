@@ -14,14 +14,7 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         return match key.code {
             KeyCode::Enter => Action::RenameConfirm,
             KeyCode::Esc => Action::RenameCancel,
-            KeyCode::Backspace => Action::RenameBackspace,
-            KeyCode::Left => Action::RenameCursorLeft,
-            KeyCode::Right => Action::RenameCursorRight,
-            KeyCode::Home => Action::RenameCursorHome,
-            KeyCode::End => Action::RenameCursorEnd,
-            KeyCode::Delete => Action::RenameDelete,
-            KeyCode::Char(ch) => Action::RenameInput(ch),
-            _ => Action::None,
+            _ => Action::RenameInputKey(*key),
         };
     }
 

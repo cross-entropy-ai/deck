@@ -204,67 +204,16 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 }
                 None => return fx,
             };
-            let len = name.len();
-            state.overlay.renaming = Some(RenameState {
-                original_name: name.clone(),
-                input: name,
-                cursor: len,
-                host,
-            });
+            state.overlay.renaming = Some(RenameState::new(name.clone(), name, host));
         }
-        Action::RenameInput(ch) => {
+        Action::RenameInputKey(key) => {
             if let Some(ref mut r) = state.overlay.renaming {
-                r.input.insert(r.cursor, ch);
-                r.cursor += ch.len_utf8();
-            }
-        }
-        Action::RenameBackspace => {
-            if let Some(ref mut r) = state.overlay.renaming {
-                if r.cursor > 0 {
-                    let prev = r.input[..r.cursor]
-                        .chars()
-                        .last()
-                        .map(|c| c.len_utf8())
-                        .unwrap_or(0);
-                    r.cursor -= prev;
-                    r.input.remove(r.cursor);
-                }
-            }
-        }
-        Action::RenameCursorLeft => {
-            if let Some(ref mut r) = state.overlay.renaming {
-                if let Some(prev) = r.input[..r.cursor].chars().last() {
-                    r.cursor -= prev.len_utf8();
-                }
-            }
-        }
-        Action::RenameCursorRight => {
-            if let Some(ref mut r) = state.overlay.renaming {
-                if let Some(next) = r.input[r.cursor..].chars().next() {
-                    r.cursor += next.len_utf8();
-                }
-            }
-        }
-        Action::RenameCursorHome => {
-            if let Some(ref mut r) = state.overlay.renaming {
-                r.cursor = 0;
-            }
-        }
-        Action::RenameCursorEnd => {
-            if let Some(ref mut r) = state.overlay.renaming {
-                r.cursor = r.input.len();
-            }
-        }
-        Action::RenameDelete => {
-            if let Some(ref mut r) = state.overlay.renaming {
-                if r.cursor < r.input.len() {
-                    r.input.remove(r.cursor);
-                }
+                r.input.input(key);
             }
         }
         Action::RenameConfirm => {
             if let Some(r) = state.overlay.renaming.take() {
-                let new_name = r.input.trim().to_string();
+                let new_name = r.input.lines().first().map(String::as_str).unwrap_or("").trim().to_string();
                 if !new_name.is_empty() && new_name != r.original_name {
                     fx.rename_session = Some(RenameRequest {
                         old_name: r.original_name,

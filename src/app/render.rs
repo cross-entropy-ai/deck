@@ -33,11 +33,7 @@ impl App {
         let theme = &THEMES[s.theme_index];
         let confirm_kill = s.overlay.confirm_kill;
         let show_help = s.overlay.show_help;
-        let rename_input = s
-            .overlay
-            .renaming
-            .as_ref()
-            .map(|r| (r.input.clone(), r.cursor));
+        let rename_input = s.overlay.renaming.as_ref().map(|r| &r.input);
         let context_menu = s.overlay.context_menu.clone();
         let new_session_overlay = s.overlay.new_session.clone();
         let port_forward_overlay = s.overlay.port_forward.clone();
@@ -197,7 +193,7 @@ impl App {
                     theme,
                     show_help,
                     confirm_kill: confirm_name.as_deref(),
-                    rename_input: rename_input.as_ref().map(|(s, c)| (s.as_str(), *c)),
+                    rename_input,
                     show_borders,
                     tabs_mode: layout_mode == LayoutMode::Vertical,
                     spinner_frame: &spinner_frame,

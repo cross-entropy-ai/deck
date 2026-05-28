@@ -364,76 +364,70 @@ fn settings_adjust_view_mode_toggles() {
     assert!(fx.save_config);
 }
 
-fn renaming(input: &str, cursor: usize) -> RenameState {
-    RenameState {
-        original_name: input.to_string(),
-        input: input.to_string(),
-        cursor,
-        host: None,
-    }
+fn rename_state(initial: &str) -> RenameState {
+    RenameState::new(initial.to_string(), initial.to_string(), None)
+}
+
+fn rename_input_text(state: &AppState) -> &str {
+    state
+        .overlay
+        .renaming
+        .as_ref()
+        .and_then(|r| r.input.lines().first().map(String::as_str))
+        .unwrap_or("")
+}
+
+fn key(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
 }
 
 #[test]
-fn rename_cursor_left_steps_back_one_char() {
+fn rename_input_key_appends_char() {
+    use crossterm::event::KeyCode;
     let mut state = make_test_state(1);
-    state.overlay.renaming = Some(renaming("hello", 3));
-    apply_action(&mut state, Action::RenameCursorLeft);
-    assert_eq!(state.overlay.renaming.as_ref().unwrap().cursor, 2);
+    state.overlay.renaming = Some(rename_state("hello"));
+    apply_action(&mut state, Action::RenameInputKey(key(KeyCode::Char('!'))));
+    assert_eq!(rename_input_text(&state), "hello!");
 }
 
 #[test]
-fn rename_cursor_left_at_zero_is_noop() {
+fn rename_input_key_backspace_deletes() {
+    use crossterm::event::KeyCode;
     let mut state = make_test_state(1);
-    state.overlay.renaming = Some(renaming("hello", 0));
-    apply_action(&mut state, Action::RenameCursorLeft);
-    assert_eq!(state.overlay.renaming.as_ref().unwrap().cursor, 0);
+    state.overlay.renaming = Some(rename_state("hello"));
+    apply_action(&mut state, Action::RenameInputKey(key(KeyCode::Backspace)));
+    assert_eq!(rename_input_text(&state), "hell");
 }
 
 #[test]
-fn rename_cursor_right_advances_over_multibyte_char() {
-    // 中文 = 3 bytes per char in UTF-8.
+fn rename_confirm_produces_side_effect() {
     let mut state = make_test_state(1);
-    state.overlay.renaming = Some(renaming("中文abc", 0));
-    apply_action(&mut state, Action::RenameCursorRight);
-    assert_eq!(state.overlay.renaming.as_ref().unwrap().cursor, 3);
+    // Build a RenameState with original "old" but current input "new-name".
+    let rs = RenameState::new("old".to_string(), "new-name".to_string(), None);
+    assert_eq!(rs.original_name, "old");
+    state.overlay.renaming = Some(rs);
+    let fx = apply_action(&mut state, Action::RenameConfirm);
+    assert!(state.overlay.renaming.is_none());
+    let req = fx.rename_session.expect("rename_session effect");
+    assert_eq!(req.old_name, "old");
+    assert_eq!(req.new_name, "new-name");
 }
 
 #[test]
-fn rename_cursor_right_at_end_is_noop() {
+fn rename_confirm_noop_when_unchanged() {
     let mut state = make_test_state(1);
-    state.overlay.renaming = Some(renaming("hi", 2));
-    apply_action(&mut state, Action::RenameCursorRight);
-    assert_eq!(state.overlay.renaming.as_ref().unwrap().cursor, 2);
+    state.overlay.renaming = Some(rename_state("same"));
+    let fx = apply_action(&mut state, Action::RenameConfirm);
+    assert!(state.overlay.renaming.is_none());
+    assert!(fx.rename_session.is_none());
 }
 
 #[test]
-fn rename_cursor_home_and_end_jump_to_extremes() {
+fn rename_cancel_clears_overlay() {
     let mut state = make_test_state(1);
-    state.overlay.renaming = Some(renaming("hello", 3));
-    apply_action(&mut state, Action::RenameCursorHome);
-    assert_eq!(state.overlay.renaming.as_ref().unwrap().cursor, 0);
-    apply_action(&mut state, Action::RenameCursorEnd);
-    assert_eq!(state.overlay.renaming.as_ref().unwrap().cursor, 5);
-}
-
-#[test]
-fn rename_delete_removes_char_at_cursor_without_moving() {
-    let mut state = make_test_state(1);
-    state.overlay.renaming = Some(renaming("abcd", 1));
-    apply_action(&mut state, Action::RenameDelete);
-    let r = state.overlay.renaming.as_ref().unwrap();
-    assert_eq!(r.input, "acd");
-    assert_eq!(r.cursor, 1);
-}
-
-#[test]
-fn rename_delete_at_end_is_noop() {
-    let mut state = make_test_state(1);
-    state.overlay.renaming = Some(renaming("abc", 3));
-    apply_action(&mut state, Action::RenameDelete);
-    let r = state.overlay.renaming.as_ref().unwrap();
-    assert_eq!(r.input, "abc");
-    assert_eq!(r.cursor, 3);
+    state.overlay.renaming = Some(rename_state("hello"));
+    apply_action(&mut state, Action::RenameCancel);
+    assert!(state.overlay.renaming.is_none());
 }
 
 fn picker_state_with(input: &str, entries: Vec<String>) -> AppState {
@@ -675,10 +669,6 @@ fn open_form_with_focus(
         }),
         status: None,
     });
-}
-
-fn key(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
-    crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
 }
 
 #[test]

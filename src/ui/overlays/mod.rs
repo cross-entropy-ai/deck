@@ -1,9 +1,11 @@
 pub mod port_forward;
 
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Widget};
 use ratatui::Frame;
+use ratatui_textarea::TextArea;
 
 use crate::keybindings::{Command, Keybindings};
 use crate::theme::Theme;
@@ -91,62 +93,46 @@ pub(super) fn draw_confirm_kill(
 
 pub(super) fn draw_rename_input(
     frame: &mut Frame,
-    area: ratatui::layout::Rect,
+    area: Rect,
     theme: &Theme,
-    input: &str,
-    cursor: usize,
+    textarea: &TextArea<'static>,
 ) {
-    use unicode_width::UnicodeWidthStr;
+    let rows = Layout::vertical([
+        Constraint::Length(1), // top pad
+        Constraint::Length(1), // title
+        Constraint::Length(1), // pad
+        Constraint::Length(1), // text field
+        Constraint::Length(1), // pad
+        Constraint::Length(1), // hint
+        Constraint::Min(0),    // tail
+    ])
+    .split(area);
 
-    let max_w = area.width.saturating_sub(4) as usize;
+    Paragraph::new(Line::from(Span::styled(
+        "  Rename session",
+        Style::default().fg(theme.text),
+    )))
+    .style(Style::default().bg(theme.bg))
+    .render(rows[1], frame.buffer_mut());
 
-    let (display, cursor_pos) = if input.width() > max_w {
-        let mut start = 0;
-        for (i, _ch) in input.char_indices() {
-            if input[i..].width() <= max_w {
-                start = i;
-                break;
-            }
-        }
-        let display = &input[start..];
-        let cursor_pos = cursor.saturating_sub(start);
-        (display, cursor_pos)
-    } else {
-        (input, cursor)
-    };
+    // Render the textarea into the field row, indented by 2.
+    let field_area = rows[3];
+    let cols = Layout::horizontal([
+        Constraint::Length(2),
+        Constraint::Min(0),
+    ])
+    .split(field_area);
 
-    let cursor_pos = cursor_pos.min(display.len());
-    let before = &display[..cursor_pos];
-    let after = &display[cursor_pos..];
+    let mut ta = textarea.clone();
+    ta.set_style(Style::default().fg(theme.accent).bg(theme.bg));
+    ta.set_cursor_line_style(Style::default().fg(theme.accent).bg(theme.bg));
+    ta.set_cursor_style(Style::default().bg(theme.accent).fg(theme.bg));
+    ta.render(cols[1], frame.buffer_mut());
 
-    let (cursor_char, rest) = if let Some(ch) = after.chars().next() {
-        let len = ch.len_utf8();
-        (&after[..len], &after[len..])
-    } else {
-        (" ", "")
-    };
-
-    let lines = vec![
-        Line::raw(""),
-        Line::from(Span::styled(
-            "  Rename session",
-            Style::default().fg(theme.text),
-        )),
-        Line::raw(""),
-        Line::from(vec![
-            Span::styled("  ", Style::default()),
-            Span::styled(before, Style::default().fg(theme.accent)),
-            Span::styled(cursor_char, Style::default().fg(theme.bg).bg(theme.accent)),
-            Span::styled(rest, Style::default().fg(theme.accent)),
-        ]),
-        Line::raw(""),
-        Line::from(Span::styled(
-            "  Enter confirm / Esc cancel",
-            Style::default().fg(theme.muted),
-        )),
-    ];
-    frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(theme.bg)),
-        area,
-    );
+    Paragraph::new(Line::from(Span::styled(
+        "  Enter confirm / Esc cancel",
+        Style::default().fg(theme.muted),
+    )))
+    .style(Style::default().bg(theme.bg))
+    .render(rows[5], frame.buffer_mut());
 }

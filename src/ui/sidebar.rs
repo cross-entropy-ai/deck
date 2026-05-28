@@ -16,6 +16,7 @@ use crate::state::{
 };
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
+use ratatui_textarea::TextArea;
 
 use super::overlays::{draw_confirm_kill, draw_help, draw_rename_input};
 use super::text::{
@@ -43,7 +44,7 @@ pub struct SidebarProps<'a> {
     pub theme: &'a Theme,
     pub show_help: bool,
     pub confirm_kill: Option<&'a str>,
-    pub rename_input: Option<(&'a str, usize)>,
+    pub rename_input: Option<&'a TextArea<'static>>,
     pub show_borders: bool,
     pub tabs_mode: bool,
     pub spinner_frame: &'a str,
@@ -169,8 +170,8 @@ pub fn draw_sidebar(
     } else if let Some(name) = props.confirm_kill {
         draw_confirm_kill(frame, sessions_area, props.theme, name);
         Vec::new()
-    } else if let Some((input, cursor)) = props.rename_input {
-        draw_rename_input(frame, sessions_area, props.theme, input, cursor);
+    } else if let Some(textarea) = props.rename_input {
+        draw_rename_input(frame, sessions_area, props.theme, textarea);
         Vec::new()
     } else {
         draw_sessions(

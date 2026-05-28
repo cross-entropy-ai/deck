@@ -20,8 +20,7 @@ pub enum Action {
     CancelKill,
     ReorderSession(i32),
     StartRename,
-    RenameInput(char),
-    RenameBackspace,
+    RenameInputKey(crossterm::event::KeyEvent),
     RenameConfirm,
     RenameCancel,
 
@@ -99,12 +98,6 @@ pub enum Action {
     ResizeSidebarHeight(u16),
     StartDrag,
     StopDrag,
-
-    RenameCursorLeft,
-    RenameCursorRight,
-    RenameCursorHome,
-    RenameCursorEnd,
-    RenameDelete,
 
     Resize(u16, u16),
 
