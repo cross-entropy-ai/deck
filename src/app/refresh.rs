@@ -13,7 +13,12 @@ impl App {
             // logic, so we don't need to plumb their slave_ttys.
             slave_tty: self.local_terminal.pty.slave_tty.clone(),
             exclude_patterns: self.state.exclude_patterns.clone(),
-            remotes: self.remotes.clone(),
+            remotes: self
+                .state
+                .config_remotes
+                .iter()
+                .map(|r| r.host.clone())
+                .collect(),
         }
     }
 
@@ -34,8 +39,20 @@ impl App {
     }
 
     fn apply_remote(&mut self, rows: Vec<RemoteSnapshotRow>) {
+        // Refresh results may carry rows for hosts the user just removed
+        // — the query was in flight when "Remove from list" landed.
+        // Drop those so a removed host can't blink back into the sidebar.
+        // `config_remotes` is the single source of truth for which hosts
+        // are configured.
+        let configured: std::collections::HashSet<&str> = self
+            .state
+            .config_remotes
+            .iter()
+            .map(|r| r.host.as_str())
+            .collect();
         self.state.remote_sessions = rows
             .into_iter()
+            .filter(|r| configured.contains(r.host.as_str()))
             .map(|r| RemoteSessionRow {
                 host: r.host,
                 name: r.name,

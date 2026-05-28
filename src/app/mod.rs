@@ -75,7 +75,7 @@ pub struct App {
     /// the background spawner finishes for each host.
     remote_terminals: HashMap<String, TerminalPane>,
     /// Per-host connection state. Populated for every host in
-    /// `self.remotes` from app startup onward.
+    /// `state.config_remotes` from app startup onward.
     remote_status: HashMap<String, RemoteConnStatus>,
     /// Background worker that spawns `ssh tmux attach` PTYs without
     /// blocking the UI.
@@ -93,10 +93,6 @@ pub struct App {
     update_checker: Option<crate::update::UpdateChecker>,
     upgrade_instance: Option<PluginInstance>,
     last_update_request: Option<Instant>,
-    /// Configured remote SSH hosts whose tmux sessions are surfaced
-    /// alongside local ones. Captured once at startup from
-    /// `config.remotes`; the `deck remote` CLI is the only writer.
-    remotes: Vec<String>,
     /// Set to true after a session switch so the next render call
     /// wipes the host terminal before drawing — clears any residue the
     /// terminal emulator leaves from the previous session.
@@ -225,7 +221,6 @@ impl App {
             update_checker,
             upgrade_instance: None,
             last_update_request,
-            remotes,
             needs_full_redraw: false,
             port_forward_tx,
             port_forward_rx: pf_result_rx,

@@ -540,22 +540,19 @@ impl App {
                 let _ = self.port_forward_tx.send(msg);
             }
         }
-        // Keep `self.remotes` (the canonical host list the refresh
-        // worker sees) in sync with the reloaded config. Without this,
-        // `request_refresh()` below would re-query the *previous*
-        // host set — added hosts never get polled and removed hosts
-        // keep polling. Mirrors the startup wiring in `App::new`.
-        self.remotes = self
+        // Commit the new config; `build_refresh_request` reads
+        // hosts straight from `state.config_remotes`, so the refresh
+        // triggered below automatically picks up the diff.
+        self.state.config_remotes = new_remotes;
+
+        // Evict sidebar rows for hosts that just disappeared so they
+        // don't linger until the next refresh result lands.
+        let kept: std::collections::HashSet<&str> = self
             .state
             .config_remotes
             .iter()
-            .map(|r| r.host.clone())
+            .map(|r| r.host.as_str())
             .collect();
-        // Clear sidebar rows for hosts that just disappeared; the next
-        // refresh round will repopulate the rest. Without this, removed
-        // hosts keep their (now-stale) section in the sidebar.
-        let kept: std::collections::HashSet<&str> =
-            self.remotes.iter().map(String::as_str).collect();
         self.state
             .remote_sessions
             .retain(|s| kept.contains(s.host.as_str()));
