@@ -108,6 +108,14 @@ fn config_path() -> PathBuf {
     config_path_for("deck")
 }
 
+/// Modification time of the on-disk config file, if present. Returns
+/// `None` if the file is missing or its mtime can't be read — callers
+/// treat that as "no change to react to", letting the watcher stay
+/// quiet when the user hasn't created a config yet.
+pub fn config_mtime() -> Option<std::time::SystemTime> {
+    fs::metadata(config_path()).ok().and_then(|m| m.modified().ok())
+}
+
 fn legacy_config_path() -> PathBuf {
     config_path_for("tmux-sidebar")
 }
