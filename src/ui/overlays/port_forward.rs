@@ -182,10 +182,18 @@ fn field_line<'a>(
     } else {
         Style::default().fg(theme.dim)
     };
-    let cursor = if focused { "\u{2588}" } else { "" };
+    let body = if focused {
+        let chars: Vec<char> = value.chars().collect();
+        let pos = form.cursor.min(chars.len());
+        let left: String = chars[..pos].iter().collect();
+        let right: String = chars[pos..].iter().collect();
+        format!("[{}\u{2588}{}]", left, right)
+    } else {
+        format!("[{}]", value)
+    };
     Line::from(vec![
         Span::styled(label.to_string(), label_style),
-        Span::styled(format!("[{}{}]", value, cursor), label_style),
+        Span::styled(body, label_style),
     ])
 }
 

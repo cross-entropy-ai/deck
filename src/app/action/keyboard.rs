@@ -218,17 +218,18 @@ fn pf_key(key: &KeyEvent, overlay: &PortForwardOverlay) -> Action {
                 if matches!(form.focus, PfField::Mode) {
                     Action::PfAddModeLeft
                 } else {
-                    Action::None
+                    Action::PfAddCursorLeft
                 }
             }
             Right => {
                 if matches!(form.focus, PfField::Mode) {
                     Action::PfAddModeRight
                 } else {
-                    Action::None
+                    Action::PfAddCursorRight
                 }
             }
             Backspace => Action::PfAddBackspace,
+            Delete => Action::PfAddDelete,
             Char(c) => Action::PfAddInput(c),
             _ => Action::None,
         }

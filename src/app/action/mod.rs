@@ -132,6 +132,9 @@ pub enum Action {
     PfAddModeRight,
     PfAddInput(char),
     PfAddBackspace,
+    PfAddDelete,
+    PfAddCursorLeft,
+    PfAddCursorRight,
     PfTaskResult {
         host: String,
         op: crate::app::port_forward_task::OpKind,

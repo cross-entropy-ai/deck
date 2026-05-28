@@ -74,6 +74,7 @@ fn blank_form() -> PfAddForm {
         listen_port: String::new(),
         target_host: String::new(),
         target_port: String::new(),
+        cursor: 0,
         submitting: false,
     }
 }

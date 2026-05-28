@@ -649,3 +649,68 @@ fn pf_task_result_marks_host_unreachable_on_master_failure() {
     assert!(row.unreachable, "host should be flagged unreachable after master failure");
     assert!(!row.loading, "loading should clear after master failure");
 }
+
+fn open_form_with_focus(state: &mut crate::state::AppState, field: crate::state::PfField, value: &str) {
+    state.overlay.port_forward = Some(crate::state::PortForwardOverlay {
+        host: "h".into(),
+        selected: 0,
+        add_form: Some(crate::state::PfAddForm {
+            mode: crate::config::ForwardMode::Local,
+            focus: field,
+            bind_addr: if matches!(field, crate::state::PfField::BindAddr) { value.into() } else { String::new() },
+            listen_port: if matches!(field, crate::state::PfField::ListenPort) { value.into() } else { String::new() },
+            target_host: if matches!(field, crate::state::PfField::TargetHost) { value.into() } else { String::new() },
+            target_port: if matches!(field, crate::state::PfField::TargetPort) { value.into() } else { String::new() },
+            cursor: value.chars().count(),
+            submitting: false,
+        }),
+        status: None,
+    });
+}
+
+#[test]
+fn pf_add_cursor_left_then_input_inserts_mid_field() {
+    let mut state = make_test_state(0);
+    open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "808");
+    // Move cursor one left → between '0' and '8'
+    crate::action::apply_action(&mut state, Action::PfAddCursorLeft);
+    crate::action::apply_action(&mut state, Action::PfAddInput('1'));
+    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    assert_eq!(f.listen_port, "8018");
+    assert_eq!(f.cursor, 3);
+}
+
+#[test]
+fn pf_add_backspace_deletes_char_before_cursor() {
+    let mut state = make_test_state(0);
+    open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "8080");
+    crate::action::apply_action(&mut state, Action::PfAddCursorLeft); // cursor at 3
+    crate::action::apply_action(&mut state, Action::PfAddBackspace);  // removes '8'
+    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    assert_eq!(f.listen_port, "800");
+    assert_eq!(f.cursor, 2);
+}
+
+#[test]
+fn pf_add_delete_removes_char_at_cursor() {
+    let mut state = make_test_state(0);
+    open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "8080");
+    crate::action::apply_action(&mut state, Action::PfAddCursorLeft); // cursor at 3
+    crate::action::apply_action(&mut state, Action::PfAddDelete);     // removes '0' at idx 3
+    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    assert_eq!(f.listen_port, "808");
+    assert_eq!(f.cursor, 3);
+}
+
+#[test]
+fn pf_add_field_next_snaps_cursor_to_end_of_new_field() {
+    let mut state = make_test_state(0);
+    open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "8");
+    // Bump cursor to 0, then tab forward. New focus is TargetHost (empty),
+    // so cursor should land at 0 (= length of empty string).
+    crate::action::apply_action(&mut state, Action::PfAddCursorLeft);
+    crate::action::apply_action(&mut state, Action::PfAddFieldNext);
+    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    assert_eq!(f.focus, crate::state::PfField::TargetHost);
+    assert_eq!(f.cursor, 0);
+}

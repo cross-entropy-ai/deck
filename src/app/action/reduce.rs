@@ -910,6 +910,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if let Some(o) = state.overlay.port_forward.as_mut() {
                 if let Some(f) = o.add_form.as_mut() {
                     f.focus = next_field(f.focus, f.mode);
+                    f.cursor_to_end();
                 }
             }
         }
@@ -917,6 +918,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if let Some(o) = state.overlay.port_forward.as_mut() {
                 if let Some(f) = o.add_form.as_mut() {
                     f.focus = prev_field(f.focus, f.mode);
+                    f.cursor_to_end();
                 }
             }
         }
@@ -925,14 +927,40 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::PfAddInput(c) => {
             if let Some(o) = state.overlay.port_forward.as_mut() {
                 if let Some(f) = o.add_form.as_mut() {
-                    push_char(f, c);
+                    insert_at_cursor(f, c);
                 }
             }
         }
         Action::PfAddBackspace => {
             if let Some(o) = state.overlay.port_forward.as_mut() {
                 if let Some(f) = o.add_form.as_mut() {
-                    pop_char(f);
+                    backspace_at_cursor(f);
+                }
+            }
+        }
+        Action::PfAddDelete => {
+            if let Some(o) = state.overlay.port_forward.as_mut() {
+                if let Some(f) = o.add_form.as_mut() {
+                    delete_at_cursor(f);
+                }
+            }
+        }
+        Action::PfAddCursorLeft => {
+            if let Some(o) = state.overlay.port_forward.as_mut() {
+                if let Some(f) = o.add_form.as_mut() {
+                    if f.cursor > 0 {
+                        f.cursor -= 1;
+                    }
+                }
+            }
+        }
+        Action::PfAddCursorRight => {
+            if let Some(o) = state.overlay.port_forward.as_mut() {
+                if let Some(f) = o.add_form.as_mut() {
+                    let len = f.focused_len();
+                    if f.cursor < len {
+                        f.cursor += 1;
+                    }
                 }
             }
         }
@@ -1002,30 +1030,67 @@ fn set_mode(o: &mut Option<PortForwardOverlay>, delta: i32) {
                 && matches!(f.focus, PfField::TargetHost | PfField::TargetPort)
             {
                 f.focus = PfField::ListenPort;
+                f.cursor_to_end();
             }
         }
     }
 }
 
-fn push_char(f: &mut PfAddForm, c: char) {
+/// Borrow the focused String field (None for Mode).
+fn focused_field_mut(f: &mut PfAddForm) -> Option<&mut String> {
     match f.focus {
-        PfField::Mode => {}
-        PfField::BindAddr => f.bind_addr.push(c),
-        PfField::ListenPort => f.listen_port.push(c),
-        PfField::TargetHost => f.target_host.push(c),
-        PfField::TargetPort => f.target_port.push(c),
+        PfField::Mode => None,
+        PfField::BindAddr => Some(&mut f.bind_addr),
+        PfField::ListenPort => Some(&mut f.listen_port),
+        PfField::TargetHost => Some(&mut f.target_host),
+        PfField::TargetPort => Some(&mut f.target_port),
     }
 }
 
-fn pop_char(f: &mut PfAddForm) {
-    let s = match f.focus {
-        PfField::Mode => return,
-        PfField::BindAddr => &mut f.bind_addr,
-        PfField::ListenPort => &mut f.listen_port,
-        PfField::TargetHost => &mut f.target_host,
-        PfField::TargetPort => &mut f.target_port,
-    };
-    s.pop();
+/// Byte offset corresponding to the `cursor`-th char of `s`. Returns
+/// `s.len()` if cursor is past the end (i.e., clamps to append point).
+fn byte_offset_of_char(s: &str, char_idx: usize) -> usize {
+    s.char_indices()
+        .nth(char_idx)
+        .map(|(b, _)| b)
+        .unwrap_or(s.len())
+}
+
+fn insert_at_cursor(f: &mut PfAddForm, c: char) {
+    let cursor = f.cursor;
+    if let Some(s) = focused_field_mut(f) {
+        let byte = byte_offset_of_char(s, cursor);
+        s.insert(byte, c);
+    } else {
+        return;
+    }
+    f.cursor += 1;
+}
+
+fn backspace_at_cursor(f: &mut PfAddForm) {
+    if f.cursor == 0 {
+        return;
+    }
+    let cursor = f.cursor;
+    if let Some(s) = focused_field_mut(f) {
+        let byte = byte_offset_of_char(s, cursor - 1);
+        s.remove(byte);
+    } else {
+        return;
+    }
+    f.cursor -= 1;
+}
+
+fn delete_at_cursor(f: &mut PfAddForm) {
+    let cursor = f.cursor;
+    if let Some(s) = focused_field_mut(f) {
+        // Cursor past end → nothing to delete.
+        if cursor >= s.chars().count() {
+            return;
+        }
+        let byte = byte_offset_of_char(s, cursor);
+        s.remove(byte);
+    }
 }
 
 /// Finalize an in-flight `AddForward` (lazy persist: only on worker

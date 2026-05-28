@@ -438,6 +438,11 @@ pub struct PfAddForm {
     pub listen_port: String,
     pub target_host: String,
     pub target_port: String,
+    /// Char-based cursor position within the focused text field.
+    /// On focus change it snaps to the new field's end; Left/Right
+    /// move within bounds; Char/Backspace/Del operate at this index.
+    /// Meaningless when `focus == PfField::Mode`.
+    pub cursor: usize,
     /// True while a validated spec is in flight to the worker. The
     /// form stays rendered (read-only) until `PfTaskResult` for this
     /// host's Forward op clears or fails the submission. Lazy
@@ -472,8 +477,27 @@ impl PfAddForm {
             listen_port: String::new(),
             target_host: "127.0.0.1".to_string(),
             target_port: String::new(),
+            cursor: 0,
             submitting: false,
         }
+    }
+
+    /// Char count of the field currently in focus; 0 for `Mode`.
+    pub fn focused_len(&self) -> usize {
+        match self.focus {
+            PfField::Mode => 0,
+            PfField::BindAddr => self.bind_addr.chars().count(),
+            PfField::ListenPort => self.listen_port.chars().count(),
+            PfField::TargetHost => self.target_host.chars().count(),
+            PfField::TargetPort => self.target_port.chars().count(),
+        }
+    }
+
+    /// Snap cursor to the end of the focused field. Called on focus
+    /// change so the cursor never refers to a position past the new
+    /// field's length.
+    pub fn cursor_to_end(&mut self) {
+        self.cursor = self.focused_len();
     }
 
     pub fn validate(&self) -> Result<crate::config::ForwardSpec, PfFormError> {
