@@ -430,40 +430,18 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::CloseNewSessionPicker => {
             state.overlay.new_session = None;
         }
-        Action::NewSessionInput(ch) => {
+        Action::NewSessionInputKey(key) => {
             if let Some(ns) = state.overlay.new_session.as_mut() {
                 use crate::new_session::PickerFocus;
                 match ns.focus {
                     PickerFocus::Name => {
-                        ns.name.insert(ns.name_cursor, ch);
-                        ns.name_cursor += ch.len_utf8();
+                        ns.name.input(key);
                     }
                     PickerFocus::Dir => {
-                        let parent_before = crate::new_session::split_input(&ns.input).0.to_string();
-                        ns.input.insert(ns.cursor, ch);
-                        ns.cursor += ch.len_utf8();
+                        let parent_before = crate::new_session::split_input(ns.input_str()).0.to_string();
+                        ns.input.input(key);
                         ns.refilter();
-                        let parent_after = crate::new_session::split_input(&ns.input).0;
-                        if parent_before != parent_after {
-                            fx.reread_new_session_entries = true;
-                        }
-                    }
-                }
-                ns.error = None;
-            }
-        }
-        Action::NewSessionBackspace => {
-            if let Some(ns) = state.overlay.new_session.as_mut() {
-                use crate::new_session::PickerFocus;
-                match ns.focus {
-                    PickerFocus::Name => {
-                        crate::new_session::smart_backspace(&mut ns.name, &mut ns.name_cursor);
-                    }
-                    PickerFocus::Dir => {
-                        let parent_before = crate::new_session::split_input(&ns.input).0.to_string();
-                        crate::new_session::smart_backspace(&mut ns.input, &mut ns.cursor);
-                        ns.refilter();
-                        let parent_after = crate::new_session::split_input(&ns.input).0;
+                        let parent_after = crate::new_session::split_input(ns.input_str()).0.to_string();
                         if parent_before != parent_after {
                             fx.reread_new_session_entries = true;
                         }
@@ -483,15 +461,16 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::NewSessionDirUp => {
             if let Some(ns) = state.overlay.new_session.as_mut() {
-                let parent_before = crate::new_session::split_input(&ns.input).0.to_string();
-                if ns.input.ends_with('/') && ns.input.len() > 1 {
-                    ns.input.pop();
+                let parent_before = crate::new_session::split_input(ns.input_str()).0.to_string();
+                let mut s = ns.input_str().to_string();
+                if s.ends_with('/') && s.len() > 1 {
+                    s.pop();
                 }
-                let new_end = ns.input.rfind('/').map(|i| i + 1).unwrap_or(0);
-                ns.input.truncate(new_end);
-                ns.cursor = ns.input.len();
+                let new_end = s.rfind('/').map(|i| i + 1).unwrap_or(0);
+                s.truncate(new_end);
+                ns.input = crate::new_session::make_textarea(&s);
                 ns.refilter();
-                let parent_after = crate::new_session::split_input(&ns.input).0;
+                let parent_after = crate::new_session::split_input(ns.input_str()).0.to_string();
                 if parent_before != parent_after {
                     fx.reread_new_session_entries = true;
                 }
@@ -502,13 +481,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if let Some(ns) = state.overlay.new_session.as_mut() {
                 if let Some(&idx) = ns.filtered.get(ns.selected) {
                     let entry = ns.entries[idx].clone();
-                    let (parent, _leaf) = crate::new_session::split_input(&ns.input);
-                    let parent_owned = parent.to_string();
-                    ns.input.clear();
-                    ns.input.push_str(&parent_owned);
-                    ns.input.push_str(&entry);
-                    ns.input.push('/');
-                    ns.cursor = ns.input.len();
+                    let (parent, _leaf) = crate::new_session::split_input(ns.input_str());
+                    let new_path = format!("{}{}/", parent, entry);
+                    ns.input = crate::new_session::make_textarea(&new_path);
                     ns.refilter();
                     fx.reread_new_session_entries = true;
                     ns.error = None;
@@ -532,52 +507,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 }
             }
         }
-        Action::NewSessionCursorLeft => {
-            if let Some(ns) = state.overlay.new_session.as_mut() {
-                use crate::new_session::PickerFocus;
-                let (s, c) = match ns.focus {
-                    PickerFocus::Name => (&ns.name, &mut ns.name_cursor),
-                    PickerFocus::Dir => (&ns.input, &mut ns.cursor),
-                };
-                if let Some(prev) = s[..*c].chars().last() {
-                    *c -= prev.len_utf8();
-                }
-            }
-        }
-        Action::NewSessionCursorRight => {
-            if let Some(ns) = state.overlay.new_session.as_mut() {
-                use crate::new_session::PickerFocus;
-                let (s, c) = match ns.focus {
-                    PickerFocus::Name => (&ns.name, &mut ns.name_cursor),
-                    PickerFocus::Dir => (&ns.input, &mut ns.cursor),
-                };
-                if let Some(next) = s[*c..].chars().next() {
-                    *c += next.len_utf8();
-                }
-            }
-        }
-        Action::NewSessionCursorHome => {
-            if let Some(ns) = state.overlay.new_session.as_mut() {
-                use crate::new_session::PickerFocus;
-                match ns.focus {
-                    PickerFocus::Name => ns.name_cursor = 0,
-                    PickerFocus::Dir => ns.cursor = 0,
-                }
-            }
-        }
-        Action::NewSessionCursorEnd => {
-            if let Some(ns) = state.overlay.new_session.as_mut() {
-                use crate::new_session::PickerFocus;
-                match ns.focus {
-                    PickerFocus::Name => ns.name_cursor = ns.name.len(),
-                    PickerFocus::Dir => ns.cursor = ns.input.len(),
-                }
-            }
-        }
         Action::NewSessionClear => {
             if let Some(ns) = state.overlay.new_session.as_mut() {
-                ns.input.clear();
-                ns.cursor = 0;
+                ns.input = crate::new_session::make_textarea("");
                 ns.refilter();
                 fx.reread_new_session_entries = true;
                 ns.error = None;
@@ -586,17 +518,18 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::NewSessionDeleteSegment => {
             if let Some(ns) = state.overlay.new_session.as_mut() {
                 // Trim trailing chars back to (and including) the previous `/`.
-                let mut new_end = ns.cursor;
-                while new_end > 0 && !ns.input[..new_end].ends_with('/') {
-                    let prev = ns.input[..new_end]
+                let s = ns.input_str().to_string();
+                let mut new_end = s.len();
+                while new_end > 0 && !s[..new_end].ends_with('/') {
+                    let prev = s[..new_end]
                         .chars()
                         .last()
                         .map(|c| c.len_utf8())
                         .unwrap_or(0);
                     new_end -= prev;
                 }
-                ns.input.truncate(new_end);
-                ns.cursor = new_end;
+                let truncated = &s[..new_end];
+                ns.input = crate::new_session::make_textarea(truncated);
                 ns.refilter();
                 // Always reread: the user explicitly cleared the segment they
                 // were typing and expects a fresh listing of the parent dir.

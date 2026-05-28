@@ -426,7 +426,8 @@ impl App {
                 let home = std::path::PathBuf::from(
                     std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
                 );
-                let (parent, _leaf) = split_input(&ns.input);
+                let input_owned = ns.input_str().to_string();
+                let (parent, _leaf) = split_input(&input_owned);
                 let parent_path = expand_path(parent, &home);
                 let (entries, error) = read_dir_entries(&parent_path);
                 ns.entries = entries;
@@ -542,7 +543,7 @@ impl App {
 
     fn open_new_session_picker(&mut self) {
         use crate::new_session::{
-            auto_session_name, expand_path, split_input, NewSessionState, PickerFocus,
+            auto_session_name, expand_path, make_textarea, split_input, NewSessionState, PickerFocus,
         };
 
         // Starting dir: focused session's dir if any, else $HOME.
@@ -553,15 +554,15 @@ impl App {
             .and_then(|&i| self.state.sessions.get(i))
             .map(|s| s.dir.clone())
             .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
-        let mut input = start_dir;
-        if !input.ends_with('/') {
-            input.push('/');
+        let mut input_str = start_dir;
+        if !input_str.ends_with('/') {
+            input_str.push('/');
         }
 
         let home = std::path::PathBuf::from(
             std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
         );
-        let (parent, _leaf) = split_input(&input);
+        let (parent, _leaf) = split_input(&input_str);
         let parent_path = expand_path(parent, &home);
         let (entries, error) = read_dir_entries(&parent_path);
 
@@ -571,14 +572,12 @@ impl App {
             .iter()
             .map(|s| s.name.as_str())
             .collect();
-        let name = auto_session_name(&existing, self.state.sessions.len());
+        let name_str = auto_session_name(&existing, self.state.sessions.len());
 
         let mut ns = NewSessionState {
-            name_cursor: name.len(),
-            name,
+            name: make_textarea(&name_str),
             focus: PickerFocus::Name,
-            cursor: input.len(),
-            input,
+            input: make_textarea(&input_str),
             entries,
             filtered: vec![],
             selected: 0,
@@ -594,7 +593,7 @@ impl App {
         // Read name first (immutable borrow on overlay)
         let name = {
             let ns = self.state.overlay.new_session.as_ref()?;
-            ns.name.trim().to_string()
+            ns.name_str().trim().to_string()
         };
 
         // Validate name.
@@ -606,7 +605,7 @@ impl App {
         }
 
         // Now resolve and validate dir.
-        let input = self.state.overlay.new_session.as_ref()?.input.clone();
+        let input = self.state.overlay.new_session.as_ref()?.input_str().to_string();
         let home = std::path::PathBuf::from(
             std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
         );

@@ -138,11 +138,9 @@ pub struct ExcludeEditorView<'a> {
 }
 
 pub struct NewSessionView<'a> {
-    pub name: &'a str,
-    pub name_cursor: usize,
+    pub name: &'a ratatui_textarea::TextArea<'static>,
     pub focus_name: bool,
-    pub input: &'a str,
-    pub cursor: usize,
+    pub input: &'a ratatui_textarea::TextArea<'static>,
     pub entries: &'a [String],
     pub filtered: &'a [usize],
     pub selected: usize,

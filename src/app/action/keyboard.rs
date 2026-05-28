@@ -248,19 +248,7 @@ fn name_field_key_to_action(key: &KeyEvent) -> Action {
         KeyCode::Esc => Action::CloseNewSessionPicker,
         KeyCode::Enter => Action::NewSessionConfirm,
         KeyCode::Tab => Action::NewSessionSwitchFocus,
-        KeyCode::Backspace => Action::NewSessionBackspace,
-        KeyCode::Left => Action::NewSessionCursorLeft,
-        KeyCode::Right => Action::NewSessionCursorRight,
-        KeyCode::Home => Action::NewSessionCursorHome,
-        KeyCode::End => Action::NewSessionCursorEnd,
-        KeyCode::Char(ch)
-            if !key
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-        {
-            Action::NewSessionInput(ch)
-        }
-        _ => Action::None,
+        _ => Action::NewSessionInputKey(*key),
     }
 }
 
@@ -270,20 +258,16 @@ fn dir_field_key_to_action(key: &KeyEvent) -> Action {
         KeyCode::Esc => Action::CloseNewSessionPicker,
         KeyCode::Enter => Action::NewSessionConfirm,
         KeyCode::Tab => Action::NewSessionSwitchFocus,
-        KeyCode::Backspace => Action::NewSessionBackspace,
         KeyCode::Up => Action::NewSessionPrev,
         KeyCode::Down => Action::NewSessionNext,
         KeyCode::Left => Action::NewSessionDirUp,
         KeyCode::Right => Action::NewSessionDirEnter,
-        KeyCode::Home => Action::NewSessionCursorHome,
-        KeyCode::End => Action::NewSessionCursorEnd,
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             Action::NewSessionClear
         }
         KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             Action::NewSessionDeleteSegment
         }
-        KeyCode::Char(ch) => Action::NewSessionInput(ch),
-        _ => Action::None,
+        _ => Action::NewSessionInputKey(*key),
     }
 }

@@ -433,14 +433,12 @@ fn rename_cancel_clears_overlay() {
 }
 
 fn picker_state_with(input: &str, entries: Vec<String>) -> AppState {
-    use crate::new_session::{NewSessionState, PickerFocus};
+    use crate::new_session::{make_textarea, NewSessionState, PickerFocus};
     let mut state = make_test_state(0);
     let mut ns = NewSessionState {
-        name: String::new(),
-        name_cursor: 0,
+        name: make_textarea(""),
         focus: PickerFocus::Dir,
-        input: input.to_string(),
-        cursor: input.len(),
+        input: make_textarea(input),
         entries,
         filtered: vec![],
         selected: 0,
@@ -451,23 +449,41 @@ fn picker_state_with(input: &str, entries: Vec<String>) -> AppState {
     state
 }
 
+fn ns_input_str(state: &AppState) -> &str {
+    state
+        .overlay
+        .new_session
+        .as_ref()
+        .map(|ns| ns.input_str())
+        .unwrap_or("")
+}
+
+fn ns_name_str(state: &AppState) -> &str {
+    state
+        .overlay
+        .new_session
+        .as_ref()
+        .map(|ns| ns.name_str())
+        .unwrap_or("")
+}
+
 #[test]
 fn new_session_input_inserts_at_cursor() {
+    use crossterm::event::KeyCode;
     let mut state = picker_state_with("~/foo/", vec!["bar".into(), "baz".into()]);
-    let fx = apply_action(&mut state, Action::NewSessionInput('b'));
+    let fx = apply_action(&mut state, Action::NewSessionInputKey(key(KeyCode::Char('b'))));
     let ns = state.overlay.new_session.as_ref().unwrap();
-    assert_eq!(ns.input, "~/foo/b");
-    assert_eq!(ns.cursor, 7);
+    assert_eq!(ns.input_str(), "~/foo/b");
     assert_eq!(ns.filtered, vec![0, 1]); // both still match "b"
     assert!(!fx.reread_new_session_entries); // parent didn't change
 }
 
 #[test]
 fn new_session_input_crossing_slash_sets_reread() {
+    use crossterm::event::KeyCode;
     let mut state = picker_state_with("~/foo", vec!["foo".into()]);
-    let fx = apply_action(&mut state, Action::NewSessionInput('/'));
-    let ns = state.overlay.new_session.as_ref().unwrap();
-    assert_eq!(ns.input, "~/foo/");
+    let fx = apply_action(&mut state, Action::NewSessionInputKey(key(KeyCode::Char('/'))));
+    assert_eq!(ns_input_str(&state), "~/foo/");
     assert!(fx.reread_new_session_entries);
 }
 
@@ -494,8 +510,7 @@ fn new_session_next_clamped_to_filtered_len() {
 fn new_session_delete_segment_goes_back_to_slash() {
     let mut state = picker_state_with("~/foo/bar", vec![]);
     let fx = apply_action(&mut state, Action::NewSessionDeleteSegment);
-    let ns = state.overlay.new_session.as_ref().unwrap();
-    assert_eq!(ns.input, "~/foo/");
+    assert_eq!(ns_input_str(&state), "~/foo/");
     assert!(fx.reread_new_session_entries);
 }
 
@@ -520,21 +535,20 @@ fn new_session_switch_focus_toggles_field() {
 
 #[test]
 fn new_session_input_routes_to_name_when_focused_on_name() {
+    use crossterm::event::KeyCode;
     let mut state = picker_state_with("~/foo/", vec![]);
     state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
 
-    apply_action(&mut state, Action::NewSessionInput('x'));
-    let ns = state.overlay.new_session.as_ref().unwrap();
-    assert_eq!(ns.name, "x");
-    assert_eq!(ns.input, "~/foo/"); // dir untouched
+    apply_action(&mut state, Action::NewSessionInputKey(key(KeyCode::Char('x'))));
+    assert_eq!(ns_name_str(&state), "x");
+    assert_eq!(ns_input_str(&state), "~/foo/"); // dir untouched
 }
 
 #[test]
 fn new_session_dir_up_drops_segment() {
     let mut state = picker_state_with("~/foo/bar/", vec![]);
     let fx = apply_action(&mut state, Action::NewSessionDirUp);
-    let ns = state.overlay.new_session.as_ref().unwrap();
-    assert_eq!(ns.input, "~/foo/");
+    assert_eq!(ns_input_str(&state), "~/foo/");
     assert!(fx.reread_new_session_entries);
 }
 
@@ -542,8 +556,7 @@ fn new_session_dir_up_drops_segment() {
 fn new_session_dir_enter_descends_into_selected() {
     let mut state = picker_state_with("~/foo/", vec!["bar".into(), "baz".into()]);
     let fx = apply_action(&mut state, Action::NewSessionDirEnter);
-    let ns = state.overlay.new_session.as_ref().unwrap();
-    assert_eq!(ns.input, "~/foo/bar/");
+    assert_eq!(ns_input_str(&state), "~/foo/bar/");
     assert!(fx.reread_new_session_entries);
 }
 
