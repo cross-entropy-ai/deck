@@ -204,10 +204,11 @@ pub enum SessionTargetRef<'a> {
 /// logic, and mouse hit-test all walk the same items in lockstep.
 #[derive(Debug, Clone)]
 pub enum SidebarItemData {
-    /// Group header label, plus the 0-based index of the host among
+    /// Remote host name, plus the 0-based index of the host among
     /// distinct remote hosts in render order — used to cycle the
-    /// divider accent color.
-    Header { label: String, host_idx: usize },
+    /// divider accent color. The renderer formats the `@host` label and
+    /// reuses the bare host for the divider's click target.
+    Header { host: String, host_idx: usize },
     /// A session row at the given flat index — matches the
     /// `FocusTarget` numbering: local rows first, then remotes. The
     /// renderer pairs this index with a `&[&dyn SidebarSession]` slice
@@ -909,7 +910,7 @@ impl AppState {
                 if show_host_headers {
                     layout.push_header(
                         SidebarItemData::Header {
-                            label: format!("  @{}", r.host),
+                            host: r.host.clone(),
                             host_idx,
                         },
                         1,

@@ -40,21 +40,6 @@ pub fn filter_entries(entries: &[String], leaf: &str) -> Vec<usize> {
         .collect()
 }
 
-/// Delete one char before the cursor. Only used in unit tests now; new
-/// code feeds KeyEvents directly to the textarea.
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn smart_backspace(input: &mut String, cursor: &mut usize) {
-    if *cursor > 0 {
-        let prev = input[..*cursor]
-            .chars()
-            .last()
-            .map(|c| c.len_utf8())
-            .unwrap_or(0);
-        *cursor -= prev;
-        input.remove(*cursor);
-    }
-}
-
 /// Build a single-line `TextArea` pre-filled with `s`, cursor at end.
 pub fn make_textarea(s: &str) -> TextArea<'static> {
     let mut ta = TextArea::new(vec![s.to_string()]);

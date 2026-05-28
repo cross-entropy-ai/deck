@@ -821,8 +821,10 @@ fn forwards_len(state: &AppState, host: &str) -> usize {
         .unwrap_or(0)
 }
 
-fn next_field(f: PfField, mode: ForwardMode) -> PfField {
-    let order: &[PfField] = match mode {
+/// Field navigation order for the port-forward add form. Dynamic mode
+/// omits the target host/port, so it stops after the listen port.
+fn pf_field_order(mode: ForwardMode) -> &'static [PfField] {
+    match mode {
         ForwardMode::Dynamic => &[PfField::Mode, PfField::BindAddr, PfField::ListenPort],
         _ => &[
             PfField::Mode,
@@ -831,24 +833,23 @@ fn next_field(f: PfField, mode: ForwardMode) -> PfField {
             PfField::TargetHost,
             PfField::TargetPort,
         ],
-    };
-    let i = order.iter().position(|x| *x == f).unwrap_or(0);
-    order[(i + 1) % order.len()]
+    }
+}
+
+/// Step `delta` positions through `pf_field_order`, wrapping at both ends.
+fn cycle_field(f: PfField, mode: ForwardMode, delta: isize) -> PfField {
+    let order = pf_field_order(mode);
+    let n = order.len() as isize;
+    let i = order.iter().position(|x| *x == f).unwrap_or(0) as isize;
+    order[(((i + delta) % n + n) % n) as usize]
+}
+
+fn next_field(f: PfField, mode: ForwardMode) -> PfField {
+    cycle_field(f, mode, 1)
 }
 
 fn prev_field(f: PfField, mode: ForwardMode) -> PfField {
-    let order: &[PfField] = match mode {
-        ForwardMode::Dynamic => &[PfField::Mode, PfField::BindAddr, PfField::ListenPort],
-        _ => &[
-            PfField::Mode,
-            PfField::BindAddr,
-            PfField::ListenPort,
-            PfField::TargetHost,
-            PfField::TargetPort,
-        ],
-    };
-    let i = order.iter().position(|x| *x == f).unwrap_or(0);
-    order[(i + order.len() - 1) % order.len()]
+    cycle_field(f, mode, -1)
 }
 
 fn set_mode(o: &mut Option<PortForwardOverlay>, delta: i32) {

@@ -19,11 +19,11 @@ pub fn draw_port_forward(
     remotes: &[RemoteConfig],
     theme: &Theme,
 ) {
-    let forwards: Vec<ForwardSpec> = remotes
+    let forwards: &[ForwardSpec] = remotes
         .iter()
         .find(|r| r.host == overlay.host)
-        .map(|r| r.forwards.clone())
-        .unwrap_or_default();
+        .map(|r| r.forwards.as_slice())
+        .unwrap_or(&[]);
 
     let body_height = if overlay.add_form.is_some() {
         12
@@ -49,7 +49,7 @@ pub fn draw_port_forward(
     block.render(modal, buf);
 
     match &overlay.add_form {
-        None => draw_list(buf, inner, &forwards, overlay, theme),
+        None => draw_list(buf, inner, forwards, overlay, theme),
         Some(form) => draw_form(buf, inner, form, theme),
     }
 }

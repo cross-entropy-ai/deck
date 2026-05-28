@@ -280,14 +280,12 @@ fn draw_sessions(
             width,
         };
         match &item.data {
-            SidebarItemData::Header { label, host_idx } => {
+            SidebarItemData::Header { host, host_idx } => {
                 let accent = host_accent(ctx.theme, *host_idx);
                 let line_idx = lines.len();
-                let col_range = render_group_header(&mut lines, label, accent, width, ctx.theme);
-                // Extract hostname: label is "  @<host>", strip leading
-                // whitespace and '@' to recover the bare hostname.
-                let host = label.trim_start().trim_start_matches('@').to_string();
-                pending_hits.push((line_idx, col_range, host));
+                let label = format!("@{host}");
+                let col_range = render_group_header(&mut lines, &label, accent, width, ctx.theme);
+                pending_hits.push((line_idx, col_range, host.clone()));
             }
             SidebarItemData::Session { session_idx } => {
                 let Some(&session) = props.sessions.get(*session_idx) else {

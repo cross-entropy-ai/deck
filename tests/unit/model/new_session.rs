@@ -48,24 +48,6 @@ fn filter_entries_shows_dotfiles_when_leaf_starts_with_dot() {
 }
 
 #[test]
-fn smart_backspace_deletes_char_mid_leaf() {
-    let mut s = "~/foo/ba".to_string();
-    let mut c = s.len();
-    smart_backspace(&mut s, &mut c);
-    assert_eq!(s, "~/foo/b");
-    assert_eq!(c, s.len());
-}
-
-#[test]
-fn smart_backspace_empty_input_noop() {
-    let mut s = String::new();
-    let mut c = 0;
-    smart_backspace(&mut s, &mut c);
-    assert_eq!(s, "");
-    assert_eq!(c, 0);
-}
-
-#[test]
 fn expand_path_tilde() {
     let home = PathBuf::from("/home/u");
     assert_eq!(expand_path("~", &home), PathBuf::from("/home/u"));

@@ -77,8 +77,8 @@ impl ForwardSpec {
     }
 
     /// Render this rule as the corresponding `ssh -L/-R/-D` argument
-    /// string. Used in tests; not called from production paths yet.
-    #[allow(dead_code)]
+    /// string. Test-only helper over `ssh_flag_and_value`.
+    #[cfg(test)]
     pub fn to_ssh_flag(&self) -> String {
         let (flag, value) = self.ssh_flag_and_value();
         format!("{} {}", flag, value)
