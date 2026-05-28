@@ -170,6 +170,21 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::CancelKill => {
             state.overlay.confirm_kill = false;
         }
+        Action::RemoveRemoteFromList(host) => {
+            // Mirror `deck remote remove <host>` on the in-memory copy:
+            // drop the host from config_remotes (which save_config writes
+            // to disk) and clear any session rows for it so the sidebar
+            // updates before the next refresh round lands.
+            state.config_remotes.retain(|r| r.host != host);
+            state.remote_sessions.retain(|s| s.host != host);
+            let total = state.focusable_count();
+            if total > 0 && state.focused >= total {
+                state.focused = total - 1;
+            }
+            fx.save_config = true;
+            fx.refresh_sessions = true;
+            fx.remove_remote_host = Some(host);
+        }
         Action::ReorderSession(direction) => {
             let Some(&session_idx) = state.filtered.get(state.focused) else {
                 return fx;
@@ -615,15 +630,21 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 MenuKind::Session { focus, .. } => {
                     state.focused = focus.0;
                     let inner = match selected_label {
-                        Some("Switch") => {
-                            let inner = apply_action(state, Action::SwitchProject);
-                            state.focus_mode = FocusMode::Main;
-                            inner
-                        }
                         Some("Rename") => apply_action(state, Action::StartRename),
                         Some("Kill") => apply_action(state, Action::KillSession),
                         Some("Move up") => apply_action(state, Action::ReorderSession(-1)),
                         Some("Move down") => apply_action(state, Action::ReorderSession(1)),
+                        Some("Remove from list") => {
+                            // Only remote rows expose this item; pull the
+                            // host from the focused target.
+                            match state.session_target(focus) {
+                                Some(SessionTargetRef::Remote(row)) => {
+                                    let host = row.host.clone();
+                                    apply_action(state, Action::RemoveRemoteFromList(host))
+                                }
+                                _ => SideEffect::default(),
+                            }
+                        }
                         _ => SideEffect::default(),
                     };
                     fx.merge(inner);

@@ -24,14 +24,17 @@ const SIDEBAR_HEIGHT_MAX_BORDERED: u16 = 6;
 const MIN_MAIN_WIDTH: u16 = 10;
 const MIN_MAIN_HEIGHT: u16 = 1;
 
+// "Switch" is dropped — the focus already triggers the switch, so the
+// menu item was redundant.
 const SESSION_MENU_ITEMS: &'static [&'static str] =
-    &["Switch", "Rename", "Kill", "Move up", "Move down"];
+    &["Rename", "Kill", "Move up", "Move down"];
 // Remote sessions live on a different tmux server, so the
 // deck-side `session_order` (which drives Move up/down) doesn't
-// apply. Switch/Rename/Kill all map to `ssh <host> tmux <cmd>`
-// against the host's server, where `(host, name)` uniquely
-// identifies the session.
-const REMOTE_SESSION_MENU_ITEMS: &'static [&'static str] = &["Switch", "Rename", "Kill"];
+// apply. Rename/Kill map to `ssh <host> tmux <cmd>` against the
+// host's server; "Remove from list" detaches the host from deck's
+// config (equivalent to `deck remote remove <host>`).
+const REMOTE_SESSION_MENU_ITEMS: &'static [&'static str] =
+    &["Rename", "Kill", "Remove from list"];
 const HOST_DIVIDER_MENU_ITEMS: &'static [&'static str] = &["Port Forward"];
 const GLOBAL_MENU_ITEMS: &'static [&'static str] = &[
     "New session",
@@ -316,6 +319,11 @@ pub struct SideEffect {
     /// used to live in `App::create_new_session` now lives in
     /// `App::open_new_session_picker` and is editable via the name input.
     pub create_session: Option<CreateSessionRequest>,
+    /// Detach a remote host from deck (equivalent to `deck remote
+    /// remove <host>`). Dispatch sends `Op::StopHost` to the
+    /// port-forward worker; the state mutation + config save happen
+    /// in the reducer.
+    pub remove_remote_host: Option<String>,
     /// Dispatch should open the new-session picker overlay. Fired by
     /// the global menu's "New session" item; uses the focused session's
     /// dir as the picker's starting point.
@@ -351,6 +359,9 @@ impl SideEffect {
         }
         if other.create_session.is_some() {
             self.create_session = other.create_session;
+        }
+        if other.remove_remote_host.is_some() {
+            self.remove_remote_host = other.remove_remote_host;
         }
         self.open_new_session_picker |= other.open_new_session_picker;
         self.reread_new_session_entries |= other.reread_new_session_entries;

@@ -751,6 +751,72 @@ fn pf_add_input_blocks_whitespace_in_host_fields() {
 }
 
 #[test]
+fn remove_remote_from_list_drops_host_and_signals_stop() {
+    use crate::state::RemoteSessionRow;
+    let mut state = make_test_state(0);
+    state.config_remotes = vec![
+        crate::config::RemoteConfig { host: "h1".into(), forwards: vec![] },
+        crate::config::RemoteConfig { host: "h2".into(), forwards: vec![] },
+    ];
+    state.remote_sessions = vec![
+        RemoteSessionRow {
+            host: "h1".into(),
+            name: "a".into(),
+            dir: "/".into(),
+            unreachable: false,
+            loading: false,
+        },
+        RemoteSessionRow {
+            host: "h2".into(),
+            name: "b".into(),
+            dir: "/".into(),
+            unreachable: false,
+            loading: false,
+        },
+    ];
+
+    let fx = crate::action::apply_action(&mut state, Action::RemoveRemoteFromList("h1".into()));
+
+    assert_eq!(state.config_remotes.len(), 1);
+    assert_eq!(state.config_remotes[0].host, "h2");
+    assert_eq!(state.remote_sessions.len(), 1);
+    assert_eq!(state.remote_sessions[0].host, "h2");
+    assert!(fx.save_config);
+    assert!(fx.refresh_sessions);
+    assert_eq!(fx.remove_remote_host.as_deref(), Some("h1"));
+}
+
+#[test]
+fn remote_menu_includes_remove_from_list_last() {
+    use crate::state::{session_menu_items, RemoteSessionRow, SessionTargetRef};
+    let row = RemoteSessionRow {
+        host: "h".into(),
+        name: "s".into(),
+        dir: "/".into(),
+        unreachable: false,
+        loading: false,
+    };
+    let items = session_menu_items(&SessionTargetRef::Remote(&row));
+    assert_eq!(items.last().copied(), Some("Remove from list"));
+    assert!(!items.contains(&"Switch"));
+}
+
+#[test]
+fn local_menu_has_no_switch_or_remove() {
+    use crate::state::{session_menu_items, SessionRow, SessionStatus, SessionTargetRef};
+    let row = SessionRow {
+        name: "s".into(),
+        dir: "/".into(),
+        is_current: false,
+        idle_seconds: 0,
+        status: SessionStatus::default(),
+    };
+    let items = session_menu_items(&SessionTargetRef::Local(&row));
+    assert!(!items.contains(&"Switch"));
+    assert!(!items.contains(&"Remove from list"));
+}
+
+#[test]
 fn pf_add_field_next_changes_focus() {
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "8");

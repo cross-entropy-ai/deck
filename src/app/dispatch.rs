@@ -412,6 +412,14 @@ impl App {
             self.save_config();
         }
 
+        if let Some(ref host) = fx.remove_remote_host {
+            // Tear down the ControlMaster (and any forwards riding on
+            // it) so the host stops occupying SSH state once detached.
+            let _ = self.port_forward_tx.send(
+                crate::app::port_forward_task::Op::StopHost { host: host.clone() },
+            );
+        }
+
         if fx.apply_tmux_theme {
             tmux::apply_theme(&THEMES[self.state.theme_index]);
         }

@@ -19,6 +19,10 @@ pub enum Action {
     ConfirmKill,
     CancelKill,
     ReorderSession(i32),
+    /// Detach a remote host from deck's config — equivalent to
+    /// `deck remote remove <host>`. Triggered from the remote-session
+    /// right-click menu's "Remove from list".
+    RemoveRemoteFromList(String),
     StartRename,
     RenameInputKey(crossterm::event::KeyEvent),
     RenameConfirm,
