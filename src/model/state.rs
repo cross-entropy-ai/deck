@@ -31,6 +31,7 @@ const SESSION_MENU_ITEMS: &'static [&'static str] =
 // against the host's server, where `(host, name)` uniquely
 // identifies the session.
 const REMOTE_SESSION_MENU_ITEMS: &'static [&'static str] = &["Switch", "Rename", "Kill"];
+const HOST_DIVIDER_MENU_ITEMS: &'static [&'static str] = &["Port Forward"];
 const GLOBAL_MENU_ITEMS: &'static [&'static str] = &[
     "New session",
     "Toggle layout",
@@ -96,6 +97,12 @@ pub enum MenuKind {
         items: &'static [&'static str],
     },
     Global,
+    /// Click on the `[…]` button on a remote host divider. Single
+    /// item today (`Port Forward`); extendable.
+    HostDivider {
+        host: String,
+        items: &'static [&'static str],
+    },
 }
 
 impl MenuKind {
@@ -103,8 +110,13 @@ impl MenuKind {
         match self {
             MenuKind::Session { items, .. } => items,
             MenuKind::Global => GLOBAL_MENU_ITEMS,
+            MenuKind::HostDivider { items, .. } => items,
         }
     }
+}
+
+pub fn host_divider_menu_items() -> &'static [&'static str] {
+    HOST_DIVIDER_MENU_ITEMS
 }
 
 /// Menu items shown after right-clicking a session row. The action
@@ -277,6 +289,15 @@ impl SidebarLayout {
         }
         None
     }
+}
+
+/// Click-region for the `[…]` button on a remote-host divider. The
+/// sidebar renderer fills `divider_hits` after each render; mouse
+/// hit-testing consults it before `focus_at_row()`.
+#[derive(Debug, Clone)]
+pub struct DividerHit {
+    pub host: String,
+    pub rect: Rect,
 }
 
 // --- Side effects ---
@@ -532,6 +553,8 @@ pub struct OverlayState {
     pub context_menu: Option<ContextMenu>,
     pub exclude_editor: Option<ExcludeEditorState>,
     pub new_session: Option<NewSessionState>,
+    /// Port-forward overlay for a single host. See `PortForwardOverlay`.
+    pub port_forward: Option<PortForwardOverlay>,
 }
 
 // --- Settings page state ---
@@ -612,6 +635,15 @@ pub struct AppState {
     /// TTL — see `RELOAD_STATUS_OK_TTL` / `RELOAD_STATUS_ERR_TTL`.
     pub reload_status: Option<ReloadStatus>,
     pub reload_status_at: Option<Instant>,
+
+    /// Click-regions for divider `[…]` buttons, refilled by the sidebar
+    /// renderer each frame. Read by mouse dispatch.
+    pub divider_hits: Vec<DividerHit>,
+
+    /// Mirror of `Config.remotes` so reducers can read per-host forwards
+    /// without round-tripping through dispatch. Kept in sync by startup
+    /// and `reload_config`.
+    pub config_remotes: Vec<crate::config::RemoteConfig>,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -686,6 +718,8 @@ impl AppState {
             banner_upgrade_bounds: None,
             reload_status: None,
             reload_status_at: None,
+            divider_hits: Vec::new(),
+            config_remotes: Vec::new(),
         }
     }
 

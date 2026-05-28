@@ -787,6 +787,8 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     };
                     fx.merge(inner);
                 }
+                // T8 will flesh this out; for now just close the menu.
+                MenuKind::HostDivider { .. } => {}
             }
         }
         Action::MenuDismiss => {
