@@ -788,8 +788,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     };
                     fx.merge(inner);
                 }
-                // T8 will flesh this out; for now just close the menu.
-                MenuKind::HostDivider { .. } => {}
+                MenuKind::HostDivider { host, .. } => {
+                    // Item 0 = "Port Forward"
+                    if menu.selected == 0 {
+                        let inner = apply_action(state, Action::OpenPortForward(host.clone()));
+                        fx.merge(inner);
+                    }
+                }
             }
         }
         Action::MenuDismiss => {

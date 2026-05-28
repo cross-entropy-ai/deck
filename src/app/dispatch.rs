@@ -239,6 +239,14 @@ impl App {
                 self.reload_config();
                 false
             }
+            Action::PfAddSubmit => {
+                self.pf_add_submit();
+                false
+            }
+            Action::PfDelete => {
+                self.pf_delete_selected();
+                false
+            }
             Action::NewSessionConfirm => {
                 if let Some(req) = self.confirm_new_session() {
                     let mut fx = crate::state::SideEffect::default();
@@ -600,6 +608,101 @@ impl App {
 
         if tmux::new_session(name, &dir_str).is_some() {
             self.switch_client(name);
+        }
+    }
+
+    /// Validate the add form. On validate-failure: set status, form stays
+    /// open, no worker call. On validate-success: send `AddForward` to
+    /// worker, mark form `submitting=true`, set status to "applying...".
+    /// **Lazy persist:** config is NOT modified here; the reducer for
+    /// `PfTaskResult` writes it on worker success.
+    fn pf_add_submit(&mut self) {
+        let Some(overlay) = self.state.overlay.port_forward.as_mut() else {
+            return;
+        };
+        let Some(form) = overlay.add_form.as_mut() else {
+            return;
+        };
+        if form.submitting {
+            return; // ignore double-Enter
+        }
+        let spec = match form.validate() {
+            Ok(s) => s,
+            Err(e) => {
+                overlay.status = Some(format!("err: {}", e.message()));
+                return;
+            }
+        };
+        let host = overlay.host.clone();
+        form.submitting = true;
+        overlay.status = Some("applying...".into());
+        let _ = self.port_forward_tx.send(
+            crate::app::port_forward_task::Op::AddForward { host, spec },
+        );
+    }
+
+    /// Cancel-then-remove. Spec semantics: remove from config regardless
+    /// of worker outcome (avoid ghost entries). Save via the existing
+    /// `save_config` path.
+    fn pf_delete_selected(&mut self) {
+        let (host, spec) = {
+            let Some(overlay) = self.state.overlay.port_forward.as_ref() else {
+                return;
+            };
+            let host = overlay.host.clone();
+            let idx = overlay.selected;
+            let Some(spec) = self
+                .state
+                .config_remotes
+                .iter()
+                .find(|r| r.host == host)
+                .and_then(|r| r.forwards.get(idx))
+                .cloned()
+            else {
+                return;
+            };
+            (host, spec)
+        };
+
+        persist_forward(
+            &mut self.state.config_remotes,
+            &host,
+            spec.clone(),
+            false,
+        );
+        self.save_config();
+
+        let new_len = self
+            .state
+            .config_remotes
+            .iter()
+            .find(|r| r.host == host)
+            .map(|r| r.forwards.len())
+            .unwrap_or(0);
+        if let Some(overlay) = self.state.overlay.port_forward.as_mut() {
+            if overlay.selected >= new_len && new_len > 0 {
+                overlay.selected = new_len - 1;
+            }
+            overlay.status = Some("cancelling...".into());
+        }
+
+        let _ = self.port_forward_tx.send(
+            crate::app::port_forward_task::Op::CancelForward { host, spec },
+        );
+    }
+}
+
+fn persist_forward(
+    remotes: &mut Vec<crate::config::RemoteConfig>,
+    host: &str,
+    spec: crate::config::ForwardSpec,
+    add: bool,
+) {
+    if let Some(r) = remotes.iter_mut().find(|r| r.host == host) {
+        if add {
+            r.forwards.push(spec);
+        } else {
+            r.forwards.retain(|s| *s != spec);
         }
     }
 }

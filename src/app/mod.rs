@@ -101,6 +101,10 @@ pub struct App {
     /// wipes the host terminal before drawing — clears any residue the
     /// terminal emulator leaves from the previous session.
     pub(super) needs_full_redraw: bool,
+    /// Channel to the port-forward worker thread.
+    port_forward_tx: std::sync::mpsc::Sender<crate::app::port_forward_task::Op>,
+    /// Results coming back from the port-forward worker.
+    port_forward_rx: std::sync::mpsc::Receiver<crate::app::port_forward_task::OpResult>,
 }
 
 impl App {
@@ -170,6 +174,10 @@ impl App {
             alive: true,
         };
 
+        // Seed the in-memory mirror of remote configs so port-forward
+        // state is available from the very first frame.
+        state.config_remotes = cfg.remotes.clone();
+
         let remotes: Vec<String> = cfg.remotes.iter().map(|r| r.host.clone()).collect();
         let pty_size = portable_pty::PtySize {
             rows: pty_rows,
@@ -198,6 +206,9 @@ impl App {
             })
             .collect();
 
+        let (pf_result_tx, pf_result_rx) = std::sync::mpsc::channel();
+        let port_forward_tx = crate::app::port_forward_task::spawn(pf_result_tx);
+
         let mut app = App {
             state,
             local_terminal,
@@ -216,6 +227,8 @@ impl App {
             last_update_request,
             remotes,
             needs_full_redraw: false,
+            port_forward_tx,
+            port_forward_rx: pf_result_rx,
         };
 
         tmux::apply_theme(&THEMES[theme_index]);
@@ -462,6 +475,22 @@ impl App {
                     self.dispatch(Action::ReloadConfig);
                 }
                 last_config_poll = Instant::now();
+            }
+
+            // Drain results from the port-forward worker thread.
+            while let Ok(r) = self.port_forward_rx.try_recv() {
+                let host = match &r.kind {
+                    crate::app::port_forward_task::OpKind::Master(h)
+                    | crate::app::port_forward_task::OpKind::Exit(h) => h.clone(),
+                    crate::app::port_forward_task::OpKind::Forward(h, _)
+                    | crate::app::port_forward_task::OpKind::Cancel(h, _) => h.clone(),
+                };
+                self.dispatch(Action::PfTaskResult {
+                    host,
+                    op: r.kind,
+                    ok: r.ok,
+                    message: r.message,
+                });
             }
 
             self.tick_update_check();
