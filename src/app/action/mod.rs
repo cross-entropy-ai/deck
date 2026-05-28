@@ -116,5 +116,28 @@ pub enum Action {
 
     Quit,
 
+    // Port-forward overlay (per-host)
+    OpenHostDividerMenu { host: String, x: u16, y: u16 },
+    OpenPortForward(String),
+    PfClose,
+    PfFocusUp,
+    PfFocusDown,
+    PfDelete,
+    PfAddOpen,
+    PfAddCancel,
+    PfAddSubmit,
+    PfAddFieldNext,
+    PfAddFieldPrev,
+    PfAddModeLeft,
+    PfAddModeRight,
+    PfAddInput(char),
+    PfAddBackspace,
+    PfTaskResult {
+        host: String,
+        op: crate::app::port_forward_task::OpKind,
+        ok: bool,
+        message: String,
+    },
+
     None,
 }

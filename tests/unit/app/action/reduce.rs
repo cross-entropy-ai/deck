@@ -550,3 +550,43 @@ fn new_session_dir_enter_descends_into_selected() {
     assert_eq!(ns.input, "~/foo/bar/");
     assert!(fx.reread_new_session_entries);
 }
+
+#[test]
+fn open_host_divider_menu_uses_host_kind() {
+    let mut state = make_test_state(1);
+    crate::action::apply_action(
+        &mut state,
+        Action::OpenHostDividerMenu { host: "h1".into(), x: 10, y: 5 },
+    );
+    let menu = state.overlay.context_menu.as_ref().expect("menu opened");
+    match &menu.kind {
+        crate::state::MenuKind::HostDivider { host, .. } => assert_eq!(host, "h1"),
+        _ => panic!("expected HostDivider"),
+    }
+}
+
+#[test]
+fn open_port_forward_clears_menu_and_opens_overlay() {
+    let mut state = make_test_state(1);
+    crate::action::apply_action(&mut state, Action::OpenPortForward("h1".into()));
+    assert!(state.overlay.context_menu.is_none());
+    let o = state.overlay.port_forward.as_ref().expect("overlay open");
+    assert_eq!(o.host, "h1");
+    assert_eq!(o.selected, 0);
+}
+
+#[test]
+fn pf_add_open_creates_default_form() {
+    let mut state = make_test_state(1);
+    state.overlay.port_forward = Some(crate::state::PortForwardOverlay {
+        host: "h".into(),
+        selected: 0,
+        add_form: None,
+        status: None,
+    });
+    crate::action::apply_action(&mut state, Action::PfAddOpen);
+    let o = state.overlay.port_forward.as_ref().unwrap();
+    let f = o.add_form.as_ref().unwrap();
+    assert_eq!(f.mode, crate::config::ForwardMode::Local);
+    assert_eq!(f.focus, crate::state::PfField::ListenPort);
+}

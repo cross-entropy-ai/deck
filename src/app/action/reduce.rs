@@ -1,7 +1,8 @@
+use crate::config::ForwardMode;
 use crate::state::{
-    session_menu_items, AppState, ContextMenu, FocusMode, KillRequest, LayoutMode, MainView,
-    MenuKind, RemoteSwitchRequest, RenameRequest, RenameState, SessionTargetRef, SideEffect,
-    ViewMode, SETTINGS_ITEM_COUNT,
+    host_divider_menu_items, session_menu_items, AppState, ContextMenu, FocusMode, KillRequest,
+    LayoutMode, MainView, MenuKind, PfAddForm, PfField, PortForwardOverlay, RemoteSwitchRequest,
+    RenameRequest, RenameState, SessionTargetRef, SideEffect, ViewMode, SETTINGS_ITEM_COUNT,
 };
 use crate::theme::THEMES;
 
@@ -846,9 +847,251 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         // keybindings, plugin instances, PTY, etc.).
         Action::ReloadConfig => {}
 
+        Action::OpenHostDividerMenu { host, x, y } => {
+            state.overlay.context_menu = Some(ContextMenu {
+                kind: MenuKind::HostDivider {
+                    host: host.clone(),
+                    items: host_divider_menu_items(),
+                },
+                x,
+                y,
+                selected: 0,
+            });
+        }
+
+        Action::OpenPortForward(host) => {
+            state.overlay.context_menu = None;
+            state.overlay.port_forward = Some(PortForwardOverlay {
+                host,
+                selected: 0,
+                add_form: None,
+                status: None,
+            });
+        }
+
+        Action::PfClose => {
+            state.overlay.port_forward = None;
+        }
+
+        Action::PfFocusUp => {
+            if let Some(o) = state.overlay.port_forward.as_mut() {
+                o.selected = o.selected.saturating_sub(1);
+            }
+        }
+        Action::PfFocusDown => {
+            let host = state.overlay.port_forward.as_ref().map(|o| o.host.clone());
+            if let Some(host) = host {
+                let len = forwards_len(state, &host);
+                if let Some(o) = state.overlay.port_forward.as_mut() {
+                    if o.selected + 1 < len {
+                        o.selected += 1;
+                    }
+                }
+            }
+        }
+
+        Action::PfAddOpen => {
+            if let Some(o) = state.overlay.port_forward.as_mut() {
+                o.add_form = Some(PfAddForm::default_for(ForwardMode::Local));
+                o.status = None;
+            }
+        }
+        Action::PfAddCancel => {
+            if let Some(o) = state.overlay.port_forward.as_mut() {
+                o.add_form = None;
+            }
+        }
+        Action::PfAddFieldNext => {
+            if let Some(o) = state.overlay.port_forward.as_mut() {
+                if let Some(f) = o.add_form.as_mut() {
+                    f.focus = next_field(f.focus, f.mode);
+                }
+            }
+        }
+        Action::PfAddFieldPrev => {
+            if let Some(o) = state.overlay.port_forward.as_mut() {
+                if let Some(f) = o.add_form.as_mut() {
+                    f.focus = prev_field(f.focus, f.mode);
+                }
+            }
+        }
+        Action::PfAddModeLeft => set_mode(&mut state.overlay.port_forward, -1),
+        Action::PfAddModeRight => set_mode(&mut state.overlay.port_forward, 1),
+        Action::PfAddInput(c) => {
+            if let Some(o) = state.overlay.port_forward.as_mut() {
+                if let Some(f) = o.add_form.as_mut() {
+                    push_char(f, c);
+                }
+            }
+        }
+        Action::PfAddBackspace => {
+            if let Some(o) = state.overlay.port_forward.as_mut() {
+                if let Some(f) = o.add_form.as_mut() {
+                    pop_char(f);
+                }
+            }
+        }
+
+        // These two stay no-ops here; the side effect that actually contacts
+        // the worker is dispatched in `dispatch.rs` (Task 9).
+        Action::PfAddSubmit | Action::PfDelete => {}
+
+        Action::PfTaskResult { host, op, ok, message } => {
+            fx.merge(apply_pf_task_result(state, &host, &op, ok, &message));
+        }
+
         Action::None => {}
     }
 
+    fx
+}
+
+fn forwards_len(state: &AppState, host: &str) -> usize {
+    state
+        .config_remotes
+        .iter()
+        .find(|r| r.host == host)
+        .map(|r| r.forwards.len())
+        .unwrap_or(0)
+}
+
+fn next_field(f: PfField, mode: ForwardMode) -> PfField {
+    let order: &[PfField] = match mode {
+        ForwardMode::Dynamic => &[PfField::Mode, PfField::BindAddr, PfField::ListenPort],
+        _ => &[
+            PfField::Mode,
+            PfField::BindAddr,
+            PfField::ListenPort,
+            PfField::TargetHost,
+            PfField::TargetPort,
+        ],
+    };
+    let i = order.iter().position(|x| *x == f).unwrap_or(0);
+    order[(i + 1) % order.len()]
+}
+
+fn prev_field(f: PfField, mode: ForwardMode) -> PfField {
+    let order: &[PfField] = match mode {
+        ForwardMode::Dynamic => &[PfField::Mode, PfField::BindAddr, PfField::ListenPort],
+        _ => &[
+            PfField::Mode,
+            PfField::BindAddr,
+            PfField::ListenPort,
+            PfField::TargetHost,
+            PfField::TargetPort,
+        ],
+    };
+    let i = order.iter().position(|x| *x == f).unwrap_or(0);
+    order[(i + order.len() - 1) % order.len()]
+}
+
+fn set_mode(o: &mut Option<PortForwardOverlay>, delta: i32) {
+    if let Some(o) = o.as_mut() {
+        if let Some(f) = o.add_form.as_mut() {
+            let modes = [ForwardMode::Local, ForwardMode::Remote, ForwardMode::Dynamic];
+            let i = modes.iter().position(|m| *m == f.mode).unwrap_or(0) as i32;
+            let n = modes.len() as i32;
+            let j = ((i + delta) % n + n) % n;
+            f.mode = modes[j as usize];
+            if matches!(f.mode, ForwardMode::Dynamic)
+                && matches!(f.focus, PfField::TargetHost | PfField::TargetPort)
+            {
+                f.focus = PfField::ListenPort;
+            }
+        }
+    }
+}
+
+fn push_char(f: &mut PfAddForm, c: char) {
+    match f.focus {
+        PfField::Mode => {}
+        PfField::BindAddr => f.bind_addr.push(c),
+        PfField::ListenPort => f.listen_port.push(c),
+        PfField::TargetHost => f.target_host.push(c),
+        PfField::TargetPort => f.target_port.push(c),
+    }
+}
+
+fn pop_char(f: &mut PfAddForm) {
+    let s = match f.focus {
+        PfField::Mode => return,
+        PfField::BindAddr => &mut f.bind_addr,
+        PfField::ListenPort => &mut f.listen_port,
+        PfField::TargetHost => &mut f.target_host,
+        PfField::TargetPort => &mut f.target_port,
+    };
+    s.pop();
+}
+
+/// Finalize an in-flight `AddForward` (lazy persist: only on worker
+/// success). On success: append to `config_remotes`, request config
+/// save via SideEffect, close the form. On failure: keep form open,
+/// clear `submitting`, set status to error message.
+fn apply_pf_task_result(
+    state: &mut AppState,
+    host: &str,
+    op: &crate::app::port_forward_task::OpKind,
+    ok: bool,
+    message: &str,
+) -> SideEffect {
+    use crate::app::port_forward_task::OpKind;
+    let mut fx = SideEffect::default();
+
+    // Guard: overlay must exist and match the host.
+    {
+        let Some(overlay) = state.overlay.port_forward.as_ref() else {
+            return fx;
+        };
+        if overlay.host != host {
+            return fx;
+        }
+    }
+
+    match op {
+        OpKind::Forward(_, spec) => {
+            if ok {
+                // Drop overlay borrow before mutating config_remotes.
+                {
+                    let overlay = state.overlay.port_forward.as_mut().unwrap();
+                    overlay.add_form = None;
+                    overlay.status = Some("forward applied".into());
+                }
+                let spec = spec.clone();
+                if let Some(r) = state.config_remotes.iter_mut().find(|r| r.host == host) {
+                    if !r.forwards.contains(&spec) {
+                        r.forwards.push(spec);
+                    }
+                }
+                fx.save_config = true;
+            } else {
+                let overlay = state.overlay.port_forward.as_mut().unwrap();
+                if let Some(f) = overlay.add_form.as_mut() {
+                    f.submitting = false;
+                }
+                overlay.status = Some(format!("error: {}", message));
+            }
+        }
+        OpKind::Cancel(_, _) => {
+            let overlay = state.overlay.port_forward.as_mut().unwrap();
+            overlay.status = Some(if ok {
+                "forward cancelled".into()
+            } else {
+                format!("warn: cancel failed ({})", message)
+            });
+        }
+        OpKind::Master(_) => {
+            if !ok {
+                let overlay = state.overlay.port_forward.as_mut().unwrap();
+                overlay.status = Some(format!("master: {}", message));
+            }
+        }
+        OpKind::Exit(_) => {
+            if !ok {
+                let overlay = state.overlay.port_forward.as_mut().unwrap();
+                overlay.status = Some(format!("exit: {}", message));
+            }
+        }
+    }
     fx
 }
 
