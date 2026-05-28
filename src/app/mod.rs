@@ -1,4 +1,5 @@
 pub mod action;
+pub mod port_forward_task;
 
 mod dispatch;
 mod lifecycle;
@@ -74,7 +75,7 @@ pub struct App {
     /// the background spawner finishes for each host.
     remote_terminals: HashMap<String, TerminalPane>,
     /// Per-host connection state. Populated for every host in
-    /// `self.remotes` from app startup onward.
+    /// `state.config_remotes` from app startup onward.
     remote_status: HashMap<String, RemoteConnStatus>,
     /// Background worker that spawns `ssh tmux attach` PTYs without
     /// blocking the UI.
@@ -92,14 +93,14 @@ pub struct App {
     update_checker: Option<crate::update::UpdateChecker>,
     upgrade_instance: Option<PluginInstance>,
     last_update_request: Option<Instant>,
-    /// Configured remote SSH hosts whose tmux sessions are surfaced
-    /// alongside local ones. Captured once at startup from
-    /// `config.remotes`; the `deck remote` CLI is the only writer.
-    remotes: Vec<String>,
     /// Set to true after a session switch so the next render call
     /// wipes the host terminal before drawing — clears any residue the
     /// terminal emulator leaves from the previous session.
     pub(super) needs_full_redraw: bool,
+    /// Channel to the port-forward worker thread.
+    port_forward_tx: std::sync::mpsc::Sender<crate::app::port_forward_task::Op>,
+    /// Results coming back from the port-forward worker.
+    port_forward_rx: std::sync::mpsc::Receiver<crate::app::port_forward_task::OpResult>,
 }
 
 impl App {
@@ -169,6 +170,10 @@ impl App {
             alive: true,
         };
 
+        // Seed the in-memory mirror of remote configs so port-forward
+        // state is available from the very first frame.
+        state.config_remotes = cfg.remotes.clone();
+
         let remotes: Vec<String> = cfg.remotes.iter().map(|r| r.host.clone()).collect();
         let pty_size = portable_pty::PtySize {
             rows: pty_rows,
@@ -197,6 +202,9 @@ impl App {
             })
             .collect();
 
+        let (pf_result_tx, pf_result_rx) = std::sync::mpsc::channel();
+        let port_forward_tx = crate::app::port_forward_task::spawn(pf_result_tx);
+
         let mut app = App {
             state,
             local_terminal,
@@ -213,12 +221,27 @@ impl App {
             update_checker,
             upgrade_instance: None,
             last_update_request,
-            remotes,
             needs_full_redraw: false,
+            port_forward_tx,
+            port_forward_rx: pf_result_rx,
         };
 
         tmux::apply_theme(&THEMES[theme_index]);
         app.request_refresh();
+
+        // Send Bootstrap once so the worker establishes ControlMasters and
+        // launches configured forwards eagerly at startup.
+        let hosts: Vec<(String, Vec<crate::config::ForwardSpec>)> = cfg
+            .remotes
+            .iter()
+            .filter(|r| !r.forwards.is_empty())
+            .map(|r| (r.host.clone(), r.forwards.clone()))
+            .collect();
+        if !hosts.is_empty() {
+            let _ = app
+                .port_forward_tx
+                .send(crate::app::port_forward_task::Op::Bootstrap { hosts });
+        }
 
         Ok(app)
     }
@@ -279,13 +302,28 @@ impl App {
                     PtyEvent::Exited => self.local_terminal.alive = false,
                 }
             }
-            // Pull any newly-spawned remote PTYs into the map.
+            // Pull any newly-spawned remote PTYs into the map. Drop
+            // events for hosts that were removed while the spawn was
+            // in flight — otherwise the PTY would resurrect in
+            // `remote_terminals` after offboard cleaned up.
             while let Some(ev) = self.remote_spawner.try_recv() {
+                let event_host = match &ev {
+                    remote_spawn::RemoteSpawnEvent::Spawned { host, .. } => host,
+                    remote_spawn::RemoteSpawnEvent::Failed { host } => host,
+                };
+                let still_configured = self
+                    .state
+                    .config_remotes
+                    .iter()
+                    .any(|r| r.host == *event_host);
+                if !still_configured {
+                    continue;
+                }
                 match ev {
                     remote_spawn::RemoteSpawnEvent::Spawned { host, pane } => {
                         self.remote_status
                             .insert(host.clone(), RemoteConnStatus::Connected);
-                        self.remote_terminals.insert(host, pane);
+                        self.remote_terminals.insert(host, *pane);
                     }
                     remote_spawn::RemoteSpawnEvent::Failed { host } => {
                         self.remote_status.insert(host, RemoteConnStatus::Failed);
@@ -408,29 +446,27 @@ impl App {
                             break;
                         }
                     }
-                    Event::Paste(text) => {
-                        if self.state.focus_mode == FocusMode::Main {
-                            let mut bytes = b"\x1b[200~".to_vec();
-                            bytes.extend_from_slice(text.as_bytes());
-                            bytes.extend_from_slice(b"\x1b[201~");
-                            match self.state.main_view {
-                                MainView::Terminal => {
-                                    let _ = self.active_terminal_mut().pty.write(&bytes);
-                                }
-                                MainView::Plugin(idx) => {
-                                    if let Some(ref mut inst) =
-                                        self.plugin_instances.get_mut(idx).and_then(|o| o.as_mut())
-                                    {
-                                        let _ = inst.pty.write(&bytes);
-                                    }
-                                }
-                                MainView::Upgrade => {
-                                    if let Some(ref mut inst) = self.upgrade_instance {
-                                        let _ = inst.pty.write(&bytes);
-                                    }
-                                }
-                                _ => {}
+                    Event::Paste(text) if self.state.focus_mode == FocusMode::Main => {
+                        let mut bytes = b"\x1b[200~".to_vec();
+                        bytes.extend_from_slice(text.as_bytes());
+                        bytes.extend_from_slice(b"\x1b[201~");
+                        match self.state.main_view {
+                            MainView::Terminal => {
+                                let _ = self.active_terminal_mut().pty.write(&bytes);
                             }
+                            MainView::Plugin(idx) => {
+                                if let Some(ref mut inst) =
+                                    self.plugin_instances.get_mut(idx).and_then(|o| o.as_mut())
+                                {
+                                    let _ = inst.pty.write(&bytes);
+                                }
+                            }
+                            MainView::Upgrade => {
+                                if let Some(ref mut inst) = self.upgrade_instance {
+                                    let _ = inst.pty.write(&bytes);
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     Event::Resize(w, h) => {
@@ -461,6 +497,22 @@ impl App {
                     self.dispatch(Action::ReloadConfig);
                 }
                 last_config_poll = Instant::now();
+            }
+
+            // Drain results from the port-forward worker thread.
+            while let Ok(r) = self.port_forward_rx.try_recv() {
+                let host = match &r.kind {
+                    crate::app::port_forward_task::OpKind::Master(h)
+                    | crate::app::port_forward_task::OpKind::Exit(h) => h.clone(),
+                    crate::app::port_forward_task::OpKind::Forward(h, _)
+                    | crate::app::port_forward_task::OpKind::Cancel(h, _) => h.clone(),
+                };
+                self.dispatch(Action::PfTaskResult {
+                    host,
+                    op: r.kind,
+                    ok: r.ok,
+                    message: r.message,
+                });
             }
 
             self.tick_update_check();

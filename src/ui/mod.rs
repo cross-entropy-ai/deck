@@ -2,7 +2,7 @@ pub mod bridge;
 pub mod layout;
 mod menu;
 mod new_session;
-mod overlays;
+pub mod overlays;
 mod reload;
 mod settings;
 mod sidebar;
@@ -133,16 +133,14 @@ pub struct ExcludeEditorView<'a> {
     pub patterns: &'a [String],
     pub selected: usize,
     pub adding: bool,
-    pub input: &'a str,
+    pub input: &'a ratatui_textarea::TextArea<'static>,
     pub error: Option<&'a str>,
 }
 
 pub struct NewSessionView<'a> {
-    pub name: &'a str,
-    pub name_cursor: usize,
+    pub name: &'a ratatui_textarea::TextArea<'static>,
     pub focus_name: bool,
-    pub input: &'a str,
-    pub cursor: usize,
+    pub input: &'a ratatui_textarea::TextArea<'static>,
     pub entries: &'a [String],
     pub filtered: &'a [usize],
     pub selected: usize,

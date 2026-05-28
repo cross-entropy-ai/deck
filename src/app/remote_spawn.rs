@@ -28,9 +28,19 @@ use crate::pty::Pty;
 use super::TerminalPane;
 
 /// One result per spawn attempt.
+///
+/// `pane` is boxed because `TerminalPane` carries a `vt100::Parser`
+/// (~768 bytes) — keeping it inline made the `Failed` variant pay the
+/// same cost. The box is short-lived: the consumer unboxes immediately
+/// and moves the pane into `remote_terminals`.
 pub(super) enum RemoteSpawnEvent {
-    Spawned { host: String, pane: TerminalPane },
-    Failed { host: String },
+    Spawned {
+        host: String,
+        pane: Box<TerminalPane>,
+    },
+    Failed {
+        host: String,
+    },
 }
 
 /// Owns the receiver end of the spawn channel. Senders live inside the
@@ -39,6 +49,11 @@ pub(super) enum RemoteSpawnEvent {
 /// worker's `send` will fail quietly.
 pub(super) struct RemoteSpawner {
     rx: Receiver<RemoteSpawnEvent>,
+    /// Kept alive so additional hosts (added via hot-reload) can be
+    /// spawned post-startup. Cloned per spawn so worker threads outlive
+    /// `tx` going out of scope on `RemoteSpawner` drop.
+    tx: Sender<RemoteSpawnEvent>,
+    size: PtySize,
 }
 
 impl RemoteSpawner {
@@ -47,14 +62,17 @@ impl RemoteSpawner {
         for host in hosts {
             spawn_one(host.clone(), tx.clone(), size);
         }
-        drop(tx); // any future sender is cloned from the workers
-        Self { rx }
+        Self { rx, tx, size }
+    }
+
+    /// Spawn a PTY for a host added after startup (hot-reload path).
+    pub fn spawn(&self, host: &str) {
+        spawn_one(host.to_string(), self.tx.clone(), self.size);
     }
 
     pub fn try_recv(&self) -> Option<RemoteSpawnEvent> {
         self.rx.try_recv().ok()
     }
-
 }
 
 fn spawn_one(host: String, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
@@ -97,11 +115,11 @@ fn spawn_one(host: String, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
                     let parser = vt100::Parser::new(size.rows, size.cols, 0);
                     RemoteSpawnEvent::Spawned {
                         host,
-                        pane: TerminalPane {
+                        pane: Box::new(TerminalPane {
                             pty,
                             parser,
                             alive: true,
-                        },
+                        }),
                     }
                 }
                 Err(_) => RemoteSpawnEvent::Failed { host },

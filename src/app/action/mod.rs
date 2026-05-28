@@ -19,9 +19,12 @@ pub enum Action {
     ConfirmKill,
     CancelKill,
     ReorderSession(i32),
+    /// Detach a remote host from deck's config — equivalent to
+    /// `deck remote remove <host>`. Triggered from the remote-session
+    /// right-click menu's "Remove from list".
+    RemoveRemoteFromList(String),
     StartRename,
-    RenameInput(char),
-    RenameBackspace,
+    RenameInputKey(crossterm::event::KeyEvent),
     RenameConfirm,
     RenameCancel,
 
@@ -55,21 +58,15 @@ pub enum Action {
     ExcludeEditorPrev,
     ExcludeEditorStartAdd,
     ExcludeEditorDelete,
-    ExcludeEditorInput(char),
-    ExcludeEditorBackspace,
+    ExcludeEditorInputKey(crossterm::event::KeyEvent),
     ExcludeEditorConfirm,
     ExcludeEditorCancelAdd,
 
     CloseNewSessionPicker,
-    NewSessionInput(char),
-    NewSessionBackspace,
+    NewSessionInputKey(crossterm::event::KeyEvent),
     NewSessionConfirm,
     NewSessionPrev,
     NewSessionNext,
-    NewSessionCursorLeft,
-    NewSessionCursorRight,
-    NewSessionCursorHome,
-    NewSessionCursorEnd,
     NewSessionClear,
     NewSessionDeleteSegment,
     NewSessionSwitchFocus,
@@ -100,12 +97,6 @@ pub enum Action {
     StartDrag,
     StopDrag,
 
-    RenameCursorLeft,
-    RenameCursorRight,
-    RenameCursorHome,
-    RenameCursorEnd,
-    RenameDelete,
-
     Resize(u16, u16),
 
     ForwardKey(Vec<u8>),
@@ -115,6 +106,31 @@ pub enum Action {
     DeactivatePlugin,
 
     Quit,
+
+    // Port-forward overlay (per-host)
+    OpenHostDividerMenu { host: String, x: u16, y: u16 },
+    OpenPortForward(String),
+    PfClose,
+    PfFocusUp,
+    PfFocusDown,
+    PfDelete,
+    PfAddOpen,
+    PfAddCancel,
+    PfAddSubmit,
+    PfAddFieldNext,
+    PfAddFieldPrev,
+    PfAddModeLeft,
+    PfAddModeRight,
+    /// Forward a raw key event to the focused textarea (insert/delete/
+    /// arrow within a field). Modal keys (Tab/Enter/Esc/Up/Down/etc.)
+    /// are mapped to their own actions before reaching this variant.
+    PfAddInputKey(crossterm::event::KeyEvent),
+    PfTaskResult {
+        host: String,
+        op: crate::app::port_forward_task::OpKind,
+        ok: bool,
+        message: String,
+    },
 
     None,
 }

@@ -10,10 +10,11 @@ use crate::keybindings::{Command, Keybindings};
 use crate::layout::{
     plugin_block_rows, BANNER_MIN_WIDTH, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR,
 };
-use crate::state::{FocusTarget, SidebarItemData, SidebarLayout, ViewMode};
+use crate::state::{DividerHit, FocusTarget, SidebarItemData, SidebarLayout, ViewMode};
 use ratatui_sectioned_list::Item;
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
+use ratatui_textarea::TextArea;
 
 use super::overlays::{draw_confirm_kill, draw_help, draw_rename_input};
 use super::text::{
@@ -41,7 +42,7 @@ pub struct SidebarProps<'a> {
     pub theme: &'a Theme,
     pub show_help: bool,
     pub confirm_kill: Option<&'a str>,
-    pub rename_input: Option<(&'a str, usize)>,
+    pub rename_input: Option<&'a TextArea<'static>>,
     pub show_borders: bool,
     pub tabs_mode: bool,
     pub spinner_frame: &'a str,
@@ -106,7 +107,11 @@ struct TabsProps<'a> {
     show_borders: bool,
 }
 
-pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> Option<Rect> {
+pub fn draw_sidebar(
+    frame: &mut Frame,
+    area: Rect,
+    props: SidebarProps<'_>,
+) -> (Option<Rect>, Vec<DividerHit>) {
     let ctx = SidebarRenderCtx {
         theme: props.theme,
         spinner_frame: props.spinner_frame,
@@ -124,7 +129,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> O
             _ => 0,
         };
         let local_sessions = &props.sessions[..props.local_count];
-        return draw_sidebar_tabs(
+        let banner_bounds = draw_sidebar_tabs(
             frame,
             area,
             &ctx,
@@ -135,6 +140,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> O
                 show_borders: props.show_borders,
             },
         );
+        return (banner_bounds, Vec::new());
     }
     let content = draw_sidebar_container(
         frame,
@@ -156,12 +162,15 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> O
     .areas(content);
 
     draw_header(frame, header_area, props.local_count, props.theme);
-    if props.show_help {
+    let divider_hits = if props.show_help {
         draw_help(frame, sessions_area, props.theme, props.keybindings);
+        Vec::new()
     } else if let Some(name) = props.confirm_kill {
         draw_confirm_kill(frame, sessions_area, props.theme, name);
-    } else if let Some((input, cursor)) = props.rename_input {
-        draw_rename_input(frame, sessions_area, props.theme, input, cursor);
+        Vec::new()
+    } else if let Some(textarea) = props.rename_input {
+        draw_rename_input(frame, sessions_area, props.theme, textarea);
+        Vec::new()
     } else {
         draw_sessions(
             frame,
@@ -173,9 +182,9 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> O
                 focus_target: props.focus_target,
                 view_mode: props.view_mode,
             },
-        );
-    }
-    draw_footer(
+        )
+    };
+    let banner_bounds = draw_footer(
         frame,
         footer_area,
         &ctx,
@@ -189,7 +198,8 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> O
                 None
             },
         },
-    )
+    );
+    (banner_bounds, divider_hits)
 }
 
 fn draw_sidebar_container(
@@ -235,18 +245,26 @@ fn draw_header(frame: &mut Frame, area: Rect, count: usize, theme: &Theme) {
     );
 }
 
-fn draw_sessions(frame: &mut Frame, area: Rect, ctx: &SidebarRenderCtx<'_>, props: SessionsProps<'_>) {
+fn draw_sessions(
+    frame: &mut Frame,
+    area: Rect,
+    ctx: &SidebarRenderCtx<'_>,
+    props: SessionsProps<'_>,
+) -> Vec<DividerHit> {
     if props.sessions.is_empty() {
         frame.render_widget(
             Paragraph::new("  No projects")
                 .style(Style::default().fg(ctx.theme.muted).bg(ctx.theme.bg)),
             area,
         );
-        return;
+        return Vec::new();
     }
 
     let width = area.width as usize;
     let mut lines: Vec<Line> = Vec::new();
+    // Pending hits: (line_index_in_lines, col_range, host). We resolve
+    // absolute screen coordinates after computing the scroll offset.
+    let mut pending_hits: Vec<(usize, std::ops::Range<usize>, String)> = Vec::new();
 
     for item in props.layout.items().iter() {
         let is_focused = is_item_focused(item, props.focus_target);
@@ -264,7 +282,12 @@ fn draw_sessions(frame: &mut Frame, area: Rect, ctx: &SidebarRenderCtx<'_>, prop
         match &item.data {
             SidebarItemData::Header { label, host_idx } => {
                 let accent = host_accent(ctx.theme, *host_idx);
-                render_group_header(&mut lines, label, accent, width, ctx.theme);
+                let line_idx = lines.len();
+                let col_range = render_group_header(&mut lines, label, accent, width, ctx.theme);
+                // Extract hostname: label is "  @<host>", strip leading
+                // whitespace and '@' to recover the bare hostname.
+                let host = label.trim_start().trim_start_matches('@').to_string();
+                pending_hits.push((line_idx, col_range, host));
             }
             SidebarItemData::Session { session_idx } => {
                 let Some(&session) = props.sessions.get(*session_idx) else {
@@ -293,6 +316,42 @@ fn draw_sessions(frame: &mut Frame, area: Rect, ctx: &SidebarRenderCtx<'_>, prop
             .scroll((scroll, 0)),
         area,
     );
+
+    // Re-express the scroll offset and viewport height in usize so the
+    // pending hits (tracked as usize line indices) map to screen rows.
+    let scroll = scroll as usize;
+    let visible_height = area.height as usize;
+
+    // Convert pending hits to absolute screen rects now that we know the
+    // scroll offset. Lines whose rendered row falls outside the visible
+    // area are discarded (they're scrolled off-screen so can't be clicked).
+    let mut hits = Vec::with_capacity(pending_hits.len());
+    for (line_idx, col_range, host) in pending_hits {
+        // line_idx is 0-based within `lines`; subtract scroll to get the
+        // rendered row index within the viewport.
+        if line_idx < scroll {
+            // Scrolled above the visible area.
+            continue;
+        }
+        let viewport_row = line_idx - scroll;
+        if viewport_row >= visible_height {
+            // Scrolled below the visible area.
+            continue;
+        }
+        let abs_y = area.y + viewport_row as u16;
+        let abs_x = area.x + col_range.start as u16;
+        let btn_width = (col_range.end - col_range.start) as u16;
+        hits.push(DividerHit {
+            host,
+            rect: Rect {
+                x: abs_x,
+                y: abs_y,
+                width: btn_width,
+                height: 1,
+            },
+        });
+    }
+    hits
 }
 
 fn is_item_focused(item: &Item<SidebarItemData>, focus_target: Option<FocusTarget>) -> bool {
@@ -302,10 +361,8 @@ fn is_item_focused(item: &Item<SidebarItemData>, focus_target: Option<FocusTarge
     }
 }
 
-/// Per-group accent color used to tint the group divider so adjacent
-/// remote hosts stay visually distinct without painting whole rows.
-/// Accent color cycled per distinct remote host so adjacent groups
-/// stay visually distinct without painting whole rows.
+/// Accent color cycled per distinct remote host so adjacent group
+/// dividers stay visually distinct without painting whole rows.
 fn host_accent(theme: &Theme, host_idx: usize) -> Color {
     let tints = [theme.teal, theme.pink, theme.yellow, theme.accent];
     tints[host_idx % tints.len()]
@@ -317,16 +374,20 @@ fn render_group_header(
     accent: Color,
     width: usize,
     theme: &Theme,
-) {
+) -> std::ops::Range<usize> {
     let label_text = label.trim_start().to_string();
     let leading = " ";
     let leading_w = leading.width();
     let label_w = label_text.as_str().width();
     let spacer_w = 1;
+    let button_w = 3; // "[…]"
+    let button_gap = 1; // space between dashes and button
     let rule_w = width
         .saturating_sub(leading_w)
         .saturating_sub(label_w)
-        .saturating_sub(spacer_w);
+        .saturating_sub(spacer_w)
+        .saturating_sub(button_gap)
+        .saturating_sub(button_w);
     let rule = "─".repeat(rule_w);
 
     lines.push(pad_line(
@@ -341,10 +402,16 @@ fn render_group_header(
             ),
             Span::styled(" ", Style::default().bg(theme.bg)),
             Span::styled(rule, Style::default().fg(accent).bg(theme.bg)),
+            Span::styled(" ", Style::default().bg(theme.bg)),
+            Span::styled("[…]", Style::default().fg(accent).bg(theme.bg)),
         ],
         theme.bg,
         width,
     ));
+
+    // Cell range of "[…]" within this rendered line.
+    let button_x = leading_w + label_w + spacer_w + rule_w + button_gap;
+    button_x..(button_x + button_w)
 }
 
 /// Visual treatment of the index hint at the start of a row. Local

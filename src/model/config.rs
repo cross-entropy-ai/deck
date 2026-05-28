@@ -21,6 +21,68 @@ pub struct PluginConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RemoteConfig {
     pub host: String,
+    /// Persisted SSH port forwards for this host. Applied at deck startup
+    /// (eager) and immediately on UI edits via `ssh -O forward/cancel`
+    /// against the host's ControlMaster.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forwards: Vec<ForwardSpec>,
+}
+
+/// One SSH port-forward rule. Maps to a single `-L`, `-R`, or `-D` flag.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForwardSpec {
+    pub mode: ForwardMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind_addr: Option<String>,
+    pub listen_port: u16,
+    /// Local/Remote: required (target endpoint on the other side).
+    /// Dynamic: must be `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ForwardMode {
+    Local,
+    Remote,
+    Dynamic,
+}
+
+impl ForwardSpec {
+    /// The pair `("-L" | "-R" | "-D", "<bind?>:listen:<target_host:target_port?>")`
+    /// suitable for `Command::arg(flag).arg(value)`. Use this when you need the
+    /// flag and value as separate arg slots (e.g., `ssh -O forward -L 8080:host:80`).
+    pub fn ssh_flag_and_value(&self) -> (&'static str, String) {
+        let flag = match self.mode {
+            ForwardMode::Local => "-L",
+            ForwardMode::Remote => "-R",
+            ForwardMode::Dynamic => "-D",
+        };
+        let bind_prefix = match &self.bind_addr {
+            Some(b) => format!("{}:", b),
+            None => String::new(),
+        };
+        let value = match self.mode {
+            ForwardMode::Dynamic => format!("{}{}", bind_prefix, self.listen_port),
+            ForwardMode::Local | ForwardMode::Remote => {
+                let th = self.target_host.as_deref().unwrap_or("");
+                let tp = self.target_port.unwrap_or(0);
+                format!("{}{}:{}:{}", bind_prefix, self.listen_port, th, tp)
+            }
+        };
+        (flag, value)
+    }
+
+    /// Render this rule as the corresponding `ssh -L/-R/-D` argument
+    /// string. Used in tests; not called from production paths yet.
+    #[allow(dead_code)]
+    pub fn to_ssh_flag(&self) -> String {
+        let (flag, value) = self.ssh_flag_and_value();
+        format!("{} {}", flag, value)
+    }
 }
 
 /// User-configurable binding value for a single command.
@@ -171,6 +233,31 @@ impl Config {
         }
         let _ = fs::write(&path, self.to_json());
     }
+}
+
+/// Difference between two `Vec<ForwardSpec>` slices: which to add and
+/// which to cancel. Order-insensitive; equal specs (by all fields) are
+/// considered the same. Used by both UI edits (single-item ops) and
+/// hot-reload (bulk).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForwardOp {
+    Add(ForwardSpec),
+    Cancel(ForwardSpec),
+}
+
+pub fn diff_forwards(old: &[ForwardSpec], new: &[ForwardSpec]) -> Vec<ForwardOp> {
+    let mut ops = Vec::new();
+    for o in old {
+        if !new.contains(o) {
+            ops.push(ForwardOp::Cancel(o.clone()));
+        }
+    }
+    for n in new {
+        if !old.contains(n) {
+            ops.push(ForwardOp::Add(n.clone()));
+        }
+    }
+    ops
 }
 
 /// A compiled exclude pattern — either a glob or a regex.

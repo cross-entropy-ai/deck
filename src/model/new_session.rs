@@ -4,6 +4,8 @@
 
 use std::path::PathBuf;
 
+use ratatui_textarea::{CursorMove, TextArea};
+
 /// Split `input` into `(parent, leaf)` where `parent` is the directory
 /// portion (including any trailing `/`) and `leaf` is the segment
 /// being typed.
@@ -38,9 +40,9 @@ pub fn filter_entries(entries: &[String], leaf: &str) -> Vec<usize> {
         .collect()
 }
 
-/// Delete one char before the cursor. Up-a-level semantics moved to
-/// `NewSessionDirUp` (see `app::action`); this helper now only does the
-/// simple char-delete branch.
+/// Delete one char before the cursor. Only used in unit tests now; new
+/// code feeds KeyEvents directly to the textarea.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn smart_backspace(input: &mut String, cursor: &mut usize) {
     if *cursor > 0 {
         let prev = input[..*cursor]
@@ -51,6 +53,13 @@ pub fn smart_backspace(input: &mut String, cursor: &mut usize) {
         *cursor -= prev;
         input.remove(*cursor);
     }
+}
+
+/// Build a single-line `TextArea` pre-filled with `s`, cursor at end.
+pub fn make_textarea(s: &str) -> TextArea<'static> {
+    let mut ta = TextArea::new(vec![s.to_string()]);
+    ta.move_cursor(CursorMove::End);
+    ta
 }
 
 /// Resolve a user-typed path to an absolute, normalized `PathBuf`.
@@ -85,19 +94,15 @@ pub fn expand_path(s: &str, home: &std::path::Path) -> PathBuf {
     buf
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct NewSessionState {
     /// Session name input field. Pre-filled with the next free
     /// `session-N` when the picker opens; user-editable.
-    pub name: String,
-    /// Byte offset into `name`.
-    pub name_cursor: usize,
+    pub name: TextArea<'static>,
     /// Which field has keyboard focus.
     pub focus: PickerFocus,
     /// User-visible path. `~` and `..` preserved verbatim.
-    pub input: String,
-    /// Byte offset into `input`.
-    pub cursor: usize,
+    pub input: TextArea<'static>,
     /// All children (directories only) of the parent of `input`.
     /// Written by dispatch after `read_dir`. The reducer never mutates
     /// this directly.
@@ -111,11 +116,35 @@ pub struct NewSessionState {
     pub error: Option<String>,
 }
 
+impl Default for NewSessionState {
+    fn default() -> Self {
+        Self {
+            name: make_textarea(""),
+            focus: PickerFocus::default(),
+            input: make_textarea(""),
+            entries: Vec::new(),
+            filtered: Vec::new(),
+            selected: 0,
+            error: None,
+        }
+    }
+}
+
 impl NewSessionState {
+    /// First line of the `name` textarea.
+    pub fn name_str(&self) -> &str {
+        self.name.lines().first().map(String::as_str).unwrap_or("")
+    }
+
+    /// First line of the `input` textarea.
+    pub fn input_str(&self) -> &str {
+        self.input.lines().first().map(String::as_str).unwrap_or("")
+    }
+
     /// Helper: rebuild `filtered` from current `input` and `entries`,
     /// clamp `selected` to the new range.
     pub fn refilter(&mut self) {
-        let (_parent, leaf) = split_input(&self.input);
+        let (_parent, leaf) = split_input(self.input_str());
         self.filtered = filter_entries(&self.entries, leaf);
         if self.filtered.is_empty() {
             self.selected = 0;

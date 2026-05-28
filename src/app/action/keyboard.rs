@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::keybindings::Command;
-use crate::state::{AppState, FocusMode, MainView};
+use crate::state::{AppState, FocusMode, MainView, PfField, PortForwardOverlay, SessionTargetRef};
 
 use super::Action;
 
@@ -14,14 +14,7 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         return match key.code {
             KeyCode::Enter => Action::RenameConfirm,
             KeyCode::Esc => Action::RenameCancel,
-            KeyCode::Backspace => Action::RenameBackspace,
-            KeyCode::Left => Action::RenameCursorLeft,
-            KeyCode::Right => Action::RenameCursorRight,
-            KeyCode::Home => Action::RenameCursorHome,
-            KeyCode::End => Action::RenameCursorEnd,
-            KeyCode::Delete => Action::RenameDelete,
-            KeyCode::Char(ch) => Action::RenameInput(ch),
-            _ => Action::None,
+            _ => Action::RenameInputKey(*key),
         };
     }
 
@@ -32,6 +25,10 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
             KeyCode::Enter => Action::MenuConfirm,
             _ => Action::MenuDismiss,
         };
+    }
+
+    if let Some(overlay) = state.overlay.port_forward.as_ref() {
+        return pf_key(key, overlay);
     }
 
     if let Some(cmd) = state.keybindings.lookup(key) {
@@ -127,6 +124,15 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         }
     }
 
+    if key.code == KeyCode::Char('f') {
+        if let Some(target) = state.focus_target() {
+            if let Some(SessionTargetRef::Remote(r)) = state.session_target(target) {
+                return Action::OpenPortForward(r.host.clone());
+            }
+        }
+        return Action::None;
+    }
+
     Action::None
 }
 
@@ -156,9 +162,7 @@ fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         return match key.code {
             KeyCode::Esc => Action::ExcludeEditorCancelAdd,
             KeyCode::Enter => Action::ExcludeEditorConfirm,
-            KeyCode::Backspace => Action::ExcludeEditorBackspace,
-            KeyCode::Char(ch) => Action::ExcludeEditorInput(ch),
-            _ => Action::None,
+            _ => Action::ExcludeEditorInputKey(*key),
         };
     }
 
@@ -193,6 +197,38 @@ fn theme_picker_key_to_action(key: &KeyEvent) -> Action {
     }
 }
 
+fn pf_key(key: &KeyEvent, overlay: &PortForwardOverlay) -> Action {
+    use KeyCode::*;
+    if let Some(form) = overlay.add_form.as_ref() {
+        match key.code {
+            Esc => Action::PfAddCancel,
+            Enter => Action::PfAddSubmit,
+            Tab | Down => Action::PfAddFieldNext,
+            BackTab | Up => Action::PfAddFieldPrev,
+            // On the Mode row, Left/Right cycle modes. Elsewhere they
+            // fall through to the textarea for cursor movement.
+            Left if matches!(form.focus, PfField::Mode) => Action::PfAddModeLeft,
+            Right if matches!(form.focus, PfField::Mode) => Action::PfAddModeRight,
+            _ => {
+                if matches!(form.focus, PfField::Mode) {
+                    Action::None
+                } else {
+                    Action::PfAddInputKey(*key)
+                }
+            }
+        }
+    } else {
+        match key.code {
+            Esc => Action::PfClose,
+            Char('a') => Action::PfAddOpen,
+            Char('d') => Action::PfDelete,
+            Up | Char('k') => Action::PfFocusUp,
+            Down | Char('j') => Action::PfFocusDown,
+            _ => Action::None,
+        }
+    }
+}
+
 fn new_session_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     use crate::new_session::PickerFocus;
     let focus = state
@@ -212,19 +248,7 @@ fn name_field_key_to_action(key: &KeyEvent) -> Action {
         KeyCode::Esc => Action::CloseNewSessionPicker,
         KeyCode::Enter => Action::NewSessionConfirm,
         KeyCode::Tab => Action::NewSessionSwitchFocus,
-        KeyCode::Backspace => Action::NewSessionBackspace,
-        KeyCode::Left => Action::NewSessionCursorLeft,
-        KeyCode::Right => Action::NewSessionCursorRight,
-        KeyCode::Home => Action::NewSessionCursorHome,
-        KeyCode::End => Action::NewSessionCursorEnd,
-        KeyCode::Char(ch)
-            if !key
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-        {
-            Action::NewSessionInput(ch)
-        }
-        _ => Action::None,
+        _ => Action::NewSessionInputKey(*key),
     }
 }
 
@@ -234,20 +258,16 @@ fn dir_field_key_to_action(key: &KeyEvent) -> Action {
         KeyCode::Esc => Action::CloseNewSessionPicker,
         KeyCode::Enter => Action::NewSessionConfirm,
         KeyCode::Tab => Action::NewSessionSwitchFocus,
-        KeyCode::Backspace => Action::NewSessionBackspace,
         KeyCode::Up => Action::NewSessionPrev,
         KeyCode::Down => Action::NewSessionNext,
         KeyCode::Left => Action::NewSessionDirUp,
         KeyCode::Right => Action::NewSessionDirEnter,
-        KeyCode::Home => Action::NewSessionCursorHome,
-        KeyCode::End => Action::NewSessionCursorEnd,
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             Action::NewSessionClear
         }
         KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             Action::NewSessionDeleteSegment
         }
-        KeyCode::Char(ch) => Action::NewSessionInput(ch),
-        _ => Action::None,
+        _ => Action::NewSessionInputKey(*key),
     }
 }

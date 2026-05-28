@@ -60,3 +60,90 @@ fn vertical_tab_hit_testing_only_uses_tab_row() {
     assert_eq!(state.session_at_col(2, 1), Some(0));
     assert_eq!(state.session_at_col(2, 2), None);
 }
+
+// --- PfAddForm::validate() tests ---
+
+use crate::config::ForwardMode;
+use crate::state::{PfAddForm, PfField, PfFormError};
+use ratatui_textarea::TextArea;
+
+fn ta(text: &str) -> TextArea<'static> {
+    TextArea::new(vec![text.to_string()])
+}
+
+fn blank_form() -> PfAddForm {
+    PfAddForm {
+        mode: ForwardMode::Local,
+        focus: PfField::ListenPort,
+        bind_addr: ta(""),
+        listen_port: ta(""),
+        target_host: ta(""),
+        target_port: ta(""),
+        submitting: false,
+    }
+}
+
+#[test]
+fn validate_local_ok() {
+    let mut f = blank_form();
+    f.listen_port = ta("8080");
+    f.target_host = ta("localhost");
+    f.target_port = ta("80");
+    let spec = f.validate().expect("should validate");
+    assert_eq!(spec.listen_port, 8080);
+    assert_eq!(spec.target_host.as_deref(), Some("localhost"));
+    assert_eq!(spec.target_port, Some(80));
+    assert_eq!(spec.bind_addr, None);
+}
+
+#[test]
+fn validate_local_missing_target_host() {
+    let mut f = blank_form();
+    f.listen_port = ta("8080");
+    f.target_port = ta("80");
+    assert_eq!(f.validate(), Err(PfFormError::TargetHostRequired));
+}
+
+#[test]
+fn validate_accepts_port_zero() {
+    // SSH treats port 0 as "kernel picks an ephemeral port"; the user
+    // asked for 0-65535 to be valid.
+    let mut f = blank_form();
+    f.listen_port = ta("0");
+    f.target_host = ta("h");
+    f.target_port = ta("80");
+    let spec = f.validate().expect("port 0 should be valid");
+    assert_eq!(spec.listen_port, 0);
+}
+
+#[test]
+fn validate_local_port_non_numeric_rejected() {
+    let mut f = blank_form();
+    f.listen_port = ta("abc");
+    f.target_host = ta("h");
+    f.target_port = ta("80");
+    assert_eq!(f.validate(), Err(PfFormError::ListenPortRange));
+}
+
+#[test]
+fn validate_dynamic_clears_target() {
+    let mut f = blank_form();
+    f.mode = ForwardMode::Dynamic;
+    f.listen_port = ta("1080");
+    f.target_host = ta("stale");
+    f.target_port = ta("999");
+    let spec = f.validate().unwrap();
+    assert_eq!(spec.target_host, None);
+    assert_eq!(spec.target_port, None);
+}
+
+#[test]
+fn validate_bind_addr_passthrough() {
+    let mut f = blank_form();
+    f.bind_addr = ta("127.0.0.1");
+    f.listen_port = ta("8080");
+    f.target_host = ta("h");
+    f.target_port = ta("80");
+    let spec = f.validate().unwrap();
+    assert_eq!(spec.bind_addr.as_deref(), Some("127.0.0.1"));
+}

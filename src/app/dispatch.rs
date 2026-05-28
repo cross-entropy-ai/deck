@@ -239,11 +239,21 @@ impl App {
                 self.reload_config();
                 false
             }
+            Action::PfAddSubmit => {
+                self.pf_add_submit();
+                false
+            }
+            Action::PfDelete => {
+                self.pf_delete_selected();
+                false
+            }
             Action::NewSessionConfirm => {
                 if let Some(req) = self.confirm_new_session() {
-                    let mut fx = crate::state::SideEffect::default();
-                    fx.create_session = Some(req);
-                    fx.refresh_sessions = true;
+                    let fx = crate::state::SideEffect {
+                        create_session: Some(req),
+                        refresh_sessions: true,
+                        ..crate::state::SideEffect::default()
+                    };
                     self.execute_side_effects(&fx);
                 }
                 false
@@ -286,6 +296,46 @@ impl App {
     /// If the PTY isn't ready yet — Connecting or Failed — we don't
     /// switch the view (would just show a blank pane). Reconnect on
     /// failure isn't wired yet.
+    /// Seed per-host runtime state for a newly-added host (UI add or
+    /// hot-reload). The placeholder row gives the sidebar an immediate
+    /// `(connecting...)` section instead of waiting one full refresh
+    /// tick; the spawner kicks off the persistent ssh+tmux PTY.
+    fn onboard_remote_host(&mut self, host: &str) {
+        self.remote_status
+            .insert(host.to_string(), crate::app::RemoteConnStatus::Connecting);
+        self.remote_spawner.spawn(host);
+        // Avoid duplicating a placeholder if one is already there
+        // (e.g. add → remove → add in quick succession).
+        if !self
+            .state
+            .remote_sessions
+            .iter()
+            .any(|s| s.host == host)
+        {
+            self.state.remote_sessions.push(crate::state::RemoteSessionRow {
+                host: host.to_string(),
+                name: String::new(),
+                dir: String::new(),
+                unreachable: false,
+                loading: true,
+            });
+        }
+    }
+
+    /// Tear down per-host runtime state for a removed host. Drops the
+    /// PTY (`remote_terminals`), clears the connection status entry,
+    /// and resets `active_remote` if it was pointing at this host so
+    /// the main pane falls back to local instead of hanging on a
+    /// dangling reference.
+    fn offboard_remote_host(&mut self, host: &str) {
+        self.remote_terminals.remove(host);
+        self.remote_status.remove(host);
+        if self.active_remote.as_deref() == Some(host) {
+            self.active_remote = None;
+            self.needs_full_redraw = true;
+        }
+    }
+
     fn switch_to_remote(&mut self, host: &str, name: &str) {
         use crate::app::RemoteConnStatus;
         let connected = matches!(
@@ -404,6 +454,18 @@ impl App {
             self.save_config();
         }
 
+        if let Some(ref host) = fx.remove_remote_host {
+            // Tear down the ControlMaster (and any forwards riding on
+            // it) so the host stops occupying SSH state once detached.
+            let _ = self.port_forward_tx.send(
+                crate::app::port_forward_task::Op::StopHost { host: host.clone() },
+            );
+            // Drop the per-host runtime state (PTY, conn status, active
+            // pointer) so a later re-add of the same host gets a fresh
+            // connection instead of inheriting stale `Failed` status.
+            self.offboard_remote_host(host);
+        }
+
         if fx.apply_tmux_theme {
             tmux::apply_theme(&THEMES[self.state.theme_index]);
         }
@@ -418,7 +480,8 @@ impl App {
                 let home = std::path::PathBuf::from(
                     std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
                 );
-                let (parent, _leaf) = split_input(&ns.input);
+                let input_owned = ns.input_str().to_string();
+                let (parent, _leaf) = split_input(&input_owned);
                 let parent_path = expand_path(parent, &home);
                 let (entries, error) = read_dir_entries(&parent_path);
                 ns.entries = entries;
@@ -489,6 +552,67 @@ impl App {
         self.state.reload_status = Some(ReloadStatus::Ok);
         self.state.reload_status_at = Some(std::time::Instant::now());
 
+        // Diff old vs new remote forwards and send ops to the worker.
+        let old_remotes = std::mem::take(&mut self.state.config_remotes);
+        let new_remotes = cfg.remotes.clone();
+
+        // Hosts only in old → stop master + offboard runtime state.
+        for old in &old_remotes {
+            if !new_remotes.iter().any(|n| n.host == old.host) {
+                let _ = self.port_forward_tx.send(
+                    crate::app::port_forward_task::Op::StopHost { host: old.host.clone() },
+                );
+                self.offboard_remote_host(&old.host);
+            }
+        }
+
+        // Hosts only in new → seed runtime state + spawn the PTY so
+        // selecting the new section actually connects without a deck
+        // restart.
+        for n in &new_remotes {
+            if !old_remotes.iter().any(|o| o.host == n.host) {
+                self.onboard_remote_host(&n.host);
+            }
+        }
+
+        // Per-host diff for hosts present in either.
+        for n in &new_remotes {
+            let empty = Vec::new();
+            let old_fwds: &[crate::config::ForwardSpec] = old_remotes
+                .iter()
+                .find(|o| o.host == n.host)
+                .map(|o| o.forwards.as_slice())
+                .unwrap_or(&empty);
+            for op in crate::config::diff_forwards(old_fwds, &n.forwards) {
+                let msg = match op {
+                    crate::config::ForwardOp::Add(spec) => crate::app::port_forward_task::Op::AddForward {
+                        host: n.host.clone(),
+                        spec,
+                    },
+                    crate::config::ForwardOp::Cancel(spec) => {
+                        crate::app::port_forward_task::Op::CancelForward { host: n.host.clone(), spec }
+                    }
+                };
+                let _ = self.port_forward_tx.send(msg);
+            }
+        }
+        // Commit the new config; `build_refresh_request` reads
+        // hosts straight from `state.config_remotes`, so the refresh
+        // triggered below automatically picks up the diff.
+        self.state.config_remotes = new_remotes;
+
+        // Evict sidebar rows for hosts that just disappeared so they
+        // don't linger until the next refresh result lands.
+        let kept: std::collections::HashSet<&str> = self
+            .state
+            .config_remotes
+            .iter()
+            .map(|r| r.host.as_str())
+            .collect();
+        self.state
+            .remote_sessions
+            .retain(|s| kept.contains(s.host.as_str()));
+
         self.resize_pty();
         if theme_changed {
             tmux::apply_theme(&THEMES[self.state.theme_index]);
@@ -498,7 +622,7 @@ impl App {
 
     fn open_new_session_picker(&mut self) {
         use crate::new_session::{
-            auto_session_name, expand_path, split_input, NewSessionState, PickerFocus,
+            auto_session_name, expand_path, make_textarea, split_input, NewSessionState, PickerFocus,
         };
 
         // Starting dir: focused session's dir if any, else $HOME.
@@ -509,15 +633,15 @@ impl App {
             .and_then(|&i| self.state.sessions.get(i))
             .map(|s| s.dir.clone())
             .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
-        let mut input = start_dir;
-        if !input.ends_with('/') {
-            input.push('/');
+        let mut input_str = start_dir;
+        if !input_str.ends_with('/') {
+            input_str.push('/');
         }
 
         let home = std::path::PathBuf::from(
             std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
         );
-        let (parent, _leaf) = split_input(&input);
+        let (parent, _leaf) = split_input(&input_str);
         let parent_path = expand_path(parent, &home);
         let (entries, error) = read_dir_entries(&parent_path);
 
@@ -527,14 +651,12 @@ impl App {
             .iter()
             .map(|s| s.name.as_str())
             .collect();
-        let name = auto_session_name(&existing, self.state.sessions.len());
+        let name_str = auto_session_name(&existing, self.state.sessions.len());
 
         let mut ns = NewSessionState {
-            name_cursor: name.len(),
-            name,
+            name: make_textarea(&name_str),
             focus: PickerFocus::Name,
-            cursor: input.len(),
-            input,
+            input: make_textarea(&input_str),
             entries,
             filtered: vec![],
             selected: 0,
@@ -550,7 +672,7 @@ impl App {
         // Read name first (immutable borrow on overlay)
         let name = {
             let ns = self.state.overlay.new_session.as_ref()?;
-            ns.name.trim().to_string()
+            ns.name_str().trim().to_string()
         };
 
         // Validate name.
@@ -562,7 +684,7 @@ impl App {
         }
 
         // Now resolve and validate dir.
-        let input = self.state.overlay.new_session.as_ref()?.input.clone();
+        let input = self.state.overlay.new_session.as_ref()?.input_str().to_string();
         let home = std::path::PathBuf::from(
             std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
         );
@@ -600,6 +722,104 @@ impl App {
 
         if tmux::new_session(name, &dir_str).is_some() {
             self.switch_client(name);
+        }
+    }
+
+    /// Validate the add form. On validate-failure: set status, form stays
+    /// open, no worker call. On validate-success: send `AddForward` to
+    /// worker, mark form `submitting=true`, set status to "applying...".
+    /// **Lazy persist:** config is NOT modified here; the reducer for
+    /// `PfTaskResult` writes it on worker success.
+    fn pf_add_submit(&mut self) {
+        let Some(overlay) = self.state.overlay.port_forward.as_mut() else {
+            return;
+        };
+        let Some(form) = overlay.add_form.as_mut() else {
+            return;
+        };
+        if form.submitting {
+            return; // ignore double-Enter
+        }
+        let spec = match form.validate() {
+            Ok(s) => s,
+            Err(e) => {
+                overlay.status = Some(format!("err: {}", e.message()));
+                return;
+            }
+        };
+        let host = overlay.host.clone();
+        form.submitting = true;
+        overlay.status = Some("applying...".into());
+        let _ = self.port_forward_tx.send(
+            crate::app::port_forward_task::Op::AddForward { host, spec },
+        );
+    }
+
+    /// Cancel-then-remove. Spec semantics: remove from config regardless
+    /// of worker outcome (avoid ghost entries). Save via the existing
+    /// `save_config` path.
+    fn pf_delete_selected(&mut self) {
+        let (host, spec) = {
+            let Some(overlay) = self.state.overlay.port_forward.as_ref() else {
+                return;
+            };
+            let host = overlay.host.clone();
+            let idx = overlay.selected;
+            let Some(spec) = self
+                .state
+                .config_remotes
+                .iter()
+                .find(|r| r.host == host)
+                .and_then(|r| r.forwards.get(idx))
+                .cloned()
+            else {
+                return;
+            };
+            (host, spec)
+        };
+
+        persist_forward(
+            &mut self.state.config_remotes,
+            &host,
+            spec.clone(),
+            false,
+        );
+        self.save_config();
+
+        let new_len = self
+            .state
+            .config_remotes
+            .iter()
+            .find(|r| r.host == host)
+            .map(|r| r.forwards.len())
+            .unwrap_or(0);
+        if let Some(overlay) = self.state.overlay.port_forward.as_mut() {
+            if overlay.selected >= new_len && new_len > 0 {
+                overlay.selected = new_len - 1;
+            }
+            overlay.status = Some("cancelling...".into());
+        }
+
+        let _ = self.port_forward_tx.send(
+            crate::app::port_forward_task::Op::CancelForward { host, spec },
+        );
+    }
+}
+
+// `push` and `retain` are called on `r.forwards` (a field), not on `remotes`
+// directly, but the Vec signature is needed to allow mutating elements.
+#[allow(clippy::ptr_arg)]
+fn persist_forward(
+    remotes: &mut Vec<crate::config::RemoteConfig>,
+    host: &str,
+    spec: crate::config::ForwardSpec,
+    add: bool,
+) {
+    if let Some(r) = remotes.iter_mut().find(|r| r.host == host) {
+        if add {
+            r.forwards.push(spec);
+        } else {
+            r.forwards.retain(|s| *s != spec);
         }
     }
 }

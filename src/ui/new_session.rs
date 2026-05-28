@@ -1,8 +1,9 @@
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 use ratatui::Frame;
+use ratatui_textarea::TextArea;
 
 use crate::theme::Theme;
 
@@ -35,43 +36,59 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
-    let mut lines: Vec<Line> = Vec::new();
+    // inner row layout: name, path, blank, entries..., blank, [error,] footer
+    let n_entry_rows = visible_entries.max(1) as u16;
+    let mut row_constraints = vec![
+        Constraint::Length(1), // name row
+        Constraint::Length(1), // path row
+        Constraint::Length(1), // blank
+    ];
+    for _ in 0..n_entry_rows {
+        row_constraints.push(Constraint::Length(1));
+    }
+    row_constraints.push(Constraint::Length(1)); // blank after entries
+    if view.error.is_some() {
+        row_constraints.push(Constraint::Length(1));
+    }
+    row_constraints.push(Constraint::Length(1)); // footer
+    row_constraints.push(Constraint::Min(0));    // tail
+    let rows = Layout::vertical(row_constraints).split(inner);
 
-    // Name row.
-    let name_display = if view.focus_name {
-        render_input_with_cursor(view.name, view.name_cursor)
-    } else {
-        view.name.to_string()
-    };
-    lines.push(Line::from(vec![
-        Span::styled(
-            "  Name: ",
-            Style::default().fg(if view.focus_name { theme.accent } else { theme.dim }),
-        ),
-        Span::styled(name_display, Style::default().fg(theme.text)),
-    ]));
+    let mut row_idx: usize = 0;
 
-    // Path row.
-    let path_display = if !view.focus_name {
-        render_input_with_cursor(view.input, view.cursor)
-    } else {
-        view.input.to_string()
-    };
-    lines.push(Line::from(vec![
-        Span::styled(
-            "  Path: ",
-            Style::default().fg(if !view.focus_name { theme.accent } else { theme.dim }),
-        ),
-        Span::styled(path_display, Style::default().fg(theme.text)),
-    ]));
-    lines.push(Line::raw(""));
+    // --- Name row ---
+    render_input_row(
+        frame,
+        rows[row_idx],
+        view.name,
+        "  Name: ",
+        view.focus_name,
+        theme,
+    );
+    row_idx += 1;
 
-    // Entries.
+    // --- Path row ---
+    render_input_row(
+        frame,
+        rows[row_idx],
+        view.input,
+        "  Path: ",
+        !view.focus_name,
+        theme,
+    );
+    row_idx += 1;
+
+    // blank
+    row_idx += 1;
+
+    // --- Entries ---
     if view.filtered.is_empty() {
-        lines.push(Line::from(Span::styled(
+        Paragraph::new(Span::styled(
             "    (no entries)",
             Style::default().fg(theme.dim),
-        )));
+        ))
+        .render(rows[row_idx], frame.buffer_mut());
+        row_idx += 1;
     } else {
         let start = scroll_window(view.selected, view.filtered.len(), MAX_VISIBLE_ENTRIES);
         let end = (start + MAX_VISIBLE_ENTRIES).min(view.filtered.len());
@@ -81,7 +98,7 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
             let selected = display_pos == view.selected;
             let row_bg = if selected { theme.surface } else { theme.bg };
             let marker = if selected { "▸" } else { " " };
-            lines.push(Line::from(vec![
+            Paragraph::new(Line::from(vec![
                 Span::styled(
                     format!("  {marker} "),
                     Style::default()
@@ -92,43 +109,75 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
                     format!("{name}/"),
                     Style::default().fg(theme.text).bg(row_bg),
                 ),
-            ]));
+            ]))
+            .render(rows[row_idx], frame.buffer_mut());
+            row_idx += 1;
+        }
+        // fill remaining entry slots with blank
+        let rendered = (end - start).min(visible_entries);
+        for _ in rendered..visible_entries {
+            row_idx += 1;
         }
     }
-    lines.push(Line::raw(""));
 
-    // Error row.
+    // blank
+    row_idx += 1;
+
+    // --- Error ---
     if let Some(err) = view.error {
-        lines.push(Line::from(Span::styled(
+        Paragraph::new(Span::styled(
             format!("  ⚠ {}", err),
             Style::default().fg(theme.pink),
-        )));
+        ))
+        .render(rows[row_idx], frame.buffer_mut());
+        row_idx += 1;
     }
 
-    // Footer.
+    // --- Footer ---
     let footer = if view.focus_name {
         "  ⏎ create   ⇥ switch   ←→ cursor   ⎋ cancel"
     } else {
         "  ⏎ create   ⇥ switch   ←→ nav   ⎋ cancel"
     };
-    lines.push(Line::from(Span::styled(
+    Paragraph::new(Span::styled(
         footer,
         Style::default().fg(theme.dim).add_modifier(Modifier::DIM),
-    )));
-
-    frame.render_widget(Paragraph::new(lines).style(Style::default().bg(theme.bg)), inner);
+    ))
+    .render(rows[row_idx], frame.buffer_mut());
 }
 
-fn render_input_with_cursor(input: &str, cursor: usize) -> String {
-    // Cursor representation: a vertical bar inserted at `cursor`.
-    // Falls back to end-of-string if `cursor` is out of bounds or
-    // (defensively) not on a UTF-8 char boundary.
-    if cursor >= input.len() || !input.is_char_boundary(cursor) {
-        format!("{input}▌")
+/// Render a label + TextArea pair in a single row.
+fn render_input_row(
+    frame: &mut Frame,
+    area: Rect,
+    textarea: &TextArea<'static>,
+    label: &str,
+    focused: bool,
+    theme: &Theme,
+) {
+    use unicode_width::UnicodeWidthStr;
+
+    let label_w = label.width() as u16;
+    let cols =
+        Layout::horizontal([Constraint::Length(label_w), Constraint::Min(0)]).split(area);
+
+    let label_style = if focused {
+        Style::default().fg(theme.accent)
     } else {
-        let (before, after) = input.split_at(cursor);
-        format!("{before}▌{after}")
+        Style::default().fg(theme.dim)
+    };
+    Paragraph::new(Span::styled(label.to_string(), label_style))
+        .render(cols[0], frame.buffer_mut());
+
+    let mut ta = textarea.clone();
+    ta.set_style(Style::default().fg(theme.text).bg(theme.bg));
+    ta.set_cursor_line_style(Style::default().fg(theme.text).bg(theme.bg));
+    if focused {
+        ta.set_cursor_style(Style::default().bg(theme.accent).fg(theme.bg));
+    } else {
+        ta.set_cursor_style(Style::default().fg(theme.text).bg(theme.bg));
     }
+    ta.render(cols[1], frame.buffer_mut());
 }
 
 /// Compute the first visible index so that `selected` stays in view.

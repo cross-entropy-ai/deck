@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use ratatui::layout::Rect;
+use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
 use crate::config::PluginConfig;
@@ -23,15 +24,18 @@ const SIDEBAR_HEIGHT_MAX_BORDERED: u16 = 6;
 const MIN_MAIN_WIDTH: u16 = 10;
 const MIN_MAIN_HEIGHT: u16 = 1;
 
-const SESSION_MENU_ITEMS: &'static [&'static str] =
-    &["Switch", "Rename", "Kill", "Move up", "Move down"];
+// "Switch" is dropped — the focus already triggers the switch, so the
+// menu item was redundant.
+const SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill", "Move up", "Move down"];
 // Remote sessions live on a different tmux server, so the
 // deck-side `session_order` (which drives Move up/down) doesn't
-// apply. Switch/Rename/Kill all map to `ssh <host> tmux <cmd>`
-// against the host's server, where `(host, name)` uniquely
-// identifies the session.
-const REMOTE_SESSION_MENU_ITEMS: &'static [&'static str] = &["Switch", "Rename", "Kill"];
-const GLOBAL_MENU_ITEMS: &'static [&'static str] = &[
+// apply. Rename/Kill map to `ssh <host> tmux <cmd>` against the
+// host's server.
+const REMOTE_SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill"];
+// Host divider [...] menu acts on the whole remote *group*. "Remove
+// from list" is equivalent to `deck remote remove <host>`.
+const HOST_DIVIDER_MENU_ITEMS: &[&str] = &["Port Forward", "Remove from list"];
+const GLOBAL_MENU_ITEMS: &[&str] = &[
     "New session",
     "Toggle layout",
     "Toggle borders",
@@ -96,6 +100,12 @@ pub enum MenuKind {
         items: &'static [&'static str],
     },
     Global,
+    /// Click on the `[…]` button on a remote host divider. Single
+    /// item today (`Port Forward`); extendable.
+    HostDivider {
+        host: String,
+        items: &'static [&'static str],
+    },
 }
 
 impl MenuKind {
@@ -103,8 +113,13 @@ impl MenuKind {
         match self {
             MenuKind::Session { items, .. } => items,
             MenuKind::Global => GLOBAL_MENU_ITEMS,
+            MenuKind::HostDivider { items, .. } => items,
         }
     }
+}
+
+pub fn host_divider_menu_items() -> &'static [&'static str] {
+    HOST_DIVIDER_MENU_ITEMS
 }
 
 /// Menu items shown after right-clicking a session row. The action
@@ -206,6 +221,15 @@ pub enum SidebarItemData {
 /// across the renderer and the action layer.
 pub type SidebarLayout = ratatui_sectioned_list::SectionedList<SidebarItemData>;
 
+/// Click-region for the `[…]` button on a remote-host divider. The
+/// sidebar renderer fills `divider_hits` after each render; mouse
+/// hit-testing consults it before `focus_at_row()`.
+#[derive(Debug, Clone)]
+pub struct DividerHit {
+    pub host: String,
+    pub rect: Rect,
+}
+
 // --- Side effects ---
 
 #[derive(Debug, Default)]
@@ -221,6 +245,11 @@ pub struct SideEffect {
     /// used to live in `App::create_new_session` now lives in
     /// `App::open_new_session_picker` and is editable via the name input.
     pub create_session: Option<CreateSessionRequest>,
+    /// Detach a remote host from deck (equivalent to `deck remote
+    /// remove <host>`). Dispatch sends `Op::StopHost` to the
+    /// port-forward worker; the state mutation + config save happen
+    /// in the reducer.
+    pub remove_remote_host: Option<String>,
     /// Dispatch should open the new-session picker overlay. Fired by
     /// the global menu's "New session" item; uses the focused session's
     /// dir as the picker's starting point.
@@ -256,6 +285,9 @@ impl SideEffect {
         }
         if other.create_session.is_some() {
             self.create_session = other.create_session;
+        }
+        if other.remove_remote_host.is_some() {
+            self.remove_remote_host = other.remove_remote_host;
         }
         self.open_new_session_picker |= other.open_new_session_picker;
         self.reread_new_session_entries |= other.reread_new_session_entries;
@@ -309,10 +341,21 @@ pub struct RemoteSwitchRequest {
 #[derive(Debug, Clone)]
 pub struct RenameState {
     pub original_name: String,
-    pub input: String,
-    pub cursor: usize,
+    pub input: TextArea<'static>,
     /// `Some(host)` when the rename targets a remote session.
     pub host: Option<String>,
+}
+
+impl RenameState {
+    pub fn new(original_name: String, initial: String, host: Option<String>) -> Self {
+        let mut ta = TextArea::new(vec![initial]);
+        ta.move_cursor(ratatui_textarea::CursorMove::End);
+        Self {
+            original_name,
+            input: ta,
+            host,
+        }
+    }
 }
 
 /// UI state for the exclude pattern editor popup.
@@ -320,9 +363,182 @@ pub struct RenameState {
 pub struct ExcludeEditorState {
     pub selected: usize,
     pub adding: bool,
-    pub input: String,
-    pub cursor: usize,
+    pub input: TextArea<'static>,
     pub error: Option<String>,
+}
+
+impl ExcludeEditorState {
+    pub fn new() -> Self {
+        Self {
+            selected: 0,
+            adding: false,
+            input: make_textarea(""),
+            error: None,
+        }
+    }
+
+    /// Read current add-input text.
+    pub fn input_str(&self) -> &str {
+        self.input.lines().first().map(String::as_str).unwrap_or("")
+    }
+
+    /// Reset the add input to empty (called on StartAdd / CancelAdd / Confirm).
+    pub fn reset_input(&mut self) {
+        self.input = make_textarea("");
+    }
+}
+
+// --- Port forward overlay ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PfField {
+    Mode,
+    BindAddr,
+    ListenPort,
+    TargetHost,
+    TargetPort,
+}
+
+/// One input field, backed by `ratatui-textarea`. Each field carries
+/// its own cursor and edit history; the keyboard dispatcher feeds key
+/// events to whichever one is focused.
+#[derive(Debug, Clone)]
+pub struct PfAddForm {
+    pub mode: crate::config::ForwardMode,
+    pub focus: PfField,
+    pub bind_addr: TextArea<'static>,
+    pub listen_port: TextArea<'static>,
+    pub target_host: TextArea<'static>,
+    pub target_port: TextArea<'static>,
+    /// True while a validated spec is in flight to the worker. The
+    /// form stays rendered (read-only) until `PfTaskResult` for this
+    /// host's Forward op clears or fails the submission. Lazy
+    /// persist: config is only written when the worker reports
+    /// success.
+    pub submitting: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PfFormError {
+    ListenPortRange,
+    TargetPortRange,
+    TargetHostRequired,
+}
+
+impl PfFormError {
+    pub fn message(&self) -> &'static str {
+        match self {
+            PfFormError::ListenPortRange => "listen_port must be 0-65535",
+            PfFormError::TargetPortRange => "target_port must be 0-65535",
+            PfFormError::TargetHostRequired => "target_host required for -L/-R",
+        }
+    }
+}
+
+/// Build a single-line `TextArea` pre-filled with `initial`, with the
+/// cursor placed at the end.
+fn make_textarea(initial: &str) -> TextArea<'static> {
+    let mut ta = TextArea::new(vec![initial.to_string()]);
+    // Move cursor to end of line so typing appends.
+    ta.move_cursor(ratatui_textarea::CursorMove::End);
+    ta
+}
+
+impl PfAddForm {
+    pub fn default_for(mode: crate::config::ForwardMode) -> Self {
+        Self {
+            mode,
+            focus: PfField::ListenPort,
+            bind_addr: make_textarea("0.0.0.0"),
+            listen_port: make_textarea(""),
+            target_host: make_textarea("127.0.0.1"),
+            target_port: make_textarea(""),
+            submitting: false,
+        }
+    }
+
+    /// Read the current text of a field. Returns `""` for `Mode`.
+    pub fn field_text(&self, field: PfField) -> &str {
+        match field {
+            PfField::Mode => "",
+            PfField::BindAddr => textarea_line(&self.bind_addr),
+            PfField::ListenPort => textarea_line(&self.listen_port),
+            PfField::TargetHost => textarea_line(&self.target_host),
+            PfField::TargetPort => textarea_line(&self.target_port),
+        }
+    }
+
+    /// Mutable handle to the focused field's textarea. `None` for `Mode`.
+    pub fn focused_textarea_mut(&mut self) -> Option<&mut TextArea<'static>> {
+        match self.focus {
+            PfField::Mode => None,
+            PfField::BindAddr => Some(&mut self.bind_addr),
+            PfField::ListenPort => Some(&mut self.listen_port),
+            PfField::TargetHost => Some(&mut self.target_host),
+            PfField::TargetPort => Some(&mut self.target_port),
+        }
+    }
+
+    pub fn validate(&self) -> Result<crate::config::ForwardSpec, PfFormError> {
+        use crate::config::{ForwardMode, ForwardSpec};
+        // Belt-and-braces: input filtering already blocks whitespace, but
+        // trim defensively so any value that somehow made it through is
+        // persisted clean. Port range is 0..=65535 — `u16::parse` already
+        // enforces the upper bound; port 0 means "let kernel pick" and is
+        // accepted.
+        let listen_port: u16 = self
+            .field_text(PfField::ListenPort)
+            .trim()
+            .parse()
+            .map_err(|_| PfFormError::ListenPortRange)?;
+        let bind_raw = self.field_text(PfField::BindAddr).trim();
+        let bind_addr = if bind_raw.is_empty() {
+            None
+        } else {
+            Some(bind_raw.to_string())
+        };
+
+        match self.mode {
+            ForwardMode::Dynamic => Ok(ForwardSpec {
+                mode: ForwardMode::Dynamic,
+                bind_addr,
+                listen_port,
+                target_host: None,
+                target_port: None,
+            }),
+            ForwardMode::Local | ForwardMode::Remote => {
+                let target_host = self.field_text(PfField::TargetHost).trim();
+                if target_host.is_empty() {
+                    return Err(PfFormError::TargetHostRequired);
+                }
+                let target_port: u16 = self
+                    .field_text(PfField::TargetPort)
+                    .trim()
+                    .parse()
+                    .map_err(|_| PfFormError::TargetPortRange)?;
+                Ok(ForwardSpec {
+                    mode: self.mode,
+                    bind_addr,
+                    listen_port,
+                    target_host: Some(target_host.to_string()),
+                    target_port: Some(target_port),
+                })
+            }
+        }
+    }
+}
+
+/// First (only) line of a single-line `TextArea`, as a borrowed `&str`.
+fn textarea_line<'a>(ta: &'a TextArea<'a>) -> &'a str {
+    ta.lines().first().map(String::as_str).unwrap_or("")
+}
+
+#[derive(Debug, Clone)]
+pub struct PortForwardOverlay {
+    pub host: String,
+    pub selected: usize,
+    pub add_form: Option<PfAddForm>,
+    pub status: Option<String>,
 }
 
 // --- Overlay state ---
@@ -345,6 +561,8 @@ pub struct OverlayState {
     pub context_menu: Option<ContextMenu>,
     pub exclude_editor: Option<ExcludeEditorState>,
     pub new_session: Option<NewSessionState>,
+    /// Port-forward overlay for a single host. See `PortForwardOverlay`.
+    pub port_forward: Option<PortForwardOverlay>,
 }
 
 // --- Settings page state ---
@@ -425,6 +643,15 @@ pub struct AppState {
     /// TTL — see `RELOAD_STATUS_OK_TTL` / `RELOAD_STATUS_ERR_TTL`.
     pub reload_status: Option<ReloadStatus>,
     pub reload_status_at: Option<Instant>,
+
+    /// Click-regions for divider `[…]` buttons, refilled by the sidebar
+    /// renderer each frame. Read by mouse dispatch.
+    pub divider_hits: Vec<DividerHit>,
+
+    /// Mirror of `Config.remotes` so reducers can read per-host forwards
+    /// without round-tripping through dispatch. Kept in sync by startup
+    /// and `reload_config`.
+    pub config_remotes: Vec<crate::config::RemoteConfig>,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -499,6 +726,8 @@ impl AppState {
             banner_upgrade_bounds: None,
             reload_status: None,
             reload_status_at: None,
+            divider_hits: Vec::new(),
+            config_remotes: Vec::new(),
         }
     }
 

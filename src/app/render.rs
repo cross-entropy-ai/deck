@@ -33,13 +33,11 @@ impl App {
         let theme = &THEMES[s.theme_index];
         let confirm_kill = s.overlay.confirm_kill;
         let show_help = s.overlay.show_help;
-        let rename_input = s
-            .overlay
-            .renaming
-            .as_ref()
-            .map(|r| (r.input.clone(), r.cursor));
+        let rename_input = s.overlay.renaming.as_ref().map(|r| &r.input);
         let context_menu = s.overlay.context_menu.clone();
         let new_session_overlay = s.overlay.new_session.clone();
+        let port_forward_overlay = s.overlay.port_forward.clone();
+        let config_remotes = s.config_remotes.clone();
         let show_borders = s.show_borders;
         let layout_mode = s.layout_mode;
         let view_mode = s.view_mode;
@@ -92,6 +90,7 @@ impl App {
         let dragging_sep = s.dragging_separator;
 
         let mut captured_banner_bounds: Option<Rect> = None;
+        let mut captured_divider_hits: Vec<crate::state::DividerHit> = Vec::new();
         terminal.draw(|frame| {
             // Unified slice the sidebar consumes: local rows first
             // (flat index == filtered_pos), then remotes (flat index
@@ -182,7 +181,7 @@ impl App {
 
             let layout = self.state.sidebar_layout(view_mode);
             let focus_target = self.state.focus_target();
-            captured_banner_bounds = ui::draw_sidebar(
+            let (banner_bounds, divider_hits) = ui::draw_sidebar(
                 frame,
                 sidebar_area,
                 ui::SidebarProps {
@@ -194,7 +193,7 @@ impl App {
                     theme,
                     show_help,
                     confirm_kill: confirm_name.as_deref(),
-                    rename_input: rename_input.as_ref().map(|(s, c)| (s.as_str(), *c)),
+                    rename_input,
                     show_borders,
                     tabs_mode: layout_mode == LayoutMode::Vertical,
                     spinner_frame: &spinner_frame,
@@ -205,6 +204,8 @@ impl App {
                     update_available: update_available.as_ref(),
                 },
             );
+            captured_banner_bounds = banner_bounds;
+            captured_divider_hits = divider_hits;
 
             if let Some(gap) = gap_area {
                 let (sep_char, sep_fg) = if dragging_sep {
@@ -352,16 +353,25 @@ impl App {
             if let Some(ref ns) = new_session_overlay {
                 let view = ui::NewSessionView {
                     name: &ns.name,
-                    name_cursor: ns.name_cursor,
                     focus_name: matches!(ns.focus, crate::new_session::PickerFocus::Name),
                     input: &ns.input,
-                    cursor: ns.cursor,
                     entries: &ns.entries,
                     filtered: &ns.filtered,
                     selected: ns.selected,
                     error: ns.error.as_deref(),
                 };
                 ui::draw_new_session(frame, frame.area(), &view, theme);
+            }
+
+            if let Some(ref overlay) = port_forward_overlay {
+                let pf_area = frame.area();
+                crate::ui::overlays::port_forward::draw_port_forward(
+                    frame.buffer_mut(),
+                    pf_area,
+                    overlay,
+                    &config_remotes,
+                    theme,
+                );
             }
 
             // Overlay the reload bar last so it sits on top of the sidebar
@@ -375,6 +385,7 @@ impl App {
         })?;
 
         self.state.banner_upgrade_bounds = captured_banner_bounds;
+        self.state.divider_hits = captured_divider_hits;
 
         Ok(())
     }
