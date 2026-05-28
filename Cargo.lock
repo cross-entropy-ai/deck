@@ -268,6 +268,7 @@ dependencies = [
  "libc",
  "portable-pty",
  "ratatui",
+ "ratatui-sectioned-list",
  "rattles",
  "regex",
  "reqwest",
@@ -1483,6 +1484,12 @@ dependencies = [
  "ratatui-core",
  "ratatui-widgets",
 ]
+
+[[package]]
+name = "ratatui-sectioned-list"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ead1862c1c5b70c8ac8611bb72a06457df9e7a6d8dde24399a52f5f95df77d3"
 
 [[package]]
 name = "ratatui-termwiz"

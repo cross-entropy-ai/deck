@@ -10,9 +10,8 @@ use crate::keybindings::{Command, Keybindings};
 use crate::layout::{
     plugin_block_rows, BANNER_MIN_WIDTH, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR,
 };
-use crate::state::{
-    scroll_for_layout, FocusTarget, SidebarItem, SidebarItemKind, SidebarLayout, ViewMode,
-};
+use crate::state::{FocusTarget, SidebarItemData, SidebarLayout, ViewMode};
+use ratatui_sectioned_list::Item;
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
 
@@ -249,7 +248,7 @@ fn draw_sessions(frame: &mut Frame, area: Rect, ctx: &SidebarRenderCtx<'_>, prop
     let width = area.width as usize;
     let mut lines: Vec<Line> = Vec::new();
 
-    for item in props.layout.items.iter() {
+    for item in props.layout.items().iter() {
         let is_focused = is_item_focused(item, props.focus_target);
         let row_bg = if is_focused {
             ctx.theme.surface
@@ -262,12 +261,12 @@ fn draw_sessions(frame: &mut Frame, area: Rect, ctx: &SidebarRenderCtx<'_>, prop
             gutter_bg: ctx.theme.bg,
             width,
         };
-        match &item.kind {
-            SidebarItemKind::Header { label, host_idx } => {
+        match &item.data {
+            SidebarItemData::Header { label, host_idx } => {
                 let accent = host_accent(ctx.theme, *host_idx);
                 render_group_header(&mut lines, label, accent, width, ctx.theme);
             }
-            SidebarItemKind::Session { session_idx } => {
+            SidebarItemData::Session { session_idx } => {
                 let Some(&session) = props.sessions.get(*session_idx) else {
                     continue;
                 };
@@ -275,7 +274,7 @@ fn draw_sessions(frame: &mut Frame, area: Rect, ctx: &SidebarRenderCtx<'_>, prop
                     session,
                     session_idx: *session_idx,
                     chrome,
-                    target_height: item.height,
+                    target_height: item.height as usize,
                 };
                 match props.view_mode {
                     ViewMode::Expanded => render_session_card_expanded(&mut lines, ctx, card),
@@ -285,19 +284,20 @@ fn draw_sessions(frame: &mut Frame, area: Rect, ctx: &SidebarRenderCtx<'_>, prop
         }
     }
 
-    let visible_height = area.height as usize;
-    let scroll = scroll_for_layout(props.layout, props.focus_target, visible_height);
+    let scroll = props
+        .layout
+        .scroll_offset(props.focus_target.map(|f| f.0), area.height);
     frame.render_widget(
         Paragraph::new(lines)
             .style(Style::default().bg(ctx.theme.bg))
-            .scroll((scroll as u16, 0)),
+            .scroll((scroll, 0)),
         area,
     );
 }
 
-fn is_item_focused(item: &SidebarItem, focus_target: Option<FocusTarget>) -> bool {
-    match (&item.kind, focus_target) {
-        (SidebarItemKind::Session { session_idx }, Some(target)) => *session_idx == target.0,
+fn is_item_focused(item: &Item<SidebarItemData>, focus_target: Option<FocusTarget>) -> bool {
+    match (&item.data, focus_target) {
+        (SidebarItemData::Session { session_idx }, Some(target)) => *session_idx == target.0,
         _ => false,
     }
 }
