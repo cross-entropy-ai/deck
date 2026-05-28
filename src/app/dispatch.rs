@@ -497,6 +497,42 @@ impl App {
         self.state.reload_status = Some(ReloadStatus::Ok);
         self.state.reload_status_at = Some(std::time::Instant::now());
 
+        // Diff old vs new remote forwards and send ops to the worker.
+        let old_remotes = std::mem::take(&mut self.state.config_remotes);
+        let new_remotes = cfg.remotes.clone();
+
+        // Hosts only in old → stop master.
+        for old in &old_remotes {
+            if !new_remotes.iter().any(|n| n.host == old.host) {
+                let _ = self.port_forward_tx.send(
+                    crate::app::port_forward_task::Op::StopHost { host: old.host.clone() },
+                );
+            }
+        }
+
+        // Per-host diff for hosts present in either.
+        for n in &new_remotes {
+            let empty = Vec::new();
+            let old_fwds: &[crate::config::ForwardSpec] = old_remotes
+                .iter()
+                .find(|o| o.host == n.host)
+                .map(|o| o.forwards.as_slice())
+                .unwrap_or(&empty);
+            for op in crate::config::diff_forwards(old_fwds, &n.forwards) {
+                let msg = match op {
+                    crate::config::ForwardOp::Add(spec) => crate::app::port_forward_task::Op::AddForward {
+                        host: n.host.clone(),
+                        spec,
+                    },
+                    crate::config::ForwardOp::Cancel(spec) => {
+                        crate::app::port_forward_task::Op::CancelForward { host: n.host.clone(), spec }
+                    }
+                };
+                let _ = self.port_forward_tx.send(msg);
+            }
+        }
+        self.state.config_remotes = new_remotes;
+
         self.resize_pty();
         if theme_changed {
             tmux::apply_theme(&THEMES[self.state.theme_index]);
