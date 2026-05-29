@@ -6,7 +6,9 @@
 //! command failed) so callers can distinguish "couldn't check" from
 //! "checked, port absent".
 
-// Callers arrive in later tasks (worker probe); suppress until then.
+// parse_netstat/parse_ss are platform-split: local_listen_ports only calls
+// one of them per OS (cfg-gated), so the other is "unused" in a non-test
+// build on that platform. The module-level allow covers that.
 #![allow(dead_code)]
 
 use std::collections::HashSet;

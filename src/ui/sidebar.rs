@@ -406,19 +406,23 @@ fn render_group_header(
     // Optional port-forward badge: " " + "⇄N", sitting between the rule and the
     // reconnect button. Reserve its width so the right-aligned buttons hold.
     let badge_text = pf.map(|b| format!("\u{21c4}{}", b.count));
-    let badge_w = badge_text.as_ref().map(|s| gap + s.as_str().width()).unwrap_or(0);
     let badge_fg = pf.map(|b| match b.color {
         PfBadgeColor::Healthy => theme.green,
         PfBadgeColor::Degraded => theme.pink,
         PfBadgeColor::Probing => theme.yellow,
     });
 
-    let rule_w = width
+    let want_badge_w = badge_text.as_ref().map(|s| gap + s.as_str().width()).unwrap_or(0);
+    let base_rule_w = width
         .saturating_sub(leading_w)
         .saturating_sub(label_w)
         .saturating_sub(spacer_w)
-        .saturating_sub(badge_w)
         .saturating_sub(buttons_w);
+    // Only show the badge if the dash run can absorb its width; otherwise the
+    // right-aligned buttons would be pushed off-screen at very narrow widths.
+    let show_badge = want_badge_w > 0 && base_rule_w > want_badge_w;
+    let badge_w = if show_badge { want_badge_w } else { 0 };
+    let rule_w = base_rule_w - badge_w;
     let rule = "\u{2500}".repeat(rule_w);
 
     // Tint the reconnect glyph by connection status; the "more" button keeps
@@ -441,9 +445,11 @@ fn render_group_header(
         Span::styled(" ", Style::default().bg(theme.bg)),
         Span::styled(rule, Style::default().fg(accent).bg(theme.bg)),
     ];
-    if let (Some(text), Some(fg)) = (badge_text, badge_fg) {
-        spans.push(Span::styled(" ", Style::default().bg(theme.bg)));
-        spans.push(Span::styled(text, Style::default().fg(fg).bg(theme.bg)));
+    if show_badge {
+        if let (Some(text), Some(fg)) = (&badge_text, badge_fg) {
+            spans.push(Span::styled(" ", Style::default().bg(theme.bg)));
+            spans.push(Span::styled(text.clone(), Style::default().fg(fg).bg(theme.bg)));
+        }
     }
     spans.push(Span::styled(" ", Style::default().bg(theme.bg)));
     spans.push(Span::styled("[\u{27f3}]", Style::default().fg(reconnect_fg).bg(theme.bg)));

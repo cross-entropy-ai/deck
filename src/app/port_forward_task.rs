@@ -192,6 +192,11 @@ impl<R: Runner> Worker<R> {
                                 None => ForwardHealth::Probing, // couldn't enumerate
                             },
                             ForwardMode::Remote => {
+                                // masters_up is only updated on Bootstrap/AddForward/StopHost,
+                                // not re-validated. Presumed means "master was brought up and
+                                // not explicitly torn down" — NOT a liveness guarantee. A master
+                                // that died on its own still reads Presumed; remote-side liveness
+                                // cannot be checked locally, by design.
                                 if self.masters_up.contains(&key.host) {
                                     ForwardHealth::Presumed
                                 } else {

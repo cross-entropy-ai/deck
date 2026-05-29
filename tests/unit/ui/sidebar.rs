@@ -39,3 +39,25 @@ fn pf_badge_does_not_shift_right_aligned_buttons() {
     let rendered: String = with[0].spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(rendered.contains("\u{21c4}2"), "badge text missing: {rendered:?}");
 }
+
+#[test]
+fn pf_badge_suppressed_at_narrow_width_keeps_buttons_on_screen() {
+    use crate::state::{HostStatus, PfBadge, PfBadgeColor};
+    let theme = &crate::theme::THEMES[0];
+    let width = 14; // too narrow to fit a badge + dash run
+    let mut lines = Vec::new();
+    let (_recon, more) = super::render_group_header(
+        &mut lines,
+        "@h",
+        theme.teal,
+        HostStatus::Connected,
+        width,
+        theme,
+        Some(PfBadge { count: 12, color: PfBadgeColor::Degraded }),
+    );
+    // Both button ranges must stay within the line width.
+    assert!(more.end <= width, "more button end {} exceeds width {}", more.end, width);
+    // Badge must be suppressed (no ⇄ glyph) at this width.
+    let rendered: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(!rendered.contains('\u{21c4}'), "badge should be hidden at narrow width: {rendered:?}");
+}
