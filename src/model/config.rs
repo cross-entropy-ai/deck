@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::keybindings::migrate_keybindings;
+
 use crate::state::{LayoutMode, ViewMode, SIDEBAR_HEIGHT};
 use crate::update::UpdateCheckMode;
 
@@ -186,7 +188,13 @@ impl Config {
     pub fn load() -> Self {
         let path = config_path();
         if let Ok(content) = fs::read_to_string(&path) {
-            return serde_json::from_str(&content).unwrap_or_default();
+            let mut config: Config = serde_json::from_str(&content).unwrap_or_default();
+            // Strip obsolete/unknown keybindings and rewrite the file once,
+            // so it self-heals instead of warning on every launch.
+            if migrate_keybindings(&mut config.keybindings) {
+                config.save();
+            }
+            return config;
         }
 
         let legacy_path = legacy_config_path();
@@ -194,7 +202,8 @@ impl Config {
             return Config::default();
         };
 
-        let config: Config = serde_json::from_str(&content).unwrap_or_default();
+        let mut config: Config = serde_json::from_str(&content).unwrap_or_default();
+        migrate_keybindings(&mut config.keybindings);
         config.save();
         config
     }
@@ -212,9 +221,15 @@ impl Config {
         // already know which file they just edited. Serde's own error
         // format carries the useful line/column info.
         match fs::read_to_string(path) {
-            Ok(content) => {
-                serde_json::from_str(&content).map_err(|e| format!("parse: {}", e))
-            }
+            Ok(content) => serde_json::from_str(&content)
+                .map(|mut config: Config| {
+                    // Clean obsolete/unknown keybindings in memory so a
+                    // reload doesn't resurrect the warning; the file itself
+                    // self-heals on the next launch via `load`.
+                    migrate_keybindings(&mut config.keybindings);
+                    config
+                })
+                .map_err(|e| format!("parse: {}", e)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
             Err(e) => Err(format!("read: {}", e)),
         }

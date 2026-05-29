@@ -203,16 +203,60 @@ fn null_unbinds() {
 }
 
 #[test]
-fn unknown_command_warns_and_keeps_defaults() {
+fn unknown_command_silently_ignored_keeps_defaults() {
+    // from_config no longer warns on unknown command names — they are
+    // stripped on load by migrate_keybindings. Any straggler is ignored.
     let map = cfg(&[("made_up_cmd", KeyBindingValue::Single("z".into()))]);
     let (kb, warnings) = Keybindings::from_config(&map, &[]);
-    assert_eq!(warnings.len(), 1);
-    assert!(warnings[0].contains("made_up_cmd"));
+    assert!(warnings.is_empty());
     // Defaults unchanged.
     assert_eq!(
         kb.lookup(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)),
         Some(Command::FocusNext)
     );
+}
+
+// --- migrate_keybindings ---
+
+#[test]
+fn migrate_drops_unknown_command() {
+    // `cycle_filter` was removed with the filter tabs (#23); the sweep must
+    // discard it while leaving valid commands in place.
+    let mut map = cfg(&[
+        ("cycle_filter", KeyBindingValue::Single("f".into())),
+        ("quit", KeyBindingValue::Single("q".into())),
+    ]);
+    assert!(migrate_keybindings(&mut map));
+    assert!(!map.contains_key("cycle_filter"));
+    assert!(map.contains_key("quit"));
+}
+
+#[test]
+fn migrate_leaves_valid_bindings_untouched() {
+    let mut map = cfg(&[("quit", KeyBindingValue::Single("q".into()))]);
+    assert!(!migrate_keybindings(&mut map));
+    assert_eq!(map.len(), 1);
+    assert!(map.contains_key("quit"));
+}
+
+#[test]
+fn migrate_renames_binding_to_new_name() {
+    let mut map = cfg(&[("old_quit", KeyBindingValue::Single("z".into()))]);
+    assert!(migrate_keybindings_with(&mut map, &[("old_quit", "quit")]));
+    assert!(!map.contains_key("old_quit"));
+    assert_eq!(map.get("quit"), Some(&KeyBindingValue::Single("z".into())));
+}
+
+#[test]
+fn migrate_rename_does_not_clobber_existing() {
+    let mut map = cfg(&[
+        ("old_quit", KeyBindingValue::Single("z".into())),
+        ("quit", KeyBindingValue::Single("q".into())),
+    ]);
+    assert!(migrate_keybindings_with(&mut map, &[("old_quit", "quit")]));
+    // The explicit `quit` binding wins; the renamed value is discarded.
+    assert_eq!(map.get("quit"), Some(&KeyBindingValue::Single("q".into())));
+    assert!(!map.contains_key("old_quit"));
 }
 
 #[test]

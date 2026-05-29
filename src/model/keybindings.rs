@@ -198,6 +198,48 @@ impl Default for Keybindings {
     }
 }
 
+/// Keybinding command renames applied on load: `(old_name, new_name)`.
+/// When a command is renamed, list it here so an existing user binding
+/// migrates to the new name instead of being dropped as unknown. Empty
+/// until the first rename lands — plain removals need no entry (the
+/// unknown-key sweep below discards them).
+const KEYBINDING_RENAMES: &[(&str, &str)] = &[];
+
+/// Migrate a raw keybindings map in place: apply known renames, then
+/// drop every entry whose command name the binary no longer recognizes.
+/// Returns `true` if the map changed, so the caller can rewrite
+/// `config.json` to self-heal. Removed commands (e.g. `cycle_filter`,
+/// dropped with the filter tabs) are silently discarded by the sweep.
+pub fn migrate_keybindings(map: &mut BTreeMap<String, KeyBindingValue>) -> bool {
+    migrate_keybindings_with(map, KEYBINDING_RENAMES)
+}
+
+fn migrate_keybindings_with(
+    map: &mut BTreeMap<String, KeyBindingValue>,
+    renames: &[(&str, &str)],
+) -> bool {
+    let mut changed = false;
+
+    // Renames: move the old name's value to the new name, unless the user
+    // already bound the new name explicitly (then the explicit one wins
+    // and the old entry is dropped).
+    for &(old, new) in renames {
+        if let Some(value) = map.remove(old) {
+            map.entry(new.to_string()).or_insert(value);
+            changed = true;
+        }
+    }
+
+    // Drop entries for command names the binary no longer recognizes.
+    let before = map.len();
+    map.retain(|name, _| Command::from_name(name).is_some());
+    if map.len() != before {
+        changed = true;
+    }
+
+    changed
+}
+
 impl Keybindings {
     pub fn from_config(
         raw: &BTreeMap<String, KeyBindingValue>,
@@ -220,7 +262,9 @@ impl Keybindings {
 
         for (name, value) in entries {
             let Some(cmd) = Command::from_name(name) else {
-                warnings.push(format!("unknown keybinding command `{}`", name));
+                // Unknown command names are stripped on load by
+                // migrate_keybindings; silently ignore any straggler so the
+                // user never sees a warning for an obsolete or mistyped key.
                 continue;
             };
 
