@@ -300,6 +300,16 @@ impl App {
     /// stays unswitchable until deck restarts. Shared by initial onboard,
     /// the reconnect button, and refresh-driven auto-recovery.
     pub(super) fn respawn_remote_host(&mut self, host: &str) {
+        // Don't stack spawns: if one is already in flight (Connecting), let
+        // it finish. A second spawn could race — a stale `Failed` from the
+        // older attempt could later clobber the newer attempt's live pane,
+        // leaving the host unswitchable.
+        if matches!(
+            self.remote_conns.get(host).map(|c| &c.status),
+            Some(crate::app::RemoteConnStatus::Connecting)
+        ) {
+            return;
+        }
         self.remote_conns.insert(
             host.to_string(),
             crate::app::RemoteConn {
