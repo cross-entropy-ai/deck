@@ -47,7 +47,6 @@ pub enum OpKind {
 
 impl OpKind {
     /// The host this result pertains to.
-    #[allow(dead_code)]
     pub fn host(&self) -> &str {
         match self {
             OpKind::Master(h) | OpKind::Exit(h) => h,
@@ -175,6 +174,9 @@ impl<R: Runner> Worker<R> {
                 let ports = if needs_local {
                     self.runner.listening_ports()
                 } else {
+                    // All-Remote probe: no local enumeration needed. This empty
+                    // set is never queried (Remote items don't inspect `ports`);
+                    // `None` would be wrong — it maps -L/-D items to Probing.
                     Some(std::collections::HashSet::new())
                 };
                 items
