@@ -31,6 +31,20 @@ LISTEN     0      128    *:9090              *:*";
 }
 
 #[test]
+fn ss_handles_modern_netid_column() {
+    let sample = "\
+Netid State  Recv-Q Send-Q Local Address:Port Peer Address:Port
+tcp   LISTEN 0      128    0.0.0.0:8080       0.0.0.0:*
+tcp   LISTEN 0      4096   127.0.0.1:1080     0.0.0.0:*
+tcp   LISTEN 0      128    [::]:9090          [::]:*";
+    let ports = parse_ss(sample);
+    assert!(ports.contains(&8080));
+    assert!(ports.contains(&1080));
+    assert!(ports.contains(&9090));
+    assert_eq!(ports.len(), 3);
+}
+
+#[test]
 fn ignores_header_and_empty() {
     assert!(parse_ss("State Recv-Q Send-Q Local Address:Port Peer Address:Port").is_empty());
     assert!(parse_netstat("Active Internet connections (including servers)").is_empty());

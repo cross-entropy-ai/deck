@@ -32,16 +32,33 @@ pub fn parse_netstat(output: &str) -> HashSet<u16> {
 }
 
 /// Parse Linux `ss -ltn` output into the set of local ports in LISTEN state.
-/// Rows start with `LISTEN`; local address is the 4th column; the port is the
-/// text after the final `:` (e.g. `0.0.0.0:8080`, `[::]:8080`, `*:9090`).
+/// Handles both the classic format (state is the first column) and the modern
+/// iproute2 format (Ubuntu 22.04+, Debian 12+) where a `Netid` column is
+/// prepended. The local `Address:Port` is always three columns after `LISTEN`
+/// (State, Recv-Q, Send-Q, **Local Address:Port**).
+///
+/// Example classic format:
+/// ```text
+/// State   Recv-Q  Send-Q  Local Address:Port  Peer Address:Port
+/// LISTEN  0       128     0.0.0.0:8080        0.0.0.0:*
+/// ```
+///
+/// Example modern format:
+/// ```text
+/// Netid  State   Recv-Q  Send-Q  Local Address:Port  Peer Address:Port
+/// tcp    LISTEN  0       128     0.0.0.0:8080        0.0.0.0:*
+/// ```
 pub fn parse_ss(output: &str) -> HashSet<u16> {
     let mut ports = HashSet::new();
     for line in output.lines() {
         let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.first() != Some(&"LISTEN") {
+        // The state token is `LISTEN`; it's the first column in the classic
+        // format and the second (after `Netid`) in modern iproute2 output.
+        // The local `Address:Port` is three columns after it either way.
+        let Some(state_idx) = cols.iter().position(|c| *c == "LISTEN") else {
             continue;
-        }
-        let Some(local) = cols.get(3) else { continue };
+        };
+        let Some(local) = cols.get(state_idx + 3) else { continue };
         if let Some((_, port)) = local.rsplit_once(':') {
             if let Ok(p) = port.parse::<u16>() {
                 ports.insert(p);
