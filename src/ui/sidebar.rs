@@ -287,12 +287,14 @@ fn draw_sessions(
                 host,
                 host_idx,
                 status,
+                pf,
             } => {
                 let accent = host_accent(ctx.theme, *host_idx);
                 let line_idx = lines.len();
                 let label = format!("@{host}");
-                let (reconnect_range, more_range) =
-                    render_group_header(&mut lines, &label, accent, *status, width, ctx.theme);
+                let (reconnect_range, more_range) = render_group_header(
+                    &mut lines, &label, accent, *status, width, ctx.theme, *pf,
+                );
                 pending_hits.push((
                     line_idx,
                     reconnect_range,
@@ -388,6 +390,7 @@ fn render_group_header(
     status: HostStatus,
     width: usize,
     theme: &Theme,
+    pf: Option<crate::state::PfBadge>,
 ) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
     let label_text = label.trim_start().to_string();
     let leading = " ";
@@ -398,44 +401,58 @@ fn render_group_header(
     let gap = 1; // space before each button
     // Right side of the divider: gap [⟳] gap […]
     let buttons_w = gap + button_w + gap + button_w;
+
+    // Optional port-forward badge: " " + "⇄N", sitting between the rule and the
+    // reconnect button. Reserve its width so the right-aligned buttons hold.
+    let badge_text = pf.map(|b| format!("\u{21c4}{}", b.count));
+    let badge_w = badge_text.as_ref().map(|s| gap + s.as_str().width()).unwrap_or(0);
+    let badge_fg = pf.map(|b| match b.color {
+        crate::state::PfBadgeColor::Healthy => theme.green,
+        crate::state::PfBadgeColor::Degraded => theme.pink,
+        crate::state::PfBadgeColor::Probing => theme.yellow,
+    });
+
     let rule_w = width
         .saturating_sub(leading_w)
         .saturating_sub(label_w)
         .saturating_sub(spacer_w)
+        .saturating_sub(badge_w)
         .saturating_sub(buttons_w);
-    let rule = "─".repeat(rule_w);
+    let rule = "\u{2500}".repeat(rule_w);
 
-    // Tint the reconnect glyph by connection status; the "more" button
-    // keeps the per-host accent.
+    // Tint the reconnect glyph by connection status; the "more" button keeps
+    // the per-host accent.
     let reconnect_fg = match status {
         HostStatus::Connected => theme.green,
         HostStatus::Connecting => theme.yellow,
         HostStatus::Unreachable => theme.pink,
     };
 
-    lines.push(pad_line(
-        vec![
-            Span::styled(leading, Style::default().bg(theme.bg)),
-            Span::styled(
-                label_text,
-                Style::default()
-                    .fg(accent)
-                    .bg(theme.bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" ", Style::default().bg(theme.bg)),
-            Span::styled(rule, Style::default().fg(accent).bg(theme.bg)),
-            Span::styled(" ", Style::default().bg(theme.bg)),
-            Span::styled("[⟳]", Style::default().fg(reconnect_fg).bg(theme.bg)),
-            Span::styled(" ", Style::default().bg(theme.bg)),
-            Span::styled("[…]", Style::default().fg(accent).bg(theme.bg)),
-        ],
-        theme.bg,
-        width,
-    ));
+    let mut spans = vec![
+        Span::styled(leading, Style::default().bg(theme.bg)),
+        Span::styled(
+            label_text,
+            Style::default()
+                .fg(accent)
+                .bg(theme.bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", Style::default().bg(theme.bg)),
+        Span::styled(rule, Style::default().fg(accent).bg(theme.bg)),
+    ];
+    if let (Some(text), Some(fg)) = (badge_text, badge_fg) {
+        spans.push(Span::styled(" ", Style::default().bg(theme.bg)));
+        spans.push(Span::styled(text, Style::default().fg(fg).bg(theme.bg)));
+    }
+    spans.push(Span::styled(" ", Style::default().bg(theme.bg)));
+    spans.push(Span::styled("[\u{27f3}]", Style::default().fg(reconnect_fg).bg(theme.bg)));
+    spans.push(Span::styled(" ", Style::default().bg(theme.bg)));
+    spans.push(Span::styled("[\u{2026}]", Style::default().fg(accent).bg(theme.bg)));
+
+    lines.push(pad_line(spans, theme.bg, width));
 
     // Cell ranges of the two buttons within this rendered line.
-    let reconnect_x = leading_w + label_w + spacer_w + rule_w + gap;
+    let reconnect_x = leading_w + label_w + spacer_w + rule_w + badge_w + gap;
     let more_x = reconnect_x + button_w + gap;
     (
         reconnect_x..(reconnect_x + button_w),

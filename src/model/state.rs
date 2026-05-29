@@ -298,6 +298,7 @@ pub enum SidebarItemData {
         host: String,
         host_idx: usize,
         status: HostStatus,
+        pf: Option<PfBadge>,
     },
     /// A session row at the given flat index — matches the
     /// `FocusTarget` numbering: local rows first, then remotes. The
@@ -1030,6 +1031,7 @@ impl AppState {
                             host: r.host.clone(),
                             host_idx,
                             status,
+                            pf: self.host_pf_badge(&r.host),
                         },
                         1,
                     );
@@ -1053,7 +1055,6 @@ impl AppState {
     /// The port-forward badge for a host's divider, or `None` when the host has
     /// no forwards. Color rolls up the per-forward health; count is the number
     /// of configured forwards.
-    #[allow(dead_code)]
     pub fn host_pf_badge(&self, host: &str) -> Option<PfBadge> {
         let forwards = self
             .config_remotes
