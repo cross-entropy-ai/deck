@@ -539,12 +539,7 @@ impl App {
 
             // Drain results from the port-forward worker thread.
             while let Ok(r) = self.port_forward_rx.try_recv() {
-                let host = match &r.kind {
-                    crate::app::port_forward_task::OpKind::Master(h)
-                    | crate::app::port_forward_task::OpKind::Exit(h) => h.clone(),
-                    crate::app::port_forward_task::OpKind::Forward(h, _)
-                    | crate::app::port_forward_task::OpKind::Cancel(h, _) => h.clone(),
-                };
+                let host = r.kind.host().to_string();
                 self.dispatch(Action::PfTaskResult {
                     host,
                     op: r.kind,

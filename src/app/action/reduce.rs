@@ -980,6 +980,8 @@ fn apply_pf_task_result(
                 overlay.status = Some(format!("exit: {}", message));
             }
         }
+        // Probe results are routed elsewhere; overlay doesn't react to them.
+        OpKind::Probe(_, _) => {}
     }
     fx
 }
