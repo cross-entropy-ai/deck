@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Instant;
 
 use ratatui::layout::Rect;
@@ -743,6 +744,10 @@ pub struct AppState {
     /// without round-tripping through dispatch. Kept in sync by startup
     /// and `reload_config`.
     pub config_remotes: Vec<crate::config::RemoteConfig>,
+
+    /// Per-forward liveness, refreshed each probe tick by the port-forward
+    /// worker. Keyed by `ForwardKey`. Missing key = `Probing` (not yet seen).
+    pub forward_health: HashMap<ForwardKey, ForwardHealth>,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -819,6 +824,7 @@ impl AppState {
             reload_status_at: None,
             divider_hits: Vec::new(),
             config_remotes: Vec::new(),
+            forward_health: HashMap::new(),
         }
     }
 
@@ -1042,6 +1048,45 @@ impl AppState {
         }
 
         layout
+    }
+
+    /// The port-forward badge for a host's divider, or `None` when the host has
+    /// no forwards. Color rolls up the per-forward health; count is the number
+    /// of configured forwards.
+    #[allow(dead_code)]
+    pub fn host_pf_badge(&self, host: &str) -> Option<PfBadge> {
+        let forwards = self
+            .config_remotes
+            .iter()
+            .find(|r| r.host == host)
+            .map(|r| r.forwards.as_slice())?;
+        if forwards.is_empty() {
+            return None;
+        }
+        let healths: Vec<ForwardHealth> = forwards
+            .iter()
+            .map(|f| {
+                self.forward_health
+                    .get(&ForwardKey::from_spec(host, f))
+                    .copied()
+                    .unwrap_or(ForwardHealth::Probing)
+            })
+            .collect();
+        Some(PfBadge {
+            count: forwards.len(),
+            color: rollup_color(&healths),
+        })
+    }
+
+    /// Drop health entries whose forward no longer exists in config (after a
+    /// reload that removed forwards), so the map doesn't accrete dead keys.
+    pub fn prune_forward_health(&mut self) {
+        let valid: std::collections::HashSet<ForwardKey> = self
+            .config_remotes
+            .iter()
+            .flat_map(|r| r.forwards.iter().map(|f| ForwardKey::from_spec(&r.host, f)))
+            .collect();
+        self.forward_health.retain(|k, _| valid.contains(k));
     }
 
     /// Resolve a focus target back to the backing row in either local

@@ -631,6 +631,7 @@ impl App {
         // hosts straight from `state.config_remotes`, so the refresh
         // triggered below automatically picks up the diff.
         self.state.config_remotes = new_remotes;
+        self.state.prune_forward_health();
 
         // Evict sidebar rows for hosts that just disappeared so they
         // don't linger until the next refresh result lands.
