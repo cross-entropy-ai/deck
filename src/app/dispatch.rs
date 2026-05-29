@@ -240,9 +240,10 @@ impl App {
                 false
             }
             Action::ReconnectHost { host } => {
-                // Force-refresh: mark the host's rows connecting for instant
-                // feedback, then kick a refresh round. The worker re-queries
-                // every configured host, this one included.
+                // Rebuild the persistent ssh+tmux PTY — refreshing the
+                // sidebar alone leaves a dropped host unswitchable. Then mark
+                // the rows connecting for instant feedback and re-probe.
+                self.respawn_remote_host(&host);
                 self.state.mark_host_reconnecting(&host);
                 self.request_refresh();
                 false
@@ -292,26 +293,25 @@ impl App {
         self.needs_full_redraw = true;
     }
 
-    /// Switch the main view to a session on a remote host.
-    ///
-    /// Cheap path: if the persistent ssh+tmux PTY for this host is
-    /// already alive (status = Connected), we just fire an out-of-band
-    /// `ssh host tmux switch-client -t name` on a worker thread and
-    /// flip `active_remote`. The PTY itself stays put; its tmux client
-    /// gets re-pointed at the requested session and the next read
-    /// produces the new screen.
-    ///
-    /// If the PTY isn't ready yet — Connecting or Failed — we don't
-    /// switch the view (would just show a blank pane). Reconnect on
-    /// failure isn't wired yet.
+    /// (Re)establish the persistent `ssh -tt host tmux attach` PTY for a
+    /// host: drop any dead pane, mark the connection `Connecting`, and kick
+    /// the spawner. The PTY is otherwise spawned only once at startup, so
+    /// without this a host that blips (drops, then becomes reachable again)
+    /// stays unswitchable until deck restarts. Shared by initial onboard,
+    /// the reconnect button, and refresh-driven auto-recovery.
+    pub(super) fn respawn_remote_host(&mut self, host: &str) {
+        self.remote_terminals.remove(host);
+        self.remote_status
+            .insert(host.to_string(), crate::app::RemoteConnStatus::Connecting);
+        self.remote_spawner.spawn(host);
+    }
+
     /// Seed per-host runtime state for a newly-added host (UI add or
     /// hot-reload). The placeholder row gives the sidebar an immediate
     /// `(connecting...)` section instead of waiting one full refresh
     /// tick; the spawner kicks off the persistent ssh+tmux PTY.
     fn onboard_remote_host(&mut self, host: &str) {
-        self.remote_status
-            .insert(host.to_string(), crate::app::RemoteConnStatus::Connecting);
-        self.remote_spawner.spawn(host);
+        self.respawn_remote_host(host);
         // Avoid duplicating a placeholder if one is already there
         // (e.g. add → remove → add in quick succession).
         if !self
@@ -344,6 +344,17 @@ impl App {
         }
     }
 
+    /// Switch the main view to a session on a remote host.
+    ///
+    /// Cheap path: if the persistent ssh+tmux PTY for this host is alive
+    /// (status = Connected), fire an out-of-band `ssh host tmux
+    /// switch-client -t name` on a worker thread and flip `active_remote`;
+    /// the PTY stays put and its tmux client is re-pointed at the target.
+    ///
+    /// If the PTY isn't ready (Connecting or Failed) we don't switch yet —
+    /// recovery of a dropped PTY is handled by `respawn_remote_host`
+    /// (the reconnect button and refresh auto-recovery), so switching
+    /// starts working again once the pane reconnects.
     fn switch_to_remote(&mut self, host: &str, name: &str) {
         use crate::app::RemoteConnStatus;
         let connected = matches!(

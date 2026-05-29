@@ -2,7 +2,7 @@ use crate::nesting_guard::WarningState;
 use crate::refresh::{RefreshRequest, RefreshUpdate, RemoteSnapshotRow, SnapshotRow};
 use crate::state::{RemoteSessionRow, SessionRow};
 
-use super::App;
+use super::{App, RemoteConnStatus};
 
 impl App {
     fn build_refresh_request(&self) -> RefreshRequest {
@@ -65,6 +65,22 @@ impl App {
         // disappeared (e.g. host went from 1 loading placeholder to
         // 3 real sessions, or down to 0). Clamp inside the new range.
         self.state.recompute_filter();
+
+        // Auto-recover the persistent PTY. A host whose attach PTY dropped
+        // (status Failed, pane removed) but which is now reachable again in
+        // the probe needs its PTY rebuilt — otherwise switching to its
+        // sessions silently no-ops until restart, since the PTY is
+        // otherwise only spawned at startup. `Connecting` hosts are skipped
+        // so an in-flight spawn isn't duplicated.
+        let to_respawn = hosts_needing_respawn(&self.state.remote_sessions, |host| {
+            matches!(
+                self.remote_status.get(host),
+                Some(RemoteConnStatus::Connected) | Some(RemoteConnStatus::Connecting)
+            )
+        });
+        for host in to_respawn {
+            self.respawn_remote_host(&host);
+        }
     }
 
     fn apply_local(&mut self, current: String, rows: Vec<SnapshotRow>) {
@@ -120,3 +136,27 @@ impl App {
         self.state.current_session = current;
     }
 }
+
+/// Hosts that are reachable in the latest snapshot but whose persistent
+/// PTY connection isn't live (`is_live` returns false) — i.e. the attach
+/// PTY dropped and needs rebuilding. Unreachable and still-loading rows
+/// are skipped; the result is deduplicated by host.
+fn hosts_needing_respawn(
+    rows: &[RemoteSessionRow],
+    is_live: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for row in rows {
+        if row.unreachable || row.loading {
+            continue;
+        }
+        if !is_live(&row.host) && !out.iter().any(|h| h == &row.host) {
+            out.push(row.host.clone());
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/app/refresh.rs"]
+mod tests;
