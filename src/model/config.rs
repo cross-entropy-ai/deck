@@ -145,7 +145,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            theme: "Catppuccin Mocha".to_string(),
+            theme: "Catppuccin Mocha (Dark)".to_string(),
             layout: LayoutMode::Horizontal,
             show_borders: true,
             sidebar_width: 28,
