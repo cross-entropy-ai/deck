@@ -300,9 +300,13 @@ impl App {
     /// stays unswitchable until deck restarts. Shared by initial onboard,
     /// the reconnect button, and refresh-driven auto-recovery.
     pub(super) fn respawn_remote_host(&mut self, host: &str) {
-        self.remote_terminals.remove(host);
-        self.remote_status
-            .insert(host.to_string(), crate::app::RemoteConnStatus::Connecting);
+        self.remote_conns.insert(
+            host.to_string(),
+            crate::app::RemoteConn {
+                status: crate::app::RemoteConnStatus::Connecting,
+                pane: None,
+            },
+        );
         self.remote_spawner.spawn(host);
     }
 
@@ -336,8 +340,7 @@ impl App {
     /// the main pane falls back to local instead of hanging on a
     /// dangling reference.
     fn offboard_remote_host(&mut self, host: &str) {
-        self.remote_terminals.remove(host);
-        self.remote_status.remove(host);
+        self.remote_conns.remove(host);
         if self.active_remote.as_deref() == Some(host) {
             self.active_remote = None;
             self.needs_full_redraw = true;
@@ -357,10 +360,9 @@ impl App {
     /// starts working again once the pane reconnects.
     fn switch_to_remote(&mut self, host: &str, name: &str) {
         use crate::app::RemoteConnStatus;
-        let connected = matches!(
-            self.remote_status.get(host),
-            Some(RemoteConnStatus::Connected)
-        ) && self.remote_terminals.contains_key(host);
+        let connected = self.remote_conns.get(host).is_some_and(|c| {
+            matches!(c.status, RemoteConnStatus::Connected) && c.pane.is_some()
+        });
         if !connected {
             return;
         }

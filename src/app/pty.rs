@@ -44,9 +44,11 @@ impl App {
             .screen_mut()
             .set_size(pty_rows, pty_cols);
         let _ = self.local_terminal.pty.resize(size);
-        for pane in self.remote_terminals.values_mut() {
-            pane.parser.screen_mut().set_size(pty_rows, pty_cols);
-            let _ = pane.pty.resize(size);
+        for conn in self.remote_conns.values_mut() {
+            if let Some(pane) = conn.pane.as_mut() {
+                pane.parser.screen_mut().set_size(pty_rows, pty_cols);
+                let _ = pane.pty.resize(size);
+            }
         }
         for inst in self.plugin_instances.iter_mut().flatten() {
             inst.parser.screen_mut().set_size(pty_rows, pty_cols);

@@ -73,12 +73,18 @@ impl App {
         // otherwise only spawned at startup. `Connecting` hosts are skipped
         // so an in-flight spawn isn't duplicated.
         let to_respawn = hosts_needing_respawn(&self.state.remote_sessions, |host| {
-            matches!(
-                self.remote_status.get(host),
-                Some(RemoteConnStatus::Connected) | Some(RemoteConnStatus::Connecting)
-            )
+            self.remote_conns.get(host).is_some_and(|c| {
+                matches!(
+                    c.status,
+                    RemoteConnStatus::Connected | RemoteConnStatus::Connecting
+                )
+            })
         });
         for host in to_respawn {
+            // Show the host as connecting in the sidebar while its PTY
+            // rebuilds, so the divider doesn't read "connected" before the
+            // switchable pane is actually back. Mirrors the reconnect button.
+            self.state.mark_host_reconnecting(&host);
             self.respawn_remote_host(&host);
         }
     }
