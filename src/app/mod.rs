@@ -520,6 +520,7 @@ impl App {
 
             if last_refresh.elapsed() >= REFRESH_INTERVAL {
                 self.request_refresh();
+                self.request_pf_probe();
                 last_refresh = Instant::now();
             }
 

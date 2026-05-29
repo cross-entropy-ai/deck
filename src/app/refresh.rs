@@ -27,6 +27,23 @@ impl App {
         self.refresh_worker.request(self.build_refresh_request());
     }
 
+    /// Ask the port-forward worker to re-classify every configured forward.
+    /// No-op when nothing is configured (skips the `netstat`/`ss` spawn).
+    pub(super) fn request_pf_probe(&self) {
+        let mut items = Vec::new();
+        for r in &self.state.config_remotes {
+            for f in &r.forwards {
+                items.push(crate::state::ForwardKey::from_spec(&r.host, f));
+            }
+        }
+        if items.is_empty() {
+            return;
+        }
+        let _ = self
+            .port_forward_tx
+            .send(crate::app::port_forward_task::Op::Probe { items });
+    }
+
     pub(super) fn apply_update(&mut self, update: RefreshUpdate) {
         match update {
             RefreshUpdate::Local { current_session, rows } => {
