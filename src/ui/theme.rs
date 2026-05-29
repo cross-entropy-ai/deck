@@ -18,7 +18,7 @@ pub struct Theme {
 
 pub const THEMES: &[Theme] = &[
     Theme {
-        name: "Catppuccin Mocha",
+        name: "Catppuccin Mocha (Dark)",
         bg: Color::Rgb(30, 30, 46),
         surface: Color::Rgb(49, 50, 68),
         dim: Color::Rgb(88, 91, 112),
@@ -33,7 +33,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(243, 139, 168),
     },
     Theme {
-        name: "Tokyo Night",
+        name: "Tokyo Night (Dark)",
         bg: Color::Rgb(26, 27, 38),
         surface: Color::Rgb(36, 40, 59),
         dim: Color::Rgb(65, 72, 104),
@@ -48,7 +48,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(187, 154, 247),
     },
     Theme {
-        name: "Gruvbox",
+        name: "Gruvbox (Dark)",
         bg: Color::Rgb(29, 32, 33),
         surface: Color::Rgb(60, 56, 54),
         dim: Color::Rgb(80, 73, 69),
@@ -63,7 +63,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(211, 134, 155),
     },
     Theme {
-        name: "Nord",
+        name: "Nord (Dark)",
         bg: Color::Rgb(46, 52, 64),
         surface: Color::Rgb(59, 66, 82),
         dim: Color::Rgb(67, 76, 94),
@@ -78,7 +78,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(180, 142, 173),
     },
     Theme {
-        name: "Dracula",
+        name: "Dracula (Dark)",
         bg: Color::Rgb(40, 42, 54),
         surface: Color::Rgb(68, 71, 90),
         dim: Color::Rgb(98, 114, 164),
@@ -93,7 +93,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(255, 121, 198),
     },
     Theme {
-        name: "Claude",
+        name: "Claude (Dark)",
         bg: Color::Rgb(26, 26, 26),
         surface: Color::Rgb(46, 38, 32),
         dim: Color::Rgb(90, 72, 56),
@@ -108,7 +108,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(212, 144, 208),
     },
     Theme {
-        name: "Absolutely",
+        name: "Absolutely (Dark)",
         bg: Color::Rgb(45, 45, 43),
         surface: Color::Rgb(60, 60, 57),
         dim: Color::Rgb(88, 88, 83),
@@ -123,7 +123,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(255, 95, 56),
     },
     Theme {
-        name: "Codex",
+        name: "Codex (Dark)",
         bg: Color::Rgb(17, 17, 17),
         surface: Color::Rgb(33, 33, 33),
         dim: Color::Rgb(64, 64, 64),
@@ -138,7 +138,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(224, 46, 42),
     },
     Theme {
-        name: "Raycast",
+        name: "Raycast (Dark)",
         bg: Color::Rgb(16, 16, 16),
         surface: Color::Rgb(32, 32, 32),
         dim: Color::Rgb(62, 62, 62),
@@ -153,7 +153,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(207, 47, 152),
     },
     Theme {
-        name: "Rose Pine",
+        name: "Rose Pine (Dark)",
         bg: Color::Rgb(35, 33, 54),
         surface: Color::Rgb(42, 39, 63),
         dim: Color::Rgb(57, 53, 82),
@@ -168,7 +168,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(235, 111, 146),
     },
     Theme {
-        name: "Catppuccin Latte",
+        name: "Catppuccin Latte (Light)",
         bg: Color::Rgb(239, 241, 245),
         surface: Color::Rgb(204, 208, 218),
         dim: Color::Rgb(172, 176, 190),
@@ -183,7 +183,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(210, 15, 57),
     },
     Theme {
-        name: "Claude Light",
+        name: "Claude (Light)",
         bg: Color::Rgb(249, 245, 239),
         surface: Color::Rgb(233, 224, 212),
         dim: Color::Rgb(201, 184, 160),
@@ -198,7 +198,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(136, 62, 149),
     },
     Theme {
-        name: "Absolutely Light",
+        name: "Absolutely (Light)",
         bg: Color::Rgb(249, 249, 247),
         surface: Color::Rgb(236, 236, 231),
         dim: Color::Rgb(206, 206, 198),
@@ -213,7 +213,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(255, 95, 56),
     },
     Theme {
-        name: "Codex Light",
+        name: "Codex (Light)",
         bg: Color::Rgb(255, 255, 255),
         surface: Color::Rgb(240, 240, 240),
         dim: Color::Rgb(208, 208, 208),
@@ -228,7 +228,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(224, 46, 42),
     },
     Theme {
-        name: "Raycast Light",
+        name: "Raycast (Light)",
         bg: Color::Rgb(255, 255, 255),
         surface: Color::Rgb(240, 240, 240),
         dim: Color::Rgb(208, 208, 208),
@@ -243,7 +243,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(154, 27, 110),
     },
     Theme {
-        name: "Rose Pine Light",
+        name: "Rose Pine (Light)",
         bg: Color::Rgb(250, 244, 237),
         surface: Color::Rgb(242, 233, 225),
         dim: Color::Rgb(206, 202, 205),
