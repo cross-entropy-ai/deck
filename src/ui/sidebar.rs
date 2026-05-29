@@ -10,7 +10,9 @@ use crate::keybindings::{Command, Keybindings};
 use crate::layout::{
     plugin_block_rows, BANNER_MIN_WIDTH, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR,
 };
-use crate::state::{DividerHit, FocusTarget, SidebarItemData, SidebarLayout, ViewMode};
+use crate::state::{
+    DividerButton, DividerHit, FocusTarget, HostStatus, SidebarItemData, SidebarLayout, ViewMode,
+};
 use ratatui_sectioned_list::Item;
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
@@ -262,9 +264,10 @@ fn draw_sessions(
 
     let width = area.width as usize;
     let mut lines: Vec<Line> = Vec::new();
-    // Pending hits: (line_index_in_lines, col_range, host). We resolve
-    // absolute screen coordinates after computing the scroll offset.
-    let mut pending_hits: Vec<(usize, std::ops::Range<usize>, String)> = Vec::new();
+    // Pending hits: (line_index_in_lines, col_range, host, button). We
+    // resolve absolute screen coordinates after computing the scroll offset.
+    let mut pending_hits: Vec<(usize, std::ops::Range<usize>, String, DividerButton)> =
+        Vec::new();
 
     for item in props.layout.items().iter() {
         let is_focused = is_item_focused(item, props.focus_target);
@@ -280,12 +283,23 @@ fn draw_sessions(
             width,
         };
         match &item.data {
-            SidebarItemData::Header { host, host_idx } => {
+            SidebarItemData::Header {
+                host,
+                host_idx,
+                status,
+            } => {
                 let accent = host_accent(ctx.theme, *host_idx);
                 let line_idx = lines.len();
                 let label = format!("@{host}");
-                let col_range = render_group_header(&mut lines, &label, accent, width, ctx.theme);
-                pending_hits.push((line_idx, col_range, host.clone()));
+                let (reconnect_range, more_range) =
+                    render_group_header(&mut lines, &label, accent, *status, width, ctx.theme);
+                pending_hits.push((
+                    line_idx,
+                    reconnect_range,
+                    host.clone(),
+                    DividerButton::Reconnect,
+                ));
+                pending_hits.push((line_idx, more_range, host.clone(), DividerButton::More));
             }
             SidebarItemData::Session { session_idx } => {
                 let Some(&session) = props.sessions.get(*session_idx) else {
@@ -324,7 +338,7 @@ fn draw_sessions(
     // scroll offset. Lines whose rendered row falls outside the visible
     // area are discarded (they're scrolled off-screen so can't be clicked).
     let mut hits = Vec::with_capacity(pending_hits.len());
-    for (line_idx, col_range, host) in pending_hits {
+    for (line_idx, col_range, host, kind) in pending_hits {
         // line_idx is 0-based within `lines`; subtract scroll to get the
         // rendered row index within the viewport.
         if line_idx < scroll {
@@ -341,6 +355,7 @@ fn draw_sessions(
         let btn_width = (col_range.end - col_range.start) as u16;
         hits.push(DividerHit {
             host,
+            kind,
             rect: Rect {
                 x: abs_x,
                 y: abs_y,
@@ -370,23 +385,33 @@ fn render_group_header(
     lines: &mut Vec<Line<'_>>,
     label: &str,
     accent: Color,
+    status: HostStatus,
     width: usize,
     theme: &Theme,
-) -> std::ops::Range<usize> {
+) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
     let label_text = label.trim_start().to_string();
     let leading = " ";
     let leading_w = leading.width();
     let label_w = label_text.as_str().width();
     let spacer_w = 1;
-    let button_w = 3; // "[…]"
-    let button_gap = 1; // space between dashes and button
+    let button_w = 3; // "[⟳]" / "[…]"
+    let gap = 1; // space before each button
+    // Right side of the divider: gap [⟳] gap […]
+    let buttons_w = gap + button_w + gap + button_w;
     let rule_w = width
         .saturating_sub(leading_w)
         .saturating_sub(label_w)
         .saturating_sub(spacer_w)
-        .saturating_sub(button_gap)
-        .saturating_sub(button_w);
+        .saturating_sub(buttons_w);
     let rule = "─".repeat(rule_w);
+
+    // Tint the reconnect glyph by connection status; the "more" button
+    // keeps the per-host accent.
+    let reconnect_fg = match status {
+        HostStatus::Connected => theme.green,
+        HostStatus::Connecting => theme.yellow,
+        HostStatus::Unreachable => theme.pink,
+    };
 
     lines.push(pad_line(
         vec![
@@ -401,15 +426,21 @@ fn render_group_header(
             Span::styled(" ", Style::default().bg(theme.bg)),
             Span::styled(rule, Style::default().fg(accent).bg(theme.bg)),
             Span::styled(" ", Style::default().bg(theme.bg)),
+            Span::styled("[⟳]", Style::default().fg(reconnect_fg).bg(theme.bg)),
+            Span::styled(" ", Style::default().bg(theme.bg)),
             Span::styled("[…]", Style::default().fg(accent).bg(theme.bg)),
         ],
         theme.bg,
         width,
     ));
 
-    // Cell range of "[…]" within this rendered line.
-    let button_x = leading_w + label_w + spacer_w + rule_w + button_gap;
-    button_x..(button_x + button_w)
+    // Cell ranges of the two buttons within this rendered line.
+    let reconnect_x = leading_w + label_w + spacer_w + rule_w + gap;
+    let more_x = reconnect_x + button_w + gap;
+    (
+        reconnect_x..(reconnect_x + button_w),
+        more_x..(more_x + button_w),
+    )
 }
 
 /// Visual treatment of the index hint at the start of a row. Local

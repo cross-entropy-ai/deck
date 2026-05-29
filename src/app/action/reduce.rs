@@ -720,6 +720,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         // keybindings, plugin instances, PTY, etc.).
         Action::ReloadConfig => {}
 
+        // Handled in dispatch (marks the host reconnecting + kicks a
+        // refresh round through the worker).
+        Action::ReconnectHost { .. } => {}
+
         Action::OpenHostDividerMenu { host, x, y } => {
             state.overlay.context_menu = Some(ContextMenu {
                 kind: MenuKind::HostDivider {

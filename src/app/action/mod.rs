@@ -109,6 +109,7 @@ pub enum Action {
 
     // Port-forward overlay (per-host)
     OpenHostDividerMenu { host: String, x: u16, y: u16 },
+    ReconnectHost { host: String },
     OpenPortForward(String),
     PfClose,
     PfFocusUp,

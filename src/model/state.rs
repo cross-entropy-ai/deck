@@ -199,6 +199,15 @@ pub enum SessionTargetRef<'a> {
     Remote(&'a RemoteSessionRow),
 }
 
+/// Connection state of a remote host, derived from its rows' reachability.
+/// Drives the color of the divider's reconnect button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostStatus {
+    Connected,
+    Connecting,
+    Unreachable,
+}
+
 /// Per-item data carried in the sidebar's `SectionedList`. Headers and
 /// session rows live in the same flat list so the renderer, scroll
 /// logic, and mouse hit-test all walk the same items in lockstep.
@@ -208,7 +217,11 @@ pub enum SidebarItemData {
     /// distinct remote hosts in render order — used to cycle the
     /// divider accent color. The renderer formats the `@host` label and
     /// reuses the bare host for the divider's click target.
-    Header { host: String, host_idx: usize },
+    Header {
+        host: String,
+        host_idx: usize,
+        status: HostStatus,
+    },
     /// A session row at the given flat index — matches the
     /// `FocusTarget` numbering: local rows first, then remotes. The
     /// renderer pairs this index with a `&[&dyn SidebarSession]` slice
@@ -222,13 +235,23 @@ pub enum SidebarItemData {
 /// across the renderer and the action layer.
 pub type SidebarLayout = ratatui_sectioned_list::SectionedList<SidebarItemData>;
 
-/// Click-region for the `[…]` button on a remote-host divider. The
-/// sidebar renderer fills `divider_hits` after each render; mouse
-/// hit-testing consults it before `focus_at_row()`.
+/// Which button on a remote-host divider a `DividerHit` targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DividerButton {
+    /// `[⟳]` — force-refresh (reconnect) the host.
+    Reconnect,
+    /// `[…]` — open the host-divider menu.
+    More,
+}
+
+/// Click-region for one button (`[⟳]` or `[…]`) on a remote-host
+/// divider. The sidebar renderer fills `divider_hits` after each render;
+/// mouse hit-testing consults it before `focus_at_row()`.
 #[derive(Debug, Clone)]
 pub struct DividerHit {
     pub host: String,
     pub rect: Rect,
+    pub kind: DividerButton,
 }
 
 // --- Side effects ---
@@ -872,6 +895,18 @@ impl AppState {
     /// session items in render order. Renderers and the mouse
     /// hit-tester share this so they can't disagree about which row
     /// lives where.
+    /// Optimistically mark a host's rows as reconnecting so the sidebar
+    /// shows "(connecting...)" the instant the user hits the divider's
+    /// reconnect button, before the refresh round returns.
+    pub fn mark_host_reconnecting(&mut self, host: &str) {
+        for row in &mut self.remote_sessions {
+            if row.host == host {
+                row.loading = true;
+                row.unreachable = false;
+            }
+        }
+    }
+
     pub fn sidebar_layout(&self, view_mode: ViewMode) -> SidebarLayout {
         let card_h = card_height(view_mode) as u16;
         let mut layout = SidebarLayout::new();
@@ -899,10 +934,20 @@ impl AppState {
                     host_idx += 1;
                 }
                 if show_host_headers {
+                    // A host's rows are contiguous and share a status; this
+                    // row is the first of the group, so it represents it.
+                    let status = if r.unreachable {
+                        HostStatus::Unreachable
+                    } else if r.loading {
+                        HostStatus::Connecting
+                    } else {
+                        HostStatus::Connected
+                    };
                     layout.push_header(
                         SidebarItemData::Header {
                             host: r.host.clone(),
                             host_idx,
+                            status,
                         },
                         1,
                     );

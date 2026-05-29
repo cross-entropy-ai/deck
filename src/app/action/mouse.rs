@@ -1,6 +1,6 @@
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
-use crate::state::{AppState, FocusTarget, LayoutMode, MainView};
+use crate::state::{AppState, DividerButton, FocusTarget, LayoutMode, MainView};
 
 use super::Action;
 
@@ -103,10 +103,15 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
                 && mouse.row >= hit.rect.y
                 && mouse.row < hit.rect.y + hit.rect.height
             {
-                return Action::OpenHostDividerMenu {
-                    host: hit.host.clone(),
-                    x: hit.rect.x,
-                    y: hit.rect.y + 1, // open just below the button
+                return match hit.kind {
+                    DividerButton::Reconnect => Action::ReconnectHost {
+                        host: hit.host.clone(),
+                    },
+                    DividerButton::More => Action::OpenHostDividerMenu {
+                        host: hit.host.clone(),
+                        x: hit.rect.x,
+                        y: hit.rect.y + 1, // open just below the button
+                    },
                 };
             }
         }

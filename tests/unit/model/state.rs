@@ -36,6 +36,54 @@ fn make_state(
     state
 }
 
+fn remote_row(host: &str, unreachable: bool, loading: bool) -> RemoteSessionRow {
+    RemoteSessionRow {
+        host: host.to_string(),
+        name: "s".to_string(),
+        dir: "/tmp".to_string(),
+        unreachable,
+        loading,
+    }
+}
+
+#[test]
+fn mark_host_reconnecting_sets_loading_clears_unreachable() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.remote_sessions = vec![remote_row("h1", true, false)];
+    state.mark_host_reconnecting("h1");
+    assert!(state.remote_sessions[0].loading);
+    assert!(!state.remote_sessions[0].unreachable);
+}
+
+#[test]
+fn mark_host_reconnecting_ignores_other_hosts() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.remote_sessions = vec![remote_row("h2", true, false)];
+    state.mark_host_reconnecting("h1");
+    assert!(state.remote_sessions[0].unreachable);
+    assert!(!state.remote_sessions[0].loading);
+}
+
+#[test]
+fn sidebar_header_status_reflects_host_reachability() {
+    let cases = [
+        (remote_row("h1", true, false), HostStatus::Unreachable),
+        (remote_row("h1", false, true), HostStatus::Connecting),
+        (remote_row("h1", false, false), HostStatus::Connected),
+    ];
+    for (row, expected) in cases {
+        let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+        state.remote_sessions = vec![row];
+        state.recompute_filter();
+        let layout = state.sidebar_layout(ViewMode::Expanded);
+        let status = layout.items().iter().find_map(|item| match &item.data {
+            SidebarItemData::Header { status, .. } => Some(*status),
+            _ => None,
+        });
+        assert_eq!(status, Some(expected));
+    }
+}
+
 #[test]
 fn resize_sidebar_handles_small_terminals() {
     let mut state = make_state(LayoutMode::Horizontal, true, 20, 40);

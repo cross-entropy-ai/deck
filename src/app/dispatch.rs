@@ -239,6 +239,14 @@ impl App {
                 self.reload_config();
                 false
             }
+            Action::ReconnectHost { host } => {
+                // Force-refresh: mark the host's rows connecting for instant
+                // feedback, then kick a refresh round. The worker re-queries
+                // every configured host, this one included.
+                self.state.mark_host_reconnecting(&host);
+                self.request_refresh();
+                false
+            }
             Action::PfAddSubmit => {
                 self.pf_add_submit();
                 false
