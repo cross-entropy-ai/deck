@@ -208,6 +208,82 @@ pub enum HostStatus {
     Unreachable,
 }
 
+// --- Port-forward liveness types ---
+// Callers arrive in later tasks; suppress dead-code warnings until then.
+
+/// Liveness of a single configured forward, refreshed each probe tick.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForwardHealth {
+    /// Not yet probed this session, or enumeration was unavailable.
+    Probing,
+    /// `-L`/`-D`: a local listener is present on the listen port.
+    Up,
+    /// `-L`/`-D`: no local listener; or any mode whose master is down.
+    Down,
+    /// `-R`: master is up, but the remote-side listener cannot be confirmed
+    /// locally.
+    Presumed,
+}
+
+/// Stable identity of a configured forward, used to key liveness across config
+/// reloads and reorders. A local listen port is unique per host, but `mode` and
+/// `bind_addr` are included so an `-L` and an `-R` sharing a port number (one
+/// local, one remote) don't collide.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ForwardKey {
+    pub host: String,
+    pub mode: crate::config::ForwardMode,
+    pub bind_addr: Option<String>,
+    pub listen_port: u16,
+}
+
+#[allow(dead_code)]
+impl ForwardKey {
+    pub fn from_spec(host: &str, spec: &crate::config::ForwardSpec) -> Self {
+        Self {
+            host: host.to_string(),
+            mode: spec.mode,
+            bind_addr: spec.bind_addr.clone(),
+            listen_port: spec.listen_port,
+        }
+    }
+}
+
+/// Per-host port-forward badge shown on the sidebar divider.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PfBadge {
+    pub count: usize,
+    pub color: PfBadgeColor,
+}
+
+/// Rolled-up health color for a host's forwards.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PfBadgeColor {
+    /// All forwards Up or Presumed → green.
+    Healthy,
+    /// At least one Down → pink.
+    Degraded,
+    /// At least one Probing, none Down → yellow.
+    Probing,
+}
+
+/// Roll a host's per-forward healths into one badge color. `Down` dominates,
+/// then `Probing`, else `Healthy` (`Up`/`Presumed`).
+#[allow(dead_code)]
+pub fn rollup_color(healths: &[ForwardHealth]) -> PfBadgeColor {
+    if healths.contains(&ForwardHealth::Down) {
+        PfBadgeColor::Degraded
+    } else if healths.contains(&ForwardHealth::Probing) {
+        PfBadgeColor::Probing
+    } else {
+        PfBadgeColor::Healthy
+    }
+}
+
 /// Per-item data carried in the sidebar's `SectionedList`. Headers and
 /// session rows live in the same flat list so the renderer, scroll
 /// logic, and mouse hit-test all walk the same items in lockstep.

@@ -195,3 +195,42 @@ fn validate_bind_addr_passthrough() {
     let spec = f.validate().unwrap();
     assert_eq!(spec.bind_addr.as_deref(), Some("127.0.0.1"));
 }
+
+#[test]
+fn rollup_down_dominates() {
+    use crate::state::{rollup_color, ForwardHealth, PfBadgeColor};
+    let healths = [ForwardHealth::Up, ForwardHealth::Down, ForwardHealth::Probing];
+    assert_eq!(rollup_color(&healths), PfBadgeColor::Degraded);
+}
+
+#[test]
+fn rollup_probing_when_no_down() {
+    use crate::state::{rollup_color, ForwardHealth, PfBadgeColor};
+    let healths = [ForwardHealth::Up, ForwardHealth::Probing];
+    assert_eq!(rollup_color(&healths), PfBadgeColor::Probing);
+}
+
+#[test]
+fn rollup_healthy_when_up_and_presumed() {
+    use crate::state::{rollup_color, ForwardHealth, PfBadgeColor};
+    let healths = [ForwardHealth::Up, ForwardHealth::Presumed];
+    assert_eq!(rollup_color(&healths), PfBadgeColor::Healthy);
+}
+
+#[test]
+fn forward_key_from_spec_uses_mode_bind_and_listen() {
+    use crate::config::{ForwardMode, ForwardSpec};
+    use crate::state::ForwardKey;
+    let spec = ForwardSpec {
+        mode: ForwardMode::Local,
+        bind_addr: Some("127.0.0.1".into()),
+        listen_port: 8080,
+        target_host: Some("h".into()),
+        target_port: Some(80),
+    };
+    let key = ForwardKey::from_spec("server-1", &spec);
+    assert_eq!(key.host, "server-1");
+    assert_eq!(key.mode, ForwardMode::Local);
+    assert_eq!(key.bind_addr.as_deref(), Some("127.0.0.1"));
+    assert_eq!(key.listen_port, 8080);
+}

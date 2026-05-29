@@ -45,7 +45,7 @@ pub struct ForwardSpec {
     pub target_port: Option<u16>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum ForwardMode {
     Local,
