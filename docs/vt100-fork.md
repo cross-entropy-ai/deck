@@ -24,9 +24,16 @@ fork and pin to it.
 
 ## What's currently patched (vs 0.16.2)
 
-| Patch | Fixes | Upstream status |
+Two kinds of divergence live on the fork's `deck` branch: fixes we authored,
+and upstream PRs we cherry-picked ahead of an upstream release.
+
+| Patch | Fixes | Origin |
 |---|---|---|
-| `Row::clear_wide` bounds check + `Row::resize` clears truncated wide cells | OOB panic when shrinking a row through a wide character's continuation cell, then erasing the line. See `docs/bugs/2026-05-18-session-switch-residue.md` for how we found it. | [doy/vt100-rust#28](https://github.com/doy/vt100-rust/issues/28) reported, [PR #30](https://github.com/doy/vt100-rust/pull/30) open. |
+| `Row::clear_wide` bounds check + `Row::resize` clears truncated wide cells + `Row::erase` `saturating_sub` | OOB panic when shrinking a row through a wide character's continuation cell, then erasing the line; plus a latent `cols() - 2` underflow in `Row::erase` for an orphaned wide cell in a one-column row. See `docs/bugs/2026-05-18-session-switch-residue.md` for the first. | ours — [doy/vt100-rust#28](https://github.com/doy/vt100-rust/issues/28) / [PR #30](https://github.com/doy/vt100-rust/pull/30) open. |
+| VS16 emoji presentation is double-width | A text-presentation base char followed by `U+FE0F` (e.g. `❤️`, `⚠️`) was stored as one narrow cell, while tmux / the host terminal / `unicode-width`'s string width count it as 2. Every column after the emoji drifted by one, leaving on-screen residue when scrolling. `Screen::text` now re-measures the cell's full contents, promotes it to wide, and clears any wide glyph it overwrites. | ours — not yet submitted upstream. |
+| 1×1 grid scroll underflow | Subtract-overflow panic when content scrolls a 1×1 grid. | cherry-picked from [PR #29](https://github.com/doy/vt100-rust/pull/29) by @ealmloff. |
+| HPA (`CSI G`) + REP (`CSI b`) | Missing horizontal-position-absolute and repeat-last-character sequences corrupted rendering for some embedded TUIs. | cherry-picked from [PR #23](https://github.com/doy/vt100-rust/pull/23) by @KacperLa. |
+| DECSCUSR cursor styles (`CSI Ps SP q`) | Set-cursor-style sequence (blinking/steady block/underline/bar) was unhandled. | cherry-picked from [PR #21](https://github.com/doy/vt100-rust/pull/21) by @reubeno. |
 
 ## Adding a new patch
 
