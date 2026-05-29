@@ -1,4 +1,4 @@
-use super::hosts_needing_respawn;
+use super::{hosts_needing_respawn, mark_connecting_rows};
 use crate::state::RemoteSessionRow;
 
 fn row(host: &str, unreachable: bool, loading: bool) -> RemoteSessionRow {
@@ -41,4 +41,22 @@ fn nothing_to_respawn_when_all_live() {
     let rows = vec![row("a", false, false), row("b", false, false)];
     let got = hosts_needing_respawn(&rows, |_| true);
     assert!(got.is_empty());
+}
+
+#[test]
+fn mark_connecting_rows_reflects_pty_liveness() {
+    // The divider should stay "connecting" while the PTY reconnects, and
+    // only show "connected" once the pane is actually live.
+    let mut rows = vec![
+        row("conn", false, false), // PTY still connecting -> loading (yellow)
+        row("up", false, false),   // PTY connected -> stays not-loading (green)
+        row("down", true, false),  // unreachable -> untouched (red)
+    ];
+    mark_connecting_rows(&mut rows, |h| h == "conn");
+    assert!(rows[0].loading, "connecting host should show as loading");
+    assert!(!rows[1].loading, "connected host should stay not-loading");
+    assert!(
+        rows[2].unreachable && !rows[2].loading,
+        "unreachable row untouched"
+    );
 }

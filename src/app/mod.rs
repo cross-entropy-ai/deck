@@ -67,16 +67,23 @@ pub(super) enum RemoteConnStatus {
     Failed,
 }
 
+/// One configured remote host's connection: its lifecycle `status` plus
+/// the live attach PTY (`pane`, present iff `status == Connected`).
+/// Single source of truth — the switchable pane and (via state derived
+/// from this) the sidebar both read from here, so the two can't drift.
+pub(super) struct RemoteConn {
+    pub(super) status: RemoteConnStatus,
+    pub(super) pane: Option<TerminalPane>,
+}
+
 pub struct App {
     state: AppState,
     /// The always-present local tmux PTY.
     local_terminal: TerminalPane,
-    /// One PTY per configured remote host, populated asynchronously as
-    /// the background spawner finishes for each host.
-    remote_terminals: HashMap<String, TerminalPane>,
-    /// Per-host connection state. Populated for every host in
-    /// `state.config_remotes` from app startup onward.
-    remote_status: HashMap<String, RemoteConnStatus>,
+    /// One connection per configured remote host (status + attach PTY),
+    /// seeded for every host in `state.config_remotes` at startup; the
+    /// PTY itself arrives asynchronously as the spawner finishes.
+    remote_conns: HashMap<String, RemoteConn>,
     /// Background worker that spawns `ssh tmux attach` PTYs without
     /// blocking the UI.
     remote_spawner: remote_spawn::RemoteSpawner,
@@ -182,9 +189,17 @@ impl App {
             pixel_height: 0,
         };
         let remote_spawner = remote_spawn::RemoteSpawner::start(&remotes, pty_size);
-        let remote_status: HashMap<String, RemoteConnStatus> = remotes
+        let remote_conns: HashMap<String, RemoteConn> = remotes
             .iter()
-            .map(|h| (h.clone(), RemoteConnStatus::Connecting))
+            .map(|h| {
+                (
+                    h.clone(),
+                    RemoteConn {
+                        status: RemoteConnStatus::Connecting,
+                        pane: None,
+                    },
+                )
+            })
             .collect();
 
         // Seed one placeholder per remote host so the sidebar shows a
@@ -208,8 +223,7 @@ impl App {
         let mut app = App {
             state,
             local_terminal,
-            remote_terminals: HashMap::new(),
-            remote_status,
+            remote_conns,
             remote_spawner,
             active_remote: None,
             spinner: rattles::presets::braille::dots(),
@@ -253,8 +267,9 @@ impl App {
     pub(super) fn active_terminal(&self) -> &TerminalPane {
         match &self.active_remote {
             Some(host) => self
-                .remote_terminals
+                .remote_conns
                 .get(host)
+                .and_then(|c| c.pane.as_ref())
                 .unwrap_or(&self.local_terminal),
             None => &self.local_terminal,
         }
@@ -262,14 +277,22 @@ impl App {
 
     pub(super) fn active_terminal_mut(&mut self) -> &mut TerminalPane {
         // Decide which pane to return without holding a borrow on
-        // `self.remote_terminals` so we can fall back to local.
+        // `self.remote_conns` so we can fall back to local.
         let key = self
             .active_remote
             .as_ref()
-            .filter(|h| self.remote_terminals.contains_key(h.as_str()))
+            .filter(|h| {
+                self.remote_conns
+                    .get(h.as_str())
+                    .is_some_and(|c| c.pane.is_some())
+            })
             .cloned();
         match key {
-            Some(host) => self.remote_terminals.get_mut(&host).expect("checked above"),
+            Some(host) => self
+                .remote_conns
+                .get_mut(&host)
+                .and_then(|c| c.pane.as_mut())
+                .expect("checked above"),
             None => &mut self.local_terminal,
         }
     }
@@ -321,12 +344,22 @@ impl App {
                 }
                 match ev {
                     remote_spawn::RemoteSpawnEvent::Spawned { host, pane } => {
-                        self.remote_status
-                            .insert(host.clone(), RemoteConnStatus::Connected);
-                        self.remote_terminals.insert(host, *pane);
+                        self.remote_conns.insert(
+                            host,
+                            RemoteConn {
+                                status: RemoteConnStatus::Connected,
+                                pane: Some(*pane),
+                            },
+                        );
                     }
                     remote_spawn::RemoteSpawnEvent::Failed { host } => {
-                        self.remote_status.insert(host, RemoteConnStatus::Failed);
+                        self.remote_conns.insert(
+                            host,
+                            RemoteConn {
+                                status: RemoteConnStatus::Failed,
+                                pane: None,
+                            },
+                        );
                     }
                 }
             }
@@ -336,7 +369,10 @@ impl App {
             // pipe buffer would fill and block the child.
             let active_host = self.active_remote.clone();
             let mut died_hosts: Vec<String> = Vec::new();
-            for (host, pane) in self.remote_terminals.iter_mut() {
+            for (host, conn) in self.remote_conns.iter_mut() {
+                let Some(pane) = conn.pane.as_mut() else {
+                    continue;
+                };
                 let host_is_active = active_host.as_deref() == Some(host.as_str());
                 for event in pane.pty.drain() {
                     match event {
@@ -356,10 +392,12 @@ impl App {
             for host in died_hosts {
                 // Drop the dead pane so its child process is reaped;
                 // surface the loss as a Failed status so the user sees
-                // why selecting that remote no longer works.
-                self.remote_terminals.remove(&host);
-                self.remote_status
-                    .insert(host.clone(), RemoteConnStatus::Failed);
+                // why selecting that remote no longer works. Refresh
+                // auto-recovery respawns it once the host is reachable.
+                if let Some(conn) = self.remote_conns.get_mut(&host) {
+                    conn.status = RemoteConnStatus::Failed;
+                    conn.pane = None;
+                }
                 // If the user was looking at this remote pane, snap
                 // them back to local so the screen doesn't freeze.
                 if self.active_remote.as_deref() == Some(host.as_str()) {

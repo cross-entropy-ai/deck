@@ -73,14 +73,27 @@ impl App {
         // otherwise only spawned at startup. `Connecting` hosts are skipped
         // so an in-flight spawn isn't duplicated.
         let to_respawn = hosts_needing_respawn(&self.state.remote_sessions, |host| {
-            matches!(
-                self.remote_status.get(host),
-                Some(RemoteConnStatus::Connected) | Some(RemoteConnStatus::Connecting)
-            )
+            self.remote_conns.get(host).is_some_and(|c| {
+                matches!(
+                    c.status,
+                    RemoteConnStatus::Connected | RemoteConnStatus::Connecting
+                )
+            })
         });
         for host in to_respawn {
             self.respawn_remote_host(&host);
         }
+
+        // Keep the divider honest for the whole reconnect window: any host
+        // whose attach PTY is still connecting shows as connecting (yellow),
+        // not connected, until the pane is actually live — re-applied every
+        // refresh, not only the tick a respawn is scheduled.
+        mark_connecting_rows(&mut self.state.remote_sessions, |host| {
+            matches!(
+                self.remote_conns.get(host).map(|c| &c.status),
+                Some(RemoteConnStatus::Connecting)
+            )
+        });
     }
 
     fn apply_local(&mut self, current: String, rows: Vec<SnapshotRow>) {
@@ -155,6 +168,18 @@ fn hosts_needing_respawn(
         }
     }
     out
+}
+
+/// Mark reachable rows as connecting (`loading = true`) while their host's
+/// attach PTY is still connecting (`is_connecting` is true), so the divider
+/// reflects real PTY liveness instead of flipping to "connected" the moment
+/// the probe succeeds. Unreachable rows are left as-is.
+fn mark_connecting_rows(rows: &mut [RemoteSessionRow], is_connecting: impl Fn(&str) -> bool) {
+    for row in rows {
+        if !row.unreachable && is_connecting(&row.host) {
+            row.loading = true;
+        }
+    }
 }
 
 #[cfg(test)]
