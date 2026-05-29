@@ -153,7 +153,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(207, 47, 152),
     },
     Theme {
-        name: "Rosé Pine",
+        name: "Rose Pine",
         bg: Color::Rgb(35, 33, 54),
         surface: Color::Rgb(42, 39, 63),
         dim: Color::Rgb(57, 53, 82),
@@ -243,7 +243,7 @@ pub const THEMES: &[Theme] = &[
         pink: Color::Rgb(154, 27, 110),
     },
     Theme {
-        name: "Rosé Pine Light",
+        name: "Rose Pine Light",
         bg: Color::Rgb(250, 244, 237),
         surface: Color::Rgb(242, 233, 225),
         dim: Color::Rgb(206, 202, 205),
