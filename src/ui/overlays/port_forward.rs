@@ -6,7 +6,8 @@ use ratatui::widgets::{Paragraph, Widget};
 use ratatui_textarea::TextArea;
 
 use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
-use crate::state::{PfAddForm, PfField, PortForwardOverlay};
+use std::collections::HashMap;
+use crate::state::{ForwardHealth, ForwardKey, PfAddForm, PfField, PortForwardOverlay};
 use crate::theme::Theme;
 use crate::ui::form::field_row;
 use crate::ui::widgets::{centered_rect, popup_frame, PopupStyle, TextAreaColors};
@@ -18,6 +19,7 @@ pub fn draw_port_forward(
     area: Rect,
     overlay: &PortForwardOverlay,
     remotes: &[RemoteConfig],
+    health: &HashMap<ForwardKey, ForwardHealth>,
     theme: &Theme,
 ) {
     let forwards: &[ForwardSpec] = remotes
@@ -49,7 +51,7 @@ pub fn draw_port_forward(
     );
 
     match &overlay.add_form {
-        None => draw_list(buf, inner, forwards, overlay, theme),
+        None => draw_list(buf, inner, forwards, overlay, health, theme),
         Some(form) => draw_form(buf, inner, form, theme),
     }
 }
@@ -59,6 +61,7 @@ fn draw_list(
     area: Rect,
     forwards: &[ForwardSpec],
     overlay: &PortForwardOverlay,
+    health: &HashMap<ForwardKey, ForwardHealth>,
     theme: &Theme,
 ) {
     let mut lines: Vec<Line> = Vec::new();
@@ -71,15 +74,27 @@ fn draw_list(
     } else {
         for (i, f) in forwards.iter().enumerate() {
             let marker = if i == overlay.selected { ">" } else { " " };
-            let row = format!("  {} {}", marker, format_forward(f));
             let style = if i == overlay.selected {
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme.text)
             };
-            lines.push(Line::styled(row, style));
+            let h = health
+                .get(&ForwardKey::from_spec(&overlay.host, f))
+                .copied()
+                .unwrap_or(ForwardHealth::Probing);
+            let (dot, dot_fg) = match h {
+                ForwardHealth::Up => ("\u{25cf}", theme.green),       // ●
+                ForwardHealth::Down => ("\u{2715}", theme.pink),      // ✕
+                ForwardHealth::Presumed => ("\u{25cb}", theme.dim),   // ○
+                ForwardHealth::Probing => ("\u{00b7}", theme.muted),  // ·
+            };
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(dot, Style::default().fg(dot_fg)),
+                Span::raw(" "),
+                Span::styled(format!("{} {}", marker, format_forward(f)), style),
+            ]));
         }
     }
     lines.push(Line::raw(""));
