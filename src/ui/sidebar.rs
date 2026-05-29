@@ -11,7 +11,8 @@ use crate::layout::{
     plugin_block_rows, BANNER_MIN_WIDTH, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR,
 };
 use crate::state::{
-    DividerButton, DividerHit, FocusTarget, HostStatus, SidebarItemData, SidebarLayout, ViewMode,
+    DividerButton, DividerHit, FocusTarget, HostStatus, PfBadge, PfBadgeColor, SidebarItemData,
+    SidebarLayout, ViewMode,
 };
 use ratatui_sectioned_list::Item;
 use crate::theme::Theme;
@@ -390,7 +391,7 @@ fn render_group_header(
     status: HostStatus,
     width: usize,
     theme: &Theme,
-    pf: Option<crate::state::PfBadge>,
+    pf: Option<PfBadge>,
 ) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
     let label_text = label.trim_start().to_string();
     let leading = " ";
@@ -407,9 +408,9 @@ fn render_group_header(
     let badge_text = pf.map(|b| format!("\u{21c4}{}", b.count));
     let badge_w = badge_text.as_ref().map(|s| gap + s.as_str().width()).unwrap_or(0);
     let badge_fg = pf.map(|b| match b.color {
-        crate::state::PfBadgeColor::Healthy => theme.green,
-        crate::state::PfBadgeColor::Degraded => theme.pink,
-        crate::state::PfBadgeColor::Probing => theme.yellow,
+        PfBadgeColor::Healthy => theme.green,
+        PfBadgeColor::Degraded => theme.pink,
+        PfBadgeColor::Probing => theme.yellow,
     });
 
     let rule_w = width

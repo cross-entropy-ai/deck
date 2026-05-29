@@ -25,7 +25,6 @@ pub enum Op {
     StopHost { host: String },
     /// Classify the liveness of each given forward. Enumerates local listeners
     /// once when any item is `-L`/`-D`.
-    #[allow(dead_code)]
     Probe { items: Vec<crate::state::ForwardKey> },
 }
 
@@ -41,7 +40,6 @@ pub enum OpKind {
     #[allow(dead_code)]
     Cancel(String, ForwardSpec),
     Exit(String),
-    #[allow(dead_code)]
     Probe(crate::state::ForwardKey, crate::state::ForwardHealth),
 }
 

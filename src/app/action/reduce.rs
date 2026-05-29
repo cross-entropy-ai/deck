@@ -984,7 +984,9 @@ fn apply_pf_task_result(
                 overlay.status = Some(format!("exit: {}", message));
             }
         }
-        // Probe results are routed elsewhere; overlay doesn't react to them.
+        // Unreachable in practice: probe results are dispatched as
+        // Action::PfProbeResult and never reach this function. Arm kept for
+        // match exhaustiveness over &OpKind.
         OpKind::Probe(_, _) => {}
     }
     fx
