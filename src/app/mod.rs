@@ -539,13 +539,20 @@ impl App {
 
             // Drain results from the port-forward worker thread.
             while let Ok(r) = self.port_forward_rx.try_recv() {
-                let host = r.kind.host().to_string();
-                self.dispatch(Action::PfTaskResult {
-                    host,
-                    op: r.kind,
-                    ok: r.ok,
-                    message: r.message,
-                });
+                match r.kind {
+                    crate::app::port_forward_task::OpKind::Probe(key, health) => {
+                        self.dispatch(Action::PfProbeResult { key, health });
+                    }
+                    kind => {
+                        let host = kind.host().to_string();
+                        self.dispatch(Action::PfTaskResult {
+                            host,
+                            op: kind,
+                            ok: r.ok,
+                            message: r.message,
+                        });
+                    }
+                }
             }
 
             self.tick_update_check();
