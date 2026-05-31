@@ -408,7 +408,7 @@ fn render_group_header(
     // Tint the reconnect glyph by connection status; the "more" button
     // keeps the per-host accent.
     let reconnect_fg = match status {
-        HostStatus::Connected => theme.green,
+        HostStatus::Connected => accent,
         HostStatus::Connecting => theme.yellow,
         HostStatus::Unreachable => theme.pink,
     };
