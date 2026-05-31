@@ -1,16 +1,42 @@
+<div align="center">
+
 # deck
 
-A tmux session sidebar inside your terminal: browse and switch sessions while the main area stays attached to the current session’s PTY—no full-screen “menu replaces your shell” workflow.
+**A tmux session sidebar that lives inside your terminal.**
 
-![screenshot](docs/screenshot.png)
+Browse and switch sessions while the main area stays attached to the current
+session's PTY — no full-screen "menu replaces your shell" workflow.
 
-`deck` **is** a [ratatui](https://github.com/ratatui-org/ratatui) sidebar UI for tmux (the sidebar lists sessions).
+<br>
 
-`deck` **is not** a tmux replacement, a general system terminal app, or a window/pane manager;
+[![Latest release](https://img.shields.io/github/v/release/cross-entropy-ai/deck?style=flat-square&logo=github&label=release&color=2ea043)](https://github.com/cross-entropy-ai/deck/releases/latest)
+[![Build](https://img.shields.io/github/actions/workflow/status/cross-entropy-ai/deck/release.yml?style=flat-square&label=build&logo=githubactions&logoColor=white)](https://github.com/cross-entropy-ai/deck/actions/workflows/release.yml)
+[![Downloads](https://img.shields.io/github/downloads/cross-entropy-ai/deck/total?style=flat-square&label=downloads&color=1f6feb)](https://github.com/cross-entropy-ai/deck/releases)
+[![Stars](https://img.shields.io/github/stars/cross-entropy-ai/deck?style=flat-square&label=stars&color=e3b341)](https://github.com/cross-entropy-ai/deck/stargazers)
+[![Built with Rust](https://img.shields.io/badge/built_with-Rust-dea584?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-8957e5?style=flat-square)](#install)
 
-`deck` **helps you** browse, switch, create, rename, kill, reorder, and filter sessions from the sidebar, and persists themes, layout, keybindings, and plugin commands in `~/.config/deck/config.json`.
+<br>
 
-`deck` **does not help you** install or configure tmux, work safely in arbitrary nested tmux setups, or do what you normally do inside a session.
+[Install](#install) · [Usage](#usage) · [Customize](#customize) · [Plugins](#plugins) · [Develop](#develop)
+
+<br>
+
+<img src="docs/screenshot.png" alt="deck — a tmux session sidebar inside your terminal" width="820">
+
+</div>
+
+---
+
+`deck` is a [ratatui](https://github.com/ratatui-org/ratatui) sidebar UI for tmux — the sidebar lists your sessions, and the main pane stays live.
+
+| ✅ deck **is** | 🚫 deck **is not** |
+|---|---|
+| A ratatui sidebar that lists, and lets you act on, your tmux sessions | A tmux replacement, a general system terminal app, or a window/pane manager |
+
+| 💪 deck **helps you** | ✋ deck **does not help you** |
+|---|---|
+| Browse, switch, create, rename, kill, reorder, and filter sessions — and persist themes, layout, keybindings, and plugin commands in `~/.config/deck/config.json` | Install or configure tmux, work safely in arbitrary nested tmux setups, or do what you normally do inside a session |
 
 ## Install
 
@@ -32,11 +58,12 @@ Or download a pre-built binary from [GitHub Releases](https://github.com/cross-e
 deck
 ```
 
-**Requirements**: `tmux` installed and available on `PATH`. If there are no sessions, deck tries to create a detached session named `default` so it can start.
-
-**Config**: `~/.config/deck/config.json`
+> [!NOTE]
+> **Requires `tmux`** installed and available on `PATH`. If there are no sessions, deck tries to create a detached session named `default` so it can start.
 
 deck runs two panes. The **sidebar** lists your tmux sessions with working directory, git branch, and idle time. The **main pane** stays attached to the focused session so the terminal never disappears behind a menu.
+
+Configuration lives in `~/.config/deck/config.json`.
 
 ### Focus and navigation
 
@@ -56,7 +83,8 @@ With the sidebar focused:
 | `h` or `?` | Show the full in-app help |
 | `q` | Quit |
 
-Click a session to switch, right-click for a context menu (rename, kill, new session), or drag the edge between panes to resize.
+> [!TIP]
+> Click a session to switch, right-click for a context menu (rename, kill, new session), or drag the edge between panes to resize.
 
 ### Customize
 
