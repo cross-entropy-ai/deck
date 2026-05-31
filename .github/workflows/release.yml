@@ -65,6 +65,8 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
+          - target: armv7-unknown-linux-musleabihf
+            os: ubuntu-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -80,16 +82,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools
 
-      - name: Install cross for aarch64 musl
-        if: matrix.target == 'aarch64-unknown-linux-musl'
+      - name: Install cross (ARM Linux targets)
+        if: matrix.target == 'aarch64-unknown-linux-musl' || matrix.target == 'armv7-unknown-linux-musleabihf'
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Build binary
-        if: matrix.target == 'aarch64-unknown-linux-musl'
+      - name: Build binary (cross)
+        if: matrix.target == 'aarch64-unknown-linux-musl' || matrix.target == 'armv7-unknown-linux-musleabihf'
         run: cross build --release --target ${{ matrix.target }}
 
-      - name: Build binary
-        if: matrix.target != 'aarch64-unknown-linux-musl'
+      - name: Build binary (cargo)
+        if: matrix.target != 'aarch64-unknown-linux-musl' && matrix.target != 'armv7-unknown-linux-musleabihf'
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package archive
@@ -144,6 +146,7 @@ jobs:
           echo "x86_64_darwin=$(sha256sum deck-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "x86_64_linux=$(sha256sum deck-${{ github.ref_name }}-x86_64-unknown-linux-musl.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "aarch64_linux=$(sha256sum deck-${{ github.ref_name }}-aarch64-unknown-linux-musl.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "armv7_linux=$(sha256sum deck-${{ github.ref_name }}-armv7-unknown-linux-musleabihf.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Update Homebrew formula
         env:
@@ -156,6 +159,7 @@ jobs:
           SHA_X86_64_DARWIN: ${{ steps.sha.outputs.x86_64_darwin }}
           SHA_X86_64_LINUX: ${{ steps.sha.outputs.x86_64_linux }}
           SHA_AARCH64_LINUX: ${{ steps.sha.outputs.aarch64_linux }}
+          SHA_ARMV7_LINUX: ${{ steps.sha.outputs.armv7_linux }}
         run: |
           FORMULA_VERSION="${VERSION#v}"
           BASE_URL="https://github.com/${REPO_SLUG}/releases/download/${VERSION}"
@@ -178,8 +182,13 @@ jobs:
 
             on_linux do
               if Hardware::CPU.arm?
-                url "${BASE_URL}/deck-${VERSION}-aarch64-unknown-linux-musl.tar.gz"
-                sha256 "${SHA_AARCH64_LINUX}"
+                if Hardware::CPU.is_32_bit?
+                  url "${BASE_URL}/deck-${VERSION}-armv7-unknown-linux-musleabihf.tar.gz"
+                  sha256 "${SHA_ARMV7_LINUX}"
+                else
+                  url "${BASE_URL}/deck-${VERSION}-aarch64-unknown-linux-musl.tar.gz"
+                  sha256 "${SHA_AARCH64_LINUX}"
+                end
               else
                 url "${BASE_URL}/deck-${VERSION}-x86_64-unknown-linux-musl.tar.gz"
                 sha256 "${SHA_X86_64_LINUX}"
