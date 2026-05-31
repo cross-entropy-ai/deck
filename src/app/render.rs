@@ -36,6 +36,7 @@ impl App {
         let rename_input = s.overlay.renaming.as_ref().map(|r| &r.input);
         let context_menu = s.overlay.context_menu.clone();
         let new_session_overlay = s.overlay.new_session.clone();
+        let add_remote_overlay = s.overlay.add_remote.clone();
         let port_forward_overlay = s.overlay.port_forward.clone();
         let config_remotes = s.config_remotes.clone();
         let show_borders = s.show_borders;
@@ -361,6 +362,10 @@ impl App {
                     error: ns.error.as_deref(),
                 };
                 ui::draw_new_session(frame, frame.area(), &view, theme);
+            }
+
+            if let Some(ref ar) = add_remote_overlay {
+                ui::draw_add_remote(frame, frame.area(), ar, theme);
             }
 
             if let Some(ref overlay) = port_forward_overlay {
