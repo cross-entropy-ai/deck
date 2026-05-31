@@ -10,7 +10,7 @@ session's PTY — no full-screen "menu replaces your shell" workflow.
 <br>
 
 [![Latest release](https://img.shields.io/github/v/release/cross-entropy-ai/deck?style=flat-square&logo=github&label=release&color=2ea043)](https://github.com/cross-entropy-ai/deck/releases/latest)
-[![Build](https://img.shields.io/github/actions/workflow/status/cross-entropy-ai/deck/release.yml?style=flat-square&label=build&logo=githubactions&logoColor=white)](https://github.com/cross-entropy-ai/deck/actions/workflows/release.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/cross-entropy-ai/deck/ci.yml?style=flat-square&label=ci&logo=githubactions&logoColor=white)](https://github.com/cross-entropy-ai/deck/actions/workflows/ci.yml)
 [![Downloads](https://img.shields.io/github/downloads/cross-entropy-ai/deck/total?style=flat-square&label=downloads&color=1f6feb)](https://github.com/cross-entropy-ai/deck/releases)
 [![Stars](https://img.shields.io/github/stars/cross-entropy-ai/deck?style=flat-square&label=stars&color=e3b341)](https://github.com/cross-entropy-ai/deck/stargazers)
 [![Built with Rust](https://img.shields.io/badge/built_with-Rust-dea584?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org)
