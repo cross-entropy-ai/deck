@@ -133,5 +133,11 @@ pub enum Action {
         message: String,
     },
 
+    AddRemoteInputKey(crossterm::event::KeyEvent),
+    AddRemoteNext,
+    AddRemotePrev,
+    AddRemoteConfirm,
+    AddRemoteClose,
+
     None,
 }

@@ -640,6 +640,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                             open_new_session_picker: true,
                             ..SideEffect::default()
                         },
+                        Some("Add Remote Host") => SideEffect {
+                            open_add_remote_picker: true,
+                            ..SideEffect::default()
+                        },
                         Some("Toggle layout") => apply_action(state, Action::ToggleLayout),
                         Some("Toggle borders") => apply_action(state, Action::ToggleBorders),
                         Some("Settings") => apply_action(state, Action::OpenSettings),
@@ -808,6 +812,62 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
 
         Action::PfTaskResult { host, op, ok, message } => {
             fx.merge(apply_pf_task_result(state, &host, &op, ok, &message));
+        }
+
+        Action::AddRemoteInputKey(key) => {
+            if let Some(ar) = state.overlay.add_remote.as_mut() {
+                ar.input.input(key);
+                ar.refilter();
+                ar.error = None;
+            }
+        }
+        Action::AddRemotePrev => {
+            if let Some(ar) = state.overlay.add_remote.as_mut() {
+                if ar.selected > 0 {
+                    ar.selected -= 1;
+                }
+            }
+        }
+        Action::AddRemoteNext => {
+            if let Some(ar) = state.overlay.add_remote.as_mut() {
+                if !ar.filtered.is_empty() && ar.selected + 1 < ar.filtered.len() {
+                    ar.selected += 1;
+                }
+            }
+        }
+        Action::AddRemoteClose => {
+            state.overlay.add_remote = None;
+        }
+        Action::AddRemoteConfirm => {
+            // Resolve first (immutable borrow released before we mutate state).
+            let chosen = state
+                .overlay
+                .add_remote
+                .as_ref()
+                .and_then(|ar| ar.chosen_host());
+            let host = match chosen {
+                None => {
+                    if let Some(ar) = state.overlay.add_remote.as_mut() {
+                        ar.error = Some("enter a hostname".into());
+                    }
+                    return fx;
+                }
+                Some(h) => h,
+            };
+            if state.config_remotes.iter().any(|r| r.host == host) {
+                if let Some(ar) = state.overlay.add_remote.as_mut() {
+                    ar.error = Some("already added".into());
+                }
+                return fx;
+            }
+            state.config_remotes.push(crate::config::RemoteConfig {
+                host: host.clone(),
+                forwards: vec![],
+            });
+            state.overlay.add_remote = None;
+            fx.save_config = true;
+            fx.refresh_sessions = true;
+            fx.add_remote_host = Some(host);
         }
 
         Action::None => {}

@@ -10,6 +10,10 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         return new_session_key_to_action(key, state);
     }
 
+    if state.overlay.add_remote.is_some() {
+        return add_remote_key_to_action(key);
+    }
+
     if state.overlay.renaming.is_some() {
         return match key.code {
             KeyCode::Enter => Action::RenameConfirm,
@@ -226,6 +230,16 @@ fn pf_key(key: &KeyEvent, overlay: &PortForwardOverlay) -> Action {
             Down | Char('j') => Action::PfFocusDown,
             _ => Action::None,
         }
+    }
+}
+
+fn add_remote_key_to_action(key: &KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Esc => Action::AddRemoteClose,
+        KeyCode::Enter => Action::AddRemoteConfirm,
+        KeyCode::Up => Action::AddRemotePrev,
+        KeyCode::Down => Action::AddRemoteNext,
+        _ => Action::AddRemoteInputKey(*key),
     }
 }
 

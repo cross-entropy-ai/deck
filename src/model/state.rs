@@ -37,6 +37,7 @@ const REMOTE_SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill"];
 const HOST_DIVIDER_MENU_ITEMS: &[&str] = &["Port Forward", "Remove from list"];
 const GLOBAL_MENU_ITEMS: &[&str] = &[
     "New session",
+    "Add Remote Host",
     "Toggle layout",
     "Toggle borders",
     "Settings",
@@ -278,6 +279,12 @@ pub struct SideEffect {
     /// the global menu's "New session" item; uses the focused session's
     /// dir as the picker's starting point.
     pub open_new_session_picker: bool,
+    /// Dispatch should open the Add Remote Host picker (build candidates from
+    /// ~/.ssh/config minus already-added hosts).
+    pub open_add_remote_picker: bool,
+    /// A host was just added; dispatch should onboard it (spawn connection),
+    /// the same way `reload_config` does for a newly-configured host.
+    pub add_remote_host: Option<String>,
     /// Dispatch should re-run `read_dir` for the picker's current
     /// parent and refresh `entries`. Fired by any reducer arm that
     /// changes the effective parent.
@@ -314,6 +321,10 @@ impl SideEffect {
             self.remove_remote_host = other.remove_remote_host;
         }
         self.open_new_session_picker |= other.open_new_session_picker;
+        self.open_add_remote_picker |= other.open_add_remote_picker;
+        if other.add_remote_host.is_some() {
+            self.add_remote_host = other.add_remote_host;
+        }
         self.reread_new_session_entries |= other.reread_new_session_entries;
         self.resize_pty |= other.resize_pty;
         self.save_config |= other.save_config;
@@ -576,6 +587,7 @@ pub struct OverlayState {
     pub context_menu: Option<ContextMenu>,
     pub exclude_editor: Option<ExcludeEditorState>,
     pub new_session: Option<NewSessionState>,
+    pub add_remote: Option<crate::add_remote::AddRemoteState>,
     /// Port-forward overlay for a single host. See `PortForwardOverlay`.
     pub port_forward: Option<PortForwardOverlay>,
 }

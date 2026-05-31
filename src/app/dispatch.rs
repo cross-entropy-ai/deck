@@ -524,6 +524,14 @@ impl App {
         if fx.open_new_session_picker {
             self.open_new_session_picker();
         }
+
+        if fx.open_add_remote_picker {
+            self.open_add_remote_picker();
+        }
+
+        if let Some(ref host) = fx.add_remote_host {
+            self.onboard_remote_host(host);
+        }
     }
 
     /// Reload `~/.config/deck/config.json` and apply it in place. On
@@ -649,6 +657,21 @@ impl App {
             tmux::apply_theme(&THEMES[self.state.theme_index]);
         }
         self.request_refresh();
+    }
+
+    fn open_add_remote_picker(&mut self) {
+        use std::collections::HashSet;
+        let existing: HashSet<&str> = self
+            .state
+            .config_remotes
+            .iter()
+            .map(|r| r.host.as_str())
+            .collect();
+        let hosts: Vec<String> = crate::infra::ssh::config_hosts()
+            .into_iter()
+            .filter(|h| !existing.contains(h.as_str()))
+            .collect();
+        self.state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(hosts));
     }
 
     fn open_new_session_picker(&mut self) {

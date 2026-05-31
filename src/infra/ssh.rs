@@ -88,7 +88,6 @@ fn ssh_config_path() -> PathBuf {
 /// wildcard/negation characters (`*`, `?`, `!`), de-duped, first-seen order.
 /// Effective per-host options are irrelevant here — the picker only needs the
 /// alias to add to deck (later resolved via `ssh -G`).
-#[allow(dead_code)] // caller arrives with the Add Remote Host picker
 pub fn parse_config_hosts(content: &str) -> Vec<String> {
     let mut hosts: Vec<String> = Vec::new();
     for line in content.lines() {
@@ -118,7 +117,6 @@ pub fn parse_config_hosts(content: &str) -> Vec<String> {
 
 /// Read `~/.ssh/config` and return its concrete `Host` aliases. A missing or
 /// unreadable file yields an empty list (the picker still accepts typed input).
-#[allow(dead_code)] // caller arrives with the Add Remote Host picker
 pub fn config_hosts() -> Vec<String> {
     let path = ssh_config_path();
     match std::fs::read_to_string(path) {

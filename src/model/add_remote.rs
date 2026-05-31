@@ -2,10 +2,6 @@
 //! new-session picker's split: this module owns the overlay state and the
 //! filtering / choice logic; rendering lives in `ui/add_remote.rs`.
 
-// Consumers (reducer/dispatch/UI) arrive in later tasks; the final task removes
-// this once everything is wired.
-#![allow(dead_code)]
-
 use ratatui_textarea::{CursorMove, TextArea};
 
 #[derive(Debug, Clone)]
