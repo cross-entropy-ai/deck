@@ -209,20 +209,34 @@ pub enum HostStatus {
     Unreachable,
 }
 
+/// Connection status carried by a single remote row. All rows of a host
+/// share one status, so any row of the group represents it. Shared between
+/// the divider header and `-R` forward-health derivation so both read the
+/// host's state the same way.
+fn host_status_of(r: &RemoteSessionRow) -> HostStatus {
+    if r.unreachable {
+        HostStatus::Unreachable
+    } else if r.loading {
+        HostStatus::Connecting
+    } else {
+        HostStatus::Connected
+    }
+}
+
 // --- Port-forward liveness types ---
 
 /// Liveness of a single configured forward, refreshed each probe tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForwardHealth {
-    /// Not yet probed this session, or enumeration was unavailable.
+    /// Not yet probed this session, enumeration was unavailable, or the host
+    /// is still connecting.
     Probing,
-    /// `-L`/`-D`: a local listener is present on the listen port.
+    /// `-L`/`-D`: a local listener is present on the listen port. `-R`: the
+    /// host connection is up (the remote listener can't be confirmed locally,
+    /// so it simply tracks reachability).
     Up,
-    /// `-L`/`-D`: no local listener; or any mode whose master is down.
+    /// `-L`/`-D`: no local listener. `-R`: the host is unreachable.
     Down,
-    /// `-R`: master is up, but the remote-side listener cannot be confirmed
-    /// locally.
-    Presumed,
 }
 
 /// Stable identity of a configured forward, used to key liveness across config
@@ -258,7 +272,7 @@ pub struct PfBadge {
 /// Rolled-up health color for a host's forwards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PfBadgeColor {
-    /// All forwards Up or Presumed → green.
+    /// All forwards Up → green.
     Healthy,
     /// At least one Down → pink.
     Degraded,
@@ -267,7 +281,7 @@ pub enum PfBadgeColor {
 }
 
 /// Roll a host's per-forward healths into one badge color. `Down` dominates,
-/// then `Probing`, else `Healthy` (`Up`/`Presumed`).
+/// then `Probing`, else `Healthy` (all `Up`).
 pub fn rollup_color(healths: &[ForwardHealth]) -> PfBadgeColor {
     if healths.contains(&ForwardHealth::Down) {
         PfBadgeColor::Degraded
@@ -313,6 +327,8 @@ pub enum DividerButton {
     Reconnect,
     /// `[…]` — open the host-divider menu.
     More,
+    /// `⇄N` — the port-forward liveness badge; opens the port-forward overlay.
+    PfBadge,
 }
 
 /// Click-region for one button (`[⟳]` or `[…]`) on a remote-host
@@ -1012,13 +1028,7 @@ impl AppState {
                 if show_host_headers {
                     // A host's rows are contiguous and share a status; this
                     // row is the first of the group, so it represents it.
-                    let status = if r.unreachable {
-                        HostStatus::Unreachable
-                    } else if r.loading {
-                        HostStatus::Connecting
-                    } else {
-                        HostStatus::Connected
-                    };
+                    let status = host_status_of(r);
                     layout.push_header(
                         SidebarItemData::Header {
                             host: r.host.clone(),
@@ -1081,6 +1091,45 @@ impl AppState {
             .flat_map(|r| r.forwards.iter().map(|f| ForwardKey::from_spec(&r.host, f)))
             .collect();
         self.forward_health.retain(|k, _| valid.contains(k));
+    }
+
+    /// The connection status shown on a host's divider, derived from its
+    /// remote rows. `None` until the host has any row (pre-refresh).
+    pub fn host_conn_status(&self, host: &str) -> Option<HostStatus> {
+        self.remote_sessions
+            .iter()
+            .find(|r| r.host == host)
+            .map(host_status_of)
+    }
+
+    /// Refresh `-R` forward health from each host's connection status. A
+    /// remote-forward listener lives on the far side and can't be probed
+    /// locally, so it simply mirrors reachability: connected → Up, unreachable
+    /// → Down, still-connecting → Probing. `-L`/`-D` entries are owned by the
+    /// worker probe and left untouched. Called whenever remote status changes
+    /// so `-R` and the divider always agree.
+    pub fn sync_remote_forward_health(&mut self) {
+        let updates: Vec<(ForwardKey, ForwardHealth)> = self
+            .config_remotes
+            .iter()
+            .flat_map(|r| {
+                r.forwards
+                    .iter()
+                    .filter(|f| matches!(f.mode, crate::config::ForwardMode::Remote))
+                    .map(|f| {
+                        let health = match self.host_conn_status(&r.host) {
+                            Some(HostStatus::Connected) => ForwardHealth::Up,
+                            Some(HostStatus::Unreachable) => ForwardHealth::Down,
+                            Some(HostStatus::Connecting) | None => ForwardHealth::Probing,
+                        };
+                        (ForwardKey::from_spec(&r.host, f), health)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        for (key, health) in updates {
+            self.forward_health.insert(key, health);
+        }
     }
 
     /// Resolve a focus target back to the backing row in either local

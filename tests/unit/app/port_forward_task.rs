@@ -121,12 +121,10 @@ fn bootstrap_orders_master_before_each_host_forwards() {
 }
 
 #[test]
-fn probe_classifies_by_mode_and_listeners() {
+fn probe_classifies_local_by_listeners_and_skips_remote() {
     let runner = MockRunner::default();
     *runner.listening.lock().unwrap() = Some(HashSet::from([8080u16])); // 8080 up, 1080 down
-    let mut w = Worker::new(runner.clone());
-    // Bring host "h" master up so the -R forward reads Presumed.
-    w.handle(Op::Bootstrap { hosts: vec![("h".into(), vec![])] });
+    let mut w = Worker::new(runner);
 
     let key = |mode, port| ForwardKey {
         host: "h".into(),
@@ -138,17 +136,27 @@ fn probe_classifies_by_mode_and_listeners() {
         items: vec![
             key(ForwardMode::Local, 8080),
             key(ForwardMode::Dynamic, 1080),
+            // -R is filtered out: its liveness mirrors host reachability and
+            // is derived in the app layer, never by the worker.
             key(ForwardMode::Remote, 9090),
         ],
     });
 
+    // Only the two local-listener forwards come back; -R produces no result.
+    assert_eq!(results.len(), 2, "worker must skip -R items");
     let health = |i: usize| match &results[i].kind {
         OpKind::Probe(_, h) => *h,
         other => panic!("expected Probe kind, got {:?}", other),
     };
     assert_eq!(health(0), ForwardHealth::Up); // -L 8080 is listening
     assert_eq!(health(1), ForwardHealth::Down); // -D 1080 not listening
-    assert_eq!(health(2), ForwardHealth::Presumed); // -R, master up
+    assert!(
+        results.iter().all(|r| !matches!(
+            &r.kind,
+            OpKind::Probe(k, _) if matches!(k.mode, ForwardMode::Remote)
+        )),
+        "no -R result should be emitted"
+    );
 }
 
 #[test]

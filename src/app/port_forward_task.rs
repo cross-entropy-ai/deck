@@ -166,43 +166,25 @@ impl<R: Runner> Worker<R> {
             Op::Probe { items } => {
                 use crate::config::ForwardMode;
                 use crate::state::ForwardHealth;
-                let needs_local = items
-                    .iter()
-                    .any(|k| matches!(k.mode, ForwardMode::Local | ForwardMode::Dynamic));
-                let ports = if needs_local {
-                    self.runner.listening_ports()
-                } else {
-                    // All-Remote probe: no local enumeration needed. This empty
-                    // set is never queried (Remote items don't inspect `ports`);
-                    // `None` would be wrong — it maps -L/-D items to Probing.
-                    Some(std::collections::HashSet::new())
-                };
+                // Only -L/-D reach the worker: their listener is local, so we
+                // confirm them by enumerating local LISTEN ports. -R listens on
+                // the far side and can't be probed locally — its health mirrors
+                // host reachability, derived in the app layer — so any -R item
+                // is ignored here defensively.
+                let ports = self.runner.listening_ports();
                 items
                     .into_iter()
+                    .filter(|key| matches!(key.mode, ForwardMode::Local | ForwardMode::Dynamic))
                     .map(|key| {
-                        let health = match key.mode {
-                            ForwardMode::Local | ForwardMode::Dynamic => match &ports {
-                                Some(set) => {
-                                    if set.contains(&key.listen_port) {
-                                        ForwardHealth::Up
-                                    } else {
-                                        ForwardHealth::Down
-                                    }
-                                }
-                                None => ForwardHealth::Probing, // couldn't enumerate
-                            },
-                            ForwardMode::Remote => {
-                                // masters_up is only updated on Bootstrap/AddForward/StopHost,
-                                // not re-validated. Presumed means "master was brought up and
-                                // not explicitly torn down" — NOT a liveness guarantee. A master
-                                // that died on its own still reads Presumed; remote-side liveness
-                                // cannot be checked locally, by design.
-                                if self.masters_up.contains(&key.host) {
-                                    ForwardHealth::Presumed
+                        let health = match &ports {
+                            Some(set) => {
+                                if set.contains(&key.listen_port) {
+                                    ForwardHealth::Up
                                 } else {
                                     ForwardHealth::Down
                                 }
                             }
+                            None => ForwardHealth::Probing, // couldn't enumerate
                         };
                         OpResult {
                             kind: OpKind::Probe(key, health),

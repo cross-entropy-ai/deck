@@ -86,7 +86,6 @@ fn draw_list(
             let (dot, dot_fg) = match h {
                 ForwardHealth::Up => ("\u{25cf}", theme.green),       // ●
                 ForwardHealth::Down => ("\u{2715}", theme.pink),      // ✕
-                ForwardHealth::Presumed => ("\u{25cb}", theme.dim),   // ○
                 ForwardHealth::Probing => ("\u{00b7}", theme.muted),  // ·
             };
             lines.push(Line::from(vec![

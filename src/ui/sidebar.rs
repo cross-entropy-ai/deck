@@ -293,9 +293,16 @@ fn draw_sessions(
                 let accent = host_accent(ctx.theme, *host_idx);
                 let line_idx = lines.len();
                 let label = format!("@{host}");
-                let (reconnect_range, more_range) = render_group_header(
+                let GroupHeaderHits {
+                    reconnect: reconnect_range,
+                    more: more_range,
+                    badge: badge_range,
+                } = render_group_header(
                     &mut lines, &label, accent, *status, width, ctx.theme, *pf,
                 );
+                if let Some(badge_range) = badge_range {
+                    pending_hits.push((line_idx, badge_range, host.clone(), DividerButton::PfBadge));
+                }
                 pending_hits.push((
                     line_idx,
                     reconnect_range,
@@ -384,6 +391,15 @@ fn host_accent(theme: &Theme, host_idx: usize) -> Color {
     tints[host_idx % tints.len()]
 }
 
+/// Cell ranges of the clickable regions on a rendered group-header line.
+/// `badge` is `None` when the port-forward badge isn't shown (host has no
+/// forwards, or the line is too narrow to fit it).
+struct GroupHeaderHits {
+    reconnect: std::ops::Range<usize>,
+    more: std::ops::Range<usize>,
+    badge: Option<std::ops::Range<usize>>,
+}
+
 fn render_group_header(
     lines: &mut Vec<Line<'_>>,
     label: &str,
@@ -392,7 +408,7 @@ fn render_group_header(
     width: usize,
     theme: &Theme,
     pf: Option<PfBadge>,
-) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
+) -> GroupHeaderHits {
     let label_text = label.trim_start().to_string();
     let leading = " ";
     let leading_w = leading.width();
@@ -461,10 +477,17 @@ fn render_group_header(
     // Cell ranges of the two buttons within this rendered line.
     let reconnect_x = leading_w + label_w + spacer_w + rule_w + badge_w + gap;
     let more_x = reconnect_x + button_w + gap;
-    (
-        reconnect_x..(reconnect_x + button_w),
-        more_x..(more_x + button_w),
-    )
+    // The badge text sits after the rule + its leading gap; its hit region
+    // covers just the `⇄N` glyph (badge_w less that leading gap).
+    let badge = show_badge.then(|| {
+        let badge_x = leading_w + label_w + spacer_w + rule_w + gap;
+        badge_x..(badge_x + badge_w - gap)
+    });
+    GroupHeaderHits {
+        reconnect: reconnect_x..(reconnect_x + button_w),
+        more: more_x..(more_x + button_w),
+        badge,
+    }
 }
 
 /// Visual treatment of the index hint at the start of a row. Local

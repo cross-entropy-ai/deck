@@ -112,6 +112,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
                         x: hit.rect.x,
                         y: hit.rect.y + 1, // open just below the button
                     },
+                    DividerButton::PfBadge => Action::OpenPortForward(hit.host.clone()),
                 };
             }
         }

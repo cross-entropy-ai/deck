@@ -27,12 +27,17 @@ impl App {
         self.refresh_worker.request(self.build_refresh_request());
     }
 
-    /// Ask the port-forward worker to re-classify every configured forward.
-    /// No-op when nothing is configured (skips the `netstat`/`ss` spawn).
+    /// Ask the port-forward worker to re-classify every `-L`/`-D` forward by
+    /// enumerating local listeners. `-R` forwards are skipped — their health
+    /// mirrors host reachability and is set in `apply_remote`, not here. No-op
+    /// (skips the `netstat`/`ss` spawn) when no local forwards are configured.
     pub(super) fn request_pf_probe(&self) {
         let mut items = Vec::new();
         for r in &self.state.config_remotes {
             for f in &r.forwards {
+                if matches!(f.mode, crate::config::ForwardMode::Remote) {
+                    continue;
+                }
                 items.push(crate::state::ForwardKey::from_spec(&r.host, f));
             }
         }
@@ -111,6 +116,11 @@ impl App {
                 Some(RemoteConnStatus::Connecting)
             )
         });
+
+        // -R forwards can't be probed locally; refresh their health from the
+        // host status we just settled so the badge/overlay agree with the
+        // divider (connected → green, unreachable → error).
+        self.state.sync_remote_forward_health();
     }
 
     fn apply_local(&mut self, current: String, rows: Vec<SnapshotRow>) {
