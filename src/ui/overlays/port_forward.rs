@@ -2,7 +2,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Widget};
+use ratatui::widgets::{Paragraph, Widget, Wrap};
 use ratatui_textarea::TextArea;
 
 use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
@@ -29,7 +29,10 @@ pub fn draw_port_forward(
         .unwrap_or(&[]);
 
     let body_height = if overlay.add_form.is_some() {
-        12
+        // Sized to the form's content rows so only ~1 blank line trails the
+        // hint bar. Reserve 3 lines for the status row when there's a (possibly
+        // long, wrapping) message, otherwise a single blank pad line.
+        9 + if overlay.status.is_some() { 3 } else { 1 }
     } else {
         (forwards.len().max(1) as u16) + 4
     };
@@ -52,7 +55,7 @@ pub fn draw_port_forward(
 
     match &overlay.add_form {
         None => draw_list(buf, inner, forwards, overlay, health, theme),
-        Some(form) => draw_form(buf, inner, form, theme),
+        Some(form) => draw_form(buf, inner, form, overlay.status.as_deref(), theme),
     }
 }
 
@@ -114,21 +117,23 @@ fn draw_list(
     Paragraph::new(lines).render(area, buf);
 }
 
-fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, theme: &Theme) {
-    // 12 rows: blank, mode, blank, 4 fields, blank, flow, blank, hint, fill.
+fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str>, theme: &Theme) {
+    // Row 9 holds the add status: 3 lines when a (possibly long, wrapping)
+    // message is present, else a single blank pad line.
+    let status_h = if status.is_some() { 3 } else { 1 };
     let rows = Layout::vertical([
-        Constraint::Length(1), // 0: top pad
-        Constraint::Length(1), // 1: mode picker
-        Constraint::Length(1), // 2: pad
-        Constraint::Length(1), // 3: bind addr
-        Constraint::Length(1), // 4: listen port
-        Constraint::Length(1), // 5: target host
-        Constraint::Length(1), // 6: target port
-        Constraint::Length(1), // 7: pad
-        Constraint::Length(1), // 8: flow sketch
-        Constraint::Length(1), // 9: pad
-        Constraint::Length(1), // 10: hint bar
-        Constraint::Min(0),    // tail
+        Constraint::Length(1),        // 0: top pad
+        Constraint::Length(1),        // 1: mode picker
+        Constraint::Length(1),        // 2: pad
+        Constraint::Length(1),        // 3: bind addr
+        Constraint::Length(1),        // 4: listen port
+        Constraint::Length(1),        // 5: target host
+        Constraint::Length(1),        // 6: target port
+        Constraint::Length(1),        // 7: pad
+        Constraint::Length(1),        // 8: flow sketch
+        Constraint::Length(status_h), // 9: status (wraps up to 3 lines)
+        Constraint::Length(1),        // 10: hint bar
+        Constraint::Min(0),           // tail
     ])
     .split(area);
 
@@ -179,8 +184,31 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, theme: &Theme) {
         enabled: target_active,
     });
 
-    // --- Flow sketch + hint ---------------------------------------------
+    // --- Flow sketch + status + hint ------------------------------------
     Paragraph::new(flow_line(form, theme)).render(rows[8], buf);
+    // Surface the add result here (e.g. validation error, "already
+    // forwarding port N", or "applying...") — the form stays open on
+    // failure, so this row is the only place the user sees why.
+    if let Some(s) = status {
+        // "applying..." is an in-progress notice; everything else here is an
+        // error/rejection. Render into a rect inset 2 cells from each border so
+        // the message — and every wrapped continuation line — lines up with the
+        // form fields' indent instead of butting up against the frame.
+        let fg = if s.starts_with("applying") {
+            theme.yellow
+        } else {
+            theme.pink
+        };
+        let inset = Rect {
+            x: rows[9].x + 2,
+            y: rows[9].y,
+            width: rows[9].width.saturating_sub(4),
+            height: rows[9].height,
+        };
+        Paragraph::new(Line::styled(s, Style::default().fg(fg)))
+            .wrap(Wrap { trim: true })
+            .render(inset, buf);
+    }
     Paragraph::new(Line::styled(
         "  [tab] next   [enter] save   [esc] cancel",
         Style::default().fg(theme.subtle),
