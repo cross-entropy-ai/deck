@@ -798,11 +798,31 @@ impl App {
         let spec = match form.validate() {
             Ok(s) => s,
             Err(e) => {
-                overlay.status = Some(format!("err: {}", e.message()));
+                overlay.status = Some(e.message().to_string());
                 return;
             }
         };
         let host = overlay.host.clone();
+        // Reject a forward whose listen identity (mode + bind addr + listen
+        // port) is already configured, before bothering ssh — otherwise the
+        // user just sees a cryptic "bind: Address already in use" from the
+        // worker, or a silent no-op when ssh treats it as idempotent.
+        let key = crate::state::ForwardKey::from_spec(&host, &spec);
+        let already_exists = self
+            .state
+            .config_remotes
+            .iter()
+            .find(|r| r.host == host)
+            .is_some_and(|r| {
+                r.forwards
+                    .iter()
+                    .any(|f| crate::state::ForwardKey::from_spec(&host, f) == key)
+            });
+        if already_exists {
+            overlay.status =
+                Some(format!("Port {} is already being forwarded.", spec.listen_port));
+            return;
+        }
         form.submitting = true;
         overlay.status = Some("applying...".into());
         let _ = self.port_forward_tx.send(

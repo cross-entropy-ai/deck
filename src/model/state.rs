@@ -550,9 +550,9 @@ pub enum PfFormError {
 impl PfFormError {
     pub fn message(&self) -> &'static str {
         match self {
-            PfFormError::ListenPortRange => "listen_port must be 0-65535",
-            PfFormError::TargetPortRange => "target_port must be 0-65535",
-            PfFormError::TargetHostRequired => "target_host required for -L/-R",
+            PfFormError::ListenPortRange => "Listen port must be a number from 0 to 65535.",
+            PfFormError::TargetPortRange => "Target port must be a number from 0 to 65535.",
+            PfFormError::TargetHostRequired => "Target host is required for -L and -R forwards.",
         }
     }
 }
