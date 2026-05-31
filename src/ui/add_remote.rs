@@ -11,6 +11,7 @@ use crate::ui::widgets::{popup_frame, PopupStyle, TextAreaColors};
 
 const POPUP_WIDTH: u16 = 56;
 const MAX_VISIBLE: usize = 8;
+const POPUP_MIN_HEIGHT: u16 = 7;
 
 pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, theme: &Theme) {
     // Always reserve at least one list row (for the "(no hosts)" line).
@@ -18,6 +19,7 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
     let extra_err = if state.error.is_some() { 1 } else { 0 };
     // borders(2) + host(1) + blank(1) + list(visible) + blank(1) + [err] + footer(1)
     let height = (2 + 1 + 1 + visible as u16 + 1 + extra_err + 1)
+        .max(POPUP_MIN_HEIGHT)
         .min(area.height.saturating_sub(2));
     let width = POPUP_WIDTH.min(area.width.saturating_sub(4));
     let x = area.x + area.width.saturating_sub(width) / 2;
@@ -92,7 +94,7 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
                         .bg(bg),
                 ),
                 Span::styled(
-                    state.hosts[*idx].clone(),
+                    state.hosts[*idx].as_str(),
                     Style::default().fg(theme.text).bg(bg),
                 ),
             ]))
