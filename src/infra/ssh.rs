@@ -102,6 +102,9 @@ pub fn parse_config_hosts(content: &str) -> Vec<String> {
             continue;
         }
         for pat in tokens {
+            if pat.starts_with('#') {
+                break; // rest of the line is an inline comment
+            }
             if pat.contains('*') || pat.contains('?') || pat.contains('!') {
                 continue;
             }
@@ -224,5 +227,11 @@ Host !secret
     fn empty_or_no_hosts_yields_empty() {
         assert!(parse_config_hosts("").is_empty());
         assert!(parse_config_hosts("# comment only\n  IdentityFile ~/x\n").is_empty());
+    }
+
+    #[test]
+    fn host_line_inline_comment_is_ignored() {
+        let sample = "Host web # primary box\nHost db\n";
+        assert_eq!(parse_config_hosts(sample), vec!["web", "db"]);
     }
 }
