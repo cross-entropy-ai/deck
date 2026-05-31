@@ -409,42 +409,48 @@ fn render_group_header(
     theme: &Theme,
     pf: Option<PfBadge>,
 ) -> GroupHeaderHits {
-    let label_text = label.trim_start().to_string();
     let leading = " ";
     let leading_w = leading.width();
-    let label_w = label_text.as_str().width();
     let spacer_w = 1;
     let button_w = 3; // "[⟳]" / "[…]"
     let gap = 1; // space before each button
-    // Right side of the divider: gap [⟳] gap […]
+    // Right side of the divider: gap [⟳] gap […]. Always reserved first so the
+    // buttons stay on screen no matter how long the host name is.
     let buttons_w = gap + button_w + gap + button_w;
 
     // Optional port-forward badge: " " + "⇄N", sitting between the rule and the
-    // reconnect button. Reserve its width so the right-aligned buttons hold.
+    // reconnect button.
     let badge_text = pf.map(|b| format!("\u{21c4}{}", b.count));
     let badge_fg = pf.map(|b| match b.color {
         PfBadgeColor::Healthy => theme.green,
         PfBadgeColor::Degraded => theme.pink,
         PfBadgeColor::Probing => theme.yellow,
     });
-
     let want_badge_w = badge_text.as_ref().map(|s| gap + s.as_str().width()).unwrap_or(0);
-    let base_rule_w = width
-        .saturating_sub(leading_w)
+
+    // Budget for everything between the leading space and the buttons.
+    let avail = width.saturating_sub(leading_w).saturating_sub(buttons_w);
+    // Show the badge only if it fits alongside the spacer and at least one
+    // label cell; otherwise it would crowd out the label entirely.
+    let show_badge = want_badge_w > 0 && avail > want_badge_w + spacer_w;
+    let badge_w = if show_badge { want_badge_w } else { 0 };
+
+    // The label takes what's left after the spacer and badge, truncated with an
+    // ellipsis when the host name is too long to fit. The rule fills any
+    // remaining gap and may collapse to nothing.
+    let label_budget = avail.saturating_sub(spacer_w).saturating_sub(badge_w);
+    let label_text = truncate(label.trim_start(), label_budget);
+    let label_w = label_text.as_str().width();
+    let rule_w = avail
         .saturating_sub(label_w)
         .saturating_sub(spacer_w)
-        .saturating_sub(buttons_w);
-    // Only show the badge if the dash run can absorb its width; otherwise the
-    // right-aligned buttons would be pushed off-screen at very narrow widths.
-    let show_badge = want_badge_w > 0 && base_rule_w > want_badge_w;
-    let badge_w = if show_badge { want_badge_w } else { 0 };
-    let rule_w = base_rule_w - badge_w;
+        .saturating_sub(badge_w);
     let rule = "\u{2500}".repeat(rule_w);
 
     // Tint the reconnect glyph by connection status; the "more" button keeps
     // the per-host accent.
     let reconnect_fg = match status {
-        HostStatus::Connected => theme.green,
+        HostStatus::Connected => accent,
         HostStatus::Connecting => theme.yellow,
         HostStatus::Unreachable => theme.pink,
     };

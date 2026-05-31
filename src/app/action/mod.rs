@@ -133,6 +133,12 @@ pub enum Action {
         message: String,
     },
 
+    AddRemoteInputKey(crossterm::event::KeyEvent),
+    AddRemoteNext,
+    AddRemotePrev,
+    AddRemoteConfirm,
+    AddRemoteClose,
+
     PfProbeResult {
         key: crate::state::ForwardKey,
         health: crate::state::ForwardHealth,

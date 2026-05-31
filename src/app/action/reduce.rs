@@ -640,6 +640,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                             open_new_session_picker: true,
                             ..SideEffect::default()
                         },
+                        Some("Add Remote Host") => SideEffect {
+                            open_add_remote_picker: true,
+                            ..SideEffect::default()
+                        },
                         Some("Toggle layout") => apply_action(state, Action::ToggleLayout),
                         Some("Toggle borders") => apply_action(state, Action::ToggleBorders),
                         Some("Settings") => apply_action(state, Action::OpenSettings),
@@ -810,6 +814,62 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.merge(apply_pf_task_result(state, &host, &op, ok, &message));
         }
 
+        Action::AddRemoteInputKey(key) => {
+            if let Some(ar) = state.overlay.add_remote.as_mut() {
+                ar.input.input(key);
+                ar.refilter();
+                ar.error = None;
+            }
+        }
+        Action::AddRemotePrev => {
+            if let Some(ar) = state.overlay.add_remote.as_mut() {
+                if ar.selected > 0 {
+                    ar.selected -= 1;
+                }
+            }
+        }
+        Action::AddRemoteNext => {
+            if let Some(ar) = state.overlay.add_remote.as_mut() {
+                if !ar.filtered.is_empty() && ar.selected + 1 < ar.filtered.len() {
+                    ar.selected += 1;
+                }
+            }
+        }
+        Action::AddRemoteClose => {
+            state.overlay.add_remote = None;
+        }
+        Action::AddRemoteConfirm => {
+            // Resolve first (immutable borrow released before we mutate state).
+            let chosen = state
+                .overlay
+                .add_remote
+                .as_ref()
+                .and_then(|ar| ar.chosen_host());
+            let host = match chosen {
+                None => {
+                    if let Some(ar) = state.overlay.add_remote.as_mut() {
+                        ar.error = Some("enter a hostname".into());
+                    }
+                    return fx;
+                }
+                Some(h) => h,
+            };
+            if state.config_remotes.iter().any(|r| r.host == host) {
+                if let Some(ar) = state.overlay.add_remote.as_mut() {
+                    ar.error = Some("already added".into());
+                }
+                return fx;
+            }
+            state.config_remotes.push(crate::config::RemoteConfig {
+                host: host.clone(),
+                forwards: vec![],
+            });
+            state.overlay.add_remote = None;
+            fx.save_config = true;
+            fx.refresh_sessions = true;
+            fx.add_remote_host = Some(host);
+        }
+
         Action::PfProbeResult { key, health } => {
             state.forward_health.insert(key, health);
         }
@@ -917,6 +977,42 @@ fn handle_pf_input(f: &mut PfAddForm, key: crossterm::event::KeyEvent) {
 /// success). On success: append to `config_remotes`, request config
 /// save via SideEffect, close the form. On failure: keep form open,
 /// clear `submitting`, set status to error message.
+/// Turn raw ssh stderr from a failed `-O forward` into a short, plain-language
+/// reason. Falls back to ssh's own words (minus noisy prefixes) for cases we
+/// don't recognize, so nothing is ever silently swallowed.
+fn humanize_forward_error(raw: &str) -> String {
+    let lc = raw.to_ascii_lowercase();
+    if lc.contains("address already in use") {
+        "That local port is already in use on this machine.".into()
+    } else if lc.contains("remote port forwarding failed") {
+        "The host refused it — that port may already be in use there.".into()
+    } else if lc.contains("administratively prohibited") || lc.contains("open failed") {
+        "The server blocked forwarding (check its AllowTcpForwarding setting).".into()
+    } else if lc.contains("permission denied") {
+        "The host denied the connection (permission denied).".into()
+    } else if lc.contains("connection refused") {
+        "Connection refused by the target.".into()
+    } else if lc.contains("could not resolve") || lc.contains("name or service not known") {
+        "Couldn't resolve the target host name.".into()
+    } else if lc.contains("timed out") || lc.contains("timeout") {
+        "The host didn't respond in time (timed out).".into()
+    } else if lc.contains("port forwarding failed")
+        || lc.contains("forward request failed")
+        || lc.contains("mux_client_forward")
+    {
+        // ssh's ControlMaster mux path reports this when `-O forward` is
+        // rejected — almost always because the listen port is already taken.
+        "Couldn't set up the forward — the listen port may already be in use.".into()
+    } else {
+        let cleaned = raw.trim().trim_start_matches("Warning: ").trim();
+        if cleaned.is_empty() {
+            "ssh rejected the forward.".into()
+        } else {
+            format!("Couldn't add the forward: {cleaned}")
+        }
+    }
+}
+
 fn apply_pf_task_result(
     state: &mut AppState,
     host: &str,
@@ -959,12 +1055,12 @@ fn apply_pf_task_result(
         OpKind::Forward(_, _) => {
             if ok {
                 overlay.add_form = None;
-                overlay.status = Some("forward applied".into());
-            } else if let Some(f) = overlay.add_form.as_mut() {
-                f.submitting = false;
-                overlay.status = Some(format!("error: {}", message));
+                overlay.status = Some("Forward added.".into());
             } else {
-                overlay.status = Some(format!("error: {}", message));
+                if let Some(f) = overlay.add_form.as_mut() {
+                    f.submitting = false;
+                }
+                overlay.status = Some(humanize_forward_error(message));
             }
         }
         OpKind::Cancel(_, _) => {

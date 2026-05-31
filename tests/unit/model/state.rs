@@ -266,3 +266,35 @@ fn forward_key_from_spec_uses_mode_bind_and_listen() {
     assert_eq!(key.bind_addr.as_deref(), Some("127.0.0.1"));
     assert_eq!(key.listen_port, 8080);
 }
+
+#[test]
+fn confirm_kill_name_resolves_remote_focused_row() {
+    // Issue #41: killing a remote session set overlay.confirm_kill but the
+    // overlay name was looked up only in the local store, so it resolved to
+    // None and the confirm dialog never drew (then leaked onto the next
+    // local row). The name must come from whichever store the focused row
+    // lives in.
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.remote_sessions = vec![remote_row("h1", false, false)]; // named "s"
+    // Flat index 2 == local_count(2) + remote_idx(0): the remote row.
+    state.focused = 2;
+    state.overlay.confirm_kill = true;
+    assert_eq!(state.confirm_kill_name().as_deref(), Some("s"));
+}
+
+#[test]
+fn confirm_kill_name_resolves_local_focused_row() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.focused = 1; // local "beta"
+    state.overlay.confirm_kill = true;
+    assert_eq!(state.confirm_kill_name().as_deref(), Some("beta"));
+}
+
+#[test]
+fn confirm_kill_name_none_when_not_pending() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.remote_sessions = vec![remote_row("h1", false, false)];
+    state.focused = 2;
+    // No pending kill -> no name regardless of what's focused.
+    assert_eq!(state.confirm_kill_name(), None);
+}

@@ -524,6 +524,14 @@ impl App {
         if fx.open_new_session_picker {
             self.open_new_session_picker();
         }
+
+        if fx.open_add_remote_picker {
+            self.open_add_remote_picker();
+        }
+
+        if let Some(ref host) = fx.add_remote_host {
+            self.onboard_remote_host(host);
+        }
     }
 
     /// Reload `~/.config/deck/config.json` and apply it in place. On
@@ -652,6 +660,21 @@ impl App {
         self.request_refresh();
     }
 
+    fn open_add_remote_picker(&mut self) {
+        use std::collections::HashSet;
+        let existing: HashSet<&str> = self
+            .state
+            .config_remotes
+            .iter()
+            .map(|r| r.host.as_str())
+            .collect();
+        let hosts: Vec<String> = crate::infra::ssh::config_hosts()
+            .into_iter()
+            .filter(|h| !existing.contains(h.as_str()))
+            .collect();
+        self.state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(hosts));
+    }
+
     fn open_new_session_picker(&mut self) {
         use crate::new_session::{
             auto_session_name, expand_path, make_textarea, split_input, NewSessionState, PickerFocus,
@@ -775,11 +798,31 @@ impl App {
         let spec = match form.validate() {
             Ok(s) => s,
             Err(e) => {
-                overlay.status = Some(format!("err: {}", e.message()));
+                overlay.status = Some(e.message().to_string());
                 return;
             }
         };
         let host = overlay.host.clone();
+        // Reject a forward whose listen identity (mode + bind addr + listen
+        // port) is already configured, before bothering ssh — otherwise the
+        // user just sees a cryptic "bind: Address already in use" from the
+        // worker, or a silent no-op when ssh treats it as idempotent.
+        let key = crate::state::ForwardKey::from_spec(&host, &spec);
+        let already_exists = self
+            .state
+            .config_remotes
+            .iter()
+            .find(|r| r.host == host)
+            .is_some_and(|r| {
+                r.forwards
+                    .iter()
+                    .any(|f| crate::state::ForwardKey::from_spec(&host, f) == key)
+            });
+        if already_exists {
+            overlay.status =
+                Some(format!("Port {} is already being forwarded.", spec.listen_port));
+            return;
+        }
         form.submitting = true;
         overlay.status = Some("applying...".into());
         let _ = self.port_forward_tx.send(

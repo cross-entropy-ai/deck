@@ -61,27 +61,60 @@ impl App {
     }
 
     fn apply_remote(&mut self, rows: Vec<RemoteSnapshotRow>) {
-        // Refresh results may carry rows for hosts the user just removed
-        // — the query was in flight when "Remove from list" landed.
-        // Drop those so a removed host can't blink back into the sidebar.
-        // `config_remotes` is the single source of truth for which hosts
-        // are configured.
+        // `config_remotes` is the single source of truth for which hosts are
+        // configured: rows for hosts the user just removed (query was in flight
+        // when "Remove from list" landed) are dropped so they can't blink back.
         let configured: std::collections::HashSet<&str> = self
             .state
             .config_remotes
             .iter()
             .map(|r| r.host.as_str())
             .collect();
-        self.state.remote_sessions = rows
-            .into_iter()
-            .filter(|r| configured.contains(r.host.as_str()))
-            .map(|r| RemoteSessionRow {
-                host: r.host,
-                name: r.name,
-                dir: r.dir,
-                unreachable: r.unreachable,
-                loading: false,
+
+        // Fresh rows from this snapshot, grouped by host. `collect_remotes`
+        // emits ≥1 row per host it queried, so a configured host absent from
+        // this map simply wasn't in this round's query list — its list was
+        // captured before the host was added.
+        let mut fresh_by_host: std::collections::HashMap<String, Vec<RemoteSessionRow>> =
+            std::collections::HashMap::new();
+        for r in rows {
+            if !configured.contains(r.host.as_str()) {
+                continue;
+            }
+            fresh_by_host
+                .entry(r.host.clone())
+                .or_default()
+                .push(RemoteSessionRow {
+                    host: r.host,
+                    name: r.name,
+                    dir: r.dir,
+                    unreachable: r.unreachable,
+                    loading: false,
+                });
+        }
+
+        // Prior rows, kept so an un-queried configured host retains its
+        // current row (e.g. a just-added host's optimistic "(connecting…)"
+        // placeholder) instead of blinking out until a snapshot covering it
+        // lands.
+        let mut prev_by_host: std::collections::HashMap<String, Vec<RemoteSessionRow>> =
+            std::collections::HashMap::new();
+        for row in std::mem::take(&mut self.state.remote_sessions) {
+            prev_by_host.entry(row.host.clone()).or_default().push(row);
+        }
+
+        // Rebuild in config order: this round's rows when it queried the host,
+        // else the host's previous rows.
+        self.state.remote_sessions = self
+            .state
+            .config_remotes
+            .iter()
+            .filter_map(|r| {
+                fresh_by_host
+                    .remove(&r.host)
+                    .or_else(|| prev_by_host.remove(&r.host))
             })
+            .flatten()
             .collect();
         // Focus may have been parked on a placeholder row that just
         // disappeared (e.g. host went from 1 loading placeholder to

@@ -38,6 +38,7 @@ const REMOTE_SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill"];
 const HOST_DIVIDER_MENU_ITEMS: &[&str] = &["Port Forward", "Remove from list"];
 const GLOBAL_MENU_ITEMS: &[&str] = &[
     "New session",
+    "Add Remote Host",
     "Toggle layout",
     "Toggle borders",
     "Settings",
@@ -365,6 +366,12 @@ pub struct SideEffect {
     /// the global menu's "New session" item; uses the focused session's
     /// dir as the picker's starting point.
     pub open_new_session_picker: bool,
+    /// Dispatch should open the Add Remote Host picker (build candidates from
+    /// ~/.ssh/config minus already-added hosts).
+    pub open_add_remote_picker: bool,
+    /// A host was just added; dispatch should onboard it (spawn connection),
+    /// the same way `reload_config` does for a newly-configured host.
+    pub add_remote_host: Option<String>,
     /// Dispatch should re-run `read_dir` for the picker's current
     /// parent and refresh `entries`. Fired by any reducer arm that
     /// changes the effective parent.
@@ -401,6 +408,10 @@ impl SideEffect {
             self.remove_remote_host = other.remove_remote_host;
         }
         self.open_new_session_picker |= other.open_new_session_picker;
+        self.open_add_remote_picker |= other.open_add_remote_picker;
+        if other.add_remote_host.is_some() {
+            self.add_remote_host = other.add_remote_host;
+        }
         self.reread_new_session_entries |= other.reread_new_session_entries;
         self.resize_pty |= other.resize_pty;
         self.save_config |= other.save_config;
@@ -539,9 +550,9 @@ pub enum PfFormError {
 impl PfFormError {
     pub fn message(&self) -> &'static str {
         match self {
-            PfFormError::ListenPortRange => "listen_port must be 0-65535",
-            PfFormError::TargetPortRange => "target_port must be 0-65535",
-            PfFormError::TargetHostRequired => "target_host required for -L/-R",
+            PfFormError::ListenPortRange => "Listen port must be a number from 0 to 65535.",
+            PfFormError::TargetPortRange => "Target port must be a number from 0 to 65535.",
+            PfFormError::TargetHostRequired => "Target host is required for -L and -R forwards.",
         }
     }
 }
@@ -663,6 +674,7 @@ pub struct OverlayState {
     pub context_menu: Option<ContextMenu>,
     pub exclude_editor: Option<ExcludeEditorState>,
     pub new_session: Option<NewSessionState>,
+    pub add_remote: Option<crate::add_remote::AddRemoteState>,
     /// Port-forward overlay for a single host. See `PortForwardOverlay`.
     pub port_forward: Option<PortForwardOverlay>,
 }
@@ -1157,6 +1169,24 @@ impl AppState {
             Some(FocusTarget(self.focused))
         } else {
             None
+        }
+    }
+
+    /// Name to show in the kill-confirmation overlay: the focused row's
+    /// session name, or `None` when no kill is pending or focus has no
+    /// valid target. The renderer gates the overlay on this being `Some`.
+    ///
+    /// Resolves through `session_target` so a focused *remote* row reports
+    /// its name too — a raw `filtered[focused]` lookup only covers local
+    /// rows, leaving remote kills with no name so the overlay never drew
+    /// (issue #41).
+    pub fn confirm_kill_name(&self) -> Option<String> {
+        if !self.overlay.confirm_kill {
+            return None;
+        }
+        match self.session_target(self.focus_target()?)? {
+            SessionTargetRef::Local(row) => Some(row.name.clone()),
+            SessionTargetRef::Remote(row) => Some(row.name.clone()),
         }
     }
 

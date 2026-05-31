@@ -12,6 +12,27 @@ fn plugin_block_rows_counts_title_and_separator() {
 }
 
 #[test]
+fn reconnect_glyph_color_follows_status() {
+    use crate::state::HostStatus;
+    let theme = &crate::theme::THEMES[0];
+    let accent = theme.teal;
+    for (status, expected) in [
+        (HostStatus::Connected, theme.teal), // unified with the divider accent
+        (HostStatus::Connecting, theme.yellow),
+        (HostStatus::Unreachable, theme.pink),
+    ] {
+        let mut lines = Vec::new();
+        super::render_group_header(&mut lines, "@h", accent, status, 40, theme, None);
+        let glyph = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.content.as_ref() == "[\u{27f3}]")
+            .expect("reconnect glyph span present");
+        assert_eq!(glyph.style.fg, Some(expected), "status {status:?}");
+    }
+}
+
+#[test]
 fn pf_badge_does_not_shift_right_aligned_buttons() {
     use crate::state::{HostStatus, PfBadge, PfBadgeColor};
     let theme = &crate::theme::THEMES[0];

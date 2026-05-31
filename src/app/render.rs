@@ -31,11 +31,11 @@ impl App {
         let s = &self.state;
         let sidebar_active = s.focus_mode == FocusMode::Sidebar;
         let theme = &THEMES[s.theme_index];
-        let confirm_kill = s.overlay.confirm_kill;
         let show_help = s.overlay.show_help;
         let rename_input = s.overlay.renaming.as_ref().map(|r| &r.input);
         let context_menu = s.overlay.context_menu.clone();
         let new_session_overlay = s.overlay.new_session.clone();
+        let add_remote_overlay = s.overlay.add_remote.clone();
         let port_forward_overlay = s.overlay.port_forward.clone();
         let config_remotes = s.config_remotes.clone();
         let forward_health = s.forward_health.clone();
@@ -47,13 +47,7 @@ impl App {
         let main_view = s.main_view;
         let warning_state = self.warning_state.clone();
 
-        let confirm_name = if confirm_kill {
-            s.filtered
-                .get(s.focused)
-                .map(|&i| s.sessions[i].name.clone())
-        } else {
-            None
-        };
+        let confirm_name = s.confirm_kill_name();
 
         let spinner_frame = self.spinner.current_frame().to_string();
         let update_check_help = format_update_check_help(s.update_last_checked_secs);
@@ -362,6 +356,10 @@ impl App {
                     error: ns.error.as_deref(),
                 };
                 ui::draw_new_session(frame, frame.area(), &view, theme);
+            }
+
+            if let Some(ref ar) = add_remote_overlay {
+                ui::draw_add_remote(frame, frame.area(), ar, theme);
             }
 
             if let Some(ref overlay) = port_forward_overlay {
