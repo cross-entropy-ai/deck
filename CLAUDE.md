@@ -53,3 +53,19 @@ git push origin vX.Y.Z
 ```
 
 GitHub Actions builds binaries and updates the Homebrew tap (`cross-entropy-ai/homebrew-tap`). See `docs/release.md`.
+
+### Release notes
+
+After the release run finishes, update that release's notes to describe what
+changed since the previous version (diff the previous tag against this one,
+e.g. `git log v0.5.0..v0.5.1`). Write for users, not committers, and group
+user-facing changes under headed sections: **New Features**, **Enhancements**,
+**Bug Fixes**, and a short **Under the hood** for CI/internal-only changes.
+
+Be careful with `@` and `#` in the notes — GitHub renders them as live
+mentions/links:
+
+- Wrap literal `@` text (e.g. the `@host` divider label, file globs, emails)
+  in backticks so it doesn't ping a GitHub user.
+- Use a bare `#123` only when you intend to link that exact PR/issue; wrap any
+  other `#` (e.g. `#tag`, a count like `#3`) in backticks.
