@@ -1172,6 +1172,24 @@ impl AppState {
         }
     }
 
+    /// Name to show in the kill-confirmation overlay: the focused row's
+    /// session name, or `None` when no kill is pending or focus has no
+    /// valid target. The renderer gates the overlay on this being `Some`.
+    ///
+    /// Resolves through `session_target` so a focused *remote* row reports
+    /// its name too — a raw `filtered[focused]` lookup only covers local
+    /// rows, leaving remote kills with no name so the overlay never drew
+    /// (issue #41).
+    pub fn confirm_kill_name(&self) -> Option<String> {
+        if !self.overlay.confirm_kill {
+            return None;
+        }
+        match self.session_target(self.focus_target()?)? {
+            SessionTargetRef::Local(row) => Some(row.name.clone()),
+            SessionTargetRef::Remote(row) => Some(row.name.clone()),
+        }
+    }
+
     /// Map a screen position to a context menu item index.
     pub fn menu_item_at(&self, col: u16, row: u16) -> Option<usize> {
         let menu = self.overlay.context_menu.as_ref()?;
