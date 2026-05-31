@@ -139,5 +139,10 @@ pub enum Action {
     AddRemoteConfirm,
     AddRemoteClose,
 
+    PfProbeResult {
+        key: crate::state::ForwardKey,
+        health: crate::state::ForwardHealth,
+    },
+
     None,
 }

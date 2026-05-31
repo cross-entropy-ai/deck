@@ -39,6 +39,7 @@ impl App {
         let add_remote_overlay = s.overlay.add_remote.clone();
         let port_forward_overlay = s.overlay.port_forward.clone();
         let config_remotes = s.config_remotes.clone();
+        let forward_health = s.forward_health.clone();
         let show_borders = s.show_borders;
         let layout_mode = s.layout_mode;
         let view_mode = s.view_mode;
@@ -375,6 +376,7 @@ impl App {
                     pf_area,
                     overlay,
                     &config_remotes,
+                    &forward_health,
                     theme,
                 );
             }

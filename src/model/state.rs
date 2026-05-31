@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Instant;
 
 use ratatui::layout::Rect;
@@ -209,6 +210,89 @@ pub enum HostStatus {
     Unreachable,
 }
 
+/// Connection status carried by a single remote row. All rows of a host
+/// share one status, so any row of the group represents it. Shared between
+/// the divider header and `-R` forward-health derivation so both read the
+/// host's state the same way.
+fn host_status_of(r: &RemoteSessionRow) -> HostStatus {
+    if r.unreachable {
+        HostStatus::Unreachable
+    } else if r.loading {
+        HostStatus::Connecting
+    } else {
+        HostStatus::Connected
+    }
+}
+
+// --- Port-forward liveness types ---
+
+/// Liveness of a single configured forward, refreshed each probe tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForwardHealth {
+    /// Not yet probed this session, enumeration was unavailable, or the host
+    /// is still connecting.
+    Probing,
+    /// `-L`/`-D`: a local listener is present on the listen port. `-R`: the
+    /// host connection is up (the remote listener can't be confirmed locally,
+    /// so it simply tracks reachability).
+    Up,
+    /// `-L`/`-D`: no local listener. `-R`: the host is unreachable.
+    Down,
+}
+
+/// Stable identity of a configured forward, used to key liveness across config
+/// reloads and reorders. A local listen port is unique per host, but `mode` and
+/// `bind_addr` are included so an `-L` and an `-R` sharing a port number (one
+/// local, one remote) don't collide.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ForwardKey {
+    pub host: String,
+    pub mode: crate::config::ForwardMode,
+    pub bind_addr: Option<String>,
+    pub listen_port: u16,
+}
+
+impl ForwardKey {
+    pub fn from_spec(host: &str, spec: &crate::config::ForwardSpec) -> Self {
+        Self {
+            host: host.to_string(),
+            mode: spec.mode,
+            bind_addr: spec.bind_addr.clone(),
+            listen_port: spec.listen_port,
+        }
+    }
+}
+
+/// Per-host port-forward badge shown on the sidebar divider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PfBadge {
+    pub count: usize,
+    pub color: PfBadgeColor,
+}
+
+/// Rolled-up health color for a host's forwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PfBadgeColor {
+    /// All forwards Up → green.
+    Healthy,
+    /// At least one Down → pink.
+    Degraded,
+    /// At least one Probing, none Down → yellow.
+    Probing,
+}
+
+/// Roll a host's per-forward healths into one badge color. `Down` dominates,
+/// then `Probing`, else `Healthy` (all `Up`).
+pub fn rollup_color(healths: &[ForwardHealth]) -> PfBadgeColor {
+    if healths.contains(&ForwardHealth::Down) {
+        PfBadgeColor::Degraded
+    } else if healths.contains(&ForwardHealth::Probing) {
+        PfBadgeColor::Probing
+    } else {
+        PfBadgeColor::Healthy
+    }
+}
+
 /// Per-item data carried in the sidebar's `SectionedList`. Headers and
 /// session rows live in the same flat list so the renderer, scroll
 /// logic, and mouse hit-test all walk the same items in lockstep.
@@ -222,6 +306,7 @@ pub enum SidebarItemData {
         host: String,
         host_idx: usize,
         status: HostStatus,
+        pf: Option<PfBadge>,
     },
     /// A session row at the given flat index — matches the
     /// `FocusTarget` numbering: local rows first, then remotes. The
@@ -243,6 +328,8 @@ pub enum DividerButton {
     Reconnect,
     /// `[…]` — open the host-divider menu.
     More,
+    /// `⇄N` — the port-forward liveness badge; opens the port-forward overlay.
+    PfBadge,
 }
 
 /// Click-region for one button (`[⟳]` or `[…]`) on a remote-host
@@ -679,6 +766,10 @@ pub struct AppState {
     /// without round-tripping through dispatch. Kept in sync by startup
     /// and `reload_config`.
     pub config_remotes: Vec<crate::config::RemoteConfig>,
+
+    /// Per-forward liveness, refreshed each probe tick by the port-forward
+    /// worker. Keyed by `ForwardKey`. Missing key = `Probing` (not yet seen).
+    pub forward_health: HashMap<ForwardKey, ForwardHealth>,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -755,6 +846,7 @@ impl AppState {
             reload_status_at: None,
             divider_hits: Vec::new(),
             config_remotes: Vec::new(),
+            forward_health: HashMap::new(),
         }
     }
 
@@ -948,18 +1040,13 @@ impl AppState {
                 if show_host_headers {
                     // A host's rows are contiguous and share a status; this
                     // row is the first of the group, so it represents it.
-                    let status = if r.unreachable {
-                        HostStatus::Unreachable
-                    } else if r.loading {
-                        HostStatus::Connecting
-                    } else {
-                        HostStatus::Connected
-                    };
+                    let status = host_status_of(r);
                     layout.push_header(
                         SidebarItemData::Header {
                             host: r.host.clone(),
                             host_idx,
                             status,
+                            pf: self.host_pf_badge(&r.host),
                         },
                         1,
                     );
@@ -978,6 +1065,83 @@ impl AppState {
         }
 
         layout
+    }
+
+    /// The port-forward badge for a host's divider, or `None` when the host has
+    /// no forwards. Color rolls up the per-forward health; count is the number
+    /// of configured forwards.
+    pub fn host_pf_badge(&self, host: &str) -> Option<PfBadge> {
+        let forwards = self
+            .config_remotes
+            .iter()
+            .find(|r| r.host == host)
+            .map(|r| r.forwards.as_slice())?;
+        if forwards.is_empty() {
+            return None;
+        }
+        let healths: Vec<ForwardHealth> = forwards
+            .iter()
+            .map(|f| {
+                self.forward_health
+                    .get(&ForwardKey::from_spec(host, f))
+                    .copied()
+                    .unwrap_or(ForwardHealth::Probing)
+            })
+            .collect();
+        Some(PfBadge {
+            count: forwards.len(),
+            color: rollup_color(&healths),
+        })
+    }
+
+    /// Drop health entries whose forward no longer exists in config (after a
+    /// reload that removed forwards), so the map doesn't accrete dead keys.
+    pub fn prune_forward_health(&mut self) {
+        let valid: std::collections::HashSet<ForwardKey> = self
+            .config_remotes
+            .iter()
+            .flat_map(|r| r.forwards.iter().map(|f| ForwardKey::from_spec(&r.host, f)))
+            .collect();
+        self.forward_health.retain(|k, _| valid.contains(k));
+    }
+
+    /// The connection status shown on a host's divider, derived from its
+    /// remote rows. `None` until the host has any row (pre-refresh).
+    pub fn host_conn_status(&self, host: &str) -> Option<HostStatus> {
+        self.remote_sessions
+            .iter()
+            .find(|r| r.host == host)
+            .map(host_status_of)
+    }
+
+    /// Refresh `-R` forward health from each host's connection status. A
+    /// remote-forward listener lives on the far side and can't be probed
+    /// locally, so it simply mirrors reachability: connected → Up, unreachable
+    /// → Down, still-connecting → Probing. `-L`/`-D` entries are owned by the
+    /// worker probe and left untouched. Called whenever remote status changes
+    /// so `-R` and the divider always agree.
+    pub fn sync_remote_forward_health(&mut self) {
+        let updates: Vec<(ForwardKey, ForwardHealth)> = self
+            .config_remotes
+            .iter()
+            .flat_map(|r| {
+                r.forwards
+                    .iter()
+                    .filter(|f| matches!(f.mode, crate::config::ForwardMode::Remote))
+                    .map(|f| {
+                        let health = match self.host_conn_status(&r.host) {
+                            Some(HostStatus::Connected) => ForwardHealth::Up,
+                            Some(HostStatus::Unreachable) => ForwardHealth::Down,
+                            Some(HostStatus::Connecting) | None => ForwardHealth::Probing,
+                        };
+                        (ForwardKey::from_spec(&r.host, f), health)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        for (key, health) in updates {
+            self.forward_health.insert(key, health);
+        }
     }
 
     /// Resolve a focus target back to the backing row in either local

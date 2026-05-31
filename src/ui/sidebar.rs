@@ -11,7 +11,8 @@ use crate::layout::{
     plugin_block_rows, BANNER_MIN_WIDTH, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR,
 };
 use crate::state::{
-    DividerButton, DividerHit, FocusTarget, HostStatus, SidebarItemData, SidebarLayout, ViewMode,
+    DividerButton, DividerHit, FocusTarget, HostStatus, PfBadge, PfBadgeColor, SidebarItemData,
+    SidebarLayout, ViewMode,
 };
 use ratatui_sectioned_list::Item;
 use crate::theme::Theme;
@@ -287,12 +288,21 @@ fn draw_sessions(
                 host,
                 host_idx,
                 status,
+                pf,
             } => {
                 let accent = host_accent(ctx.theme, *host_idx);
                 let line_idx = lines.len();
                 let label = format!("@{host}");
-                let (reconnect_range, more_range) =
-                    render_group_header(&mut lines, &label, accent, *status, width, ctx.theme);
+                let GroupHeaderHits {
+                    reconnect: reconnect_range,
+                    more: more_range,
+                    badge: badge_range,
+                } = render_group_header(
+                    &mut lines, &label, accent, *status, width, ctx.theme, *pf,
+                );
+                if let Some(badge_range) = badge_range {
+                    pending_hits.push((line_idx, badge_range, host.clone(), DividerButton::PfBadge));
+                }
                 pending_hits.push((
                     line_idx,
                     reconnect_range,
@@ -381,6 +391,15 @@ fn host_accent(theme: &Theme, host_idx: usize) -> Color {
     tints[host_idx % tints.len()]
 }
 
+/// Cell ranges of the clickable regions on a rendered group-header line.
+/// `badge` is `None` when the port-forward badge isn't shown (host has no
+/// forwards, or the line is too narrow to fit it).
+struct GroupHeaderHits {
+    reconnect: std::ops::Range<usize>,
+    more: std::ops::Range<usize>,
+    badge: Option<std::ops::Range<usize>>,
+}
+
 fn render_group_header(
     lines: &mut Vec<Line<'_>>,
     label: &str,
@@ -388,7 +407,8 @@ fn render_group_header(
     status: HostStatus,
     width: usize,
     theme: &Theme,
-) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
+    pf: Option<PfBadge>,
+) -> GroupHeaderHits {
     let label_text = label.trim_start().to_string();
     let leading = " ";
     let leading_w = leading.width();
@@ -398,49 +418,76 @@ fn render_group_header(
     let gap = 1; // space before each button
     // Right side of the divider: gap [⟳] gap […]
     let buttons_w = gap + button_w + gap + button_w;
-    let rule_w = width
+
+    // Optional port-forward badge: " " + "⇄N", sitting between the rule and the
+    // reconnect button. Reserve its width so the right-aligned buttons hold.
+    let badge_text = pf.map(|b| format!("\u{21c4}{}", b.count));
+    let badge_fg = pf.map(|b| match b.color {
+        PfBadgeColor::Healthy => theme.green,
+        PfBadgeColor::Degraded => theme.pink,
+        PfBadgeColor::Probing => theme.yellow,
+    });
+
+    let want_badge_w = badge_text.as_ref().map(|s| gap + s.as_str().width()).unwrap_or(0);
+    let base_rule_w = width
         .saturating_sub(leading_w)
         .saturating_sub(label_w)
         .saturating_sub(spacer_w)
         .saturating_sub(buttons_w);
-    let rule = "─".repeat(rule_w);
+    // Only show the badge if the dash run can absorb its width; otherwise the
+    // right-aligned buttons would be pushed off-screen at very narrow widths.
+    let show_badge = want_badge_w > 0 && base_rule_w > want_badge_w;
+    let badge_w = if show_badge { want_badge_w } else { 0 };
+    let rule_w = base_rule_w - badge_w;
+    let rule = "\u{2500}".repeat(rule_w);
 
-    // Tint the reconnect glyph by connection status; the "more" button
-    // keeps the per-host accent.
+    // Tint the reconnect glyph by connection status; the "more" button keeps
+    // the per-host accent.
     let reconnect_fg = match status {
         HostStatus::Connected => accent,
         HostStatus::Connecting => theme.yellow,
         HostStatus::Unreachable => theme.pink,
     };
 
-    lines.push(pad_line(
-        vec![
-            Span::styled(leading, Style::default().bg(theme.bg)),
-            Span::styled(
-                label_text,
-                Style::default()
-                    .fg(accent)
-                    .bg(theme.bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" ", Style::default().bg(theme.bg)),
-            Span::styled(rule, Style::default().fg(accent).bg(theme.bg)),
-            Span::styled(" ", Style::default().bg(theme.bg)),
-            Span::styled("[⟳]", Style::default().fg(reconnect_fg).bg(theme.bg)),
-            Span::styled(" ", Style::default().bg(theme.bg)),
-            Span::styled("[…]", Style::default().fg(accent).bg(theme.bg)),
-        ],
-        theme.bg,
-        width,
-    ));
+    let mut spans = vec![
+        Span::styled(leading, Style::default().bg(theme.bg)),
+        Span::styled(
+            label_text,
+            Style::default()
+                .fg(accent)
+                .bg(theme.bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", Style::default().bg(theme.bg)),
+        Span::styled(rule, Style::default().fg(accent).bg(theme.bg)),
+    ];
+    if show_badge {
+        if let (Some(text), Some(fg)) = (&badge_text, badge_fg) {
+            spans.push(Span::styled(" ", Style::default().bg(theme.bg)));
+            spans.push(Span::styled(text.clone(), Style::default().fg(fg).bg(theme.bg)));
+        }
+    }
+    spans.push(Span::styled(" ", Style::default().bg(theme.bg)));
+    spans.push(Span::styled("[\u{27f3}]", Style::default().fg(reconnect_fg).bg(theme.bg)));
+    spans.push(Span::styled(" ", Style::default().bg(theme.bg)));
+    spans.push(Span::styled("[\u{2026}]", Style::default().fg(accent).bg(theme.bg)));
+
+    lines.push(pad_line(spans, theme.bg, width));
 
     // Cell ranges of the two buttons within this rendered line.
-    let reconnect_x = leading_w + label_w + spacer_w + rule_w + gap;
+    let reconnect_x = leading_w + label_w + spacer_w + rule_w + badge_w + gap;
     let more_x = reconnect_x + button_w + gap;
-    (
-        reconnect_x..(reconnect_x + button_w),
-        more_x..(more_x + button_w),
-    )
+    // The badge text sits after the rule + its leading gap; its hit region
+    // covers just the `⇄N` glyph (badge_w less that leading gap).
+    let badge = show_badge.then(|| {
+        let badge_x = leading_w + label_w + spacer_w + rule_w + gap;
+        badge_x..(badge_x + badge_w - gap)
+    });
+    GroupHeaderHits {
+        reconnect: reconnect_x..(reconnect_x + button_w),
+        more: more_x..(more_x + button_w),
+        badge,
+    }
 }
 
 /// Visual treatment of the index hint at the start of a row. Local

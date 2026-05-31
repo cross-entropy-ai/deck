@@ -81,7 +81,6 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
             .render(rows[i], frame.buffer_mut());
         i += 1;
     } else {
-    } else {
         let start = scroll_window(state.selected, state.filtered.len(), MAX_VISIBLE);
         let end = (start + MAX_VISIBLE).min(state.filtered.len());
         for (pos, idx) in state.filtered[start..end].iter().enumerate() {

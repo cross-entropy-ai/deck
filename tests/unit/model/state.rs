@@ -85,6 +85,38 @@ fn sidebar_header_status_reflects_host_reachability() {
 }
 
 #[test]
+fn sync_remote_forward_health_mirrors_host_status() {
+    use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
+    use crate::state::{ForwardHealth, ForwardKey};
+
+    let r_spec = ForwardSpec {
+        mode: ForwardMode::Remote,
+        bind_addr: None,
+        listen_port: 9090,
+        target_host: Some("127.0.0.1".into()),
+        target_port: Some(9090),
+    };
+    let key = ForwardKey::from_spec("h1", &r_spec);
+
+    // connected → Up, unreachable → Down, connecting → Probing.
+    let cases = [
+        (remote_row("h1", false, false), ForwardHealth::Up),
+        (remote_row("h1", true, false), ForwardHealth::Down),
+        (remote_row("h1", false, true), ForwardHealth::Probing),
+    ];
+    for (row, expected) in cases {
+        let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+        state.config_remotes = vec![RemoteConfig {
+            host: "h1".into(),
+            forwards: vec![r_spec.clone()],
+        }];
+        state.remote_sessions = vec![row];
+        state.sync_remote_forward_health();
+        assert_eq!(state.forward_health.get(&key).copied(), Some(expected));
+    }
+}
+
+#[test]
 fn resize_sidebar_handles_small_terminals() {
     let mut state = make_state(LayoutMode::Horizontal, true, 20, 40);
     assert!(state.resize_sidebar(30));
@@ -194,4 +226,43 @@ fn validate_bind_addr_passthrough() {
     f.target_port = ta("80");
     let spec = f.validate().unwrap();
     assert_eq!(spec.bind_addr.as_deref(), Some("127.0.0.1"));
+}
+
+#[test]
+fn rollup_down_dominates() {
+    use crate::state::{rollup_color, ForwardHealth, PfBadgeColor};
+    let healths = [ForwardHealth::Up, ForwardHealth::Down, ForwardHealth::Probing];
+    assert_eq!(rollup_color(&healths), PfBadgeColor::Degraded);
+}
+
+#[test]
+fn rollup_probing_when_no_down() {
+    use crate::state::{rollup_color, ForwardHealth, PfBadgeColor};
+    let healths = [ForwardHealth::Up, ForwardHealth::Probing];
+    assert_eq!(rollup_color(&healths), PfBadgeColor::Probing);
+}
+
+#[test]
+fn rollup_healthy_when_all_up() {
+    use crate::state::{rollup_color, ForwardHealth, PfBadgeColor};
+    let healths = [ForwardHealth::Up, ForwardHealth::Up];
+    assert_eq!(rollup_color(&healths), PfBadgeColor::Healthy);
+}
+
+#[test]
+fn forward_key_from_spec_uses_mode_bind_and_listen() {
+    use crate::config::{ForwardMode, ForwardSpec};
+    use crate::state::ForwardKey;
+    let spec = ForwardSpec {
+        mode: ForwardMode::Local,
+        bind_addr: Some("127.0.0.1".into()),
+        listen_port: 8080,
+        target_host: Some("h".into()),
+        target_port: Some(80),
+    };
+    let key = ForwardKey::from_spec("server-1", &spec);
+    assert_eq!(key.host, "server-1");
+    assert_eq!(key.mode, ForwardMode::Local);
+    assert_eq!(key.bind_addr.as_deref(), Some("127.0.0.1"));
+    assert_eq!(key.listen_port, 8080);
 }
