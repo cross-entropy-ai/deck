@@ -72,12 +72,15 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
 
     // --- candidate list ---
     if state.filtered.is_empty() {
-        Paragraph::new(Span::styled(
-            "    (no ~/.ssh/config hosts \u{2014} type a hostname)",
-            Style::default().fg(theme.dim),
-        ))
-        .render(rows[i], frame.buffer_mut());
+        let msg = if state.hosts.is_empty() {
+            "    (no ~/.ssh/config hosts \u{2014} type a hostname)"
+        } else {
+            "    (no matches \u{2014} press \u{23ce} to add typed host)"
+        };
+        Paragraph::new(Span::styled(msg, Style::default().fg(theme.dim)))
+            .render(rows[i], frame.buffer_mut());
         i += 1;
+    } else {
     } else {
         let start = scroll_window(state.selected, state.filtered.len(), MAX_VISIBLE);
         let end = (start + MAX_VISIBLE).min(state.filtered.len());
