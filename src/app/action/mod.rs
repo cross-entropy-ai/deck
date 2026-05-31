@@ -133,5 +133,10 @@ pub enum Action {
         message: String,
     },
 
+    PfProbeResult {
+        key: crate::state::ForwardKey,
+        health: crate::state::ForwardHealth,
+    },
+
     None,
 }

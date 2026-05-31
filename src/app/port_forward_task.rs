@@ -23,6 +23,9 @@ pub enum Op {
     /// Tear down the host's master entirely (used when a host is removed
     /// from config via hot-reload).
     StopHost { host: String },
+    /// Classify the liveness of each given forward. Enumerates local listeners
+    /// once when any item is `-L`/`-D`.
+    Probe { items: Vec<crate::state::ForwardKey> },
 }
 
 /// Identifier for what the result is reporting on. Mirrored on
@@ -37,6 +40,18 @@ pub enum OpKind {
     #[allow(dead_code)]
     Cancel(String, ForwardSpec),
     Exit(String),
+    Probe(crate::state::ForwardKey, crate::state::ForwardHealth),
+}
+
+impl OpKind {
+    /// The host this result pertains to.
+    pub fn host(&self) -> &str {
+        match self {
+            OpKind::Master(h) | OpKind::Exit(h) => h,
+            OpKind::Forward(h, _) | OpKind::Cancel(h, _) => h,
+            OpKind::Probe(key, _) => &key.host,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +68,7 @@ pub trait Runner: Send + 'static {
     fn run_forward(&self, host: &str, spec: &ForwardSpec) -> Result<(), String>;
     fn run_cancel(&self, host: &str, spec: &ForwardSpec) -> Result<(), String>;
     fn run_exit(&self, host: &str) -> Result<(), String>;
+    fn listening_ports(&self) -> Option<std::collections::HashSet<u16>>;
 }
 
 /// The default Runner — actually shells out via `infra::port_forward`.
@@ -74,6 +90,9 @@ impl Runner for SshRunner {
     fn run_exit(&self, host: &str) -> Result<(), String> {
         let mut cmd = crate::infra::port_forward::build_exit_cmd(host);
         run_blocking(&mut cmd)
+    }
+    fn listening_ports(&self) -> Option<std::collections::HashSet<u16>> {
+        crate::infra::listeners::local_listen_ports()
     }
 }
 
@@ -143,6 +162,37 @@ impl<R: Runner> Worker<R> {
                 let r = self.runner.run_exit(&host);
                 self.masters_up.remove(&host);
                 vec![result_from(OpKind::Exit(host), r)]
+            }
+            Op::Probe { items } => {
+                use crate::config::ForwardMode;
+                use crate::state::ForwardHealth;
+                // Only -L/-D reach the worker: their listener is local, so we
+                // confirm them by enumerating local LISTEN ports. -R listens on
+                // the far side and can't be probed locally — its health mirrors
+                // host reachability, derived in the app layer — so any -R item
+                // is ignored here defensively.
+                let ports = self.runner.listening_ports();
+                items
+                    .into_iter()
+                    .filter(|key| matches!(key.mode, ForwardMode::Local | ForwardMode::Dynamic))
+                    .map(|key| {
+                        let health = match &ports {
+                            Some(set) => {
+                                if set.contains(&key.listen_port) {
+                                    ForwardHealth::Up
+                                } else {
+                                    ForwardHealth::Down
+                                }
+                            }
+                            None => ForwardHealth::Probing, // couldn't enumerate
+                        };
+                        OpResult {
+                            kind: OpKind::Probe(key, health),
+                            ok: true,
+                            message: String::new(),
+                        }
+                    })
+                    .collect()
             }
         }
     }
