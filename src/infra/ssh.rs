@@ -83,6 +83,47 @@ fn ssh_config_path() -> PathBuf {
     PathBuf::from(home).join(".ssh").join("config")
 }
 
+/// Parse `~/.ssh/config` text into the list of concrete `Host` aliases.
+/// Each `Host` line may list several patterns; we keep those without
+/// wildcard/negation characters (`*`, `?`, `!`), de-duped, first-seen order.
+/// Effective per-host options are irrelevant here — the picker only needs the
+/// alias to add to deck (later resolved via `ssh -G`).
+#[allow(dead_code)] // caller arrives with the Add Remote Host picker
+pub fn parse_config_hosts(content: &str) -> Vec<String> {
+    let mut hosts: Vec<String> = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut tokens = line.split_whitespace();
+        let keyword = tokens.next().unwrap_or("");
+        if !keyword.eq_ignore_ascii_case("host") {
+            continue;
+        }
+        for pat in tokens {
+            if pat.contains('*') || pat.contains('?') || pat.contains('!') {
+                continue;
+            }
+            if !hosts.iter().any(|h| h == pat) {
+                hosts.push(pat.to_string());
+            }
+        }
+    }
+    hosts
+}
+
+/// Read `~/.ssh/config` and return its concrete `Host` aliases. A missing or
+/// unreadable file yields an empty list (the picker still accepts typed input).
+#[allow(dead_code)] // caller arrives with the Add Remote Host picker
+pub fn config_hosts() -> Vec<String> {
+    let path = ssh_config_path();
+    match std::fs::read_to_string(path) {
+        Ok(content) => parse_config_hosts(&content),
+        Err(_) => Vec::new(),
+    }
+}
+
 /// Append the snippet to `~/.ssh/config`, creating the file if needed.
 pub fn append_to_ssh_config(snippet: &str) -> io::Result<PathBuf> {
     let path = ssh_config_path();
@@ -147,5 +188,41 @@ mod tests {
         let s = suggested_snippet("myhost");
         assert!(s.contains("Host myhost"));
         assert!(s.contains("ControlMaster auto"));
+    }
+
+    #[test]
+    fn parses_concrete_hosts_excluding_wildcards() {
+        let sample = "\
+# work hosts
+Host prod-web-1
+    HostName 10.0.0.1
+    User deploy
+
+Host prod-web-2 staging
+    HostName 10.0.0.2
+
+Host *
+    ServerAliveInterval 30
+
+Host build-?
+    HostName builder
+
+Host !secret
+    HostName x
+";
+        let hosts = parse_config_hosts(sample);
+        assert_eq!(hosts, vec!["prod-web-1", "prod-web-2", "staging"]);
+    }
+
+    #[test]
+    fn dedups_and_preserves_first_seen_order() {
+        let sample = "Host a\nHost b\nHost a\n";
+        assert_eq!(parse_config_hosts(sample), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn empty_or_no_hosts_yields_empty() {
+        assert!(parse_config_hosts("").is_empty());
+        assert!(parse_config_hosts("# comment only\n  IdentityFile ~/x\n").is_empty());
     }
 }
