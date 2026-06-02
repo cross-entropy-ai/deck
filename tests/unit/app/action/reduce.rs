@@ -443,6 +443,7 @@ fn picker_state_with(input: &str, entries: Vec<String>) -> AppState {
         filtered: vec![],
         selected: 0,
         error: None,
+        remote_host: None,
     };
     ns.refilter();
     state.overlay.new_session = Some(ns);
@@ -787,10 +788,12 @@ fn remove_remote_from_list_drops_host_and_signals_stop() {
 }
 
 #[test]
-fn host_divider_menu_has_remove_from_list_last() {
+fn host_divider_menu_has_new_session_first_and_remove_last() {
     use crate::state::host_divider_menu_items;
     let items = host_divider_menu_items();
-    assert_eq!(items.first().copied(), Some("Port Forward"));
+    assert_eq!(items.first().copied(), Some("New session"));
+    assert!(items.contains(&"Port Forward"));
+    // "Remove from list" is destructive — keep it last.
     assert_eq!(items.last().copied(), Some("Remove from list"));
 }
 

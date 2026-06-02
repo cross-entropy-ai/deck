@@ -44,7 +44,7 @@ const PLACEHOLDER_DISABLED_ITEMS: &[&str] = &["Rename", "Kill"];
 const LAST_REMOTE_SESSION_DISABLED: &[&str] = &["Kill"];
 // Host divider [...] menu acts on the whole remote *group*. "Remove
 // from list" is equivalent to `deck remote remove <host>`.
-const HOST_DIVIDER_MENU_ITEMS: &[&str] = &["Port Forward", "Remove from list"];
+const HOST_DIVIDER_MENU_ITEMS: &[&str] = &["New session", "Port Forward", "Remove from list"];
 const GLOBAL_MENU_ITEMS: &[&str] = &[
     "New session",
     "Add Remote Host",
@@ -471,6 +471,11 @@ pub struct SideEffect {
     /// the global menu's "New session" item; uses the focused session's
     /// dir as the picker's starting point.
     pub open_new_session_picker: bool,
+    /// Dispatch should open the new-session picker targeting this remote
+    /// host: the dir browser lists remote directories over ssh and the
+    /// session is created on that host. Fired by the host divider menu's
+    /// "New session" item.
+    pub open_remote_new_session_picker: Option<String>,
     /// Dispatch should open the Add Remote Host picker (build candidates from
     /// ~/.ssh/config minus already-added hosts).
     pub open_add_remote_picker: bool,
@@ -513,6 +518,9 @@ impl SideEffect {
             self.remove_remote_host = other.remove_remote_host;
         }
         self.open_new_session_picker |= other.open_new_session_picker;
+        if other.open_remote_new_session_picker.is_some() {
+            self.open_remote_new_session_picker = other.open_remote_new_session_picker;
+        }
         self.open_add_remote_picker |= other.open_add_remote_picker;
         if other.add_remote_host.is_some() {
             self.add_remote_host = other.add_remote_host;
@@ -555,6 +563,9 @@ pub struct RenameRequest {
 pub struct CreateSessionRequest {
     pub name: String,
     pub dir: String,
+    /// `Some(host)` creates the session on that remote host over ssh;
+    /// `None` creates it on the local tmux server.
+    pub host: Option<String>,
 }
 
 /// Info needed to switch the main view to a remote tmux session.

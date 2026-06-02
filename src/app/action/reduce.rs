@@ -665,6 +665,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 }
                 MenuKind::HostDivider { host, .. } => {
                     let inner = match selected_label {
+                        Some("New session") => SideEffect {
+                            open_remote_new_session_picker: Some(host.clone()),
+                            ..SideEffect::default()
+                        },
                         Some("Port Forward") => {
                             apply_action(state, Action::OpenPortForward(host.clone()))
                         }

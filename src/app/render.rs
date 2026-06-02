@@ -362,6 +362,7 @@ impl App {
                     filtered: &ns.filtered,
                     selected: ns.selected,
                     error: ns.error.as_deref(),
+                    host: ns.remote_host.as_deref(),
                 };
                 ui::draw_new_session(frame, frame.area(), &view, theme);
             }

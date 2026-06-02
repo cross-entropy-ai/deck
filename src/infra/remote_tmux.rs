@@ -163,6 +163,84 @@ pub fn rename_session(host: &str, old_name: &str, new_name: &str) {
     );
 }
 
+/// Create a detached session `name` on the remote tmux server, starting
+/// in `dir`. `dir` may contain `~` (expanded by the remote shell before
+/// tmux sees it). Returns whether the create succeeded so the caller can
+/// decide whether to switch to it. Blocking — runs on an explicit user
+/// action and the caller waits on the result.
+pub fn new_session(host: &str, name: &str, dir: &str) -> bool {
+    new_session_with(default_runner(), host, name, dir)
+}
+
+fn new_session_with(runner: &dyn CommandRunner, host: &str, name: &str, dir: &str) -> bool {
+    run_ssh(
+        runner,
+        host,
+        &["tmux", "new-session", "-d", "-s", name, "-c", dir],
+    )
+    .is_ok()
+}
+
+/// List subdirectories under `path` on `host` for the remote new-session
+/// working-dir browser. `path` may contain `~`; the remote shell expands
+/// it. The returned `Option<String>` is an error message, `None` on
+/// success.
+///
+/// Mirrors the local `read_dir_entries`: directories only, sorted, with
+/// dotfiles included (the picker's pure filter hides them unless the
+/// typed leaf starts with `.`). Blocking, but the host's ControlMaster
+/// connection is already warm so each call is a fast multiplexed hop.
+pub fn list_dir(host: &str, path: &str) -> (Vec<String>, Option<String>) {
+    list_dir_with(default_runner(), host, path)
+}
+
+fn list_dir_with(
+    runner: &dyn CommandRunner,
+    host: &str,
+    path: &str,
+) -> (Vec<String>, Option<String>) {
+    // `-1` one per line, `-p` suffixes directories with `/` (so we keep
+    // only those), `-A` includes dotfiles but not `.`/`..`. `--` guards a
+    // path that begins with `-`.
+    match run_ssh(runner, host, &["ls", "-1pA", "--", path]) {
+        Ok(raw) => {
+            let mut names = parse_dir_listing(&raw);
+            names.sort();
+            (names, None)
+        }
+        Err(err) => (Vec::new(), Some(dir_error_message(&err))),
+    }
+}
+
+/// Keep only directory lines — those `ls -p` suffixed with `/` — and
+/// strip the trailing slash. Non-directory lines (no `/`) are dropped.
+pub(crate) fn parse_dir_listing(raw: &str) -> Vec<String> {
+    raw.lines()
+        .filter_map(|line| line.strip_suffix('/'))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Short, one-line error for the picker's error slot. Distinguishes a
+/// reachable host whose `ls` failed (missing dir, permission) from one
+/// ssh couldn't reach at all.
+fn dir_error_message(err: &CommandError) -> String {
+    match err {
+        CommandError::NonZero { status, stderr, .. } if status.code() != Some(255) => {
+            let msg = String::from_utf8_lossy(stderr);
+            let msg = msg.to_lowercase();
+            if msg.contains("no such file") {
+                "not found".to_string()
+            } else if msg.contains("permission denied") {
+                "permission denied".to_string()
+            } else {
+                "cannot list directory".to_string()
+            }
+        }
+        _ => "host unreachable".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,5 +343,71 @@ mod tests {
             elapsed: Duration::from_secs(5),
         }));
         assert!(list_sessions_with(&runner, "box").is_none());
+    }
+
+    /// Returns one canned result for the single ssh call list_dir /
+    /// new_session make.
+    struct OneShot(Mutex<Option<Result<Output, CommandError>>>);
+    impl OneShot {
+        fn new(r: Result<Output, CommandError>) -> Self {
+            Self(Mutex::new(Some(r)))
+        }
+    }
+    impl CommandRunner for OneShot {
+        fn run(&self, _p: &str, _a: &[&str], _t: Duration) -> Result<Output, CommandError> {
+            self.0.lock().unwrap().take().expect("called once")
+        }
+    }
+
+    #[test]
+    fn parse_dir_listing_keeps_dirs_drops_files() {
+        // `ls -1pA` suffixes directories (incl. dotfile dirs) with `/`.
+        let raw = "src/\nmain.rs\ntests/\n.config/\nREADME";
+        let mut got = parse_dir_listing(raw);
+        got.sort();
+        assert_eq!(got, vec![".config", "src", "tests"]);
+    }
+
+    #[test]
+    fn list_dir_returns_sorted_dirs() {
+        let runner = OneShot::new(ok("beta/\nalpha/\nnote.txt"));
+        let (dirs, err) = list_dir_with(&runner, "box", "~/");
+        assert_eq!(dirs, vec!["alpha", "beta"]);
+        assert!(err.is_none());
+    }
+
+    #[test]
+    fn list_dir_missing_path_reports_not_found() {
+        let runner = OneShot::new(Err(CommandError::NonZero {
+            program: "ssh".to_string(),
+            status: exit_status(2),
+            stderr: b"ls: cannot access '~/nope': No such file or directory".to_vec(),
+        }));
+        let (dirs, err) = list_dir_with(&runner, "box", "~/nope");
+        assert!(dirs.is_empty());
+        assert_eq!(err.as_deref(), Some("not found"));
+    }
+
+    #[test]
+    fn list_dir_unreachable_host_reports_unreachable() {
+        let runner = OneShot::new(Err(CommandError::NonZero {
+            program: "ssh".to_string(),
+            status: exit_status(255),
+            stderr: b"ssh: connect to host box port 22: Connection refused".to_vec(),
+        }));
+        let (_dirs, err) = list_dir_with(&runner, "box", "~/");
+        assert_eq!(err.as_deref(), Some("host unreachable"));
+    }
+
+    #[test]
+    fn new_session_reports_success_and_failure() {
+        let okrunner = OneShot::new(ok(""));
+        assert!(new_session_with(&okrunner, "box", "work", "~/proj"));
+
+        let failrunner = OneShot::new(Err(CommandError::Timeout {
+            program: "ssh".to_string(),
+            elapsed: Duration::from_secs(5),
+        }));
+        assert!(!new_session_with(&failrunner, "box", "work", "~/proj"));
     }
 }
