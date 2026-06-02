@@ -220,7 +220,10 @@ fn hosts_needing_respawn(
 ) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for row in rows {
-        if row.unreachable || row.loading {
+        // Only real sessions are attachable. A reachable host with no
+        // tmux server ("(no sessions)") has nothing to attach to —
+        // respawning its PTY just flaps it forever on "connecting…".
+        if !row.is_attachable_session() {
             continue;
         }
         if !is_live(&row.host) && !out.iter().any(|h| h == &row.host) {
@@ -236,7 +239,9 @@ fn hosts_needing_respawn(
 /// the probe succeeds. Unreachable rows are left as-is.
 fn mark_connecting_rows(rows: &mut [RemoteSessionRow], is_connecting: impl Fn(&str) -> bool) {
     for row in rows {
-        if !row.unreachable && is_connecting(&row.host) {
+        // Only real sessions track PTY liveness. Synthetic placeholders
+        // (unreachable / "no sessions") have no PTY to be connecting.
+        if row.is_attachable_session() && is_connecting(&row.host) {
             row.loading = true;
         }
     }

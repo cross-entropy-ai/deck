@@ -182,6 +182,25 @@ pub struct RemoteSessionRow {
     pub loading: bool,
 }
 
+/// Synthetic row name for a reachable host whose tmux server isn't up
+/// (so it has no sessions to attach to). Distinct from `unreachable`:
+/// the host responded, it just has nothing running.
+pub const REMOTE_NO_SESSIONS_LABEL: &str = "(no sessions)";
+/// Synthetic row name for a host deck couldn't reach over ssh.
+pub const REMOTE_UNREACHABLE_LABEL: &str = "(unreachable)";
+
+impl RemoteSessionRow {
+    /// Whether deck can attach a PTY to this row. Synthetic status
+    /// placeholders — still loading, unreachable, or the "no sessions"
+    /// marker for a reachable but server-less host — are not real tmux
+    /// sessions. The attach/respawn machinery must skip them; otherwise
+    /// it spins forever trying to `tmux attach` a host with nothing to
+    /// attach to, leaving the row stuck on "connecting…".
+    pub fn is_attachable_session(&self) -> bool {
+        !self.loading && !self.unreachable && self.name != REMOTE_NO_SESSIONS_LABEL
+    }
+}
+
 /// Identifies a focused sidebar row by its flat index.
 ///
 /// The flat index walks the visible row list in render order: local

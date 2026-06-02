@@ -22,9 +22,10 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) {
         Some(SessionTargetRef::Local(row)) => {
             fx.switch_session = Some(row.name.clone());
         }
-        // Placeholder rows (loading) and dead hosts have no
-        // session name to switch to. Skip silently.
-        Some(SessionTargetRef::Remote(row)) if !row.unreachable && !row.loading => {
+        // Synthetic placeholder rows (loading, unreachable, or the
+        // "no sessions" marker) have no real session to switch to. Skip
+        // silently so a click doesn't fire a doomed remote switch.
+        Some(SessionTargetRef::Remote(row)) if row.is_attachable_session() => {
             fx.switch_remote = Some(RemoteSwitchRequest {
                 host: row.host.clone(),
                 name: row.name.clone(),
