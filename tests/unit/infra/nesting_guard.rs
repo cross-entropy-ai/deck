@@ -7,6 +7,7 @@ fn session(name: &str, activity: u64) -> SessionInfo {
         name: name.to_string(),
         dir: format!("/tmp/{name}"),
         activity,
+        order: None,
     }
 }
 

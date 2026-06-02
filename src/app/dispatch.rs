@@ -460,6 +460,10 @@ impl App {
             self.save_config();
         }
 
+        if fx.save_session_order {
+            tmux::persist_session_order(&self.state.session_order);
+        }
+
         if let Some(ref host) = fx.remove_remote_host {
             // Tear down the ControlMaster (and any forwards riding on
             // it) so the host stops occupying SSH state once detached.

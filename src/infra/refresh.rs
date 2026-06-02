@@ -40,6 +40,10 @@ pub struct SnapshotRow {
     pub dir: String,
     pub idle_seconds: u64,
     pub status: SessionStatus,
+    /// Persisted display rank from the session's `@deck_order` option,
+    /// or `None` if it was never reordered. Used to restore the manual
+    /// arrangement on first load after a deck restart.
+    pub order: Option<u32>,
 }
 
 /// One row from a remote host. Mirrors the subset of `SnapshotRow`
@@ -204,6 +208,7 @@ fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>) {
                 dir: s.dir,
                 idle_seconds,
                 status,
+                order: s.order,
             }
         })
         .collect();

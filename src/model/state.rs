@@ -512,6 +512,10 @@ pub struct SideEffect {
     pub reread_new_session_entries: bool,
     pub resize_pty: bool,
     pub save_config: bool,
+    /// Dispatch should persist the current local `session_order` onto the
+    /// tmux sessions (`@deck_order`) so the manual arrangement survives a
+    /// deck restart. Fired by `ReorderSession`.
+    pub save_session_order: bool,
     pub apply_tmux_theme: bool,
     pub refresh_sessions: bool,
     pub quit: bool,
@@ -552,6 +556,7 @@ impl SideEffect {
         self.reread_new_session_entries |= other.reread_new_session_entries;
         self.resize_pty |= other.resize_pty;
         self.save_config |= other.save_config;
+        self.save_session_order |= other.save_session_order;
         self.apply_tmux_theme |= other.apply_tmux_theme;
         self.refresh_sessions |= other.refresh_sessions;
         self.quit |= other.quit;

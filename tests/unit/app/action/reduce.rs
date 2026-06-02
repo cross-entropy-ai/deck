@@ -343,10 +343,23 @@ fn resize_signals_pty_resize() {
 fn reorder_session_moves_up() {
     let mut state = make_test_state(3);
     state.focused = 1;
-    apply_action(&mut state, Action::ReorderSession(-1));
+    let fx = apply_action(&mut state, Action::ReorderSession(-1));
     assert_eq!(state.sessions[0].name, "sess-1");
     assert_eq!(state.sessions[1].name, "sess-0");
     assert_eq!(state.focused, 0);
+    // The new arrangement is persisted to tmux (@deck_order) so it
+    // survives a restart.
+    assert!(fx.save_session_order);
+}
+
+#[test]
+fn reorder_session_at_boundary_is_noop() {
+    let mut state = make_test_state(3);
+    state.focused = 0;
+    // Already at the top — moving up changes nothing and persists nothing.
+    let fx = apply_action(&mut state, Action::ReorderSession(-1));
+    assert_eq!(state.sessions[0].name, "sess-0");
+    assert!(!fx.save_session_order);
 }
 
 #[test]

@@ -18,6 +18,11 @@ pub struct SessionInfo {
     pub dir: String,
     /// Unix timestamp of last buffer activity in this session.
     pub activity: u64,
+    /// Deck's persisted display rank, read from the `@deck_order`
+    /// session option. `None` when the session was never reordered (no
+    /// option set). Remote sessions are always `None` — their listing
+    /// doesn't request the field.
+    pub order: Option<u32>,
 }
 
 /// A single pane within a tmux session. Populated by `list_panes`.
@@ -54,12 +59,45 @@ pub fn list_sessions() -> Vec<SessionInfo> {
 }
 
 fn list_sessions_with(runner: &dyn CommandRunner) -> Vec<SessionInfo> {
-    let format = "#{session_name}\t#{session_path}";
+    // The trailing `#{@deck_order}` carries the persisted display rank
+    // (empty when unset). See `persist_session_order`.
+    let format = "#{session_name}\t#{session_path}\t#{@deck_order}";
     let Ok(raw) = tmux_with(runner, &["list-sessions", "-F", format]) else {
         return Vec::new();
     };
     let window_activity = latest_window_activity_with(runner);
     parse_sessions(&raw, &window_activity)
+}
+
+/// Persist the local session display order onto the tmux sessions
+/// themselves via the `@deck_order` user option (0-based rank). The
+/// option lives on the running tmux server, so the order survives a
+/// deck restart without touching the config file; it's read back by
+/// `list_sessions`. Best-effort — a failed write just means the order
+/// isn't remembered, degrading to tmux's default listing order.
+pub fn persist_session_order(order: &[String]) {
+    persist_session_order_with(default_runner(), order)
+}
+
+fn persist_session_order_with(runner: &dyn CommandRunner, order: &[String]) {
+    if order.is_empty() {
+        return;
+    }
+    // Batch into a single tmux invocation: `set-option -t a @deck_order 0 ;
+    // set-option -t b @deck_order 1 ; ...` (same `;`-chaining as apply_theme).
+    let mut args: Vec<String> = Vec::with_capacity(order.len() * 6);
+    for (rank, name) in order.iter().enumerate() {
+        if !args.is_empty() {
+            args.push(";".to_string());
+        }
+        args.push("set-option".to_string());
+        args.push("-t".to_string());
+        args.push(name.clone());
+        args.push("@deck_order".to_string());
+        args.push(rank.to_string());
+    }
+    let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+    let _ = runner.run("tmux", &args_ref, TMUX_TIMEOUT);
 }
 
 /// List every pane across every session, with the info deck needs to

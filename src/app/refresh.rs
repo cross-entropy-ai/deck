@@ -166,6 +166,18 @@ impl App {
             self.warning_state = None;
         }
 
+        // On first load, restore the manual order persisted on each
+        // session's `@deck_order` rank (written by ReorderSession).
+        // Ranked sessions come first in rank order; never-reordered ones
+        // fall after, in tmux's listing order. Afterwards the in-memory
+        // `session_order` is authoritative and reorders write back to tmux,
+        // so this seeds exactly once per deck run.
+        if self.state.session_order.is_empty() {
+            let mut ranked: Vec<&SnapshotRow> = rows.iter().collect();
+            ranked.sort_by_key(|r| (r.order.is_none(), r.order.unwrap_or(0)));
+            self.state.session_order = ranked.into_iter().map(|r| r.name.clone()).collect();
+        }
+
         self.state.sessions = rows
             .into_iter()
             .map(|r| SessionRow {

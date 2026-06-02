@@ -15,18 +15,26 @@ enum FakeResponse {
 /// stay terse about the calls they don't care about.
 struct FakeRunner {
     responses: Mutex<HashMap<String, FakeResponse>>,
+    /// Joined-arg string of every `run` call, in order — lets tests
+    /// assert what was issued (e.g. the batched `set-option` order write).
+    calls: Mutex<Vec<String>>,
 }
 
 impl FakeRunner {
     fn new() -> Self {
         Self {
             responses: Mutex::new(HashMap::new()),
+            calls: Mutex::new(Vec::new()),
         }
     }
 
     fn set(&self, args: &[&str], resp: FakeResponse) {
         let key = args.join(" ");
         self.responses.lock().unwrap().insert(key, resp);
+    }
+
+    fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
     }
 }
 
@@ -38,6 +46,7 @@ impl CommandRunner for FakeRunner {
         _timeout: Duration,
     ) -> Result<Output, CommandError> {
         let key = args.join(" ");
+        self.calls.lock().unwrap().push(key.clone());
         let map = self.responses.lock().unwrap();
         let resp = map.get(&key);
         match resp {
@@ -102,9 +111,15 @@ fn parse_client_session_returns_none_when_tty_missing() {
 #[test]
 fn list_sessions_with_runner_returns_parsed_rows() {
     let runner = FakeRunner::new();
+    // `alpha` carries a `@deck_order` rank; `beta` was never reordered
+    // (empty trailing field).
     runner.set(
-        &["list-sessions", "-F", "#{session_name}\t#{session_path}"],
-        FakeResponse::Ok("alpha\t/tmp/alpha\nbeta\t/tmp/beta".to_string()),
+        &[
+            "list-sessions",
+            "-F",
+            "#{session_name}\t#{session_path}\t#{@deck_order}",
+        ],
+        FakeResponse::Ok("alpha\t/tmp/alpha\t1\nbeta\t/tmp/beta\t".to_string()),
     );
     runner.set(
         &[
@@ -119,15 +134,41 @@ fn list_sessions_with_runner_returns_parsed_rows() {
     let got = list_sessions_with(&runner);
     assert_eq!(got.len(), 2);
     assert_eq!(got[0].name, "alpha");
+    assert_eq!(got[0].dir, "/tmp/alpha");
     assert_eq!(got[0].activity, 99);
+    assert_eq!(got[0].order, Some(1));
     assert_eq!(got[1].activity, 0);
+    assert_eq!(got[1].order, None);
+}
+
+#[test]
+fn persist_session_order_batches_set_option_calls() {
+    let runner = FakeRunner::new();
+    persist_session_order_with(&runner, &["alpha".to_string(), "beta".to_string()]);
+    let calls = runner.calls();
+    assert_eq!(calls.len(), 1, "one batched tmux invocation");
+    assert_eq!(
+        calls[0],
+        "set-option -t alpha @deck_order 0 ; set-option -t beta @deck_order 1"
+    );
+}
+
+#[test]
+fn persist_session_order_empty_is_noop() {
+    let runner = FakeRunner::new();
+    persist_session_order_with(&runner, &[]);
+    assert!(runner.calls().is_empty());
 }
 
 #[test]
 fn list_sessions_with_runner_returns_empty_on_timeout() {
     let runner = FakeRunner::new();
     runner.set(
-        &["list-sessions", "-F", "#{session_name}\t#{session_path}"],
+        &[
+            "list-sessions",
+            "-F",
+            "#{session_name}\t#{session_path}\t#{@deck_order}",
+        ],
         FakeResponse::Timeout,
     );
     assert!(list_sessions_with(&runner).is_empty());

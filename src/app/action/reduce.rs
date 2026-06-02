@@ -216,6 +216,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     {
                         state.focused = new_focused;
                     }
+                    // Persist the new arrangement onto the tmux sessions so
+                    // it survives a deck restart (see `persist_session_order`).
+                    fx.save_session_order = true;
                 }
             }
         }

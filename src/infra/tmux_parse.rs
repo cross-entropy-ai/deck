@@ -10,21 +10,32 @@ use std::collections::HashMap;
 
 use crate::infra::tmux::SessionInfo;
 
-/// Parse `tmux list-sessions -F '#{session_name}\t#{session_path}'`
-/// output. `window_activity` provides per-session activity timestamps;
-/// sessions absent from the map get `activity = 0`.
+/// Parse `tmux list-sessions` output. The local caller's format is
+/// `#{session_name}\t#{session_path}\t#{@deck_order}`; the remote caller
+/// omits the trailing rank (`#{session_name}\t#{session_path}`), so the
+/// order field is optional. `window_activity` provides per-session
+/// activity timestamps; sessions absent from the map get `activity = 0`.
 pub(crate) fn parse_sessions(
     raw: &str,
     window_activity: &HashMap<String, u64>,
 ) -> Vec<SessionInfo> {
     raw.lines()
         .filter_map(|line| {
-            let (name, dir) = line.split_once('\t')?;
+            let (name, after_name) = line.split_once('\t')?;
+            // `@deck_order` (if requested) is the last field, a bare
+            // integer or empty. Split it off the tail so a dir that
+            // somehow contains a tab still parses. With no trailing field
+            // (remote listing) there's no rank.
+            let (dir, order) = match after_name.rsplit_once('\t') {
+                Some((dir, rank)) => (dir, rank.parse::<u32>().ok()),
+                None => (after_name, None),
+            };
             let activity = window_activity.get(name).copied().unwrap_or(0);
             Some(SessionInfo {
                 name: name.to_string(),
                 dir: dir.to_string(),
                 activity,
+                order,
             })
         })
         .collect()
@@ -64,6 +75,31 @@ mod tests {
         assert_eq!(got[0].activity, 100);
         assert_eq!(got[1].name, "beta");
         assert_eq!(got[1].activity, 0);
+    }
+
+    #[test]
+    fn parse_sessions_reads_optional_deck_order() {
+        let activity = HashMap::new();
+        // Local format: name \t dir \t @deck_order. `beta` has an empty
+        // trailing field (never reordered → no rank).
+        let raw = "alpha\t/tmp/alpha\t2\nbeta\t/tmp/beta\t";
+        let got = parse_sessions(raw, &activity);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].dir, "/tmp/alpha");
+        assert_eq!(got[0].order, Some(2));
+        assert_eq!(got[1].dir, "/tmp/beta");
+        assert_eq!(got[1].order, None);
+    }
+
+    #[test]
+    fn parse_sessions_two_field_remote_form_has_no_order() {
+        let activity = HashMap::new();
+        // Remote listing omits the trailing rank field entirely.
+        let raw = "alpha\t/tmp/alpha";
+        let got = parse_sessions(raw, &activity);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].dir, "/tmp/alpha");
+        assert_eq!(got[0].order, None);
     }
 
     #[test]
