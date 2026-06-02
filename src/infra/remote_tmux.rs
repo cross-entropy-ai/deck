@@ -102,28 +102,35 @@ fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Sess
             let window_activity = latest_window_activity_with(runner, host);
             Some(parse_sessions(&raw, &window_activity))
         }
-        // ssh connected but the remote command exited non-zero — almost
-        // always "no server running" because the host has no tmux server.
-        // Reachable, just no sessions: report an empty list, not down.
-        Err(err) if !ssh_connect_failed(&err) => Some(Vec::new()),
-        // ssh itself failed to reach the host — genuinely unreachable.
+        // ssh connected and tmux reported there's no server running: the
+        // host is reachable, it just has no sessions. This is the *only*
+        // failure we read as empty — other non-zero exits (tmux missing,
+        // permission, a PATH problem) and ssh connection failures stay
+        // unreachable rather than masquerading as "(no sessions)".
+        Err(err) if is_no_server_error(&err) => Some(Vec::new()),
         Err(_) => None,
     }
 }
 
-/// Did the ssh call fail to reach the host at all, as opposed to
-/// reaching it and having the remote command exit non-zero?
+/// Whether a failed remote `tmux` call means "reachable host, no tmux
+/// server up" — as opposed to ssh not reaching the host, or tmux failing
+/// for some other reason we shouldn't paper over as "no sessions".
 ///
-/// ssh maps its *own* failures (connection refused, timeout, auth, DNS,
-/// host-key) to exit status 255. Any other non-zero status is the remote
-/// command's exit code, so ssh connected fine. A missing ssh binary, a
-/// timeout, or a signal-killed ssh (no exit code) all count as
-/// "couldn't reach".
-fn ssh_connect_failed(err: &CommandError) -> bool {
-    match err {
-        CommandError::Spawn { .. } | CommandError::Timeout { .. } => true,
-        CommandError::NonZero { status, .. } => !matches!(status.code(), Some(code) if code != 255),
+/// ssh reports its *own* failures (refused, timeout, auth, DNS) as exit
+/// 255; tmux exits non-zero with a recognizable "no server" message when
+/// nothing is running. We require both: a non-255 remote exit AND a
+/// stderr that names the missing server.
+fn is_no_server_error(err: &CommandError) -> bool {
+    let CommandError::NonZero { status, stderr, .. } = err else {
+        return false;
+    };
+    if status.code() == Some(255) {
+        return false;
     }
+    let msg = String::from_utf8_lossy(stderr).to_lowercase();
+    msg.contains("no server running")
+        || msg.contains("failed to connect to server")
+        || msg.contains("error connecting to")
 }
 
 fn latest_window_activity_with(runner: &dyn CommandRunner, host: &str) -> HashMap<String, u64> {
@@ -134,12 +141,37 @@ fn latest_window_activity_with(runner: &dyn CommandRunner, host: &str) -> HashMa
     parse_window_activity(&raw)
 }
 
+/// Single-quote a value so the remote shell treats it as one literal
+/// token. ssh concatenates the remote argv into a string that the login
+/// shell re-parses (argv boundaries are NOT preserved), so any
+/// user-supplied name or path must be quoted — both for correctness
+/// (spaces) and to keep shell metacharacters from being interpreted.
+/// Embedded single quotes are escaped as `'\''`.
+fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Quote a remote path, preserving a leading `~` / `~/` as the remote
+/// `$HOME`. A single-quoted `~` would NOT expand, and tmux's `-c` won't
+/// expand `~` itself, so the home prefix is emitted as `"$HOME"` (the
+/// only unquoted part) and the rest is a single-quoted literal.
+fn shell_quote_remote_path(path: &str) -> String {
+    if path == "~" {
+        return "\"$HOME\"".to_string();
+    }
+    if let Some(rest) = path.strip_prefix("~/") {
+        return format!("\"$HOME\"/{}", shell_single_quote(rest));
+    }
+    shell_single_quote(path)
+}
+
 /// Tell the remote tmux server to switch its (only) attached client to
 /// `session`. Fire-and-forget: errors are swallowed because the user
 /// will see the failure to switch reflected in the UI anyway.
 pub fn switch_client(host: &str, session: &str) {
     let runner = default_runner();
-    let _ = run_ssh(runner, host, &["tmux", "switch-client", "-t", session]);
+    let target = shell_single_quote(session);
+    let _ = run_ssh(runner, host, &["tmux", "switch-client", "-t", target.as_str()]);
 }
 
 /// Kill a session on the remote tmux server. The `(host, name)` tuple
@@ -149,17 +181,26 @@ pub fn switch_client(host: &str, session: &str) {
 /// session's continued existence (or absence) regardless.
 pub fn kill_session(host: &str, name: &str) {
     let runner = default_runner();
-    let _ = run_ssh(runner, host, &["tmux", "kill-session", "-t", name]);
+    let target = shell_single_quote(name);
+    let _ = run_ssh(runner, host, &["tmux", "kill-session", "-t", target.as_str()]);
 }
 
 /// Rename a session on the remote tmux server. As with `kill_session`,
 /// `(host, old_name)` uniquely identifies the target.
 pub fn rename_session(host: &str, old_name: &str, new_name: &str) {
     let runner = default_runner();
+    let target = shell_single_quote(old_name);
+    let new_name = shell_single_quote(new_name);
     let _ = run_ssh(
         runner,
         host,
-        &["tmux", "rename-session", "-t", old_name, new_name],
+        &[
+            "tmux",
+            "rename-session",
+            "-t",
+            target.as_str(),
+            new_name.as_str(),
+        ],
     );
 }
 
@@ -173,10 +214,20 @@ pub fn new_session(host: &str, name: &str, dir: &str) -> bool {
 }
 
 fn new_session_with(runner: &dyn CommandRunner, host: &str, name: &str, dir: &str) -> bool {
+    let name = shell_single_quote(name);
+    let dir = shell_quote_remote_path(dir);
     run_ssh(
         runner,
         host,
-        &["tmux", "new-session", "-d", "-s", name, "-c", dir],
+        &[
+            "tmux",
+            "new-session",
+            "-d",
+            "-s",
+            name.as_str(),
+            "-c",
+            dir.as_str(),
+        ],
     )
     .is_ok()
 }
@@ -201,8 +252,10 @@ fn list_dir_with(
 ) -> (Vec<String>, Option<String>) {
     // `-1` one per line, `-p` suffixes directories with `/` (so we keep
     // only those), `-A` includes dotfiles but not `.`/`..`. `--` guards a
-    // path that begins with `-`.
-    match run_ssh(runner, host, &["ls", "-1pA", "--", path]) {
+    // path that begins with `-`. The path is shell-quoted (preserving a
+    // leading `~`) so spaces / metacharacters in it stay literal.
+    let path = shell_quote_remote_path(path);
+    match run_ssh(runner, host, &["ls", "-1pA", "--", path.as_str()]) {
         Ok(raw) => {
             let mut names = parse_dir_listing(&raw);
             names.sort();
@@ -337,6 +390,18 @@ mod tests {
     }
 
     #[test]
+    fn tmux_missing_is_unreachable_not_empty() {
+        // Reachable host, but tmux isn't installed (127): this is a real
+        // error, not "no sessions", so it must not be reported as empty.
+        let runner = FakeRunner::new(Err(CommandError::NonZero {
+            program: "ssh".to_string(),
+            status: exit_status(127),
+            stderr: b"bash: tmux: command not found".to_vec(),
+        }));
+        assert!(list_sessions_with(&runner, "box").is_none());
+    }
+
+    #[test]
     fn timeout_is_unreachable() {
         let runner = FakeRunner::new(Err(CommandError::Timeout {
             program: "ssh".to_string(),
@@ -397,6 +462,33 @@ mod tests {
         }));
         let (_dirs, err) = list_dir_with(&runner, "box", "~/");
         assert_eq!(err.as_deref(), Some("host unreachable"));
+    }
+
+    #[test]
+    fn shell_single_quote_wraps_and_escapes() {
+        assert_eq!(shell_single_quote("plain"), "'plain'");
+        assert_eq!(shell_single_quote("a b"), "'a b'");
+        assert_eq!(shell_single_quote("it's"), "'it'\\''s'");
+        // Metacharacters stay inside the quotes — never interpreted.
+        assert_eq!(shell_single_quote("a; rm -rf ~"), "'a; rm -rf ~'");
+    }
+
+    #[test]
+    fn shell_quote_remote_path_keeps_home_expandable() {
+        assert_eq!(shell_quote_remote_path("~"), "\"$HOME\"");
+        assert_eq!(shell_quote_remote_path("~/"), "\"$HOME\"/''");
+        assert_eq!(shell_quote_remote_path("~/proj"), "\"$HOME\"/'proj'");
+        assert_eq!(
+            shell_quote_remote_path("~/My Docs/a"),
+            "\"$HOME\"/'My Docs/a'"
+        );
+        // Absolute path: fully single-quoted, no expansion.
+        assert_eq!(shell_quote_remote_path("/abs/My Docs"), "'/abs/My Docs'");
+        // A command-substitution attempt stays a literal directory name.
+        assert_eq!(
+            shell_quote_remote_path("~/$(reboot)"),
+            "\"$HOME\"/'$(reboot)'"
+        );
     }
 
     #[test]
