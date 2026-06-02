@@ -34,6 +34,10 @@ const SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill", "Move up", "Move down"];
 // apply. Rename/Kill map to `ssh <host> tmux <cmd>` against the
 // host's server.
 const REMOTE_SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill"];
+// Items shown but greyed-out / unselectable when the right-clicked row
+// is a synthetic placeholder (a remote host with no sessions, or an
+// unreachable one): there's no real session for Rename/Kill to act on.
+const PLACEHOLDER_DISABLED_ITEMS: &[&str] = &["Rename", "Kill"];
 // Host divider [...] menu acts on the whole remote *group*. "Remove
 // from list" is equivalent to `deck remote remove <host>`.
 const HOST_DIVIDER_MENU_ITEMS: &[&str] = &["Port Forward", "Remove from list"];
@@ -101,6 +105,10 @@ pub enum MenuKind {
     Session {
         focus: FocusTarget,
         items: &'static [&'static str],
+        /// Subset of `items` shown greyed-out and not selectable (e.g.
+        /// Rename/Kill on a synthetic placeholder row). Empty for a real
+        /// session, where every item is actionable.
+        disabled: &'static [&'static str],
     },
     Global,
     /// Click on the `[…]` button on a remote host divider. Single
@@ -119,6 +127,15 @@ impl MenuKind {
             MenuKind::HostDivider { items, .. } => items,
         }
     }
+
+    /// Items that are shown but greyed-out / unselectable. Only session
+    /// menus carry these today; other menus have every item enabled.
+    pub fn disabled(&self) -> &'static [&'static str] {
+        match self {
+            MenuKind::Session { disabled, .. } => disabled,
+            MenuKind::Global | MenuKind::HostDivider { .. } => &[],
+        }
+    }
 }
 
 pub fn host_divider_menu_items() -> &'static [&'static str] {
@@ -135,6 +152,17 @@ pub fn session_menu_items(target: &SessionTargetRef<'_>) -> &'static [&'static s
     }
 }
 
+/// Menu items to grey out / disable for a right-clicked row. A synthetic
+/// remote placeholder (no sessions / unreachable) isn't a real session,
+/// so Rename/Kill have nothing to act on and are disabled. Real sessions
+/// (local or live remote) have everything enabled.
+pub fn session_menu_disabled(target: &SessionTargetRef<'_>) -> &'static [&'static str] {
+    match target {
+        SessionTargetRef::Remote(row) if !row.is_attachable_session() => PLACEHOLDER_DISABLED_ITEMS,
+        SessionTargetRef::Local(_) | SessionTargetRef::Remote(_) => &[],
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ContextMenu {
     pub kind: MenuKind,
@@ -146,6 +174,43 @@ pub struct ContextMenu {
 impl ContextMenu {
     pub fn items(&self) -> &'static [&'static str] {
         self.kind.items()
+    }
+
+    pub fn disabled(&self) -> &'static [&'static str] {
+        self.kind.disabled()
+    }
+
+    /// Whether the item at `idx` is selectable (exists and not disabled).
+    pub fn is_enabled(&self, idx: usize) -> bool {
+        self.items()
+            .get(idx)
+            .is_some_and(|label| !self.disabled().contains(label))
+    }
+
+    /// First selectable item, used as the initial highlight so it never
+    /// starts on a greyed item. Falls back to 0 when every item is
+    /// disabled (a fully-greyed menu, e.g. a placeholder remote row).
+    pub fn first_enabled(&self) -> usize {
+        (0..self.items().len())
+            .find(|&i| self.is_enabled(i))
+            .unwrap_or(0)
+    }
+
+    /// Next selectable item after the current selection, or the current
+    /// selection if there's no enabled item below it.
+    pub fn next_enabled(&self) -> usize {
+        ((self.selected + 1)..self.items().len())
+            .find(|&i| self.is_enabled(i))
+            .unwrap_or(self.selected)
+    }
+
+    /// Previous selectable item before the current selection, or the
+    /// current selection if there's no enabled item above it.
+    pub fn prev_enabled(&self) -> usize {
+        (0..self.selected)
+            .rev()
+            .find(|&i| self.is_enabled(i))
+            .unwrap_or(self.selected)
     }
 }
 

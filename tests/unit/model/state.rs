@@ -171,6 +171,48 @@ fn vertical_tabs_hit_test_remote_sessions() {
     }
 }
 
+#[test]
+fn context_menu_navigation_skips_disabled_items() {
+    use crate::state::{ContextMenu, MenuKind};
+    // A placeholder remote menu: both items disabled.
+    let all_disabled = ContextMenu {
+        kind: MenuKind::Session {
+            focus: FocusTarget(0),
+            items: &["Rename", "Kill"],
+            disabled: &["Rename", "Kill"],
+        },
+        x: 0,
+        y: 0,
+        selected: 0,
+    };
+    assert!(!all_disabled.is_enabled(0));
+    assert!(!all_disabled.is_enabled(1));
+    // Nothing selectable: first/next/prev stay put.
+    assert_eq!(all_disabled.first_enabled(), 0);
+    assert_eq!(all_disabled.next_enabled(), 0);
+
+    // One disabled item among enabled ones: navigation hops over it.
+    let mixed = ContextMenu {
+        kind: MenuKind::Session {
+            focus: FocusTarget(0),
+            items: &["Rename", "Kill", "Move up"],
+            disabled: &["Kill"],
+        },
+        x: 0,
+        y: 0,
+        selected: 0,
+    };
+    assert_eq!(mixed.first_enabled(), 0);
+    // From "Rename" (0), next skips disabled "Kill" (1) to "Move up" (2).
+    assert_eq!(mixed.next_enabled(), 2);
+    let from_last = ContextMenu {
+        selected: 2,
+        ..mixed.clone()
+    };
+    // From "Move up" (2), prev skips "Kill" (1) back to "Rename" (0).
+    assert_eq!(from_last.prev_enabled(), 0);
+}
+
 // --- PfAddForm::validate() tests ---
 
 use crate::config::ForwardMode;

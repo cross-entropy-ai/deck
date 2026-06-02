@@ -1,6 +1,7 @@
 use crate::config::ForwardMode;
 use crate::state::{
-    host_divider_menu_items, session_menu_items, AppState, ContextMenu, FocusMode, KillRequest,
+    host_divider_menu_items, session_menu_disabled, session_menu_items, AppState, ContextMenu,
+    FocusMode, KillRequest,
     LayoutMode, MainView, MenuKind, PfAddForm, PfField, PortForwardOverlay, RemoteSwitchRequest,
     RenameRequest, RenameState, SessionTargetRef, SideEffect, ViewMode, SETTINGS_ITEM_COUNT,
 };
@@ -583,18 +584,22 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 Some(ref tgt) => MenuKind::Session {
                     focus: target,
                     items: session_menu_items(tgt),
+                    disabled: session_menu_disabled(tgt),
                 },
                 // Index points outside any row — treat as a global
                 // right-click. Shouldn't happen since mouse hit-test
                 // only emits OpenSessionMenu on a real row.
                 None => MenuKind::Global,
             };
-            state.overlay.context_menu = Some(ContextMenu {
+            let mut menu = ContextMenu {
                 kind,
                 x,
                 y,
                 selected: 0,
-            });
+            };
+            // Don't start the highlight on a greyed item.
+            menu.selected = menu.first_enabled();
+            state.overlay.context_menu = Some(menu);
         }
         Action::OpenGlobalMenu { x, y } => {
             state.overlay.context_menu = Some(ContextMenu {
@@ -606,15 +611,12 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::MenuNext => {
             if let Some(ref mut menu) = state.overlay.context_menu {
-                let len = menu.items().len();
-                menu.selected = (menu.selected + 1).min(len - 1);
+                menu.selected = menu.next_enabled();
             }
         }
         Action::MenuPrev => {
             if let Some(ref mut menu) = state.overlay.context_menu {
-                if menu.selected > 0 {
-                    menu.selected -= 1;
-                }
+                menu.selected = menu.prev_enabled();
             }
         }
         Action::MenuConfirm => {
@@ -622,6 +624,11 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 Some(m) => m,
                 Option::None => return fx,
             };
+            // Confirming a greyed item (only reachable when every item is
+            // disabled) just closes the menu without acting.
+            if !menu.is_enabled(menu.selected) {
+                return fx;
+            }
             let selected_label = menu.items().get(menu.selected).copied();
             match menu.kind {
                 MenuKind::Session { focus, .. } => {
@@ -675,7 +682,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::MenuHover(idx) => {
             if let Some(ref mut menu) = state.overlay.context_menu {
-                menu.selected = idx;
+                // Hovering a greyed item doesn't move the highlight onto it.
+                if menu.is_enabled(idx) {
+                    menu.selected = idx;
+                }
             }
         }
 

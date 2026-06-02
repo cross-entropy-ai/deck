@@ -827,6 +827,50 @@ fn local_menu_has_no_switch_or_remove() {
 }
 
 #[test]
+fn placeholder_remote_menu_disables_rename_and_kill() {
+    use crate::state::{
+        session_menu_disabled, RemoteSessionRow, SessionTargetRef, REMOTE_NO_SESSIONS_LABEL,
+        REMOTE_UNREACHABLE_LABEL,
+    };
+    for label in [REMOTE_NO_SESSIONS_LABEL, REMOTE_UNREACHABLE_LABEL] {
+        let row = RemoteSessionRow {
+            host: "h".into(),
+            name: label.into(),
+            dir: String::new(),
+            unreachable: label == REMOTE_UNREACHABLE_LABEL,
+            loading: false,
+        };
+        let disabled = session_menu_disabled(&SessionTargetRef::Remote(&row));
+        assert!(disabled.contains(&"Rename"), "{label}: Rename disabled");
+        assert!(disabled.contains(&"Kill"), "{label}: Kill disabled");
+    }
+}
+
+#[test]
+fn real_session_menu_disables_nothing() {
+    use crate::state::{
+        session_menu_disabled, RemoteSessionRow, SessionRow, SessionStatus, SessionTargetRef,
+    };
+    let remote = RemoteSessionRow {
+        host: "h".into(),
+        name: "work".into(),
+        dir: "/srv".into(),
+        unreachable: false,
+        loading: false,
+    };
+    assert!(session_menu_disabled(&SessionTargetRef::Remote(&remote)).is_empty());
+
+    let local = SessionRow {
+        name: "s".into(),
+        dir: "/".into(),
+        is_current: false,
+        idle_seconds: 0,
+        status: SessionStatus::default(),
+    };
+    assert!(session_menu_disabled(&SessionTargetRef::Local(&local)).is_empty());
+}
+
+#[test]
 fn pf_add_field_next_changes_focus() {
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "8");
