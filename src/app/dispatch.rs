@@ -50,6 +50,8 @@ fn session_name_format_error(name: &str) -> Option<&'static str> {
         "" => Some("name required"),
         n if n.contains('.') => Some("name cannot contain '.'"),
         n if n.contains(':') => Some("name cannot contain ':'"),
+        // Placeholder labels would make a real session look synthetic.
+        n if crate::state::is_reserved_session_name(n) => Some("name is reserved"),
         _ => None,
     }
 }

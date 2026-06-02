@@ -227,7 +227,12 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::RenameConfirm => {
             if let Some(r) = state.overlay.renaming.take() {
                 let new_name = r.input.lines().first().map(String::as_str).unwrap_or("").trim().to_string();
-                if !new_name.is_empty() && new_name != r.original_name {
+                // Skip no-op and reserved placeholder names (the latter
+                // would make a real session look like a synthetic row).
+                if !new_name.is_empty()
+                    && new_name != r.original_name
+                    && !crate::state::is_reserved_session_name(&new_name)
+                {
                     fx.rename_session = Some(RenameRequest {
                         old_name: r.original_name,
                         new_name,

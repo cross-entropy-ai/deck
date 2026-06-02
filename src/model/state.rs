@@ -274,6 +274,14 @@ pub const REMOTE_NO_SESSIONS_LABEL: &str = "(no sessions)";
 /// Synthetic row name for a host deck couldn't reach over ssh.
 pub const REMOTE_UNREACHABLE_LABEL: &str = "(unreachable)";
 
+/// Whether `name` collides with a synthetic placeholder-row label. A real
+/// session so named would be mistaken for a placeholder (e.g. treated as
+/// non-attachable by `is_attachable_session`), so these are reserved and
+/// rejected when creating or renaming.
+pub fn is_reserved_session_name(name: &str) -> bool {
+    name == REMOTE_NO_SESSIONS_LABEL || name == REMOTE_UNREACHABLE_LABEL
+}
+
 impl RemoteSessionRow {
     /// Whether deck can attach a PTY to this row. Synthetic status
     /// placeholders — still loading, unreachable, or the "no sessions"
