@@ -7,7 +7,7 @@ use ratatui_textarea::TextArea;
 
 use crate::theme::Theme;
 use crate::ui::form::field_row;
-use crate::ui::widgets::{popup_frame, PopupStyle, TextAreaColors};
+use crate::ui::widgets::{centered_rect, popup_frame, PopupStyle, TextAreaColors};
 
 use super::NewSessionView;
 
@@ -24,9 +24,7 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
         .max(POPUP_MIN_HEIGHT)
         .min(area.height.saturating_sub(2));
     let width = POPUP_WIDTH.min(area.width.saturating_sub(4));
-    let x = area.x + area.width.saturating_sub(width) / 2;
-    let y = area.y + area.height.saturating_sub(height) / 2;
-    let popup = Rect::new(x, y, width, height);
+    let popup = centered_rect(area, width, height);
 
     // Title carries the target host for remote creation so it's obvious
     // the dir browser is listing that host, not the local machine.

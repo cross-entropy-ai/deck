@@ -27,27 +27,11 @@ fn default_runner() -> &'static dyn CommandRunner {
     R.get_or_init(RealRunner::default)
 }
 
-/// SSH options we apply on *every* remote call. These ensure deck's
-/// own ssh invocations multiplex onto a shared control connection even
-/// if the user's ssh_config doesn't enable it. `BatchMode=yes` prevents
-/// ssh from prompting interactively from inside a background worker
-/// (it would just block forever); a misconfigured host fails fast
-/// instead, which surfaces in the UI as a disconnected remote.
+/// SSH options we apply on *every* remote call. See
+/// [`crate::ssh::CONTROL_OPTS`] for why these must be identical across
+/// every ssh code path.
 pub(crate) fn base_ssh_args() -> Vec<&'static str> {
-    vec![
-        "-o",
-        "ControlMaster=auto",
-        "-o",
-        "ControlPath=~/.ssh/cm-%r@%h:%p",
-        "-o",
-        "ControlPersist=10m",
-        "-o",
-        "ConnectTimeout=5",
-        "-o",
-        "ServerAliveInterval=30",
-        "-o",
-        "BatchMode=yes",
-    ]
+    crate::ssh::CONTROL_OPTS.to_vec()
 }
 
 /// Extra path prefix prepended to every remote command. SSH runs

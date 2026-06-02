@@ -37,8 +37,6 @@ impl App {
         let new_session_overlay = s.overlay.new_session.clone();
         let add_remote_overlay = s.overlay.add_remote.clone();
         let port_forward_overlay = s.overlay.port_forward.clone();
-        let config_remotes = s.config_remotes.clone();
-        let forward_health = s.forward_health.clone();
         let show_borders = s.show_borders;
         let layout_mode = s.layout_mode;
         let view_mode = s.view_mode;
@@ -49,37 +47,7 @@ impl App {
 
         let confirm_name = s.confirm_kill_name();
 
-        let spinner_frame = self.spinner.current_frame().to_string();
-        let update_check_help = format_update_check_help(s.update_last_checked_secs);
-        let update_check_mode = s.update_check_mode;
-        let settings_view = SettingsView {
-            selected: s.settings.selected,
-            focus_main: s.focus_mode == FocusMode::Main,
-            theme_name: THEMES[s.theme_index].name,
-            theme_picker_open: s.settings.theme_picker_open,
-            theme_picker_selected: s.settings.theme_picker_selected,
-            theme_names: THEMES.iter().map(|theme| theme.name).collect(),
-            layout_mode: s.layout_mode,
-            show_borders: s.show_borders,
-            view_mode: s.view_mode,
-            exclude_count: s.exclude_patterns.len(),
-            exclude_editor: s
-                .overlay
-                .exclude_editor
-                .as_ref()
-                .map(|e| ui::ExcludeEditorView {
-                    patterns: &s.exclude_patterns,
-                    selected: e.selected,
-                    adding: e.adding,
-                    input: &e.input,
-                    error: e.error.as_deref(),
-                }),
-            keybindings: &s.keybindings,
-            keybindings_view_open: s.settings.keybindings_view_open,
-            keybindings_view_scroll: s.settings.keybindings_view_scroll,
-            update_check_enabled: update_check_mode == UpdateCheckMode::Enabled,
-            update_check_help,
-        };
+        let spinner_frame = self.spinner.current_frame();
         let update_available = s.update_available.clone();
         let reload_status = s.reload_status.clone();
         let dragging_sep = s.dragging_separator;
@@ -191,7 +159,7 @@ impl App {
                     rename_input,
                     show_borders,
                     tabs_mode: layout_mode == LayoutMode::Vertical,
-                    spinner_frame: &spinner_frame,
+                    spinner_frame,
                     view_mode,
                     plugins: &plugin_views,
                     blink_on,
@@ -291,7 +259,36 @@ impl App {
                 main_area
             };
 
+            // Built only when the Settings page is actually showing —
+            // it allocates `theme_names` and the update-check help string,
+            // which would otherwise be thrown away every other frame.
             if warning_state.is_none() && main_view == MainView::Settings {
+                let settings_view = SettingsView {
+                    selected: s.settings.selected,
+                    focus_main: s.focus_mode == FocusMode::Main,
+                    theme_name: THEMES[s.theme_index].name,
+                    theme_picker_open: s.settings.theme_picker_open,
+                    theme_picker_selected: s.settings.theme_picker_selected,
+                    theme_names: THEMES.iter().map(|theme| theme.name).collect(),
+                    layout_mode: s.layout_mode,
+                    show_borders: s.show_borders,
+                    view_mode: s.view_mode,
+                    exclude_count: s.exclude_patterns.len(),
+                    exclude_editor: s.overlay.exclude_editor.as_ref().map(|e| {
+                        ui::ExcludeEditorView {
+                            patterns: &s.exclude_patterns,
+                            selected: e.selected,
+                            adding: e.adding,
+                            input: &e.input,
+                            error: e.error.as_deref(),
+                        }
+                    }),
+                    keybindings: &s.keybindings,
+                    keybindings_view_open: s.settings.keybindings_view_open,
+                    keybindings_view_scroll: s.settings.keybindings_view_scroll,
+                    update_check_enabled: s.update_check_mode == UpdateCheckMode::Enabled,
+                    update_check_help: format_update_check_help(s.update_last_checked_secs),
+                };
                 ui::draw_settings_page(frame, main_inner, &settings_view, theme);
             }
 
@@ -377,8 +374,8 @@ impl App {
                     frame.buffer_mut(),
                     pf_area,
                     overlay,
-                    &config_remotes,
-                    &forward_health,
+                    &self.state.config_remotes,
+                    &self.state.forward_health,
                     theme,
                 );
             }

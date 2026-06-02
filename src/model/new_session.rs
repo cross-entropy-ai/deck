@@ -47,6 +47,11 @@ pub fn make_textarea(s: &str) -> TextArea<'static> {
     ta
 }
 
+/// First (only) line of a single-line `TextArea`, as a borrowed `&str`.
+pub fn textarea_line<'a>(ta: &'a TextArea<'a>) -> &'a str {
+    ta.lines().first().map(String::as_str).unwrap_or("")
+}
+
 /// Resolve a user-typed path to an absolute, normalized `PathBuf`.
 ///
 /// - Leading `~` expands to `$HOME`. `~/foo` → `<home>/foo`. Bare `~`
@@ -123,12 +128,12 @@ impl Default for NewSessionState {
 impl NewSessionState {
     /// First line of the `name` textarea.
     pub fn name_str(&self) -> &str {
-        self.name.lines().first().map(String::as_str).unwrap_or("")
+        textarea_line(&self.name)
     }
 
     /// First line of the `input` textarea.
     pub fn input_str(&self) -> &str {
-        self.input.lines().first().map(String::as_str).unwrap_or("")
+        textarea_line(&self.input)
     }
 
     /// Helper: rebuild `filtered` from current `input` and `entries`,

@@ -1,7 +1,7 @@
 use crate::config::ForwardMode;
+use crate::new_session::textarea_line;
 use crate::state::{
-    host_divider_menu_items, session_menu_disabled, session_menu_items, AppState, ContextMenu,
-    FocusMode, KillRequest,
+    session_menu_disabled, session_menu_items, AppState, ContextMenu, FocusMode, KillRequest,
     LayoutMode, MainView, MenuKind, PfAddForm, PfField, PortForwardOverlay, RemoteSwitchRequest,
     RenameRequest, RenameState, SessionTargetRef, SideEffect, ViewMode, SETTINGS_ITEM_COUNT,
 };
@@ -36,43 +36,40 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) {
     }
 }
 
+/// Advance focus to the next row (clamped to the last), filling the
+/// switch effect if the selection actually moved.
+fn focus_next(state: &mut AppState, fx: &mut SideEffect) {
+    let total = state.focusable_count();
+    if total > 0 {
+        let old = state.focused;
+        state.focused = (state.focused + 1).min(total - 1);
+        if state.focused != old {
+            fill_switch_effect(state, fx);
+        }
+    }
+}
+
+/// Move focus to the previous row, filling the switch effect if it moved.
+fn focus_prev(state: &mut AppState, fx: &mut SideEffect) {
+    if state.focused > 0 {
+        state.focused -= 1;
+        fill_switch_effect(state, fx);
+    }
+}
+
 pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
     let mut fx = SideEffect::default();
 
     match action {
-        Action::FocusNext => {
-            let total = state.focusable_count();
-            if total > 0 {
-                let old = state.focused;
-                state.focused = (state.focused + 1).min(total - 1);
-                if state.focused != old {
-                    fill_switch_effect(state, &mut fx);
-                }
-            }
-        }
-        Action::FocusPrev => {
-            if state.focused > 0 {
-                state.focused -= 1;
-                fill_switch_effect(state, &mut fx);
-            }
-        }
+        Action::FocusNext => focus_next(state, &mut fx),
+        Action::FocusPrev => focus_prev(state, &mut fx),
         Action::ScrollUp => {
             state.last_scroll = std::time::Instant::now();
-            if state.focused > 0 {
-                state.focused -= 1;
-                fill_switch_effect(state, &mut fx);
-            }
+            focus_prev(state, &mut fx);
         }
         Action::ScrollDown => {
             state.last_scroll = std::time::Instant::now();
-            let total = state.focusable_count();
-            if total > 0 {
-                let old = state.focused;
-                state.focused = (state.focused + 1).min(total - 1);
-                if state.focused != old {
-                    fill_switch_effect(state, &mut fx);
-                }
-            }
+            focus_next(state, &mut fx);
         }
         Action::FocusIndex(idx) => {
             // Mouse clicks pass a unified flat index (local rows then
@@ -226,7 +223,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::RenameConfirm => {
             if let Some(r) = state.overlay.renaming.take() {
-                let new_name = r.input.lines().first().map(String::as_str).unwrap_or("").trim().to_string();
+                let new_name = textarea_line(&r.input).trim().to_string();
                 // Skip no-op and reserved placeholder names (the latter
                 // would make a real session look like a synthetic row).
                 if !new_name.is_empty()
@@ -750,10 +747,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
 
         Action::OpenHostDividerMenu { host, x, y } => {
             state.overlay.context_menu = Some(ContextMenu {
-                kind: MenuKind::HostDivider {
-                    host: host.clone(),
-                    items: host_divider_menu_items(),
-                },
+                kind: MenuKind::HostDivider { host: host.clone() },
                 x,
                 y,
                 selected: 0,

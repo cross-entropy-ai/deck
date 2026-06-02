@@ -789,8 +789,8 @@ fn remove_remote_from_list_drops_host_and_signals_stop() {
 
 #[test]
 fn host_divider_menu_has_new_session_first_and_remove_last() {
-    use crate::state::host_divider_menu_items;
-    let items = host_divider_menu_items();
+    use crate::state::MenuKind;
+    let items = MenuKind::HostDivider { host: "h".into() }.items();
     assert_eq!(items.first().copied(), Some("New session"));
     assert!(items.contains(&"Port Forward"));
     // "Remove from list" is destructive — keep it last.

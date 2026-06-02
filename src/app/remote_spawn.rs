@@ -43,6 +43,15 @@ pub(super) enum RemoteSpawnEvent {
     },
 }
 
+impl RemoteSpawnEvent {
+    /// The host this event is about, regardless of outcome.
+    pub(super) fn host(&self) -> &str {
+        match self {
+            RemoteSpawnEvent::Spawned { host, .. } | RemoteSpawnEvent::Failed { host } => host,
+        }
+    }
+}
+
 /// Owns the receiver end of the spawn channel. Senders live inside the
 /// worker threads, which finish on their own after delivering one
 /// event. Dropping this struct closes the channel; any still-pending
@@ -85,31 +94,21 @@ fn spawn_one(host: String, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
             // `BatchMode=yes` keeps ssh from blocking on a hidden
             // password prompt — we'd never see it from the spawn
             // thread anyway, and it would deadlock the PTY.
-            // `-tt` forces TTY allocation (required for the remote
-            // tmux client). Multiplexing flags match the one-shot ssh
-            // calls in `remote_tmux` so they share a ControlMaster
-            // connection. The `PATH=...` prefix makes tmux discoverable
-            // when the remote user's tmux isn't on the default
-            // non-interactive PATH (e.g. Homebrew on macOS).
-            let argv: Vec<&str> = vec![
-                "-tt",
-                "-o",
-                "ControlMaster=auto",
-                "-o",
-                "ControlPath=~/.ssh/cm-%r@%h:%p",
-                "-o",
-                "ControlPersist=10m",
-                "-o",
-                "ConnectTimeout=5",
-                "-o",
-                "ServerAliveInterval=30",
-                "-o",
-                "BatchMode=yes",
+            // `-tt` forces TTY allocation (required for the remote tmux
+            // client). The multiplexing flags come from the shared
+            // `crate::ssh::CONTROL_OPTS` so this PTY lands on the same
+            // ControlMaster as the one-shot `remote_tmux` calls. The
+            // `PATH=...` prefix makes tmux discoverable when the remote
+            // user's tmux isn't on the default non-interactive PATH
+            // (e.g. Homebrew on macOS).
+            let mut argv: Vec<&str> = vec!["-tt"];
+            argv.extend_from_slice(crate::ssh::CONTROL_OPTS);
+            argv.extend_from_slice(&[
                 host_for_args.as_str(),
                 crate::remote_tmux::REMOTE_PATH_PREFIX,
                 "tmux",
                 "attach",
-            ];
+            ]);
             let event = match Pty::spawn("ssh", &argv, size) {
                 Ok(pty) => {
                     let parser = vt100::Parser::new(size.rows, size.cols, 0);

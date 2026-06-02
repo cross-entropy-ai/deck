@@ -7,7 +7,7 @@ use ratatui::Frame;
 use crate::keybindings::{Command, Keybindings};
 use crate::state::{LayoutMode, ViewMode};
 use crate::theme::Theme;
-use crate::ui::widgets::{popup_frame, style_textarea, PopupStyle, TextAreaColors};
+use crate::ui::widgets::{centered_rect, popup_frame, style_textarea, PopupStyle, TextAreaColors};
 
 use super::text::format_keys_for;
 use super::{ExcludeEditorView, SettingsView};
@@ -190,9 +190,7 @@ fn draw_keybindings_view(
         .max(30);
     let content_height = rows.len() as u16 + 6;
     let popup_height = content_height.min(area.height.saturating_sub(2)).max(7);
-    let x = area.x + area.width.saturating_sub(popup_width) / 2;
-    let y = area.y + area.height.saturating_sub(popup_height) / 2;
-    let popup_area = Rect::new(x, y, popup_width, popup_height);
+    let popup_area = centered_rect(area, popup_width, popup_height);
 
     let inner = popup_frame(
         frame.buffer_mut(),
@@ -268,9 +266,7 @@ fn draw_theme_picker(frame: &mut Frame, area: Rect, settings: &SettingsView, the
     let height = (settings.theme_names.len() as u16 + 2).min(area.height.saturating_sub(2));
     let popup_width = (width as u16).min(area.width.saturating_sub(2)).max(12);
     let popup_height = height.max(3);
-    let x = area.x + area.width.saturating_sub(popup_width) / 2;
-    let y = area.y + area.height.saturating_sub(popup_height) / 2;
-    let popup_area = Rect::new(x, y, popup_width, popup_height);
+    let popup_area = centered_rect(area, popup_width, popup_height);
 
     let inner = popup_frame(
         frame.buffer_mut(),
@@ -327,9 +323,7 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
     let width = (max_pattern_width as u16 + 8)
         .max(30)
         .min(area.width.saturating_sub(4));
-    let x = area.x + area.width.saturating_sub(width) / 2;
-    let y = area.y + area.height.saturating_sub(height) / 2;
-    let popup_area = Rect::new(x, y, width, height);
+    let popup_area = centered_rect(area, width, height);
 
     let inner = popup_frame(
         frame.buffer_mut(),
