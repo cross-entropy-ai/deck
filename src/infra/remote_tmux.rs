@@ -78,9 +78,14 @@ fn run_ssh(
         .map(|out| out.stdout_trimmed())
 }
 
-/// List tmux sessions on `host`. `None` means the call failed (host
-/// unreachable, ssh/tmux error, timeout); `Some(empty)` means the
-/// host responded but has no tmux server / no sessions.
+/// List tmux sessions on `host`.
+///
+/// - `None` — ssh couldn't reach the host (connection refused, timeout,
+///   auth, DNS); ssh reports these as its own exit status 255.
+/// - `Some(empty)` — ssh connected but the host has no tmux server up,
+///   so `tmux list-sessions` exited non-zero with "no server running".
+///   The host is reachable, it just has no sessions.
+/// - `Some(non-empty)` — the live session list.
 pub fn list_sessions(host: &str) -> Option<Vec<SessionInfo>> {
     list_sessions_with(default_runner(), host)
 }
@@ -92,9 +97,33 @@ fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Sess
     // bash/zsh; a POSIX-only remote shell would need a different
     // escape, but that's an acceptable tradeoff today.
     let format = "$'#{session_name}\\t#{session_path}'";
-    let raw = run_ssh(runner, host, &["tmux", "list-sessions", "-F", format]).ok()?;
-    let window_activity = latest_window_activity_with(runner, host);
-    Some(parse_sessions(&raw, &window_activity))
+    match run_ssh(runner, host, &["tmux", "list-sessions", "-F", format]) {
+        Ok(raw) => {
+            let window_activity = latest_window_activity_with(runner, host);
+            Some(parse_sessions(&raw, &window_activity))
+        }
+        // ssh connected but the remote command exited non-zero — almost
+        // always "no server running" because the host has no tmux server.
+        // Reachable, just no sessions: report an empty list, not down.
+        Err(err) if !ssh_connect_failed(&err) => Some(Vec::new()),
+        // ssh itself failed to reach the host — genuinely unreachable.
+        Err(_) => None,
+    }
+}
+
+/// Did the ssh call fail to reach the host at all, as opposed to
+/// reaching it and having the remote command exit non-zero?
+///
+/// ssh maps its *own* failures (connection refused, timeout, auth, DNS,
+/// host-key) to exit status 255. Any other non-zero status is the remote
+/// command's exit code, so ssh connected fine. A missing ssh binary, a
+/// timeout, or a signal-killed ssh (no exit code) all count as
+/// "couldn't reach".
+fn ssh_connect_failed(err: &CommandError) -> bool {
+    match err {
+        CommandError::Spawn { .. } | CommandError::Timeout { .. } => true,
+        CommandError::NonZero { status, .. } => !matches!(status.code(), Some(code) if code != 255),
+    }
 }
 
 fn latest_window_activity_with(runner: &dyn CommandRunner, host: &str) -> HashMap<String, u64> {
@@ -137,6 +166,54 @@ pub fn rename_session(host: &str, old_name: &str, new_name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::infra::command::Output;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+    use std::sync::Mutex;
+
+    fn exit_status(code: i32) -> ExitStatus {
+        ExitStatus::from_raw(code << 8)
+    }
+
+    /// Hands back the configured result for the `list-sessions` call and
+    /// succeeds (empty) for anything else — namely the follow-up
+    /// `list-windows` activity probe in the reachable path.
+    struct FakeRunner {
+        list_sessions: Mutex<Option<Result<Output, CommandError>>>,
+    }
+
+    impl FakeRunner {
+        fn new(list_sessions: Result<Output, CommandError>) -> Self {
+            Self {
+                list_sessions: Mutex::new(Some(list_sessions)),
+            }
+        }
+    }
+
+    impl CommandRunner for FakeRunner {
+        fn run(
+            &self,
+            _program: &str,
+            args: &[&str],
+            _timeout: Duration,
+        ) -> Result<Output, CommandError> {
+            if args.iter().any(|a| *a == "list-sessions") {
+                self.list_sessions
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("list-sessions should be called once")
+            } else {
+                Ok(Output { stdout: Vec::new() })
+            }
+        }
+    }
+
+    fn ok(stdout: &str) -> Result<Output, CommandError> {
+        Ok(Output {
+            stdout: stdout.as_bytes().to_vec(),
+        })
+    }
 
     #[test]
     fn base_args_include_multiplexing() {
@@ -145,5 +222,48 @@ mod tests {
         assert!(joined.contains("ControlMaster=auto"));
         assert!(joined.contains("ControlPersist=10m"));
         assert!(joined.contains("BatchMode=yes"));
+    }
+
+    #[test]
+    fn reachable_host_with_sessions_lists_them() {
+        let runner = FakeRunner::new(ok("main\t/home/me"));
+        let sessions = list_sessions_with(&runner, "box").expect("reachable host");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].name, "main");
+    }
+
+    #[test]
+    fn reachable_host_without_server_reports_no_sessions() {
+        // No tmux server up: `tmux list-sessions` exits 1 with
+        // "no server running". The host is reachable, so this must be an
+        // empty list (→ "(no sessions)"), not unreachable.
+        let runner = FakeRunner::new(Err(CommandError::NonZero {
+            program: "ssh".to_string(),
+            status: exit_status(1),
+            stderr: b"no server running on /tmp/tmux-1000/default".to_vec(),
+        }));
+        let result = list_sessions_with(&runner, "box");
+        assert!(result.is_some(), "reachable host should not be None");
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn ssh_connection_failure_is_unreachable() {
+        // ssh reports its own connection failures as exit 255.
+        let runner = FakeRunner::new(Err(CommandError::NonZero {
+            program: "ssh".to_string(),
+            status: exit_status(255),
+            stderr: b"ssh: connect to host box port 22: Connection refused".to_vec(),
+        }));
+        assert!(list_sessions_with(&runner, "box").is_none());
+    }
+
+    #[test]
+    fn timeout_is_unreachable() {
+        let runner = FakeRunner::new(Err(CommandError::Timeout {
+            program: "ssh".to_string(),
+            elapsed: Duration::from_secs(5),
+        }));
+        assert!(list_sessions_with(&runner, "box").is_none());
     }
 }
