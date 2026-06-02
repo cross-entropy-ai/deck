@@ -260,16 +260,12 @@ impl App {
             };
 
             // Built only when the Settings page is actually showing —
-            // it allocates `theme_names` and the update-check help string,
-            // which would otherwise be thrown away every other frame.
+            // it allocates the update-check help string, which would
+            // otherwise be thrown away every other frame.
             if warning_state.is_none() && main_view == MainView::Settings {
                 let settings_view = SettingsView {
                     selected: s.settings.selected,
-                    focus_main: s.focus_mode == FocusMode::Main,
                     theme_name: THEMES[s.theme_index].name,
-                    theme_picker_open: s.settings.theme_picker_open,
-                    theme_picker_selected: s.settings.theme_picker_selected,
-                    theme_names: THEMES.iter().map(|theme| theme.name).collect(),
                     layout_mode: s.layout_mode,
                     show_borders: s.show_borders,
                     view_mode: s.view_mode,
@@ -290,6 +286,22 @@ impl App {
                     update_check_help: format_update_check_help(s.update_last_checked_secs),
                 };
                 ui::draw_settings_page(frame, main_inner, &settings_view, theme);
+            }
+
+            // Theme picker — a standalone overlay drawn over the main pane
+            // whenever it's open, on top of the settings page if that's
+            // showing or directly over the terminal when opened from the
+            // sidebar (`t`). Decoupled from the settings page so it can
+            // bypass it entirely.
+            if warning_state.is_none() && s.settings.theme_picker_open {
+                let theme_names: Vec<&str> = THEMES.iter().map(|t| t.name).collect();
+                ui::draw_theme_picker(
+                    frame,
+                    main_inner,
+                    &theme_names,
+                    s.settings.theme_picker_selected,
+                    theme,
+                );
             }
 
             if let Some(warning_state) = warning_state {

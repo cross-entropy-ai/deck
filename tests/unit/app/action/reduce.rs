@@ -168,6 +168,19 @@ fn settings_adjust_theme_opens_picker() {
 }
 
 #[test]
+fn open_theme_picker_from_sidebar_bypasses_settings() {
+    let mut state = make_test_state(1);
+    state.focus_mode = FocusMode::Sidebar;
+    state.main_view = MainView::Terminal;
+    apply_action(&mut state, Action::OpenThemePicker);
+    assert!(state.settings.theme_picker_open);
+    // The picker overlays the current view rather than entering the
+    // settings page, so neither the view nor the focus changes.
+    assert_eq!(state.main_view, MainView::Terminal);
+    assert_eq!(state.focus_mode, FocusMode::Sidebar);
+}
+
+#[test]
 fn confirm_theme_picker_selects_theme_and_saves() {
     let mut state = make_test_state(1);
     state.theme_index = 0;
@@ -219,6 +232,30 @@ fn toggle_focus() {
     assert_eq!(state.focus_mode, FocusMode::Sidebar);
     apply_action(&mut state, Action::ToggleFocus);
     assert_eq!(state.focus_mode, FocusMode::Main);
+}
+
+#[test]
+fn toggle_focus_to_sidebar_closes_settings() {
+    let mut state = make_test_state(1);
+    apply_action(&mut state, Action::OpenSettings);
+    state.settings.theme_picker_open = true;
+    assert_eq!(state.main_view, MainView::Settings);
+
+    // Moving focus off the settings page and onto the session list closes
+    // the page outright rather than leaving it lingering unfocused.
+    apply_action(&mut state, Action::ToggleFocus);
+    assert_eq!(state.focus_mode, FocusMode::Sidebar);
+    assert_eq!(state.main_view, MainView::Terminal);
+    assert!(!state.settings.theme_picker_open);
+}
+
+#[test]
+fn set_focus_sidebar_closes_settings() {
+    let mut state = make_test_state(1);
+    apply_action(&mut state, Action::OpenSettings);
+    apply_action(&mut state, Action::SetFocusSidebar);
+    assert_eq!(state.focus_mode, FocusMode::Sidebar);
+    assert_eq!(state.main_view, MainView::Terminal);
 }
 
 #[test]

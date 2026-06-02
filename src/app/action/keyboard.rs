@@ -35,6 +35,13 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         return pf_key(key, overlay);
     }
 
+    // The theme picker is a standalone modal: when open it captures all
+    // keys, whether it was opened from the settings page or straight from
+    // the sidebar (`t`), which bypasses the page entirely.
+    if state.settings.theme_picker_open {
+        return theme_picker_key_to_action(key);
+    }
+
     if let Some(cmd) = state.keybindings.lookup(key) {
         if cmd.is_global() {
             return command_to_action(cmd);
@@ -47,9 +54,6 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         }
         if state.overlay.exclude_editor.is_some() {
             return exclude_editor_key_to_action(key, state);
-        }
-        if state.settings.theme_picker_open {
-            return theme_picker_key_to_action(key);
         }
         return settings_key_to_action(key);
     }

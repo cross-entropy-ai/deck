@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Widget};
+use ratatui::widgets::{Block, Clear, Paragraph, Widget};
 use ratatui::Frame;
 
 use crate::keybindings::{Command, Keybindings};
@@ -124,23 +124,16 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
         "  j/k move  h/l change  Enter select  Esc close",
         Style::default().fg(theme.muted),
     )));
-    lines.push(Line::from(Span::styled(
-        if settings.focus_main {
-            "  Settings focus is active."
-        } else {
-            "  Press Ctrl+s to move focus back here."
-        },
-        Style::default().fg(theme.dim),
-    )));
 
     frame.render_widget(
         Paragraph::new(lines).style(Style::default().bg(theme.bg)),
         area,
     );
 
-    if settings.theme_picker_open {
-        draw_theme_picker(frame, area, settings, theme);
-    }
+    // The theme picker is drawn by the render loop, not here: it's a
+    // standalone overlay that can be opened from the sidebar (`t`)
+    // without entering this page, so it renders over whatever main view
+    // is active. See `App::render`.
 
     if let Some(ref editor) = settings.exclude_editor {
         draw_exclude_editor(frame, area, editor, theme);
@@ -254,19 +247,45 @@ fn draw_keybindings_view(
     );
 }
 
-fn draw_theme_picker(frame: &mut Frame, area: Rect, settings: &SettingsView, theme: &Theme) {
-    let width = settings
-        .theme_names
+/// Draw the theme picker overlay centered in `area`. Decoupled from the
+/// settings page so it can also be opened standalone from the sidebar
+/// (`t`) — the render loop calls this whenever the picker is open,
+/// regardless of which main view is showing.
+pub fn draw_theme_picker(
+    frame: &mut Frame,
+    area: Rect,
+    theme_names: &[&str],
+    selected_idx: usize,
+    theme: &Theme,
+) {
+    let width = theme_names
         .iter()
         .map(|name| name.len())
         .max()
         .unwrap_or(12)
         .min(area.width.saturating_sub(4) as usize)
         + 6;
-    let height = (settings.theme_names.len() as u16 + 2).min(area.height.saturating_sub(2));
+    let height = (theme_names.len() as u16 + 2).min(area.height.saturating_sub(2));
     let popup_width = (width as u16).min(area.width.saturating_sub(2)).max(12);
     let popup_height = height.max(3);
     let popup_area = centered_rect(area, popup_width, popup_height);
+
+    // Pad the popup background by one cell on the left and right (not top
+    // or bottom) so the overlay floats with a little horizontal breathing
+    // room instead of sitting flush on the content behind it. Clamped to
+    // `area` so the padding never spills past the pane it's drawn in.
+    let left = popup_area.x.saturating_sub(1).max(area.x);
+    let right = (popup_area.right() + 1).min(area.right());
+    let halo = Rect {
+        x: left,
+        y: popup_area.y,
+        width: right - left,
+        height: popup_area.height,
+    };
+    Clear.render(halo, frame.buffer_mut());
+    Block::default()
+        .style(Style::default().bg(theme.surface))
+        .render(halo, frame.buffer_mut());
 
     let inner = popup_frame(
         frame.buffer_mut(),
@@ -279,12 +298,11 @@ fn draw_theme_picker(frame: &mut Frame, area: Rect, settings: &SettingsView, the
     );
 
     let inner_w = inner.width as usize;
-    let lines: Vec<Line> = settings
-        .theme_names
+    let lines: Vec<Line> = theme_names
         .iter()
         .enumerate()
         .map(|(idx, name)| {
-            let selected = idx == settings.theme_picker_selected;
+            let selected = idx == selected_idx;
             let label = format!(" {:<width$}", name, width = inner_w.saturating_sub(1));
             if selected {
                 Line::from(Span::styled(

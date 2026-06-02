@@ -19,7 +19,7 @@ pub use menu::draw_context_menu;
 pub use add_remote::draw_add_remote;
 pub use new_session::draw_new_session;
 pub use reload::{draw_reload_bar, reload_row_count};
-pub use settings::draw_settings_page;
+pub use settings::{draw_settings_page, draw_theme_picker};
 pub use sidebar::{draw_sidebar, SidebarProps};
 
 /// Runtime state of a configured plugin, used by the sidebar footer.
@@ -156,11 +156,7 @@ pub struct NewSessionView<'a> {
 
 pub struct SettingsView<'a> {
     pub selected: usize,
-    pub focus_main: bool,
     pub theme_name: &'a str,
-    pub theme_picker_open: bool,
-    pub theme_picker_selected: usize,
-    pub theme_names: Vec<&'a str>,
     pub layout_mode: LayoutMode,
     pub show_borders: bool,
     pub view_mode: ViewMode,

@@ -9,6 +9,22 @@ use crate::theme::THEMES;
 
 use super::Action;
 
+/// Tear down the settings page and its sub-overlays, returning the main
+/// pane to the terminal. Called when focus moves to the sidebar while
+/// settings is open: the page shouldn't linger unfocused behind the
+/// session list, so leaving it for the sidebar closes it outright — the
+/// same end state as `Esc`, just with focus on the sidebar. A no-op when
+/// settings isn't showing (the sub-overlays can't be open without it).
+fn close_settings_page(state: &mut AppState) {
+    if state.main_view != MainView::Settings {
+        return;
+    }
+    state.main_view = MainView::Terminal;
+    state.settings.theme_picker_open = false;
+    state.settings.keybindings_view_open = false;
+    state.overlay.exclude_editor = None;
+}
+
 /// Fill the appropriate `SideEffect` field based on the currently
 /// focused row — `switch_session` for a local row, `switch_remote`
 /// for a remote one. Local-vs-remote dispatch lives in
@@ -296,8 +312,11 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.merge(inner);
         }
         Action::OpenThemePicker => {
-            state.main_view = MainView::Settings;
-            state.focus_mode = FocusMode::Main;
+            // Opens as a standalone overlay over the current view — from
+            // the sidebar (`t`) it does *not* enter the settings page,
+            // and from the settings page it simply layers on top. Leaving
+            // `main_view`/`focus_mode` untouched is what lets it do both:
+            // closing the picker returns to wherever it was opened from.
             state.settings.theme_picker_open = true;
             state.settings.theme_picker_selected =
                 state.theme_index.min(THEMES.len().saturating_sub(1));
@@ -565,7 +584,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::SetFocusSidebar => {
             state.focus_mode = FocusMode::Sidebar;
-            state.settings.theme_picker_open = false;
+            close_settings_page(state);
         }
         Action::ToggleFocus => {
             state.focus_mode = match state.focus_mode {
@@ -573,7 +592,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 FocusMode::Sidebar => FocusMode::Main,
             };
             if state.focus_mode == FocusMode::Sidebar {
-                state.settings.theme_picker_open = false;
+                close_settings_page(state);
             }
         }
 
