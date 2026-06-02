@@ -91,6 +91,11 @@ pub struct App {
     /// = the remote terminal for that host does. Switched by selecting
     /// a session in the sidebar.
     active_remote: Option<String>,
+    /// A switch deferred until a host's attach PTY finishes (re)connecting.
+    /// Set when creating a session on a host whose PTY isn't live yet (it
+    /// had no tmux server, so there was nothing to attach to); fired from
+    /// the spawner's `Spawned` event so the user lands on the new session.
+    pending_remote_switch: Option<crate::state::RemoteSwitchRequest>,
     spinner: rattles::Rattler<rattles::presets::braille::Dots>,
     nesting_guard: NestingGuard,
     warning_state: Option<WarningState>,
@@ -226,6 +231,7 @@ impl App {
             remote_conns,
             remote_spawner,
             active_remote: None,
+            pending_remote_switch: None,
             spinner: rattles::presets::braille::dots(),
             nesting_guard,
             warning_state: None,
@@ -345,14 +351,33 @@ impl App {
                 match ev {
                     remote_spawn::RemoteSpawnEvent::Spawned { host, pane } => {
                         self.remote_conns.insert(
-                            host,
+                            host.clone(),
                             RemoteConn {
                                 status: RemoteConnStatus::Connected,
                                 pane: Some(*pane),
                             },
                         );
+                        // A create-on-empty-host deferred its switch until
+                        // the PTY came up — fire it now that it's live.
+                        if self
+                            .pending_remote_switch
+                            .as_ref()
+                            .is_some_and(|req| req.host == host)
+                        {
+                            let req = self.pending_remote_switch.take().unwrap();
+                            self.switch_to_remote(&req.host, &req.name);
+                        }
                     }
                     remote_spawn::RemoteSpawnEvent::Failed { host } => {
+                        // The deferred switch can't happen; drop it so a
+                        // later unrelated reconnect doesn't trigger it.
+                        if self
+                            .pending_remote_switch
+                            .as_ref()
+                            .is_some_and(|req| req.host == host)
+                        {
+                            self.pending_remote_switch = None;
+                        }
                         self.remote_conns.insert(
                             host,
                             RemoteConn {

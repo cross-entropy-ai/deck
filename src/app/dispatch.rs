@@ -371,7 +371,7 @@ impl App {
     /// recovery of a dropped PTY is handled by `respawn_remote_host`
     /// (the reconnect button and refresh auto-recovery), so switching
     /// starts working again once the pane reconnects.
-    fn switch_to_remote(&mut self, host: &str, name: &str) {
+    pub(super) fn switch_to_remote(&mut self, host: &str, name: &str) {
         use crate::app::RemoteConnStatus;
         let connected = self.remote_conns.get(host).is_some_and(|c| {
             matches!(c.status, RemoteConnStatus::Connected) && c.pane.is_some()
@@ -867,12 +867,29 @@ impl App {
     }
 
     /// Create a session on a remote host (blocking ssh, user-initiated)
-    /// and best-effort switch to it. `dir` keeps its `~` for the remote
-    /// shell to expand. The accompanying `refresh_sessions` side effect
-    /// re-queries the host so the new row shows under its `@host` group.
+    /// and switch to it. `dir` keeps its `~` for the remote shell to
+    /// expand. The accompanying `refresh_sessions` side effect re-queries
+    /// the host so the new row shows under its `@host` group.
+    ///
+    /// If the host's attach PTY is already live, switch immediately.
+    /// Otherwise the host had no tmux server (nothing to attach to), so
+    /// reconnect now that a session exists and defer the switch until the
+    /// PTY comes up — the spawner's `Spawned` event fires it.
     fn create_remote_session(&mut self, host: &str, name: &str, dir: &str) {
-        if crate::remote_tmux::new_session(host, name, dir) {
+        if !crate::remote_tmux::new_session(host, name, dir) {
+            return;
+        }
+        let connected = self.remote_conns.get(host).is_some_and(|c| {
+            matches!(c.status, crate::app::RemoteConnStatus::Connected) && c.pane.is_some()
+        });
+        if connected {
             self.switch_to_remote(host, name);
+        } else {
+            self.pending_remote_switch = Some(crate::state::RemoteSwitchRequest {
+                host: host.to_string(),
+                name: name.to_string(),
+            });
+            self.respawn_remote_host(host);
         }
     }
 
