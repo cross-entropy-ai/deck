@@ -1133,10 +1133,6 @@ impl AppState {
         self.filtered.len() + self.remote_sessions.len()
     }
 
-    /// Build the unified sidebar layout: a flat list of header /
-    /// session items in render order. Renderers and the mouse
-    /// hit-tester share this so they can't disagree about which row
-    /// lives where.
     /// Optimistically mark a host's rows as reconnecting so the sidebar
     /// shows "(connecting...)" the instant the user hits the divider's
     /// reconnect button, before the refresh round returns.
@@ -1149,6 +1145,10 @@ impl AppState {
         }
     }
 
+    /// Build the unified sidebar layout: a flat list of header /
+    /// session items in render order. Renderers and the mouse
+    /// hit-tester share this so they can't disagree about which row
+    /// lives where.
     pub fn sidebar_layout(&self, view_mode: ViewMode) -> SidebarLayout {
         let card_h = card_height(view_mode) as u16;
         let mut layout = SidebarLayout::new();

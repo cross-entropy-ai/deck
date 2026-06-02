@@ -312,13 +312,9 @@ impl App {
         let mut config_mtime_seen = crate::config::config_mtime();
 
         loop {
-            // Drain the local terminal. OSC52 (clipboard) is only
-            // forwarded from the pane the user is *actively viewing*
-            // — never from a background pane. The selection that
-            // produced the sequence happened where the user is
-            // looking, so the clipboard write follows the user's
-            // gaze; an inactive remote can't silently overwrite the
-            // user's clipboard.
+            // Drain the local terminal. OSC52 (clipboard) is forwarded
+            // only from the actively-viewed pane, so a background remote
+            // can't silently overwrite the user's clipboard.
             let local_is_active = self.active_remote.is_none();
             for event in self.local_terminal.pty.drain() {
                 match event {

@@ -47,9 +47,9 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
     // inner row layout: name, path, blank, entries..., blank, [error,] footer
     let n_entry_rows = visible_entries.max(1) as u16;
     let mut row_constraints = vec![
-        Constraint::Length(1), // name row
-        Constraint::Length(1), // path row
-        Constraint::Length(1), // blank
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
     ];
     for _ in 0..n_entry_rows {
         row_constraints.push(Constraint::Length(1));

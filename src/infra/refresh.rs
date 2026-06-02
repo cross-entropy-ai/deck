@@ -211,13 +211,11 @@ fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>) {
     (current, rows)
 }
 
-/// Query each remote host in parallel for its tmux sessions. Each host
-/// gets its own thread (one at a time, joined sequentially); this is
-/// fine because the per-host SSH call itself takes a few hundred ms
-/// and we'd rather max out at N parallel TCP roundtrips than serialize
-/// them. The thread join is bounded by the underlying ssh timeout in
-/// `remote_tmux` (5s), so a dead host can stall this call by at most
-/// that much.
+/// Query each remote host for its tmux sessions in parallel: one thread
+/// per host, all spawned up front, then joined in order. N concurrent
+/// TCP roundtrips beat serializing the few-hundred-ms-each SSH calls.
+/// Each join is bounded by `remote_tmux`'s 5s ssh timeout, so one dead
+/// host stalls this call by at most that much.
 fn collect_remotes(remotes: &[String]) -> Vec<RemoteSnapshotRow> {
     if remotes.is_empty() {
         return Vec::new();

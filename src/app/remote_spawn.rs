@@ -14,9 +14,9 @@
 //! 2. Each tick the main loop calls `try_recv` to drain pending
 //!    events without blocking; the app inserts the `TerminalPane`
 //!    into `remote_terminals` or stamps a failure status.
-//! 3. Threads exit when their spawn is done. Reconnect is not yet
-//!    automatic — a future change will trigger respawns on user
-//!    action.
+//! 3. Threads exit when their spawn is done. Respawns are triggered on
+//!    demand by `App::respawn_remote_host` — via the reconnect button,
+//!    refresh-driven auto-recovery, and host onboarding.
 
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
