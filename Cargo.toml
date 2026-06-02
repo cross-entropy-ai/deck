@@ -24,6 +24,3 @@ ratatui-textarea = "0.9.1"
 # carries fixes we depend on. See docs/vt100-fork.md for what's
 # patched and how to maintain it.
 vt100 = { git = "https://github.com/Junyi-99/vt100-rust", branch = "deck" }
-
-[dev-dependencies]
-tempfile = "3.27.0"
