@@ -9,7 +9,32 @@
 
 use unicode_width::UnicodeWidthStr;
 
+use super::text::truncate;
 use crate::state::ViewMode;
+
+/// Max display width of each side of a remote tab label. A remote tab
+/// reads `host:session`; capping both sides keeps the whole label within
+/// 13 columns (6 + ":" + 6), an ellipsis taking over past that.
+pub const TAB_REMOTE_SIDE_MAX: usize = 6;
+
+/// Visible label for a session tab in the vertical/tabs layout.
+///
+/// Local sessions (`host == None`) show their bare name. Remote sessions
+/// show `host:session`, each side truncated to `TAB_REMOTE_SIDE_MAX`; a
+/// loading placeholder (empty name) shows just the host. Shared by the
+/// tab renderer and the click hit-tester so tab widths and click targets
+/// can't drift apart.
+pub fn tab_label(host: Option<&str>, name: &str) -> String {
+    match host {
+        None => name.to_string(),
+        Some(host) if name.is_empty() => truncate(host, TAB_REMOTE_SIDE_MAX),
+        Some(host) => format!(
+            "{}:{}",
+            truncate(host, TAB_REMOTE_SIDE_MAX),
+            truncate(name, TAB_REMOTE_SIDE_MAX),
+        ),
+    }
+}
 
 /// Leading padding (in columns) before the first tab in the tab bar.
 pub const TAB_LEADING_PAD: u16 = 1;
@@ -71,3 +96,7 @@ pub fn context_menu_width(items: &[&str]) -> u16 {
     let max_len = items.iter().map(|s| s.len()).max().unwrap_or(0);
     (max_len as u16) + 4 // 1 border + 1 padding each side + 1 border
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/ui/layout.rs"]
+mod tests;

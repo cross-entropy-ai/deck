@@ -14,6 +14,7 @@ pub fn draw_context_menu(
     menu_y: u16,
     selected: usize,
     items: &[&str],
+    disabled: &[&str],
     theme: &Theme,
 ) {
     let w = context_menu_width(items);
@@ -40,7 +41,14 @@ pub fn draw_context_menu(
         .enumerate()
         .map(|(i, item)| {
             let label = format!(" {:<width$}", item, width = inner_w.saturating_sub(1));
-            if i == selected {
+            if disabled.contains(item) {
+                // Greyed-out: shown for context but not selectable, so it
+                // never takes the accent highlight even at `selected`.
+                Line::from(Span::styled(
+                    label,
+                    Style::default().fg(theme.dim).bg(theme.surface),
+                ))
+            } else if i == selected {
                 Line::from(Span::styled(
                     label,
                     Style::default().fg(theme.bg).bg(theme.accent),

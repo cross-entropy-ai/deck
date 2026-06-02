@@ -149,6 +149,9 @@ pub struct NewSessionView<'a> {
     pub filtered: &'a [usize],
     pub selected: usize,
     pub error: Option<&'a str>,
+    /// `Some(host)` when creating on a remote host — shown in the title,
+    /// and the dir browser is listing that host over ssh.
+    pub host: Option<&'a str>,
 }
 
 pub struct SettingsView<'a> {

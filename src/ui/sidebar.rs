@@ -21,8 +21,8 @@ use ratatui_textarea::TextArea;
 
 use super::overlays::{draw_confirm_kill, draw_help, draw_rename_input};
 use super::text::{
-    format_activity_compact, format_idle_badge, idle_color, pack_hint_lines, pad_line,
-    primary_key_string, shorten_dir, status_color, status_icon, status_icon_compact, truncate,
+    format_idle_badge, idle_color, pack_hint_lines, pad_line, primary_key_string, shorten_dir,
+    status_color, status_icon, status_icon_compact, truncate,
 };
 use super::{PluginStatus, PluginView, SessionActivity, SessionOrigin, SidebarSession};
 use crate::state::SessionStatus;
@@ -123,22 +123,17 @@ pub fn draw_sidebar(
     };
 
     if props.tabs_mode {
-        // Tabs mode currently shows only local sessions; map focus
-        // back to a plain local index, defaulting to 0 when focus is
-        // on a remote row (those just aren't reachable here). Local
-        // rows occupy the first `local_count` flat indices.
-        let focused_local = match props.focus_target {
-            Some(t) if t.0 < props.local_count => t.0,
-            _ => 0,
-        };
-        let local_sessions = &props.sessions[..props.local_count];
+        // Tabs mode shows the unified session list (local rows first,
+        // then remotes) so the flat focus index maps straight through —
+        // remotes render as `host:session` tabs alongside local ones.
+        let focused = props.focus_target.map_or(0, |t| t.0);
         let banner_bounds = draw_sidebar_tabs(
             frame,
             area,
             &ctx,
             TabsProps {
-                sessions: local_sessions,
-                focused: focused_local,
+                sessions: props.sessions,
+                focused,
                 sidebar_active: props.sidebar_active,
                 show_borders: props.show_borders,
             },
@@ -1017,8 +1012,17 @@ fn draw_sidebar_tabs(
     for (i, session) in sessions.iter().enumerate() {
         let is_focused = i == focused;
 
+        // Remote sessions read `host:session` (each side capped); local
+        // sessions keep their bare name.
+        let label = match session.origin() {
+            SessionOrigin::Local => crate::layout::tab_label(None, session.name()),
+            SessionOrigin::Remote { host } => crate::layout::tab_label(Some(host), session.name()),
+        };
+
         let bg = if is_focused { theme.surface } else { theme.bg };
-        let name_fg = if is_focused {
+        let name_fg = if session.unreachable() {
+            theme.dim
+        } else if is_focused {
             theme.green
         } else {
             theme.secondary
@@ -1035,7 +1039,7 @@ fn draw_sidebar_tabs(
         ));
         spans.push(Span::styled(inner_pad.clone(), Style::default().bg(bg)));
         spans.push(Span::styled(
-            session.name().to_string(),
+            label,
             Style::default()
                 .fg(name_fg)
                 .bg(bg)
@@ -1099,56 +1103,9 @@ fn draw_sidebar_tabs(
         tab_area,
     );
 
-    if content.height > 1 {
-        let detail_area = Rect {
-            y: content.y + 1,
-            height: content.height - 1,
-            ..content
-        };
-
-        if let Some(&session) = sessions.get(focused) {
-            let avail = content.width as usize;
-            let dir = shorten_dir(session.dir());
-            // Tabs mode is local-only today, so the activity is always
-            // Some(...) for the rows we're given. Fall back to neutral
-            // defaults if a non-local row ever slips in.
-            let activity = session.activity().unwrap_or(SessionActivity {
-                status: SessionStatus::Idle,
-                idle_seconds: 0,
-                is_current: false,
-            });
-            let dir_activity = format_activity_compact(activity.idle_seconds, ctx.spinner_frame);
-            let status_text =
-                status_icon_compact(activity.status, activity.is_current, ctx.spinner_frame);
-            let status_color = status_color(
-                activity.status,
-                activity.is_current,
-                theme,
-                ctx.blink_on,
-                true,
-            );
-
-            let mut tail = format!("  {}", dir);
-            tail.push_str(&format!("  {}", dir_activity));
-            let tail = truncate(&tail, avail.saturating_sub(status_text.width() + 2));
-
-            let detail_line = pad_line(
-                vec![
-                    Span::styled(
-                        format!(" {} ", status_text),
-                        Style::default().fg(status_color).bg(theme.bg),
-                    ),
-                    Span::styled(tail, Style::default().fg(theme.subtle).bg(theme.bg)),
-                ],
-                theme.bg,
-                avail,
-            );
-            frame.render_widget(
-                Paragraph::new(vec![detail_line]).style(Style::default().bg(theme.bg)),
-                detail_area,
-            );
-        }
-    }
+    // Vertical/tabs mode is a single tab-switching row. The working
+    // directory + activity indicator that used to fill the rows below
+    // is intentionally omitted here so the layout stays one row tall.
 
     None
 }

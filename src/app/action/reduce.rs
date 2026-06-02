@@ -1,6 +1,7 @@
 use crate::config::ForwardMode;
 use crate::state::{
-    host_divider_menu_items, session_menu_items, AppState, ContextMenu, FocusMode, KillRequest,
+    host_divider_menu_items, session_menu_disabled, session_menu_items, AppState, ContextMenu,
+    FocusMode, KillRequest,
     LayoutMode, MainView, MenuKind, PfAddForm, PfField, PortForwardOverlay, RemoteSwitchRequest,
     RenameRequest, RenameState, SessionTargetRef, SideEffect, ViewMode, SETTINGS_ITEM_COUNT,
 };
@@ -22,9 +23,10 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) {
         Some(SessionTargetRef::Local(row)) => {
             fx.switch_session = Some(row.name.clone());
         }
-        // Placeholder rows (loading) and dead hosts have no
-        // session name to switch to. Skip silently.
-        Some(SessionTargetRef::Remote(row)) if !row.unreachable && !row.loading => {
+        // Synthetic placeholder rows (loading, unreachable, or the
+        // "no sessions" marker) have no real session to switch to. Skip
+        // silently so a click doesn't fire a doomed remote switch.
+        Some(SessionTargetRef::Remote(row)) if row.is_attachable_session() => {
             fx.switch_remote = Some(RemoteSwitchRequest {
                 host: row.host.clone(),
                 name: row.name.clone(),
@@ -225,7 +227,12 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::RenameConfirm => {
             if let Some(r) = state.overlay.renaming.take() {
                 let new_name = r.input.lines().first().map(String::as_str).unwrap_or("").trim().to_string();
-                if !new_name.is_empty() && new_name != r.original_name {
+                // Skip no-op and reserved placeholder names (the latter
+                // would make a real session look like a synthetic row).
+                if !new_name.is_empty()
+                    && new_name != r.original_name
+                    && !crate::state::is_reserved_session_name(&new_name)
+                {
                     fx.rename_session = Some(RenameRequest {
                         old_name: r.original_name,
                         new_name,
@@ -582,18 +589,22 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 Some(ref tgt) => MenuKind::Session {
                     focus: target,
                     items: session_menu_items(tgt),
+                    disabled: session_menu_disabled(tgt, &state.remote_sessions),
                 },
                 // Index points outside any row — treat as a global
                 // right-click. Shouldn't happen since mouse hit-test
                 // only emits OpenSessionMenu on a real row.
                 None => MenuKind::Global,
             };
-            state.overlay.context_menu = Some(ContextMenu {
+            let mut menu = ContextMenu {
                 kind,
                 x,
                 y,
                 selected: 0,
-            });
+            };
+            // Don't start the highlight on a greyed item.
+            menu.selected = menu.first_enabled();
+            state.overlay.context_menu = Some(menu);
         }
         Action::OpenGlobalMenu { x, y } => {
             state.overlay.context_menu = Some(ContextMenu {
@@ -605,15 +616,12 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::MenuNext => {
             if let Some(ref mut menu) = state.overlay.context_menu {
-                let len = menu.items().len();
-                menu.selected = (menu.selected + 1).min(len - 1);
+                menu.selected = menu.next_enabled();
             }
         }
         Action::MenuPrev => {
             if let Some(ref mut menu) = state.overlay.context_menu {
-                if menu.selected > 0 {
-                    menu.selected -= 1;
-                }
+                menu.selected = menu.prev_enabled();
             }
         }
         Action::MenuConfirm => {
@@ -621,6 +629,11 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 Some(m) => m,
                 Option::None => return fx,
             };
+            // Confirming a greyed item (only reachable when every item is
+            // disabled) just closes the menu without acting.
+            if !menu.is_enabled(menu.selected) {
+                return fx;
+            }
             let selected_label = menu.items().get(menu.selected).copied();
             match menu.kind {
                 MenuKind::Session { focus, .. } => {
@@ -657,6 +670,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 }
                 MenuKind::HostDivider { host, .. } => {
                     let inner = match selected_label {
+                        Some("New session") => SideEffect {
+                            open_remote_new_session_picker: Some(host.clone()),
+                            ..SideEffect::default()
+                        },
                         Some("Port Forward") => {
                             apply_action(state, Action::OpenPortForward(host.clone()))
                         }
@@ -674,7 +691,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::MenuHover(idx) => {
             if let Some(ref mut menu) = state.overlay.context_menu {
-                menu.selected = idx;
+                // Hovering a greyed item doesn't move the highlight onto it.
+                if menu.is_enabled(idx) {
+                    menu.selected = idx;
+                }
             }
         }
 

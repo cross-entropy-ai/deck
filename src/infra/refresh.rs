@@ -252,7 +252,7 @@ fn collect_remotes(remotes: &[String]) -> Vec<RemoteSnapshotRow> {
             Some((host_name, Some(_empty))) => {
                 out.push(RemoteSnapshotRow {
                     host: host_name,
-                    name: String::from("(no sessions)"),
+                    name: crate::state::REMOTE_NO_SESSIONS_LABEL.to_string(),
                     dir: String::new(),
                     unreachable: false,
                 });
@@ -260,7 +260,7 @@ fn collect_remotes(remotes: &[String]) -> Vec<RemoteSnapshotRow> {
             Some((host_name, None)) => {
                 out.push(RemoteSnapshotRow {
                     host: host_name,
-                    name: String::from("(unreachable)"),
+                    name: crate::state::REMOTE_UNREACHABLE_LABEL.to_string(),
                     dir: String::new(),
                     unreachable: true,
                 });
@@ -270,7 +270,7 @@ fn collect_remotes(remotes: &[String]) -> Vec<RemoteSnapshotRow> {
                 // original host string.
                 out.push(RemoteSnapshotRow {
                     host: host.clone(),
-                    name: String::from("(unreachable)"),
+                    name: crate::state::REMOTE_UNREACHABLE_LABEL.to_string(),
                     dir: String::new(),
                     unreachable: true,
                 });

@@ -342,7 +342,15 @@ impl App {
             }
 
             if let Some(ref menu) = context_menu {
-                ui::draw_context_menu(frame, menu.x, menu.y, menu.selected, menu.items(), theme);
+                ui::draw_context_menu(
+                    frame,
+                    menu.x,
+                    menu.y,
+                    menu.selected,
+                    menu.items(),
+                    menu.disabled(),
+                    theme,
+                );
             }
 
             if let Some(ref ns) = new_session_overlay {
@@ -354,6 +362,7 @@ impl App {
                     filtered: &ns.filtered,
                     selected: ns.selected,
                     error: ns.error.as_deref(),
+                    host: ns.remote_host.as_deref(),
                 };
                 ui::draw_new_session(frame, frame.area(), &view, theme);
             }

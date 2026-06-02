@@ -443,6 +443,7 @@ fn picker_state_with(input: &str, entries: Vec<String>) -> AppState {
         filtered: vec![],
         selected: 0,
         error: None,
+        remote_host: None,
     };
     ns.refilter();
     state.overlay.new_session = Some(ns);
@@ -787,10 +788,12 @@ fn remove_remote_from_list_drops_host_and_signals_stop() {
 }
 
 #[test]
-fn host_divider_menu_has_remove_from_list_last() {
+fn host_divider_menu_has_new_session_first_and_remove_last() {
     use crate::state::host_divider_menu_items;
     let items = host_divider_menu_items();
-    assert_eq!(items.first().copied(), Some("Port Forward"));
+    assert_eq!(items.first().copied(), Some("New session"));
+    assert!(items.contains(&"Port Forward"));
+    // "Remove from list" is destructive — keep it last.
     assert_eq!(items.last().copied(), Some("Remove from list"));
 }
 
@@ -824,6 +827,65 @@ fn local_menu_has_no_switch_or_remove() {
     let items = session_menu_items(&SessionTargetRef::Local(&row));
     assert!(!items.contains(&"Switch"));
     assert!(!items.contains(&"Remove from list"));
+}
+
+#[test]
+fn placeholder_remote_menu_disables_rename_and_kill() {
+    use crate::state::{
+        session_menu_disabled, RemoteSessionRow, SessionTargetRef, REMOTE_NO_SESSIONS_LABEL,
+        REMOTE_UNREACHABLE_LABEL,
+    };
+    for label in [REMOTE_NO_SESSIONS_LABEL, REMOTE_UNREACHABLE_LABEL] {
+        let row = RemoteSessionRow {
+            host: "h".into(),
+            name: label.into(),
+            dir: String::new(),
+            unreachable: label == REMOTE_UNREACHABLE_LABEL,
+            loading: false,
+        };
+        let disabled =
+            session_menu_disabled(&SessionTargetRef::Remote(&row), std::slice::from_ref(&row));
+        assert!(disabled.contains(&"Rename"), "{label}: Rename disabled");
+        assert!(disabled.contains(&"Kill"), "{label}: Kill disabled");
+    }
+}
+
+fn remote(host: &str, name: &str) -> crate::state::RemoteSessionRow {
+    crate::state::RemoteSessionRow {
+        host: host.into(),
+        name: name.into(),
+        dir: "/srv".into(),
+        unreachable: false,
+        loading: false,
+    }
+}
+
+#[test]
+fn remote_session_with_siblings_disables_nothing() {
+    use crate::state::{session_menu_disabled, SessionRow, SessionStatus, SessionTargetRef};
+    // Host "h" has two live sessions, so killing either is fine.
+    let sessions = vec![remote("h", "work"), remote("h", "other")];
+    assert!(session_menu_disabled(&SessionTargetRef::Remote(&sessions[0]), &sessions).is_empty());
+
+    let local = SessionRow {
+        name: "s".into(),
+        dir: "/".into(),
+        is_current: false,
+        idle_seconds: 0,
+        status: SessionStatus::default(),
+    };
+    assert!(session_menu_disabled(&SessionTargetRef::Local(&local), &sessions).is_empty());
+}
+
+#[test]
+fn last_remote_session_disables_kill_only() {
+    use crate::state::{session_menu_disabled, SessionTargetRef};
+    // "solo" is the only session on its host; a session on a *different*
+    // host doesn't count toward it.
+    let sessions = vec![remote("h", "solo"), remote("other", "x")];
+    let disabled = session_menu_disabled(&SessionTargetRef::Remote(&sessions[0]), &sessions);
+    assert!(disabled.contains(&"Kill"), "Kill disabled for last session");
+    assert!(!disabled.contains(&"Rename"), "Rename still allowed");
 }
 
 #[test]

@@ -124,13 +124,19 @@ fn resize_sidebar_handles_small_terminals() {
 }
 
 #[test]
-fn vertical_sidebar_height_affects_layout() {
+fn vertical_sidebar_is_fixed_single_tab_row() {
+    // Bordered: one tab row + top/bottom border = 3 rows, and the
+    // height is pinned there regardless of any stored sidebar_height.
     let mut state = make_state(LayoutMode::Vertical, true, 120, 40);
-    assert_eq!(state.effective_sidebar_height(), 4);
+    assert_eq!(state.effective_sidebar_height(), 3);
 
-    assert!(state.resize_sidebar_height(6));
-    assert_eq!(state.effective_sidebar_height(), 6);
-    assert_eq!(state.pty_size(), (32, 118));
+    state.resize_sidebar_height(6);
+    assert_eq!(state.effective_sidebar_height(), 3);
+    assert_eq!(state.pty_size(), (35, 118));
+
+    // Borderless: just the single tab row.
+    let borderless = make_state(LayoutMode::Vertical, false, 120, 40);
+    assert_eq!(borderless.effective_sidebar_height(), 1);
 }
 
 #[test]
@@ -139,6 +145,72 @@ fn vertical_tab_hit_testing_only_uses_tab_row() {
 
     assert_eq!(state.session_at_col(2, 1), Some(0));
     assert_eq!(state.session_at_col(2, 2), None);
+}
+
+#[test]
+fn vertical_tabs_hit_test_remote_sessions() {
+    // Two local tabs ("alpha", "beta") then one remote ("h1:s"). A click
+    // landing in the remote tab's column resolves to its flat focus
+    // index (local_count + remote_idx == 2), and that index decodes back
+    // to the remote row for switch/menu dispatch.
+    let mut state = make_state(LayoutMode::Vertical, true, 120, 40);
+    state.remote_sessions = vec![remote_row("h1", false, false)];
+
+    // Tab columns (bordered, leading pad 1): alpha (1..9), beta (10..17),
+    // h1:s (18..25). Probe a column inside the remote tab, offset by the
+    // left border.
+    let hit = state.session_at_col(1 + 20, 1);
+    assert_eq!(hit, Some(2));
+
+    match state.session_target(FocusTarget(hit.unwrap())) {
+        Some(SessionTargetRef::Remote(row)) => {
+            assert_eq!(row.host, "h1");
+            assert_eq!(row.name, "s");
+        }
+        other => panic!("expected remote target, got {other:?}"),
+    }
+}
+
+#[test]
+fn context_menu_navigation_skips_disabled_items() {
+    use crate::state::{ContextMenu, MenuKind};
+    // A placeholder remote menu: both items disabled.
+    let all_disabled = ContextMenu {
+        kind: MenuKind::Session {
+            focus: FocusTarget(0),
+            items: &["Rename", "Kill"],
+            disabled: &["Rename", "Kill"],
+        },
+        x: 0,
+        y: 0,
+        selected: 0,
+    };
+    assert!(!all_disabled.is_enabled(0));
+    assert!(!all_disabled.is_enabled(1));
+    // Nothing selectable: first/next/prev stay put.
+    assert_eq!(all_disabled.first_enabled(), 0);
+    assert_eq!(all_disabled.next_enabled(), 0);
+
+    // One disabled item among enabled ones: navigation hops over it.
+    let mixed = ContextMenu {
+        kind: MenuKind::Session {
+            focus: FocusTarget(0),
+            items: &["Rename", "Kill", "Move up"],
+            disabled: &["Kill"],
+        },
+        x: 0,
+        y: 0,
+        selected: 0,
+    };
+    assert_eq!(mixed.first_enabled(), 0);
+    // From "Rename" (0), next skips disabled "Kill" (1) to "Move up" (2).
+    assert_eq!(mixed.next_enabled(), 2);
+    let from_last = ContextMenu {
+        selected: 2,
+        ..mixed.clone()
+    };
+    // From "Move up" (2), prev skips "Kill" (1) back to "Rename" (0).
+    assert_eq!(from_last.prev_enabled(), 0);
 }
 
 // --- PfAddForm::validate() tests ---

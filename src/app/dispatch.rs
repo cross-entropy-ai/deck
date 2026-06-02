@@ -43,21 +43,26 @@ fn read_dir_entries(path: &std::path::Path) -> (Vec<String>, Option<String>) {
     }
 }
 
-/// Returns a static error string if `name` is invalid, else `None`.
+/// tmux session-name format rules, shared by local and remote creation
+/// (uniqueness is checked separately against the relevant session list).
+fn session_name_format_error(name: &str) -> Option<&'static str> {
+    match name {
+        "" => Some("name required"),
+        n if n.contains('.') => Some("name cannot contain '.'"),
+        n if n.contains(':') => Some("name cannot contain ':'"),
+        // Placeholder labels would make a real session look synthetic.
+        n if crate::state::is_reserved_session_name(n) => Some("name is reserved"),
+        _ => None,
+    }
+}
+
 fn validate_session_name(name: &str, sessions: &[crate::state::SessionRow]) -> Option<&'static str> {
-    if name.is_empty() {
-        return Some("name required");
-    }
-    if name.contains('.') {
-        return Some("name cannot contain '.'");
-    }
-    if name.contains(':') {
-        return Some("name cannot contain ':'");
-    }
-    if sessions.iter().any(|s| s.name == name) {
-        return Some("name already in use");
-    }
-    None
+    session_name_format_error(name).or_else(|| {
+        sessions
+            .iter()
+            .any(|s| s.name == name)
+            .then_some("name already in use")
+    })
 }
 
 impl App {
@@ -368,7 +373,7 @@ impl App {
     /// recovery of a dropped PTY is handled by `respawn_remote_host`
     /// (the reconnect button and refresh auto-recovery), so switching
     /// starts working again once the pane reconnects.
-    fn switch_to_remote(&mut self, host: &str, name: &str) {
+    pub(super) fn switch_to_remote(&mut self, host: &str, name: &str) {
         use crate::app::RemoteConnStatus;
         let connected = self.remote_conns.get(host).is_some_and(|c| {
             matches!(c.status, RemoteConnStatus::Connected) && c.pane.is_some()
@@ -468,7 +473,10 @@ impl App {
         }
 
         if let Some(ref req) = fx.create_session {
-            self.create_new_session(&req.name, &req.dir);
+            match &req.host {
+                None => self.create_new_session(&req.name, &req.dir),
+                Some(host) => self.create_remote_session(host, &req.name, &req.dir),
+            }
         }
 
         if fx.resize_pty {
@@ -508,13 +516,19 @@ impl App {
         if fx.reread_new_session_entries {
             if let Some(ns) = self.state.overlay.new_session.as_mut() {
                 use crate::new_session::{expand_path, split_input};
-                let home = std::path::PathBuf::from(
-                    std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
-                );
                 let input_owned = ns.input_str().to_string();
                 let (parent, _leaf) = split_input(&input_owned);
-                let parent_path = expand_path(parent, &home);
-                let (entries, error) = read_dir_entries(&parent_path);
+                let (entries, error) = match ns.remote_host.clone() {
+                    // Remote: list over ssh, passing the raw `~`-path the
+                    // remote shell will expand (no local expand_path).
+                    Some(host) => crate::remote_tmux::list_dir(&host, parent),
+                    None => {
+                        let home = std::path::PathBuf::from(
+                            std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
+                        );
+                        read_dir_entries(&expand_path(parent, &home))
+                    }
+                };
                 ns.entries = entries;
                 ns.error = error;
                 ns.refilter();
@@ -523,6 +537,10 @@ impl App {
 
         if fx.open_new_session_picker {
             self.open_new_session_picker();
+        }
+
+        if let Some(ref host) = fx.open_remote_new_session_picker {
+            self.open_remote_new_session_picker(host);
         }
 
         if fx.open_add_remote_picker {
@@ -716,6 +734,43 @@ impl App {
             filtered: vec![],
             selected: 0,
             error,
+            remote_host: None,
+        };
+        ns.refilter();
+        self.state.overlay.new_session = Some(ns);
+    }
+
+    /// Open the new-session picker targeting a remote `host`: the dir
+    /// browser lists remote directories over ssh and confirming creates
+    /// the session on that host. Starts at the remote home (`~`).
+    fn open_remote_new_session_picker(&mut self, host: &str) {
+        use crate::new_session::{
+            auto_session_name, make_textarea, split_input, NewSessionState, PickerFocus,
+        };
+
+        let input_str = "~/".to_string();
+        let (parent, _leaf) = split_input(&input_str);
+        let (entries, error) = crate::remote_tmux::list_dir(host, parent);
+
+        // Name must be unique among this host's live sessions.
+        let existing: Vec<&str> = self
+            .state
+            .remote_sessions
+            .iter()
+            .filter(|r| r.host == host && r.is_attachable_session())
+            .map(|r| r.name.as_str())
+            .collect();
+        let name_str = auto_session_name(&existing, existing.len());
+
+        let mut ns = NewSessionState {
+            name: make_textarea(&name_str),
+            focus: PickerFocus::Name,
+            input: make_textarea(&input_str),
+            entries,
+            filtered: vec![],
+            selected: 0,
+            error,
+            remote_host: Some(host.to_string()),
         };
         ns.refilter();
         self.state.overlay.new_session = Some(ns);
@@ -724,13 +779,42 @@ impl App {
     fn confirm_new_session(&mut self) -> Option<crate::state::CreateSessionRequest> {
         use crate::new_session::expand_path;
 
-        // Read name first (immutable borrow on overlay)
-        let name = {
+        // Read name + target first (immutable borrow on overlay).
+        let (name, remote_host) = {
             let ns = self.state.overlay.new_session.as_ref()?;
-            ns.name_str().trim().to_string()
+            (ns.name_str().trim().to_string(), ns.remote_host.clone())
         };
 
-        // Validate name.
+        // Remote: validate the name against the host's sessions, trust
+        // the browsed path (it can't be stat'd locally — tmux fails
+        // loudly if it's bad), and let the remote shell expand `~`.
+        if let Some(host) = remote_host {
+            let dup = self
+                .state
+                .remote_sessions
+                .iter()
+                .any(|r| r.host == host && r.name == name);
+            let err = session_name_format_error(&name)
+                .or_else(|| dup.then_some("name already in use"));
+            if let Some(err) = err {
+                if let Some(ns) = self.state.overlay.new_session.as_mut() {
+                    ns.error = Some(err.to_string());
+                }
+                return None;
+            }
+            let dir = self.state.overlay.new_session.as_ref()?.input_str().trim();
+            // Empty path (user cleared it) → remote home, so `-c` is never
+            // blank.
+            let dir = if dir.is_empty() { "~" } else { dir }.to_string();
+            self.state.overlay.new_session = None;
+            return Some(crate::state::CreateSessionRequest {
+                name,
+                dir,
+                host: Some(host),
+            });
+        }
+
+        // Validate name (local).
         if let Some(err) = validate_session_name(&name, &self.state.sessions) {
             if let Some(ns) = self.state.overlay.new_session.as_mut() {
                 ns.error = Some(err.to_string());
@@ -748,7 +832,11 @@ impl App {
             Ok(m) if m.is_dir() => {
                 let dir = resolved.to_string_lossy().to_string();
                 self.state.overlay.new_session = None;
-                Some(crate::state::CreateSessionRequest { name, dir })
+                Some(crate::state::CreateSessionRequest {
+                    name,
+                    dir,
+                    host: None,
+                })
             }
             Ok(_) => {
                 if let Some(ns) = self.state.overlay.new_session.as_mut() {
@@ -777,6 +865,33 @@ impl App {
 
         if tmux::new_session(name, &dir_str).is_some() {
             self.switch_client(name);
+        }
+    }
+
+    /// Create a session on a remote host (blocking ssh, user-initiated)
+    /// and switch to it. `dir` keeps its `~` for the remote shell to
+    /// expand. The accompanying `refresh_sessions` side effect re-queries
+    /// the host so the new row shows under its `@host` group.
+    ///
+    /// If the host's attach PTY is already live, switch immediately.
+    /// Otherwise the host had no tmux server (nothing to attach to), so
+    /// reconnect now that a session exists and defer the switch until the
+    /// PTY comes up — the spawner's `Spawned` event fires it.
+    fn create_remote_session(&mut self, host: &str, name: &str, dir: &str) {
+        if !crate::remote_tmux::new_session(host, name, dir) {
+            return;
+        }
+        let connected = self.remote_conns.get(host).is_some_and(|c| {
+            matches!(c.status, crate::app::RemoteConnStatus::Connected) && c.pane.is_some()
+        });
+        if connected {
+            self.switch_to_remote(host, name);
+        } else {
+            self.pending_remote_switch = Some(crate::state::RemoteSwitchRequest {
+                host: host.to_string(),
+                name: name.to_string(),
+            });
+            self.respawn_remote_host(host);
         }
     }
 

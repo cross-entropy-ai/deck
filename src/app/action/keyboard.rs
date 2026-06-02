@@ -111,7 +111,10 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     if let KeyCode::Char(c @ '1'..='9') = key.code {
         if !key.modifiers.contains(KeyModifiers::ALT) {
             let idx = (c as usize) - ('1' as usize);
-            if idx < state.filtered.len() {
+            // Jump targets the unified flat list (local rows then
+            // remotes), matching the numbered tabs in the vertical
+            // layout so `3` reaches a remote `host:session` tab.
+            if idx < state.focusable_count() {
                 return Action::NumberKeyJump(idx);
             }
             return Action::None;

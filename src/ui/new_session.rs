@@ -28,11 +28,17 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
     let y = area.y + area.height.saturating_sub(height) / 2;
     let popup = Rect::new(x, y, width, height);
 
+    // Title carries the target host for remote creation so it's obvious
+    // the dir browser is listing that host, not the local machine.
+    let title = match view.host {
+        Some(host) => format!(" New session · @{host} "),
+        None => " New session ".to_string(),
+    };
     let inner = popup_frame(
         frame.buffer_mut(),
         popup,
         PopupStyle {
-            title: Some(" New session "),
+            title: Some(title.as_str()),
             border_fg: theme.accent,
             bg: theme.bg,
         },

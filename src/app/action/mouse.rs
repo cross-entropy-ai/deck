@@ -11,22 +11,22 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         return Action::TriggerUpgrade;
     }
 
-    if state.overlay.context_menu.is_some() {
+    if let Some(menu) = state.overlay.context_menu.as_ref() {
         return match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(idx) = state.menu_item_at(mouse.column, mouse.row) {
-                    return Action::MenuClickItem(idx);
+                match state.menu_item_at(mouse.column, mouse.row) {
+                    // Clicking a greyed item does nothing and keeps the
+                    // menu open; clicking outside any item dismisses it.
+                    Some(idx) if menu.is_enabled(idx) => Action::MenuClickItem(idx),
+                    Some(_) => Action::None,
+                    None => Action::MenuDismiss,
                 }
-                Action::MenuDismiss
             }
             MouseEventKind::Down(MouseButton::Right) => Action::MenuDismiss,
-            MouseEventKind::Moved => {
-                if let Some(idx) = state.menu_item_at(mouse.column, mouse.row) {
-                    Action::MenuHover(idx)
-                } else {
-                    Action::None
-                }
-            }
+            MouseEventKind::Moved => match state.menu_item_at(mouse.column, mouse.row) {
+                Some(idx) if menu.is_enabled(idx) => Action::MenuHover(idx),
+                _ => Action::None,
+            },
             _ => Action::None,
         };
     }
@@ -52,10 +52,11 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             (on_sep, in_sb)
         }
         LayoutMode::Vertical => {
+            // Tabs mode is a fixed single row, so there's no resize
+            // handle — never treat a click as a separator drag.
             let sidebar_height = state.effective_sidebar_height();
-            let on_sep = mouse.row == sidebar_height.saturating_sub(1);
             let in_sb = mouse.row < sidebar_height;
-            (on_sep, in_sb)
+            (false, in_sb)
         }
     };
 
@@ -119,8 +120,8 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
 
         let flat = match state.layout_mode {
             LayoutMode::Horizontal => state.focus_at_row(mouse.row).map(|t| t.0),
-            // Vertical/tabs mode doesn't surface remotes yet — the
-            // existing local-only path is fine here.
+            // Both return a unified flat index (local rows then
+            // remotes); the tab hit-tester resolves remote tabs too.
             LayoutMode::Vertical => state.session_at_col(mouse.column, mouse.row),
         };
         if let Some(idx) = flat {

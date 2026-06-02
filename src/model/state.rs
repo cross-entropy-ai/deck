@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::config::PluginConfig;
 use crate::keybindings::Keybindings;
 use crate::layout::{
-    card_height, context_menu_width, plugin_block_rows, tab_col_ranges, BANNER_MIN_WIDTH,
+    card_height, context_menu_width, plugin_block_rows, tab_col_ranges, tab_label,
+    BANNER_MIN_WIDTH,
 };
 use crate::new_session::{make_textarea, NewSessionState};
 use crate::update::{UpdateCheckMode, UpdateStatus};
@@ -33,9 +34,17 @@ const SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill", "Move up", "Move down"];
 // apply. Rename/Kill map to `ssh <host> tmux <cmd>` against the
 // host's server.
 const REMOTE_SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill"];
+// Items shown but greyed-out / unselectable when the right-clicked row
+// is a synthetic placeholder (a remote host with no sessions, or an
+// unreachable one): there's no real session for Rename/Kill to act on.
+const PLACEHOLDER_DISABLED_ITEMS: &[&str] = &["Rename", "Kill"];
+// Only Kill is greyed when the row is the last live session on a remote
+// host: killing it would tear down that host's tmux server. Rename is
+// still fine.
+const LAST_REMOTE_SESSION_DISABLED: &[&str] = &["Kill"];
 // Host divider [...] menu acts on the whole remote *group*. "Remove
 // from list" is equivalent to `deck remote remove <host>`.
-const HOST_DIVIDER_MENU_ITEMS: &[&str] = &["Port Forward", "Remove from list"];
+const HOST_DIVIDER_MENU_ITEMS: &[&str] = &["New session", "Port Forward", "Remove from list"];
 const GLOBAL_MENU_ITEMS: &[&str] = &[
     "New session",
     "Add Remote Host",
@@ -100,6 +109,10 @@ pub enum MenuKind {
     Session {
         focus: FocusTarget,
         items: &'static [&'static str],
+        /// Subset of `items` shown greyed-out and not selectable (e.g.
+        /// Rename/Kill on a synthetic placeholder row). Empty for a real
+        /// session, where every item is actionable.
+        disabled: &'static [&'static str],
     },
     Global,
     /// Click on the `[…]` button on a remote host divider. Single
@@ -118,6 +131,15 @@ impl MenuKind {
             MenuKind::HostDivider { items, .. } => items,
         }
     }
+
+    /// Items that are shown but greyed-out / unselectable. Only session
+    /// menus carry these today; other menus have every item enabled.
+    pub fn disabled(&self) -> &'static [&'static str] {
+        match self {
+            MenuKind::Session { disabled, .. } => disabled,
+            MenuKind::Global | MenuKind::HostDivider { .. } => &[],
+        }
+    }
 }
 
 pub fn host_divider_menu_items() -> &'static [&'static str] {
@@ -134,6 +156,33 @@ pub fn session_menu_items(target: &SessionTargetRef<'_>) -> &'static [&'static s
     }
 }
 
+/// Menu items to grey out / disable for a right-clicked row.
+///
+/// - A synthetic remote placeholder (no sessions / unreachable) isn't a
+///   real session, so both Rename and Kill are disabled.
+/// - The last live session on a remote host disables Kill — killing it
+///   would tear down that host's tmux server. Rename stays available.
+/// - Everything else (a local session, or a remote host with more than
+///   one session) has every item enabled.
+pub fn session_menu_disabled(
+    target: &SessionTargetRef<'_>,
+    remote_sessions: &[RemoteSessionRow],
+) -> &'static [&'static str] {
+    match target {
+        SessionTargetRef::Remote(row) if !row.is_attachable_session() => PLACEHOLDER_DISABLED_ITEMS,
+        SessionTargetRef::Remote(row)
+            if remote_sessions
+                .iter()
+                .filter(|r| r.host == row.host && r.is_attachable_session())
+                .count()
+                <= 1 =>
+        {
+            LAST_REMOTE_SESSION_DISABLED
+        }
+        SessionTargetRef::Local(_) | SessionTargetRef::Remote(_) => &[],
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ContextMenu {
     pub kind: MenuKind,
@@ -145,6 +194,43 @@ pub struct ContextMenu {
 impl ContextMenu {
     pub fn items(&self) -> &'static [&'static str] {
         self.kind.items()
+    }
+
+    pub fn disabled(&self) -> &'static [&'static str] {
+        self.kind.disabled()
+    }
+
+    /// Whether the item at `idx` is selectable (exists and not disabled).
+    pub fn is_enabled(&self, idx: usize) -> bool {
+        self.items()
+            .get(idx)
+            .is_some_and(|label| !self.disabled().contains(label))
+    }
+
+    /// First selectable item, used as the initial highlight so it never
+    /// starts on a greyed item. Falls back to 0 when every item is
+    /// disabled (a fully-greyed menu, e.g. a placeholder remote row).
+    pub fn first_enabled(&self) -> usize {
+        (0..self.items().len())
+            .find(|&i| self.is_enabled(i))
+            .unwrap_or(0)
+    }
+
+    /// Next selectable item after the current selection, or the current
+    /// selection if there's no enabled item below it.
+    pub fn next_enabled(&self) -> usize {
+        ((self.selected + 1)..self.items().len())
+            .find(|&i| self.is_enabled(i))
+            .unwrap_or(self.selected)
+    }
+
+    /// Previous selectable item before the current selection, or the
+    /// current selection if there's no enabled item above it.
+    pub fn prev_enabled(&self) -> usize {
+        (0..self.selected)
+            .rev()
+            .find(|&i| self.is_enabled(i))
+            .unwrap_or(self.selected)
     }
 }
 
@@ -179,6 +265,33 @@ pub struct RemoteSessionRow {
     /// appear immediately even if the ssh+tmux query takes a few
     /// seconds. Cleared (false) when a real refresh update lands.
     pub loading: bool,
+}
+
+/// Synthetic row name for a reachable host whose tmux server isn't up
+/// (so it has no sessions to attach to). Distinct from `unreachable`:
+/// the host responded, it just has nothing running.
+pub const REMOTE_NO_SESSIONS_LABEL: &str = "(no sessions)";
+/// Synthetic row name for a host deck couldn't reach over ssh.
+pub const REMOTE_UNREACHABLE_LABEL: &str = "(unreachable)";
+
+/// Whether `name` collides with a synthetic placeholder-row label. A real
+/// session so named would be mistaken for a placeholder (e.g. treated as
+/// non-attachable by `is_attachable_session`), so these are reserved and
+/// rejected when creating or renaming.
+pub fn is_reserved_session_name(name: &str) -> bool {
+    name == REMOTE_NO_SESSIONS_LABEL || name == REMOTE_UNREACHABLE_LABEL
+}
+
+impl RemoteSessionRow {
+    /// Whether deck can attach a PTY to this row. Synthetic status
+    /// placeholders — still loading, unreachable, or the "no sessions"
+    /// marker for a reachable but server-less host — are not real tmux
+    /// sessions. The attach/respawn machinery must skip them; otherwise
+    /// it spins forever trying to `tmux attach` a host with nothing to
+    /// attach to, leaving the row stuck on "connecting…".
+    pub fn is_attachable_session(&self) -> bool {
+        !self.loading && !self.unreachable && self.name != REMOTE_NO_SESSIONS_LABEL
+    }
 }
 
 /// Identifies a focused sidebar row by its flat index.
@@ -366,6 +479,11 @@ pub struct SideEffect {
     /// the global menu's "New session" item; uses the focused session's
     /// dir as the picker's starting point.
     pub open_new_session_picker: bool,
+    /// Dispatch should open the new-session picker targeting this remote
+    /// host: the dir browser lists remote directories over ssh and the
+    /// session is created on that host. Fired by the host divider menu's
+    /// "New session" item.
+    pub open_remote_new_session_picker: Option<String>,
     /// Dispatch should open the Add Remote Host picker (build candidates from
     /// ~/.ssh/config minus already-added hosts).
     pub open_add_remote_picker: bool,
@@ -408,6 +526,9 @@ impl SideEffect {
             self.remove_remote_host = other.remove_remote_host;
         }
         self.open_new_session_picker |= other.open_new_session_picker;
+        if other.open_remote_new_session_picker.is_some() {
+            self.open_remote_new_session_picker = other.open_remote_new_session_picker;
+        }
         self.open_add_remote_picker |= other.open_add_remote_picker;
         if other.add_remote_host.is_some() {
             self.add_remote_host = other.add_remote_host;
@@ -450,6 +571,9 @@ pub struct RenameRequest {
 pub struct CreateSessionRequest {
     pub name: String,
     pub dir: String,
+    /// `Some(host)` creates the session on that remote host over ssh;
+    /// `None` creates it on the local tmux server.
+    pub host: Option<String>,
 }
 
 /// Info needed to switch the main view to a remote tmux session.
@@ -869,6 +993,13 @@ impl AppState {
     }
 
     pub fn effective_sidebar_height(&self) -> u16 {
+        // Vertical layout is a single tab-switching row — there is no
+        // second detail row to resize into, so the sidebar is pinned to
+        // exactly the tab bar (plus top/bottom border when shown) and
+        // the stored `sidebar_height` is ignored.
+        if self.layout_mode == LayoutMode::Vertical {
+            return if self.show_borders { 3 } else { 1 };
+        }
         let (min_height, max_height) = self.sidebar_height_bounds();
         self.sidebar_height.clamp(min_height, max_height)
     }
@@ -974,12 +1105,19 @@ impl AppState {
         if row != b {
             return None;
         }
-        let names: Vec<&str> = self
-            .filtered
-            .iter()
-            .map(|&i| self.sessions[i].name.as_str())
-            .collect();
-        let ranges = tab_col_ranges(&names);
+        // Build labels in the same flat order the tab renderer walks —
+        // local rows first, then remotes as `host:session` — so a hit
+        // maps straight to a `FocusTarget` flat index.
+        let mut labels: Vec<String> =
+            Vec::with_capacity(self.filtered.len() + self.remote_sessions.len());
+        for &i in &self.filtered {
+            labels.push(tab_label(None, &self.sessions[i].name));
+        }
+        for r in &self.remote_sessions {
+            labels.push(tab_label(Some(&r.host), &r.name));
+        }
+        let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let ranges = tab_col_ranges(&label_refs);
         let local_col = col.saturating_sub(b);
         for (i, &(start, end)) in ranges.iter().enumerate() {
             if local_col >= start && local_col < end {

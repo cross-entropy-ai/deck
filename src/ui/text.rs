@@ -126,13 +126,6 @@ pub(super) fn format_idle_badge(seconds: u64) -> Option<String> {
     Some(format!("{}d", seconds / 86_400))
 }
 
-pub(super) fn format_activity_compact(seconds: u64, spinner_frame: &str) -> String {
-    if seconds < 3 {
-        return spinner_frame.to_string();
-    }
-    format_idle_badge(seconds).unwrap_or_else(|| "󰒲".to_string())
-}
-
 /// Glyph used for the "you are here" override on the currently
 /// attached session. Whatever the underlying status, this beats it.
 const FOCUS_GLYPH: &str = "\u{276f}";

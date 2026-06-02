@@ -1,5 +1,5 @@
 use super::{hosts_needing_respawn, mark_connecting_rows};
-use crate::state::RemoteSessionRow;
+use crate::state::{RemoteSessionRow, REMOTE_NO_SESSIONS_LABEL};
 
 fn row(host: &str, unreachable: bool, loading: bool) -> RemoteSessionRow {
     RemoteSessionRow {
@@ -8,6 +8,17 @@ fn row(host: &str, unreachable: bool, loading: bool) -> RemoteSessionRow {
         dir: "/tmp".to_string(),
         unreachable,
         loading,
+    }
+}
+
+/// The synthetic row for a reachable host with no tmux server up.
+fn no_sessions_row(host: &str) -> RemoteSessionRow {
+    RemoteSessionRow {
+        host: host.to_string(),
+        name: REMOTE_NO_SESSIONS_LABEL.to_string(),
+        dir: String::new(),
+        unreachable: false,
+        loading: false,
     }
 }
 
@@ -41,6 +52,25 @@ fn nothing_to_respawn_when_all_live() {
     let rows = vec![row("a", false, false), row("b", false, false)];
     let got = hosts_needing_respawn(&rows, |_| true);
     assert!(got.is_empty());
+}
+
+#[test]
+fn skips_reachable_host_with_no_sessions() {
+    // A reachable host with no tmux server has nothing to attach to, so
+    // it must never be respawned — otherwise the attach PTY flaps and
+    // the row sticks on "connecting…" forever.
+    let rows = vec![no_sessions_row("empty")];
+    let got = hosts_needing_respawn(&rows, |_| false);
+    assert!(got.is_empty());
+}
+
+#[test]
+fn no_sessions_row_is_never_marked_connecting() {
+    // Even if the host's (doomed) attach PTY reports connecting, the
+    // "no sessions" placeholder must not flip to the connecting state.
+    let mut rows = vec![no_sessions_row("empty")];
+    mark_connecting_rows(&mut rows, |_| true);
+    assert!(!rows[0].loading);
 }
 
 #[test]

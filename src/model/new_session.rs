@@ -99,6 +99,10 @@ pub struct NewSessionState {
     pub selected: usize,
     /// Last error encountered. Cleared on the next successful mutation.
     pub error: Option<String>,
+    /// `Some(host)` when the picker is creating a session on a remote
+    /// host: directory entries come from `ssh <host> ls` and the session
+    /// is created over ssh. `None` is the local picker.
+    pub remote_host: Option<String>,
 }
 
 impl Default for NewSessionState {
@@ -111,6 +115,7 @@ impl Default for NewSessionState {
             filtered: Vec::new(),
             selected: 0,
             error: None,
+            remote_host: None,
         }
     }
 }
