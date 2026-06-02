@@ -987,10 +987,6 @@ fn handle_pf_input(f: &mut PfAddForm, key: crossterm::event::KeyEvent) {
     }
 }
 
-/// Finalize an in-flight `AddForward` (lazy persist: only on worker
-/// success). On success: append to `config_remotes`, request config
-/// save via SideEffect, close the form. On failure: keep form open,
-/// clear `submitting`, set status to error message.
 /// Turn raw ssh stderr from a failed `-O forward` into a short, plain-language
 /// reason. Falls back to ssh's own words (minus noisy prefixes) for cases we
 /// don't recognize, so nothing is ever silently swallowed.
@@ -1027,6 +1023,10 @@ fn humanize_forward_error(raw: &str) -> String {
     }
 }
 
+/// Finalize an in-flight `AddForward` (lazy persist: only on worker
+/// success). On success: append to `config_remotes`, request config
+/// save via SideEffect, close the form. On failure: keep form open,
+/// clear `submitting`, set status to error message.
 fn apply_pf_task_result(
     state: &mut AppState,
     host: &str,

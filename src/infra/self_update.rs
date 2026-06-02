@@ -90,9 +90,9 @@ fn is_brew_managed(exe: &Path) -> bool {
     if prefix.is_empty() {
         return false;
     }
-    // The resolved exe always traverses brew's Cellar directory, so
-    // a prefix `starts_with` check is robust even when the user has
-    // exotic symlinks pointing into the cellar from elsewhere.
+    // The resolved exe always traverses brew's Cellar, so a prefix
+    // `starts_with` check holds even with symlinks pointing into the
+    // cellar from elsewhere.
     exe.starts_with(&prefix)
 }
 

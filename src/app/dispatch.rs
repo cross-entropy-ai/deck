@@ -452,8 +452,7 @@ impl App {
             // Force a full repaint after any PTY resize (sidebar drag,
             // toggle borders/layout). ratatui's frame-to-frame diff
             // can leak stale cells from the old layout — same class
-            // of bug fixed for session switch via terminal.clear()
-            // (see docs/bugs/2026-05-18-session-switch-residue.md).
+            // of bug fixed for session switch via terminal.clear().
             self.needs_full_redraw = true;
         }
 
