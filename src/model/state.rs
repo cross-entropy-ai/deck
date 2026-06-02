@@ -38,6 +38,10 @@ const REMOTE_SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill"];
 // is a synthetic placeholder (a remote host with no sessions, or an
 // unreachable one): there's no real session for Rename/Kill to act on.
 const PLACEHOLDER_DISABLED_ITEMS: &[&str] = &["Rename", "Kill"];
+// Only Kill is greyed when the row is the last live session on a remote
+// host: killing it would tear down that host's tmux server. Rename is
+// still fine.
+const LAST_REMOTE_SESSION_DISABLED: &[&str] = &["Kill"];
 // Host divider [...] menu acts on the whole remote *group*. "Remove
 // from list" is equivalent to `deck remote remove <host>`.
 const HOST_DIVIDER_MENU_ITEMS: &[&str] = &["Port Forward", "Remove from list"];
@@ -152,13 +156,29 @@ pub fn session_menu_items(target: &SessionTargetRef<'_>) -> &'static [&'static s
     }
 }
 
-/// Menu items to grey out / disable for a right-clicked row. A synthetic
-/// remote placeholder (no sessions / unreachable) isn't a real session,
-/// so Rename/Kill have nothing to act on and are disabled. Real sessions
-/// (local or live remote) have everything enabled.
-pub fn session_menu_disabled(target: &SessionTargetRef<'_>) -> &'static [&'static str] {
+/// Menu items to grey out / disable for a right-clicked row.
+///
+/// - A synthetic remote placeholder (no sessions / unreachable) isn't a
+///   real session, so both Rename and Kill are disabled.
+/// - The last live session on a remote host disables Kill — killing it
+///   would tear down that host's tmux server. Rename stays available.
+/// - Everything else (a local session, or a remote host with more than
+///   one session) has every item enabled.
+pub fn session_menu_disabled(
+    target: &SessionTargetRef<'_>,
+    remote_sessions: &[RemoteSessionRow],
+) -> &'static [&'static str] {
     match target {
         SessionTargetRef::Remote(row) if !row.is_attachable_session() => PLACEHOLDER_DISABLED_ITEMS,
+        SessionTargetRef::Remote(row)
+            if remote_sessions
+                .iter()
+                .filter(|r| r.host == row.host && r.is_attachable_session())
+                .count()
+                <= 1 =>
+        {
+            LAST_REMOTE_SESSION_DISABLED
+        }
         SessionTargetRef::Local(_) | SessionTargetRef::Remote(_) => &[],
     }
 }

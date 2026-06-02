@@ -584,7 +584,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 Some(ref tgt) => MenuKind::Session {
                     focus: target,
                     items: session_menu_items(tgt),
-                    disabled: session_menu_disabled(tgt),
+                    disabled: session_menu_disabled(tgt, &state.remote_sessions),
                 },
                 // Index points outside any row — treat as a global
                 // right-click. Shouldn't happen since mouse hit-test

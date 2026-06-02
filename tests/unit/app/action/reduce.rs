@@ -840,25 +840,29 @@ fn placeholder_remote_menu_disables_rename_and_kill() {
             unreachable: label == REMOTE_UNREACHABLE_LABEL,
             loading: false,
         };
-        let disabled = session_menu_disabled(&SessionTargetRef::Remote(&row));
+        let disabled =
+            session_menu_disabled(&SessionTargetRef::Remote(&row), std::slice::from_ref(&row));
         assert!(disabled.contains(&"Rename"), "{label}: Rename disabled");
         assert!(disabled.contains(&"Kill"), "{label}: Kill disabled");
     }
 }
 
-#[test]
-fn real_session_menu_disables_nothing() {
-    use crate::state::{
-        session_menu_disabled, RemoteSessionRow, SessionRow, SessionStatus, SessionTargetRef,
-    };
-    let remote = RemoteSessionRow {
-        host: "h".into(),
-        name: "work".into(),
+fn remote(host: &str, name: &str) -> crate::state::RemoteSessionRow {
+    crate::state::RemoteSessionRow {
+        host: host.into(),
+        name: name.into(),
         dir: "/srv".into(),
         unreachable: false,
         loading: false,
-    };
-    assert!(session_menu_disabled(&SessionTargetRef::Remote(&remote)).is_empty());
+    }
+}
+
+#[test]
+fn remote_session_with_siblings_disables_nothing() {
+    use crate::state::{session_menu_disabled, SessionRow, SessionStatus, SessionTargetRef};
+    // Host "h" has two live sessions, so killing either is fine.
+    let sessions = vec![remote("h", "work"), remote("h", "other")];
+    assert!(session_menu_disabled(&SessionTargetRef::Remote(&sessions[0]), &sessions).is_empty());
 
     let local = SessionRow {
         name: "s".into(),
@@ -867,7 +871,18 @@ fn real_session_menu_disables_nothing() {
         idle_seconds: 0,
         status: SessionStatus::default(),
     };
-    assert!(session_menu_disabled(&SessionTargetRef::Local(&local)).is_empty());
+    assert!(session_menu_disabled(&SessionTargetRef::Local(&local), &sessions).is_empty());
+}
+
+#[test]
+fn last_remote_session_disables_kill_only() {
+    use crate::state::{session_menu_disabled, SessionTargetRef};
+    // "solo" is the only session on its host; a session on a *different*
+    // host doesn't count toward it.
+    let sessions = vec![remote("h", "solo"), remote("other", "x")];
+    let disabled = session_menu_disabled(&SessionTargetRef::Remote(&sessions[0]), &sessions);
+    assert!(disabled.contains(&"Kill"), "Kill disabled for last session");
+    assert!(!disabled.contains(&"Rename"), "Rename still allowed");
 }
 
 #[test]
