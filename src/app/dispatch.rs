@@ -14,11 +14,7 @@ fn read_dir_entries(path: &std::path::Path) -> (Vec<String>, Option<String>) {
         Ok(rd) => {
             let mut names: Vec<String> = rd
                 .filter_map(|e| e.ok())
-                .filter(|e| {
-                    e.metadata()
-                        .map(|m| m.is_dir())
-                        .unwrap_or(false)
-                })
+                .filter(|e| e.metadata().is_ok_and(|m| m.is_dir()))
                 .filter_map(|e| e.file_name().into_string().ok())
                 .collect();
             names.sort();
@@ -69,39 +65,11 @@ impl App {
     pub(super) fn dispatch(&mut self, action: Action) -> bool {
         match action {
             Action::ForwardKey(ref bytes) => {
-                match self.state.main_view {
-                    MainView::Plugin(idx) => {
-                        if let Some(Some(ref mut inst)) = self.plugin_instances.get_mut(idx) {
-                            let _ = inst.pty.write(bytes);
-                        }
-                    }
-                    MainView::Upgrade => {
-                        if let Some(ref mut inst) = self.upgrade_instance {
-                            let _ = inst.pty.write(bytes);
-                        }
-                    }
-                    _ => {
-                        let _ = self.active_terminal_mut().pty.write(bytes);
-                    }
-                }
+                self.write_to_active_pty(bytes);
                 false
             }
             Action::ForwardMouse(ref bytes) => {
-                match self.state.main_view {
-                    MainView::Plugin(idx) => {
-                        if let Some(Some(ref mut inst)) = self.plugin_instances.get_mut(idx) {
-                            let _ = inst.pty.write(bytes);
-                        }
-                    }
-                    MainView::Upgrade => {
-                        if let Some(ref mut inst) = self.upgrade_instance {
-                            let _ = inst.pty.write(bytes);
-                        }
-                    }
-                    _ => {
-                        let _ = self.active_terminal_mut().pty.write(bytes);
-                    }
-                }
+                self.write_to_active_pty(bytes);
                 self.state.focus_mode = FocusMode::Main;
                 false
             }

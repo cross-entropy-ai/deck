@@ -2,7 +2,9 @@
 //! new-session picker's split: this module owns the overlay state and the
 //! filtering / choice logic; rendering lives in `ui/add_remote.rs`.
 
-use ratatui_textarea::{CursorMove, TextArea};
+use ratatui_textarea::TextArea;
+
+use crate::new_session::{make_textarea, textarea_line};
 
 #[derive(Debug, Clone)]
 pub struct AddRemoteState {
@@ -34,7 +36,7 @@ impl AddRemoteState {
 
     /// First line of the input textarea.
     pub fn input_str(&self) -> &str {
-        self.input.lines().first().map(String::as_str).unwrap_or("")
+        textarea_line(&self.input)
     }
 
     /// Rebuild `filtered` from the current input; clamp `selected`.
@@ -61,12 +63,6 @@ impl AddRemoteState {
             Some(typed.to_string())
         }
     }
-}
-
-pub fn make_textarea(s: &str) -> TextArea<'static> {
-    let mut ta = TextArea::new(vec![s.to_string()]);
-    ta.move_cursor(CursorMove::End);
-    ta
 }
 
 /// Indices of `hosts` whose name contains `needle` (case-insensitive). An

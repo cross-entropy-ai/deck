@@ -11,7 +11,7 @@ use crate::layout::{
     card_height, context_menu_width, plugin_block_rows, tab_col_ranges, tab_label,
     BANNER_MIN_WIDTH,
 };
-use crate::new_session::{make_textarea, NewSessionState};
+use crate::new_session::{make_textarea, textarea_line, NewSessionState};
 use crate::update::{UpdateCheckMode, UpdateStatus};
 
 // --- Constants ---
@@ -115,11 +115,10 @@ pub enum MenuKind {
         disabled: &'static [&'static str],
     },
     Global,
-    /// Click on the `[…]` button on a remote host divider. Single
-    /// item today (`Port Forward`); extendable.
+    /// Click on the `[…]` button on a remote host divider. The items are
+    /// the fixed `HOST_DIVIDER_MENU_ITEMS` list (see `items()`).
     HostDivider {
         host: String,
-        items: &'static [&'static str],
     },
 }
 
@@ -128,7 +127,7 @@ impl MenuKind {
         match self {
             MenuKind::Session { items, .. } => items,
             MenuKind::Global => GLOBAL_MENU_ITEMS,
-            MenuKind::HostDivider { items, .. } => items,
+            MenuKind::HostDivider { .. } => HOST_DIVIDER_MENU_ITEMS,
         }
     }
 
@@ -140,10 +139,6 @@ impl MenuKind {
             MenuKind::Global | MenuKind::HostDivider { .. } => &[],
         }
     }
-}
-
-pub fn host_divider_menu_items() -> &'static [&'static str] {
-    HOST_DIVIDER_MENU_ITEMS
 }
 
 /// Menu items shown after right-clicking a session row. The action
@@ -625,7 +620,7 @@ impl ExcludeEditorState {
 
     /// Read current add-input text.
     pub fn input_str(&self) -> &str {
-        self.input.lines().first().map(String::as_str).unwrap_or("")
+        textarea_line(&self.input)
     }
 
     /// Reset the add input to empty (called on StartAdd / CancelAdd / Confirm).
@@ -763,11 +758,6 @@ impl PfAddForm {
             }
         }
     }
-}
-
-/// First (only) line of a single-line `TextArea`, as a borrowed `&str`.
-fn textarea_line<'a>(ta: &'a TextArea<'a>) -> &'a str {
-    ta.lines().first().map(String::as_str).unwrap_or("")
 }
 
 #[derive(Debug, Clone)]

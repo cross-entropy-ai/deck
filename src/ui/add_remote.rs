@@ -7,7 +7,7 @@ use ratatui::Frame;
 use crate::add_remote::AddRemoteState;
 use crate::theme::Theme;
 use crate::ui::form::field_row;
-use crate::ui::widgets::{popup_frame, PopupStyle, TextAreaColors};
+use crate::ui::widgets::{centered_rect, popup_frame, PopupStyle, TextAreaColors};
 
 const POPUP_WIDTH: u16 = 56;
 const MAX_VISIBLE: usize = 8;
@@ -22,9 +22,7 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
         .max(POPUP_MIN_HEIGHT)
         .min(area.height.saturating_sub(2));
     let width = POPUP_WIDTH.min(area.width.saturating_sub(4));
-    let x = area.x + area.width.saturating_sub(width) / 2;
-    let y = area.y + area.height.saturating_sub(height) / 2;
-    let popup = Rect::new(x, y, width, height);
+    let popup = centered_rect(area, width, height);
 
     let inner = popup_frame(
         frame.buffer_mut(),

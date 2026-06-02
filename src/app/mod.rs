@@ -303,6 +303,29 @@ impl App {
         }
     }
 
+    /// Write `bytes` to the PTY backing the active main view: the
+    /// foreground plugin, the upgrade pane, or the attached terminal.
+    /// `Settings` has no PTY, so it's a no-op there. Shared by key
+    /// forwarding, mouse forwarding, and bracketed paste.
+    pub(super) fn write_to_active_pty(&mut self, bytes: &[u8]) {
+        match self.state.main_view {
+            MainView::Plugin(idx) => {
+                if let Some(inst) = self.plugin_instances.get_mut(idx).and_then(|o| o.as_mut()) {
+                    let _ = inst.pty.write(bytes);
+                }
+            }
+            MainView::Upgrade => {
+                if let Some(ref mut inst) = self.upgrade_instance {
+                    let _ = inst.pty.write(bytes);
+                }
+            }
+            MainView::Terminal => {
+                let _ = self.active_terminal_mut().pty.write(bytes);
+            }
+            MainView::Settings => {}
+        }
+    }
+
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         let mut last_refresh = Instant::now();
         // Watcher for ~/.config/deck/config.json: poll its mtime every
@@ -336,15 +359,11 @@ impl App {
             // in flight — otherwise the PTY would resurrect in
             // `remote_terminals` after offboard cleaned up.
             while let Some(ev) = self.remote_spawner.try_recv() {
-                let event_host = match &ev {
-                    remote_spawn::RemoteSpawnEvent::Spawned { host, .. } => host,
-                    remote_spawn::RemoteSpawnEvent::Failed { host } => host,
-                };
                 let still_configured = self
                     .state
                     .config_remotes
                     .iter()
-                    .any(|r| r.host == *event_host);
+                    .any(|r| r.host == ev.host());
                 if !still_configured {
                     continue;
                 }
@@ -513,24 +532,7 @@ impl App {
                         let mut bytes = b"\x1b[200~".to_vec();
                         bytes.extend_from_slice(text.as_bytes());
                         bytes.extend_from_slice(b"\x1b[201~");
-                        match self.state.main_view {
-                            MainView::Terminal => {
-                                let _ = self.active_terminal_mut().pty.write(&bytes);
-                            }
-                            MainView::Plugin(idx) => {
-                                if let Some(ref mut inst) =
-                                    self.plugin_instances.get_mut(idx).and_then(|o| o.as_mut())
-                                {
-                                    let _ = inst.pty.write(&bytes);
-                                }
-                            }
-                            MainView::Upgrade => {
-                                if let Some(ref mut inst) = self.upgrade_instance {
-                                    let _ = inst.pty.write(&bytes);
-                                }
-                            }
-                            _ => {}
-                        }
+                        self.write_to_active_pty(&bytes);
                     }
                     Event::Resize(w, h) => {
                         self.dispatch(Action::Resize(w, h));

@@ -11,6 +11,31 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::Command;
 
+/// SSH options applied on *every* deck-initiated ssh invocation so all
+/// code paths (one-shot tmux calls, the attach PTY, port-forward control
+/// commands) multiplex onto a single ControlMaster socket per host, even
+/// when the user's `ssh_config` doesn't enable it. `BatchMode=yes` keeps
+/// ssh from blocking on an interactive prompt inside a background worker
+/// (a misconfigured host fails fast, surfacing as a disconnected remote).
+///
+/// Every code path MUST pass this exact block — diverging options open
+/// separate master connections and silently break connection sharing, so
+/// this is the single source of truth.
+pub const CONTROL_OPTS: &[&str] = &[
+    "-o",
+    "ControlMaster=auto",
+    "-o",
+    "ControlPath=~/.ssh/cm-%r@%h:%p",
+    "-o",
+    "ControlPersist=10m",
+    "-o",
+    "ConnectTimeout=5",
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "BatchMode=yes",
+];
+
 /// Result of querying `ssh -G <host>`. Keys are lowercased option names.
 pub type SshEffectiveConfig = HashMap<String, String>;
 

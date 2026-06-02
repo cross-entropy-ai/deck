@@ -10,22 +10,15 @@ use std::process::Command;
 
 use crate::config::ForwardSpec;
 
-/// The common ssh argument block: control options + host. Keep in sync
-/// with `app/remote_spawn.rs` so both code paths reach the same master.
-// TODO(post-feature): consolidate this with remote_tmux::base_ssh_args
-// and remote_spawn's ssh-options block (port-forward design doc, Open
-// Question 1). All three must stay in sync for ControlMaster sharing
-// to work.
+/// The common ssh argument block: the shared [`crate::ssh::CONTROL_OPTS`]
+/// control options followed by `host`, so this worker and
+/// `app::remote_spawn` reach the same master socket per host.
 pub fn ssh_args_for_host(host: &str) -> Vec<String> {
-    vec![
-        "-o".into(), "ControlMaster=auto".into(),
-        "-o".into(), "ControlPath=~/.ssh/cm-%r@%h:%p".into(),
-        "-o".into(), "ControlPersist=10m".into(),
-        "-o".into(), "ConnectTimeout=5".into(),
-        "-o".into(), "ServerAliveInterval=30".into(),
-        "-o".into(), "BatchMode=yes".into(),
-        host.into(),
-    ]
+    crate::ssh::CONTROL_OPTS
+        .iter()
+        .map(|s| s.to_string())
+        .chain(std::iter::once(host.to_string()))
+        .collect()
 }
 
 fn ssh_with(host: &str, leading: &[&str]) -> Command {
