@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::config::PluginConfig;
 use crate::keybindings::Keybindings;
 use crate::layout::{
-    card_height, context_menu_width, plugin_block_rows, tab_col_ranges, BANNER_MIN_WIDTH,
+    card_height, context_menu_width, plugin_block_rows, tab_col_ranges, tab_label,
+    BANNER_MIN_WIDTH,
 };
 use crate::new_session::{make_textarea, NewSessionState};
 use crate::update::{UpdateCheckMode, UpdateStatus};
@@ -869,6 +870,13 @@ impl AppState {
     }
 
     pub fn effective_sidebar_height(&self) -> u16 {
+        // Vertical layout is a single tab-switching row — there is no
+        // second detail row to resize into, so the sidebar is pinned to
+        // exactly the tab bar (plus top/bottom border when shown) and
+        // the stored `sidebar_height` is ignored.
+        if self.layout_mode == LayoutMode::Vertical {
+            return if self.show_borders { 3 } else { 1 };
+        }
         let (min_height, max_height) = self.sidebar_height_bounds();
         self.sidebar_height.clamp(min_height, max_height)
     }
@@ -974,12 +982,19 @@ impl AppState {
         if row != b {
             return None;
         }
-        let names: Vec<&str> = self
-            .filtered
-            .iter()
-            .map(|&i| self.sessions[i].name.as_str())
-            .collect();
-        let ranges = tab_col_ranges(&names);
+        // Build labels in the same flat order the tab renderer walks —
+        // local rows first, then remotes as `host:session` — so a hit
+        // maps straight to a `FocusTarget` flat index.
+        let mut labels: Vec<String> =
+            Vec::with_capacity(self.filtered.len() + self.remote_sessions.len());
+        for &i in &self.filtered {
+            labels.push(tab_label(None, &self.sessions[i].name));
+        }
+        for r in &self.remote_sessions {
+            labels.push(tab_label(Some(&r.host), &r.name));
+        }
+        let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let ranges = tab_col_ranges(&label_refs);
         let local_col = col.saturating_sub(b);
         for (i, &(start, end)) in ranges.iter().enumerate() {
             if local_col >= start && local_col < end {
