@@ -275,7 +275,7 @@ mod tests {
             args: &[&str],
             _timeout: Duration,
         ) -> Result<Output, CommandError> {
-            if args.iter().any(|a| *a == "list-sessions") {
+            if args.contains(&"list-sessions") {
                 self.list_sessions
                     .lock()
                     .unwrap()
