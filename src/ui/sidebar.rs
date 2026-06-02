@@ -279,6 +279,12 @@ fn draw_sessions(
             width,
         };
         match &item.data {
+            SidebarItemData::LocalHeader => {
+                let line_idx = lines.len();
+                let more_range = render_local_header(&mut lines, ctx.theme.accent, width, ctx.theme);
+                // Local divider carries no host; the menu it opens is fixed.
+                pending_hits.push((line_idx, more_range, String::new(), DividerButton::LocalMore));
+            }
             SidebarItemData::Header {
                 host,
                 host_idx,
@@ -393,6 +399,51 @@ struct GroupHeaderHits {
     reconnect: std::ops::Range<usize>,
     more: std::ops::Range<usize>,
     badge: Option<std::ops::Range<usize>>,
+}
+
+/// Render the `@local` group divider. Mirrors the remote `@host`
+/// dividers visually but carries only the `[…]` menu button — local
+/// sessions have no connection to reconnect and no forwards to badge.
+/// Returns the cell range of the `[…]` button for hit-testing.
+fn render_local_header(
+    lines: &mut Vec<Line<'_>>,
+    accent: Color,
+    width: usize,
+    theme: &Theme,
+) -> std::ops::Range<usize> {
+    let leading = " ";
+    let leading_w = leading.width();
+    let spacer_w = 1;
+    let button_w = 3; // "[…]"
+    let gap = 1; // space before the button
+
+    // Reserve the button column first so it stays on screen, then give the
+    // label what's left and let the rule fill any remaining gap.
+    let avail = width.saturating_sub(leading_w).saturating_sub(gap + button_w);
+    let label_budget = avail.saturating_sub(spacer_w);
+    let label_text = truncate("@local", label_budget);
+    let label_w = label_text.as_str().width();
+    let rule_w = avail.saturating_sub(label_w).saturating_sub(spacer_w);
+    let rule = "\u{2500}".repeat(rule_w);
+
+    let spans = vec![
+        Span::styled(leading, Style::default().bg(theme.bg)),
+        Span::styled(
+            label_text,
+            Style::default()
+                .fg(accent)
+                .bg(theme.bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", Style::default().bg(theme.bg)),
+        Span::styled(rule, Style::default().fg(accent).bg(theme.bg)),
+        Span::styled(" ", Style::default().bg(theme.bg)),
+        Span::styled("[\u{2026}]", Style::default().fg(accent).bg(theme.bg)),
+    ];
+    lines.push(pad_line(spans, theme.bg, width));
+
+    let more_x = leading_w + label_w + spacer_w + rule_w + gap;
+    more_x..(more_x + button_w)
 }
 
 fn render_group_header(

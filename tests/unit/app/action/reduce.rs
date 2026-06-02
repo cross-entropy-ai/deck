@@ -283,6 +283,30 @@ fn dismiss_help() {
 }
 
 #[test]
+fn open_local_divider_menu_greys_remote_items_and_starts_on_new_session() {
+    let mut state = make_test_state(1);
+    apply_action(&mut state, Action::OpenLocalDividerMenu { x: 5, y: 5 });
+    let menu = state.overlay.context_menu.as_ref().expect("menu open");
+    assert!(matches!(menu.kind, crate::state::MenuKind::LocalDivider));
+    // Highlight starts on the first enabled item, never a greyed one.
+    assert_eq!(menu.items()[menu.selected], "New session");
+    assert!(menu.disabled().contains(&"Port Forward"));
+    assert!(menu.disabled().contains(&"Remove from list"));
+}
+
+#[test]
+fn local_divider_new_session_opens_local_picker() {
+    let mut state = make_test_state(1);
+    apply_action(&mut state, Action::OpenLocalDividerMenu { x: 0, y: 0 });
+    let fx = apply_action(&mut state, Action::MenuConfirm);
+    // "New session" on @local routes to the local picker, not a remote one.
+    assert!(fx.open_new_session_picker);
+    assert!(fx.open_remote_new_session_picker.is_none());
+    // Confirming closes the menu.
+    assert!(state.overlay.context_menu.is_none());
+}
+
+#[test]
 fn open_and_navigate_context_menu() {
     let mut state = make_test_state(3);
     apply_action(
@@ -832,6 +856,14 @@ fn host_divider_menu_has_new_session_first_and_remove_last() {
     assert!(items.contains(&"Port Forward"));
     // "Remove from list" is destructive — keep it last.
     assert_eq!(items.last().copied(), Some("Remove from list"));
+}
+
+#[test]
+fn global_menu_has_no_new_session() {
+    use crate::state::MenuKind;
+    // Creating a local session lives on the `@local` divider now, so the
+    // blank-area right-click menu no longer offers it.
+    assert!(!MenuKind::Global.items().contains(&"New session"));
 }
 
 #[test]

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use ratatui::layout::Rect;
+use ratatui_sectioned_list::ItemKind;
 use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
@@ -45,8 +46,15 @@ const LAST_REMOTE_SESSION_DISABLED: &[&str] = &["Kill"];
 // Host divider [...] menu acts on the whole remote *group*. "Remove
 // from list" is equivalent to `deck remote remove <host>`.
 const HOST_DIVIDER_MENU_ITEMS: &[&str] = &["New session", "Port Forward", "Remove from list"];
+// The `@local` divider reuses the host divider's item list so the menu
+// reads consistently, but Port Forward and Remove from list are remote-
+// only concepts: they're shown greyed out, leaving just "New session"
+// (which creates a local session).
+const LOCAL_DIVIDER_DISABLED: &[&str] = &["Port Forward", "Remove from list"];
+// Right-click on blank sidebar space. "New session" is intentionally
+// absent — creating a local session lives on the `@local` divider's
+// `[…]` menu instead.
 const GLOBAL_MENU_ITEMS: &[&str] = &[
-    "New session",
     "Add Remote Host",
     "Toggle layout",
     "Toggle borders",
@@ -120,6 +128,10 @@ pub enum MenuKind {
     HostDivider {
         host: String,
     },
+    /// Click on the `[…]` button on the `@local` divider. Shares the host
+    /// divider's items, but the remote-only ones (`LOCAL_DIVIDER_DISABLED`)
+    /// are greyed out.
+    LocalDivider,
 }
 
 impl MenuKind {
@@ -127,15 +139,17 @@ impl MenuKind {
         match self {
             MenuKind::Session { items, .. } => items,
             MenuKind::Global => GLOBAL_MENU_ITEMS,
-            MenuKind::HostDivider { .. } => HOST_DIVIDER_MENU_ITEMS,
+            MenuKind::HostDivider { .. } | MenuKind::LocalDivider => HOST_DIVIDER_MENU_ITEMS,
         }
     }
 
-    /// Items that are shown but greyed-out / unselectable. Only session
-    /// menus carry these today; other menus have every item enabled.
+    /// Items that are shown but greyed-out / unselectable: session menus
+    /// carry a per-row set, and the `@local` divider greys the remote-only
+    /// items. Other menus have every item enabled.
     pub fn disabled(&self) -> &'static [&'static str] {
         match self {
             MenuKind::Session { disabled, .. } => disabled,
+            MenuKind::LocalDivider => LOCAL_DIVIDER_DISABLED,
             MenuKind::Global | MenuKind::HostDivider { .. } => &[],
         }
     }
@@ -406,6 +420,10 @@ pub fn rollup_color(healths: &[ForwardHealth]) -> PfBadgeColor {
 /// logic, and mouse hit-test all walk the same items in lockstep.
 #[derive(Debug, Clone)]
 pub enum SidebarItemData {
+    /// The `@local` group divider, shown above the local session rows in
+    /// Expanded view. Carries no data — the renderer draws a fixed label
+    /// and a single `[…]` menu button.
+    LocalHeader,
     /// Remote host name, plus the 0-based index of the host among
     /// distinct remote hosts in render order — used to cycle the
     /// divider accent color. The renderer formats the `@host` label and
@@ -429,7 +447,7 @@ pub enum SidebarItemData {
 /// across the renderer and the action layer.
 pub type SidebarLayout = ratatui_sectioned_list::SectionedList<SidebarItemData>;
 
-/// Which button on a remote-host divider a `DividerHit` targets.
+/// Which button on a divider a `DividerHit` targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DividerButton {
     /// `[⟳]` — force-refresh (reconnect) the host.
@@ -438,6 +456,9 @@ pub enum DividerButton {
     More,
     /// `⇄N` — the port-forward liveness badge; opens the port-forward overlay.
     PfBadge,
+    /// `[…]` on the `@local` divider — opens the local-divider menu. Carries
+    /// no host (the `DividerHit.host` is unused for this kind).
+    LocalMore,
 }
 
 /// Click-region for one button (`[⟳]` or `[…]`) on a remote-host
@@ -471,8 +492,8 @@ pub struct SideEffect {
     /// in the reducer.
     pub remove_remote_host: Option<String>,
     /// Dispatch should open the new-session picker overlay. Fired by
-    /// the global menu's "New session" item; uses the focused session's
-    /// dir as the picker's starting point.
+    /// the `@local` divider's "New session" item; uses the focused
+    /// session's dir as the picker's starting point.
     pub open_new_session_picker: bool,
     /// Dispatch should open the new-session picker targeting this remote
     /// host: the dir browser lists remote directories over ssh and the
@@ -1062,10 +1083,12 @@ impl AppState {
         3 + banner_visible as u16 + plugin_block_rows(self.plugins.len())
     }
 
-    /// Map a screen row to a sidebar focus target. Walks the unified
-    /// layout (local cards + remote groups + headers) so variable-
-    /// height rows hit-test correctly.
-    pub fn focus_at_row(&self, row: u16) -> Option<FocusTarget> {
+    /// Resolve a screen row inside the sidebar's scrollable session area
+    /// into `(layout, viewport_y, scroll, visible_height)`. `None` when
+    /// the row falls in the header banner, the footer, or outside the
+    /// sidebar. Shared by the row and divider hit-testers so they agree
+    /// on geometry and the scroll offset the renderer applied.
+    fn session_row_hit(&self, row: u16) -> Option<(SidebarLayout, u16, u16, u16)> {
         let b = if self.show_borders { 1u16 } else { 0 };
         let sidebar_h = match self.layout_mode {
             LayoutMode::Horizontal => self.term_height,
@@ -1079,14 +1102,32 @@ impl AppState {
             return None;
         }
         let visible_height = sessions_bottom - sessions_top;
-
         let layout = self.sidebar_layout(self.view_mode);
-        // Use the same scroll offset the renderer applies so click
-        // coordinates and rendered positions agree.
-        let focus_idx = self.focus_target().map(|f| f.0);
-        let scroll = layout.scroll_offset(focus_idx, visible_height);
+        let scroll = layout.scroll_offset(self.focus_target().map(|f| f.0), visible_height);
         let viewport_y = row - sessions_top;
+        Some((layout, viewport_y, scroll, visible_height))
+    }
+
+    /// Map a screen row to a sidebar focus target. Walks the unified
+    /// layout (local cards + remote groups + headers) so variable-
+    /// height rows hit-test correctly.
+    pub fn focus_at_row(&self, row: u16) -> Option<FocusTarget> {
+        let (layout, viewport_y, scroll, _) = self.session_row_hit(row)?;
         layout.row_at_y(viewport_y, scroll).map(FocusTarget)
+    }
+
+    /// Whether `row` falls on a group divider header (`@local` / `@host`).
+    /// Used to swallow right-clicks on dividers — their actions live on
+    /// the divider's own `[…]` button, not a context menu.
+    pub fn is_divider_at_row(&self, row: u16) -> bool {
+        let Some((layout, viewport_y, scroll, visible_height)) = self.session_row_hit(row) else {
+            return false;
+        };
+        layout.visible_items(scroll, visible_height).any(|v| {
+            v.item.kind == ItemKind::Header
+                && viewport_y >= v.viewport_y
+                && viewport_y < v.viewport_y + v.visible_height
+        })
     }
 
     /// Map a screen column to a tab index in vertical/tabs mode.
@@ -1142,10 +1183,16 @@ impl AppState {
     pub fn sidebar_layout(&self, view_mode: ViewMode) -> SidebarLayout {
         let card_h = card_height(view_mode) as u16;
         let mut layout = SidebarLayout::new();
+        // Group dividers (`@local`, `@host`) are an Expanded-view
+        // adornment; Compact rows already carry an origin prefix.
+        let show_headers = matches!(view_mode, ViewMode::Expanded);
 
-        // Local group: no header, the fixed "Projects (N)" banner at
-        // the top of the sidebar already labels this section. Flat
-        // index for a local row equals its filtered_pos.
+        // Local group: an `@local` divider over the local rows, matching
+        // the remote `@host` dividers. Flat index for a local row equals
+        // its filtered_pos regardless of the header (headers aren't rows).
+        if show_headers && !self.filtered.is_empty() {
+            layout.push_header(SidebarItemData::LocalHeader, 1);
+        }
         for pos in 0..self.filtered.len() {
             layout.push_row(SidebarItemData::Session { session_idx: pos }, card_h);
         }
@@ -1158,14 +1205,13 @@ impl AppState {
         let local_count = self.filtered.len();
         let mut host_idx: usize = 0;
         let mut prev_host: Option<&str> = None;
-        let show_host_headers = matches!(view_mode, ViewMode::Expanded);
         for (remote_idx, r) in self.remote_sessions.iter().enumerate() {
             let new_host = Some(r.host.as_str()) != prev_host;
             if new_host {
                 if prev_host.is_some() {
                     host_idx += 1;
                 }
-                if show_host_headers {
+                if show_headers {
                     // A host's rows are contiguous and share a status; this
                     // row is the first of the group, so it represents it.
                     let status = host_status_of(r);

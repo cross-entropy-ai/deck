@@ -85,6 +85,89 @@ fn sidebar_header_status_reflects_host_reachability() {
 }
 
 #[test]
+fn sidebar_layout_adds_local_header_in_expanded() {
+    let state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    let layout = state.sidebar_layout(ViewMode::Expanded);
+
+    let local_headers = layout
+        .items()
+        .iter()
+        .filter(|i| matches!(i.data, SidebarItemData::LocalHeader))
+        .count();
+    assert_eq!(local_headers, 1, "one @local divider above the local rows");
+
+    // The header is not a row, so local flat indices stay 0..N.
+    let session_idxs: Vec<usize> = layout
+        .items()
+        .iter()
+        .filter_map(|i| match &i.data {
+            SidebarItemData::Session { session_idx } => Some(*session_idx),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(session_idxs, vec![0, 1]);
+}
+
+#[test]
+fn sidebar_layout_omits_local_header_in_compact_and_when_empty() {
+    let state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    let compact = state.sidebar_layout(ViewMode::Compact);
+    assert!(
+        !compact
+            .items()
+            .iter()
+            .any(|i| matches!(i.data, SidebarItemData::LocalHeader)),
+        "compact view carries no group dividers",
+    );
+
+    let mut empty = make_state(LayoutMode::Horizontal, false, 80, 24);
+    empty.sessions.clear();
+    empty.recompute_filter();
+    let layout = empty.sidebar_layout(ViewMode::Expanded);
+    assert!(
+        !layout
+            .items()
+            .iter()
+            .any(|i| matches!(i.data, SidebarItemData::LocalHeader)),
+        "no @local divider when there are no local sessions",
+    );
+}
+
+#[test]
+fn is_divider_at_row_detects_header_not_session() {
+    let state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    // Session area starts at row 2 (banner is 2 rows, no border). The
+    // @local divider is the first item (1 row tall); the first session
+    // card sits just below it.
+    assert!(state.is_divider_at_row(2), "row 2 is the @local divider");
+    assert!(!state.is_divider_at_row(3), "row 3 is a session card");
+    assert_eq!(state.focus_at_row(3), Some(FocusTarget(0)));
+    // Rows in the header banner above the session area aren't dividers.
+    assert!(!state.is_divider_at_row(0));
+}
+
+#[test]
+fn local_divider_menu_greys_remote_only_items() {
+    use crate::state::{ContextMenu, MenuKind};
+    let menu = ContextMenu {
+        kind: MenuKind::LocalDivider,
+        x: 0,
+        y: 0,
+        selected: 0,
+    };
+    // Same item list as a host divider...
+    assert!(menu.items().contains(&"New session"));
+    assert!(menu.items().contains(&"Port Forward"));
+    assert!(menu.items().contains(&"Remove from list"));
+    // ...but the remote-only ones are greyed out, leaving New session live.
+    assert!(menu.disabled().contains(&"Port Forward"));
+    assert!(menu.disabled().contains(&"Remove from list"));
+    assert!(!menu.disabled().contains(&"New session"));
+    // The initial highlight lands on the first enabled item.
+    assert_eq!(menu.items()[menu.first_enabled()], "New session");
+}
+
+#[test]
 fn sync_remote_forward_health_mirrors_host_status() {
     use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
     use crate::state::{ForwardHealth, ForwardKey};

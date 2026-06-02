@@ -82,6 +82,9 @@ pub enum Action {
 
     OpenSessionMenu { target: crate::state::FocusTarget, x: u16, y: u16 },
     OpenGlobalMenu { x: u16, y: u16 },
+    /// Open the `@local` divider's `[…]` menu (local "New session";
+    /// Port Forward / Remove from list greyed out).
+    OpenLocalDividerMenu { x: u16, y: u16 },
     MenuNext,
     MenuPrev,
     MenuConfirm,

@@ -665,10 +665,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 }
                 MenuKind::Global => {
                     let inner = match selected_label {
-                        Some("New session") => SideEffect {
-                            open_new_session_picker: true,
-                            ..SideEffect::default()
-                        },
                         Some("Add Remote Host") => SideEffect {
                             open_add_remote_picker: true,
                             ..SideEffect::default()
@@ -696,6 +692,18 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                         Some("Remove from list") => {
                             apply_action(state, Action::RemoveRemoteFromList(host.clone()))
                         }
+                        _ => SideEffect::default(),
+                    };
+                    fx.merge(inner);
+                }
+                MenuKind::LocalDivider => {
+                    // Port Forward / Remove from list are greyed out and
+                    // unreachable here; only "New session" (local) fires.
+                    let inner = match selected_label {
+                        Some("New session") => SideEffect {
+                            open_new_session_picker: true,
+                            ..SideEffect::default()
+                        },
                         _ => SideEffect::default(),
                     };
                     fx.merge(inner);
@@ -771,6 +779,18 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 y,
                 selected: 0,
             });
+        }
+
+        Action::OpenLocalDividerMenu { x, y } => {
+            let mut menu = ContextMenu {
+                kind: MenuKind::LocalDivider,
+                x,
+                y,
+                selected: 0,
+            };
+            // Don't start the highlight on a greyed item.
+            menu.selected = menu.first_enabled();
+            state.overlay.context_menu = Some(menu);
         }
 
         Action::OpenPortForward(host) => {
