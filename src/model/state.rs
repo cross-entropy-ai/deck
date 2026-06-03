@@ -471,6 +471,15 @@ pub struct DividerHit {
     pub kind: DividerButton,
 }
 
+/// Click-regions for the two buttons in the kill-confirmation prompt.
+/// The sidebar renderer fills `kill_confirm_hits` while the prompt is
+/// shown; mouse hit-testing maps a click in `yes`/`no` to confirm/cancel.
+#[derive(Debug, Clone, Copy)]
+pub struct KillConfirmHits {
+    pub yes: Rect,
+    pub no: Rect,
+}
+
 // --- Side effects ---
 
 #[derive(Debug, Default)]
@@ -902,6 +911,11 @@ pub struct AppState {
     /// renderer each frame. Read by mouse dispatch.
     pub divider_hits: Vec<DividerHit>,
 
+    /// Click-regions for the kill-confirmation `[No]` / `[Yes]` buttons,
+    /// refilled by the sidebar renderer while the prompt is up.
+    /// Read by mouse dispatch. `None` when the prompt is not shown.
+    pub kill_confirm_hits: Option<KillConfirmHits>,
+
     /// Mirror of `Config.remotes` so reducers can read per-host forwards
     /// without round-tripping through dispatch. Kept in sync by startup
     /// and `reload_config`.
@@ -985,6 +999,7 @@ impl AppState {
             reload_status: None,
             reload_status_at: None,
             divider_hits: Vec::new(),
+            kill_confirm_hits: None,
             config_remotes: Vec::new(),
             forward_health: HashMap::new(),
         }

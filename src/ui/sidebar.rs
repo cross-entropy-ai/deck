@@ -11,8 +11,8 @@ use crate::layout::{
     plugin_block_rows, BANNER_MIN_WIDTH, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR,
 };
 use crate::state::{
-    DividerButton, DividerHit, FocusTarget, HostStatus, PfBadge, PfBadgeColor, SidebarItemData,
-    SidebarLayout, ViewMode,
+    DividerButton, DividerHit, FocusTarget, HostStatus, KillConfirmHits, PfBadge, PfBadgeColor,
+    SidebarItemData, SidebarLayout, ViewMode,
 };
 use ratatui_sectioned_list::Item;
 use crate::theme::Theme;
@@ -114,7 +114,7 @@ pub fn draw_sidebar(
     frame: &mut Frame,
     area: Rect,
     props: SidebarProps<'_>,
-) -> (Option<Rect>, Vec<DividerHit>) {
+) -> (Option<Rect>, Vec<DividerHit>, Option<KillConfirmHits>) {
     let ctx = SidebarRenderCtx {
         theme: props.theme,
         spinner_frame: props.spinner_frame,
@@ -138,7 +138,23 @@ pub fn draw_sidebar(
                 show_borders: props.show_borders,
             },
         );
-        return (banner_bounds, Vec::new());
+        // A pending kill confirmation must render and stay clickable in
+        // tabs mode too: the mouse guard swallows every click while
+        // `confirm_kill` is set, so without drawing the prompt here the
+        // user would face an invisible modal that only y/n could clear.
+        // Overlay it on the inner content (covering the tab row), which
+        // matches the modal "kill prompt owns the sidebar" behavior.
+        let kill_hits = props.confirm_kill.and_then(|name| {
+            let content = draw_sidebar_container(
+                frame,
+                area,
+                props.theme,
+                props.sidebar_active,
+                props.show_borders,
+            );
+            draw_confirm_kill(frame, content, props.theme, name)
+        });
+        return (banner_bounds, Vec::new(), kill_hits);
     }
     let content = draw_sidebar_container(
         frame,
@@ -160,11 +176,12 @@ pub fn draw_sidebar(
     .areas(content);
 
     draw_header(frame, header_area, props.local_count, props.theme);
+    let mut kill_hits: Option<KillConfirmHits> = None;
     let divider_hits = if props.show_help {
         draw_help(frame, sessions_area, props.theme, props.keybindings);
         Vec::new()
     } else if let Some(name) = props.confirm_kill {
-        draw_confirm_kill(frame, sessions_area, props.theme, name);
+        kill_hits = draw_confirm_kill(frame, sessions_area, props.theme, name);
         Vec::new()
     } else if let Some(textarea) = props.rename_input {
         draw_rename_input(frame, sessions_area, props.theme, textarea);
@@ -197,7 +214,7 @@ pub fn draw_sidebar(
             },
         },
     );
-    (banner_bounds, divider_hits)
+    (banner_bounds, divider_hits, kill_hits)
 }
 
 fn draw_sidebar_container(
