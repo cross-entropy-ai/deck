@@ -260,10 +260,12 @@ impl App {
         // Selecting a local session implies returning to the local
         // view if we were watching a remote one.
         self.active_remote = None;
-        // Force a clean repaint after the switch — see the note on
-        // `needs_full_redraw` for why the host-terminal clear is the
-        // reliable fix for switch residue.
-        self.needs_full_redraw = true;
+        // No full redraw here: switching only re-points the existing
+        // tmux client at another session, so ratatui's per-cell diff
+        // against the new vt100 screen repaints what actually changed.
+        // The host-terminal clear used to flash the whole screen on
+        // every switch; the wide-char residue it papered over is now
+        // handled in bridge.rs via `set_skip`.
     }
 
     /// (Re)establish the persistent `ssh -tt host tmux attach` PTY for a
@@ -364,7 +366,9 @@ impl App {
             .ok();
 
         self.active_remote = Some(host.to_string());
-        self.needs_full_redraw = true;
+        // No full redraw on switch — see `switch_client`. We flip
+        // `active_remote` and let the diff repaint from the target
+        // host's vt100 screen.
     }
 
     fn switch_to_session_if_safe(&mut self, session: &str) -> bool {
