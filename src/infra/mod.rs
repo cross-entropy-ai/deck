@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod command;
 pub mod instance_guard;
 pub mod listeners;

@@ -12,7 +12,7 @@ use crate::layout::{
 };
 use crate::state::{
     DividerButton, DividerHit, FocusTarget, HostStatus, KillConfirmHits, PfBadge, PfBadgeColor,
-    SidebarItemData, SidebarLayout, ViewMode,
+    SidebarItemData, SidebarLayout, ViewMode, AGENT_FOOTER_GAP_ROWS,
 };
 use ratatui_sectioned_list::Item;
 use crate::theme::Theme;
@@ -301,6 +301,27 @@ fn draw_sessions(
                 let more_range = render_local_header(&mut lines, ctx.theme.accent, width, ctx.theme);
                 // Local divider carries no host; the menu it opens is fixed.
                 pending_hits.push((line_idx, more_range, String::new(), DividerButton::LocalMore));
+            }
+            SidebarItemData::AgentCount { counts } => {
+                // Until the first probe lands, show ellipses rather than a
+                // misleading "0".
+                let text = match counts {
+                    Some(c) => format!("  claude {}, codex {}", c.claude, c.codex),
+                    None => "  claude …, codex …".to_string(),
+                };
+                lines.push(pad_line(
+                    vec![Span::styled(
+                        text,
+                        Style::default().fg(ctx.theme.dim).bg(ctx.theme.bg),
+                    )],
+                    ctx.theme.bg,
+                    width,
+                ));
+                // Two blank rows as a gap before the next section. Keep in
+                // sync with the item height in `sidebar_layout`.
+                for _ in 0..AGENT_FOOTER_GAP_ROWS {
+                    lines.push(pad_line(Vec::new(), ctx.theme.bg, width));
+                }
             }
             SidebarItemData::Header {
                 host,

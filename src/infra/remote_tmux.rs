@@ -12,9 +12,16 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use crate::agent::AgentCounts;
 use crate::infra::command::{CommandError, CommandRunner, RealRunner};
 use crate::infra::tmux::SessionInfo;
 use crate::infra::tmux_parse::{parse_sessions, parse_window_activity};
+
+/// Marker separating the pane-pid list from the `ps` snapshot in the
+/// single combined ssh `agent_probe` runs. Must not start with `=` (zsh
+/// equals-expansion would treat it as a command path and eat it) nor with
+/// `-` (echo flag); plain underscores are safe in any remote shell.
+const AGENT_PROBE_MARKER: &str = "__DECK_AGENT_PROBE__";
 
 /// Hard cap on a single remote ssh+tmux call. Generous compared to the
 /// local 1s budget because the first call to a host may have to wait
@@ -96,6 +103,38 @@ fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Sess
         Err(err) if is_no_server_error(&err) => Some(Vec::new()),
         Err(_) => None,
     }
+}
+
+/// Probe `host` for interactive agents running in its tmux panes, in one
+/// ssh hop: list pane pids, then a `ps` snapshot, separated by a marker.
+/// The pure `crate::agent::count_agents` does the rest — identical to the
+/// local path, just fed over ssh. `None` if the host is unreachable (the
+/// section's count then stays "probing" / its last value).
+pub fn agent_probe(host: &str) -> Option<AgentCounts> {
+    agent_probe_with(default_runner(), host)
+}
+
+fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<AgentCounts> {
+    // Two commands joined by a bare `;` (a shell separator, so the remote
+    // shell runs them in sequence). `$'…'` protects the `#` in the tmux
+    // format from being read as a comment; `2>/dev/null` swallows tmux's
+    // "no server" noise so a server-less host still yields a clean ps.
+    let raw = run_ssh(
+        runner,
+        host,
+        &[
+            "tmux", "list-panes", "-a", "-F", "$'#{pane_pid}'", "2>/dev/null", ";",
+            "echo", AGENT_PROBE_MARKER, ";",
+            "ps", "-axo", "pid=,ppid=,args=",
+        ],
+    )
+    .ok()?;
+    let (pids_part, ps_part) = raw.split_once(AGENT_PROBE_MARKER)?;
+    let pane_pids: Vec<u32> = pids_part
+        .lines()
+        .filter_map(|l| l.trim().parse().ok())
+        .collect();
+    Some(crate::agent::count_agents(&pane_pids, ps_part))
 }
 
 /// Whether a failed remote `tmux` call means "reachable host, no tmux

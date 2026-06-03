@@ -51,16 +51,20 @@ impl App {
 
     pub(super) fn apply_update(&mut self, update: RefreshUpdate) {
         match update {
-            RefreshUpdate::Local { current_session, rows } => {
-                self.apply_local(current_session, rows);
+            RefreshUpdate::Local { current_session, rows, agent_counts } => {
+                self.apply_local(current_session, rows, agent_counts);
             }
-            RefreshUpdate::Remote { rows } => {
-                self.apply_remote(rows);
+            RefreshUpdate::Remote { rows, agent_counts } => {
+                self.apply_remote(rows, agent_counts);
             }
         }
     }
 
-    fn apply_remote(&mut self, rows: Vec<RemoteSnapshotRow>) {
+    fn apply_remote(
+        &mut self,
+        rows: Vec<RemoteSnapshotRow>,
+        agent_counts: std::collections::HashMap<String, crate::agent::AgentCounts>,
+    ) {
         // `config_remotes` is the single source of truth for which hosts are
         // configured: rows for hosts the user just removed (query was in flight
         // when "Remove from list" landed) are dropped so they can't blink back.
@@ -154,9 +158,34 @@ impl App {
         // host status we just settled so the badge/overlay agree with the
         // divider (connected → green, unreachable → error).
         self.state.sync_remote_forward_health();
+
+        // Store this round's per-host agent counts under the unified
+        // `Some(host)` key, then drop any host no longer configured (the
+        // local `None` key is always kept). Owned set so we don't hold a
+        // borrow of `self.state` across the mutating retain.
+        for (host, counts) in agent_counts {
+            self.state.agent_counts.insert(Some(host), counts);
+        }
+        let configured_hosts: std::collections::HashSet<String> = self
+            .state
+            .config_remotes
+            .iter()
+            .map(|r| r.host.clone())
+            .collect();
+        self.state.agent_counts.retain(|k, _| match k {
+            None => true,
+            Some(h) => configured_hosts.contains(h),
+        });
     }
 
-    fn apply_local(&mut self, current: String, rows: Vec<SnapshotRow>) {
+    fn apply_local(
+        &mut self,
+        current: String,
+        rows: Vec<SnapshotRow>,
+        agent_counts: crate::agent::AgentCounts,
+    ) {
+        // Local section is the `None`-host key.
+        self.state.agent_counts.insert(None, agent_counts);
         if let Some(warning) = self
             .nesting_guard
             .warning_for_current_session(Some(current.as_str()))

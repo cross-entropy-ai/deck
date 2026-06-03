@@ -106,6 +106,11 @@ pub enum SessionStatus {
 
 pub const SETTINGS_ITEM_COUNT: usize = 7;
 
+/// Blank rows appended under each section's agent-count footer, as a gap
+/// before the next section. The footer item is `1 + this` rows tall;
+/// `sidebar_layout` (height) and the renderer (blank lines) both use it.
+pub const AGENT_FOOTER_GAP_ROWS: u16 = 2;
+
 // --- Context menu ---
 
 #[derive(Debug, Clone)]
@@ -439,6 +444,10 @@ pub enum SidebarItemData {
     /// built in render order; storage routing happens via
     /// `AppState::session_target` in the action layer.
     Session { session_idx: usize },
+    /// Non-selectable footer at the bottom of a section, showing how many
+    /// interactive agents were detected there (`claude X, codex Y`).
+    /// `None` while the section hasn't been probed yet ("claude …, codex …").
+    AgentCount { counts: Option<crate::agent::AgentCounts> },
 }
 
 /// Sidebar layout — built on top of `ratatui_sectioned_list::SectionedList`
@@ -930,6 +939,15 @@ pub struct AppState {
     /// Per-forward liveness, refreshed each probe tick by the port-forward
     /// worker. Keyed by `ForwardKey`. Missing key = `Probing` (not yet seen).
     pub forward_health: HashMap<ForwardKey, ForwardHealth>,
+
+    /// Interactive coding agents (Claude Code / Codex) detected per
+    /// sidebar section, keyed by host the same way the rest of deck keys
+    /// local-vs-remote: `None` = the local tmux server, `Some(host)` = a
+    /// remote one. A key absent from the map hasn't been probed yet
+    /// (rendered "claude …, codex …"). The layout/render just look a
+    /// section up by key — they never branch on local vs remote. Refreshed
+    /// on the agent-probe cadence. See `crate::agent`.
+    pub agent_counts: HashMap<Option<String>, crate::agent::AgentCounts>,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -1008,6 +1026,7 @@ impl AppState {
             kill_confirm_hits: None,
             config_remotes: Vec::new(),
             forward_health: HashMap::new(),
+            agent_counts: HashMap::new(),
         }
     }
 
@@ -1202,6 +1221,13 @@ impl AppState {
         }
     }
 
+    /// Agent counts for a sidebar section, addressed uniformly by host
+    /// (`None` = local). `None` result = not probed yet. The layout uses
+    /// this without caring whether the section is local or remote.
+    pub fn section_agent_counts(&self, host: Option<&str>) -> Option<crate::agent::AgentCounts> {
+        self.agent_counts.get(&host.map(str::to_string)).copied()
+    }
+
     /// Build the unified sidebar layout: a flat list of header /
     /// session items in render order. Renderers and the mouse
     /// hit-tester share this so they can't disagree about which row
@@ -1222,19 +1248,39 @@ impl AppState {
         for pos in 0..self.filtered.len() {
             layout.push_row(SidebarItemData::Session { session_idx: pos }, card_h);
         }
+        // Footer line under the local section: detected agent counts.
+        // Non-focusable (a header), so it can't be selected.
+        if show_headers && !self.filtered.is_empty() {
+            layout.push_header(
+                SidebarItemData::AgentCount {
+                    counts: self.section_agent_counts(None),
+                },
+                1 + AGENT_FOOTER_GAP_ROWS,
+            );
+        }
 
         // Remote groups: detect host transitions in render order
         // (which matches focus order — `remote_sessions` is already
         // grouped by host because the refresh worker emits hosts in
         // config order, one block at a time). Flat index for a remote
-        // row is filtered.len() + remote_idx.
+        // row is filtered.len() + remote_idx. Each group gets an
+        // `@host` divider above and an agent-count footer below.
         let local_count = self.filtered.len();
         let mut host_idx: usize = 0;
         let mut prev_host: Option<&str> = None;
         for (remote_idx, r) in self.remote_sessions.iter().enumerate() {
             let new_host = Some(r.host.as_str()) != prev_host;
             if new_host {
-                if prev_host.is_some() {
+                if let Some(ph) = prev_host {
+                    // Close the previous host's section with its footer.
+                    if show_headers {
+                        layout.push_header(
+                            SidebarItemData::AgentCount {
+                                counts: self.section_agent_counts(Some(ph)),
+                            },
+                            1 + AGENT_FOOTER_GAP_ROWS,
+                        );
+                    }
                     host_idx += 1;
                 }
                 if show_headers {
@@ -1262,6 +1308,17 @@ impl AppState {
                 },
                 card_h,
             );
+        }
+        // Footer for the last remote host group.
+        if show_headers {
+            if let Some(ph) = prev_host {
+                layout.push_header(
+                    SidebarItemData::AgentCount {
+                        counts: self.section_agent_counts(Some(ph)),
+                    },
+                    1 + AGENT_FOOTER_GAP_ROWS,
+                );
+            }
         }
 
         layout

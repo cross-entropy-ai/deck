@@ -100,6 +100,15 @@ fn persist_session_order_with(runner: &dyn CommandRunner, order: &[String]) {
     let _ = runner.run("tmux", &args_ref, TMUX_TIMEOUT);
 }
 
+/// Root pids of every pane on the local tmux server (`#{pane_pid}`).
+/// Used by agent detection to walk each pane's process subtree. See
+/// `crate::agent`.
+pub fn pane_pids() -> Vec<u32> {
+    tmux(&["list-panes", "-a", "-F", "#{pane_pid}"])
+        .map(|raw| raw.lines().filter_map(|l| l.trim().parse().ok()).collect())
+        .unwrap_or_default()
+}
+
 /// List every pane across every session, with the info deck needs to
 /// derive session status (current_command for the proc heuristic).
 pub fn list_panes() -> Vec<TmuxPane> {

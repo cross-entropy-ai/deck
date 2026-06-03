@@ -65,9 +65,15 @@ pub enum RefreshUpdate {
     Local {
         current_session: String,
         rows: Vec<SnapshotRow>,
+        /// Interactive agents on the local tmux server this round.
+        agent_counts: crate::agent::AgentCounts,
     },
     Remote {
         rows: Vec<RemoteSnapshotRow>,
+        /// Per-reachable-host agent counts, keyed by host string;
+        /// `apply_remote` stores them under the unified `Some(host)` key.
+        /// Unreachable hosts are absent (stay "not probed").
+        agent_counts: HashMap<String, crate::agent::AgentCounts>,
     },
 }
 
@@ -135,11 +141,12 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
 
         // Local update synchronously — fast (~ms), users see the
         // sidebar populate immediately on startup.
-        let (current, local_rows) = collect_local(&req);
+        let (current, local_rows, agent_counts) = collect_local(&req);
         if update_tx
             .send(RefreshUpdate::Local {
                 current_session: current,
                 rows: local_rows,
+                agent_counts,
             })
             .is_err()
         {
@@ -159,15 +166,15 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
             let _ = thread::Builder::new()
                 .name("deck-refresh-remote".into())
                 .spawn(move || {
-                    let rows = collect_remotes(&remotes);
-                    let _ = tx.send(RefreshUpdate::Remote { rows });
+                    let (rows, agent_counts) = collect_remotes(&remotes);
+                    let _ = tx.send(RefreshUpdate::Remote { rows, agent_counts });
                     flag.store(false, Ordering::Release);
                 });
         }
     }
 }
 
-fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>) {
+fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>, crate::agent::AgentCounts) {
     let current = if req.slave_tty.is_empty() {
         tmux::current_session()
     } else {
@@ -213,7 +220,12 @@ fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>) {
         })
         .collect();
 
-    (current, rows)
+    // Agent detection: walk each pane's process subtree for an
+    // interactive Claude Code / Codex. No hooks. Cheap enough to run
+    // every refresh round.
+    let agent_counts = crate::agent::count_agents(&tmux::pane_pids(), &crate::agent::ps_snapshot());
+
+    (current, rows, agent_counts)
 }
 
 /// Query each remote host for its tmux sessions in parallel: one thread
@@ -221,9 +233,11 @@ fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>) {
 /// TCP roundtrips beat serializing the few-hundred-ms-each SSH calls.
 /// Each join is bounded by `remote_tmux`'s 5s ssh timeout, so one dead
 /// host stalls this call by at most that much.
-fn collect_remotes(remotes: &[String]) -> Vec<RemoteSnapshotRow> {
+fn collect_remotes(
+    remotes: &[String],
+) -> (Vec<RemoteSnapshotRow>, HashMap<String, crate::agent::AgentCounts>) {
     if remotes.is_empty() {
-        return Vec::new();
+        return (Vec::new(), HashMap::new());
     }
     let handles: Vec<_> = remotes
         .iter()
@@ -232,17 +246,37 @@ fn collect_remotes(remotes: &[String]) -> Vec<RemoteSnapshotRow> {
             thread::Builder::new()
                 .name(format!("deck-remote-{host}"))
                 .spawn(move || {
-                    let result = remote_tmux::list_sessions(&host);
-                    (host, result)
+                    let sessions = remote_tmux::list_sessions(&host);
+                    // Same ssh round as sessions: also probe agents.
+                    let agents = remote_tmux::agent_probe(&host);
+                    (host, sessions, agents)
                 })
                 .ok()
         })
         .collect();
 
     let mut out = Vec::new();
+    let mut agent_counts = HashMap::new();
     for (host, handle) in remotes.iter().zip(handles) {
-        match handle.and_then(|h| h.join().ok()) {
-            Some((host_name, Some(mut sessions))) if !sessions.is_empty() => {
+        let (host_name, sessions, agents) = match handle.and_then(|h| h.join().ok()) {
+            Some(triple) => triple,
+            None => {
+                // Thread spawn or join failed — rare. Fall back to the
+                // original host string, mark unreachable.
+                out.push(RemoteSnapshotRow {
+                    host: host.clone(),
+                    name: crate::state::REMOTE_UNREACHABLE_LABEL.to_string(),
+                    dir: String::new(),
+                    unreachable: true,
+                });
+                continue;
+            }
+        };
+        if let Some(counts) = agents {
+            agent_counts.insert(host_name.clone(), counts);
+        }
+        match sessions {
+            Some(mut sessions) if !sessions.is_empty() => {
                 // Honor the per-session @deck_order set by a remote reorder:
                 // ranked sessions first (by rank), never-reordered ones after
                 // in tmux's listing order. remote_sessions is rebuilt every
@@ -257,7 +291,7 @@ fn collect_remotes(remotes: &[String]) -> Vec<RemoteSnapshotRow> {
                     });
                 }
             }
-            Some((host_name, Some(_empty))) => {
+            Some(_empty) => {
                 out.push(RemoteSnapshotRow {
                     host: host_name,
                     name: crate::state::REMOTE_NO_SESSIONS_LABEL.to_string(),
@@ -265,7 +299,7 @@ fn collect_remotes(remotes: &[String]) -> Vec<RemoteSnapshotRow> {
                     unreachable: false,
                 });
             }
-            Some((host_name, None)) => {
+            None => {
                 out.push(RemoteSnapshotRow {
                     host: host_name,
                     name: crate::state::REMOTE_UNREACHABLE_LABEL.to_string(),
@@ -273,19 +307,9 @@ fn collect_remotes(remotes: &[String]) -> Vec<RemoteSnapshotRow> {
                     unreachable: true,
                 });
             }
-            None => {
-                // Thread spawn or join failed — rare. Fall back to the
-                // original host string.
-                out.push(RemoteSnapshotRow {
-                    host: host.clone(),
-                    name: crate::state::REMOTE_UNREACHABLE_LABEL.to_string(),
-                    dir: String::new(),
-                    unreachable: true,
-                });
-            }
         }
     }
-    out
+    (out, agent_counts)
 }
 
 /// Returns the proc-derived status for one session.
