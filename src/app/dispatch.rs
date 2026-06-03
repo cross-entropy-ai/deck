@@ -265,10 +265,12 @@ impl App {
         // view if we were watching a remote one.
         self.active_remote = None;
         self.supersede_agent_focus();
-        // Force a clean repaint after the switch — see the note on
-        // `needs_full_redraw` for why the host-terminal clear is the
-        // reliable fix for switch residue.
-        self.needs_full_redraw = true;
+        // No full redraw here: switching only re-points the existing
+        // tmux client at another session, so ratatui's per-cell diff
+        // against the new vt100 screen repaints what actually changed.
+        // The host-terminal clear used to flash the whole screen on
+        // every switch; the wide-char residue it papered over is now
+        // handled in bridge.rs via `set_skip`.
     }
 
     /// (Re)establish the persistent `ssh -tt host tmux attach` PTY for a
@@ -394,7 +396,9 @@ impl App {
 
         self.active_remote = Some(host.to_string());
         self.supersede_agent_focus();
-        self.needs_full_redraw = true;
+        // No full redraw on switch — see `switch_client`. We flip
+        // `active_remote` and let the diff repaint from the target
+        // host's vt100 screen.
     }
 
     /// Switch to and focus the pane a clicked agent runs in. Local:
@@ -549,7 +553,8 @@ impl App {
         self.active_remote = target.host.clone();
         self.state.active_agent = exact.then_some(target);
         self.state.focus_mode = FocusMode::Main;
-        self.needs_full_redraw = true;
+        // No full redraw — like the plain switch paths, the per-cell diff
+        // repaints from the new pane's vt100 screen (see `switch_client`).
     }
 
     fn switch_to_session_if_safe(&mut self, session: &str) -> bool {
