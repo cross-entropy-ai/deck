@@ -243,34 +243,34 @@ mod tests {
     use super::kill_button_rects;
     use ratatui::layout::Rect;
 
-#[test]
-fn kill_buttons_are_disjoint_and_on_screen() {
-    // Across a range of sidebar widths the two buttons must never
-    // overlap and must stay within the prompt's horizontal bounds.
-    for width in [14u16, 16, 28, 60] {
-        let area = Rect {
-            x: 0,
-            y: 0,
-            width,
-            height: 10,
-        };
-        let hits = kill_button_rects(area);
+    #[test]
+    fn kill_buttons_are_disjoint_and_on_screen() {
+        // Across a range of sidebar widths the two buttons must never
+        // overlap and must stay within the prompt's horizontal bounds.
+        for width in [14u16, 16, 28, 60] {
+            let area = Rect {
+                x: 0,
+                y: 0,
+                width,
+                height: 10,
+            };
+            let hits = kill_button_rects(area);
 
-        assert_eq!(hits.no.y, hits.yes.y, "buttons share the button row");
-        assert!(
-            hits.no.x + hits.no.width <= hits.yes.x,
-            "No must sit fully left of Yes (width {width})"
-        );
-        assert!(
-            hits.no.x >= area.x && hits.no.x + hits.no.width <= area.right(),
-            "No must stay within the prompt bounds (width {width})"
-        );
-        assert!(
-            hits.yes.x >= area.x && hits.yes.x + hits.yes.width <= area.right(),
-            "Yes must stay within the prompt bounds (width {width})"
-        );
+            assert_eq!(hits.no.y, hits.yes.y, "buttons share the button row");
+            assert!(
+                hits.no.x + hits.no.width <= hits.yes.x,
+                "No must sit fully left of Yes (width {width})"
+            );
+            assert!(
+                hits.no.x >= area.x && hits.no.x + hits.no.width <= area.right(),
+                "No must stay within the prompt bounds (width {width})"
+            );
+            assert!(
+                hits.yes.x >= area.x && hits.yes.x + hits.yes.width <= area.right(),
+                "Yes must stay within the prompt bounds (width {width})"
+            );
+        }
     }
-}
 
     #[test]
     fn kill_buttons_spread_apart_at_wide_width() {
