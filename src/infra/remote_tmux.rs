@@ -80,7 +80,9 @@ fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Sess
     // tab byte we can split on. Most remote shells deck talks to are
     // bash/zsh; a POSIX-only remote shell would need a different
     // escape, but that's an acceptable tradeoff today.
-    let format = "$'#{session_name}\\t#{session_path}'";
+    // Trailing `#{@deck_order}` carries deck's persisted display rank
+    // (empty when unset). See `persist_session_order`.
+    let format = "$'#{session_name}\\t#{session_path}\\t#{@deck_order}'";
     match run_ssh(runner, host, &["tmux", "list-sessions", "-F", format]) {
         Ok(raw) => {
             let window_activity = latest_window_activity_with(runner, host);
@@ -186,6 +188,40 @@ pub fn rename_session(host: &str, old_name: &str, new_name: &str) {
             new_name.as_str(),
         ],
     );
+}
+
+/// Persist the display order of `host`'s sessions onto the remote tmux
+/// server via the `@deck_order` user option (0-based rank), mirroring the
+/// local `tmux::persist_session_order`. Survives a deck restart/reconnect
+/// as long as the remote tmux server lives, with no config write. `order`
+/// lists the host's session names in their new display order. Best-effort,
+/// blocking ssh — runs on an explicit reorder the user is waiting on.
+pub fn persist_session_order(host: &str, order: &[String]) {
+    persist_session_order_with(default_runner(), host, order)
+}
+
+fn persist_session_order_with(runner: &dyn CommandRunner, host: &str, order: &[String]) {
+    if order.is_empty() {
+        return;
+    }
+    // One ssh hop, one tmux invocation with `;`-separated set-option
+    // commands. The remote shell re-parses the joined argv, so the
+    // separator is single-quoted (`';'`) to reach tmux as its command
+    // separator rather than splitting the shell command; names are
+    // single-quoted the same way.
+    let mut argv: Vec<String> = vec!["tmux".to_string()];
+    for (rank, name) in order.iter().enumerate() {
+        if rank > 0 {
+            argv.push("';'".to_string());
+        }
+        argv.push("set-option".to_string());
+        argv.push("-t".to_string());
+        argv.push(shell_single_quote(name));
+        argv.push("@deck_order".to_string());
+        argv.push(rank.to_string());
+    }
+    let argv_ref: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let _ = run_ssh(runner, host, &argv_ref);
 }
 
 /// Create a detached session `name` on the remote tmux server, starting
@@ -295,13 +331,21 @@ mod tests {
     /// `list-windows` activity probe in the reachable path.
     struct FakeRunner {
         list_sessions: Mutex<Option<Result<Output, CommandError>>>,
+        /// Joined-arg string of every `run` call, for asserting what was
+        /// issued (e.g. the persisted order's set-option chain).
+        calls: Mutex<Vec<String>>,
     }
 
     impl FakeRunner {
         fn new(list_sessions: Result<Output, CommandError>) -> Self {
             Self {
                 list_sessions: Mutex::new(Some(list_sessions)),
+                calls: Mutex::new(Vec::new()),
             }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
         }
     }
 
@@ -312,6 +356,7 @@ mod tests {
             args: &[&str],
             _timeout: Duration,
         ) -> Result<Output, CommandError> {
+            self.calls.lock().unwrap().push(args.join(" "));
             if args.contains(&"list-sessions") {
                 self.list_sessions
                     .lock()
@@ -345,6 +390,29 @@ mod tests {
         let sessions = list_sessions_with(&runner, "box").expect("reachable host");
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].name, "main");
+    }
+
+    #[test]
+    fn persist_session_order_chains_quoted_set_options_over_ssh() {
+        let runner = FakeRunner::new(ok(""));
+        persist_session_order_with(&runner, "box", &["a".to_string(), "b".to_string()]);
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 1, "one ssh hop");
+        // Names and the `;` separator are single-quoted so the remote shell
+        // passes them literally to tmux (tmux interprets the `;`).
+        assert!(
+            calls[0].contains("set-option -t 'a' @deck_order 0 ';' set-option -t 'b' @deck_order 1"),
+            "got: {}",
+            calls[0]
+        );
+        assert!(calls[0].contains("box"), "targets the host");
+    }
+
+    #[test]
+    fn persist_session_order_empty_is_noop() {
+        let runner = FakeRunner::new(ok(""));
+        persist_session_order_with(&runner, "box", &[]);
+        assert!(runner.calls().is_empty());
     }
 
     #[test]

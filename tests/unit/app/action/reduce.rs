@@ -362,6 +362,52 @@ fn reorder_session_at_boundary_is_noop() {
     assert!(!fx.save_session_order);
 }
 
+fn remote_row(host: &str, name: &str) -> crate::state::RemoteSessionRow {
+    crate::state::RemoteSessionRow {
+        host: host.to_string(),
+        name: name.to_string(),
+        dir: "/".to_string(),
+        unreachable: false,
+        loading: false,
+    }
+}
+
+#[test]
+fn reorder_remote_session_swaps_within_host_group() {
+    let mut state = make_test_state(2); // local sess-0, sess-1 (flat 0..1)
+    state.remote_sessions = vec![
+        remote_row("h", "a"),
+        remote_row("h", "b"),
+        remote_row("h2", "c"),
+    ];
+    // Focus the first remote row (flat index = local_count + 0 = 2).
+    state.focused = 2;
+    let fx = apply_action(&mut state, Action::ReorderSession(1)); // move "a" down
+    assert_eq!(state.remote_sessions[0].name, "b");
+    assert_eq!(state.remote_sessions[1].name, "a");
+    assert_eq!(state.focused, 3, "focus follows the moved row");
+    assert_eq!(fx.save_remote_session_order.as_deref(), Some("h"));
+    // Local order is untouched.
+    assert!(!fx.save_session_order);
+}
+
+#[test]
+fn reorder_remote_session_stops_at_host_boundary() {
+    let mut state = make_test_state(2);
+    state.remote_sessions = vec![
+        remote_row("h", "a"),
+        remote_row("h", "b"),
+        remote_row("h2", "c"),
+    ];
+    // Focus "b" — the last row of host h (flat 3). Moving it down would
+    // cross into host h2's group, so it's a no-op.
+    state.focused = 3;
+    let fx = apply_action(&mut state, Action::ReorderSession(1));
+    assert_eq!(state.remote_sessions[1].name, "b");
+    assert_eq!(state.remote_sessions[2].name, "c");
+    assert!(fx.save_remote_session_order.is_none());
+}
+
 #[test]
 fn open_close_exclude_editor() {
     let mut state = make_test_state(1);

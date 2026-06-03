@@ -464,6 +464,20 @@ impl App {
             tmux::persist_session_order(&self.state.session_order);
         }
 
+        if let Some(ref host) = fx.save_remote_session_order {
+            // Persist this host's group order to its remote tmux server.
+            // Blocking ssh, like remote rename/kill — the user just acted
+            // and the connection's ControlMaster is already warm.
+            let names: Vec<String> = self
+                .state
+                .remote_sessions
+                .iter()
+                .filter(|r| &r.host == host && r.is_attachable_session())
+                .map(|r| r.name.clone())
+                .collect();
+            crate::remote_tmux::persist_session_order(host, &names);
+        }
+
         if let Some(ref host) = fx.remove_remote_host {
             // Tear down the ControlMaster (and any forwards riding on
             // it) so the host stops occupying SSH state once detached.

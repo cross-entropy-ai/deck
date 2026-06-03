@@ -197,6 +197,36 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.remove_remote_host = Some(host);
         }
         Action::ReorderSession(direction) => {
+            let local_count = state.filtered.len();
+            // Remote row: reorder only within the same host's contiguous
+            // block (hosts can't interleave). Swap with the adjacent row in
+            // `direction` if it's the same host and a real session; persist
+            // that host's new order to its tmux server over ssh.
+            if state.focused >= local_count {
+                let idx = state.focused - local_count;
+                let len = state.remote_sessions.len();
+                let Some(row) = state.remote_sessions.get(idx) else {
+                    return fx;
+                };
+                if !row.is_attachable_session() {
+                    return fx;
+                }
+                let host = row.host.clone();
+                let neighbor = idx as i32 + direction;
+                if neighbor < 0 || neighbor as usize >= len {
+                    return fx;
+                }
+                let neighbor = neighbor as usize;
+                let n = &state.remote_sessions[neighbor];
+                if n.host != host || !n.is_attachable_session() {
+                    return fx;
+                }
+                state.remote_sessions.swap(idx, neighbor);
+                state.focused = local_count + neighbor;
+                fx.save_remote_session_order = Some(host);
+                return fx;
+            }
+
             let Some(&session_idx) = state.filtered.get(state.focused) else {
                 return fx;
             };

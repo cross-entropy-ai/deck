@@ -30,15 +30,14 @@ const MIN_MAIN_HEIGHT: u16 = 1;
 // "Switch" is dropped — the focus already triggers the switch, so the
 // menu item was redundant.
 const SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill", "Move up", "Move down"];
-// Remote sessions live on a different tmux server, so the
-// deck-side `session_order` (which drives Move up/down) doesn't
-// apply. Rename/Kill map to `ssh <host> tmux <cmd>` against the
-// host's server.
-const REMOTE_SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill"];
+// Remote sessions live on a different tmux server. Rename/Kill map to
+// `ssh <host> tmux <cmd>`; Move up/down reorder *within the host group*
+// (hosts can't interleave), persisted to that server's `@deck_order`.
+const REMOTE_SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill", "Move up", "Move down"];
 // Items shown but greyed-out / unselectable when the right-clicked row
 // is a synthetic placeholder (a remote host with no sessions, or an
-// unreachable one): there's no real session for Rename/Kill to act on.
-const PLACEHOLDER_DISABLED_ITEMS: &[&str] = &["Rename", "Kill"];
+// unreachable one): there's no real session to Rename/Kill/reorder.
+const PLACEHOLDER_DISABLED_ITEMS: &[&str] = &["Rename", "Kill", "Move up", "Move down"];
 // Only Kill is greyed when the row is the last live session on a remote
 // host: killing it would tear down that host's tmux server. Rename is
 // still fine.
@@ -525,6 +524,10 @@ pub struct SideEffect {
     /// tmux sessions (`@deck_order`) so the manual arrangement survives a
     /// deck restart. Fired by `ReorderSession`.
     pub save_session_order: bool,
+    /// Dispatch should persist this host's remote session order onto its
+    /// tmux server (`@deck_order` over ssh). Fired by `ReorderSession`
+    /// when the moved row is remote; carries the host whose group changed.
+    pub save_remote_session_order: Option<String>,
     pub apply_tmux_theme: bool,
     pub refresh_sessions: bool,
     pub quit: bool,
@@ -566,6 +569,9 @@ impl SideEffect {
         self.resize_pty |= other.resize_pty;
         self.save_config |= other.save_config;
         self.save_session_order |= other.save_session_order;
+        if other.save_remote_session_order.is_some() {
+            self.save_remote_session_order = other.save_remote_session_order;
+        }
         self.apply_tmux_theme |= other.apply_tmux_theme;
         self.refresh_sessions |= other.refresh_sessions;
         self.quit |= other.quit;

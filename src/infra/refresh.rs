@@ -242,7 +242,12 @@ fn collect_remotes(remotes: &[String]) -> Vec<RemoteSnapshotRow> {
     let mut out = Vec::new();
     for (host, handle) in remotes.iter().zip(handles) {
         match handle.and_then(|h| h.join().ok()) {
-            Some((host_name, Some(sessions))) if !sessions.is_empty() => {
+            Some((host_name, Some(mut sessions))) if !sessions.is_empty() => {
+                // Honor the per-session @deck_order set by a remote reorder:
+                // ranked sessions first (by rank), never-reordered ones after
+                // in tmux's listing order. remote_sessions is rebuilt every
+                // refresh, so sorting here is what makes the order stick.
+                sessions.sort_by_key(|s| (s.order.is_none(), s.order.unwrap_or(0)));
                 for s in sessions {
                     out.push(RemoteSnapshotRow {
                         host: host_name.clone(),
