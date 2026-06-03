@@ -40,16 +40,16 @@ layers must not branch on local vs remote**. When adding any
 per-session/per-host feature:
 
 - **One data type for both.** Local and remote produce the *same* shape
-  (`SessionInfo`, `AgentCounts`, …). Never introduce a parallel
+  (e.g. `SessionInfo`, `DetectedAgent`, `AgentTarget`). Never introduce a parallel
   `foo` + `remote_foo` pair with different shapes (e.g. a scalar for
   local and a map for remote) — that leaks the distinction upward.
 - **Key by host the way the rest of deck does:** `Option<String>`, where
   `None` = local and `Some(host)` = a remote host (see `KillRequest`,
-  `RenameRequest`, `CreateSessionRequest`, `AppState.agent_counts`). One
+  `RenameRequest`, `CreateSessionRequest`, `AppState.agents`). One
   store (`HashMap<Option<String>, T>`); absence = "not known yet".
 - **Only the data-gathering branches.** `tmux.rs` (local) and
   `remote_tmux.rs` (ssh) gather inputs differently, then feed the *same*
-  pure logic (`agent::count_agents`, `tmux_parse::parse_sessions`). The
+  pure logic (`agent::detect_agents`, `tmux_parse::parse_sessions`). The
   renderer consumes `&[&dyn SidebarSession]` and never asks "is this
   remote?". Push the local/remote split as low as it goes.
 
