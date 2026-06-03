@@ -911,8 +911,8 @@ pub struct AppState {
     /// renderer each frame. Read by mouse dispatch.
     pub divider_hits: Vec<DividerHit>,
 
-    /// Click-regions for the kill-confirmation `[ Yes ]` / `[ No ]`
-    /// buttons, refilled by the sidebar renderer while the prompt is up.
+    /// Click-regions for the kill-confirmation `[No]` / `[Yes]` buttons,
+    /// refilled by the sidebar renderer while the prompt is up.
     /// Read by mouse dispatch. `None` when the prompt is not shown.
     pub kill_confirm_hits: Option<KillConfirmHits>,
 
