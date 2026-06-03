@@ -536,6 +536,16 @@ impl App {
     }
 
     fn commit_focus(&mut self, target: crate::state::AgentTarget, exact: bool) {
+        // Move the sidebar's single highlight onto the session we just
+        // switched to, so it tracks the viewed session like j/k does (which
+        // moves the cursor and switches together). An agent-footer click
+        // otherwise switches the view without touching the highlight.
+        if let Some(idx) = self
+            .state
+            .focusable_index_for(target.host.as_deref(), &target.session)
+        {
+            self.state.focused = idx;
+        }
         self.active_remote = target.host.clone();
         self.state.active_agent = exact.then_some(target);
         self.state.focus_mode = FocusMode::Main;

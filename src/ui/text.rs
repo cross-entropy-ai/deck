@@ -126,31 +126,20 @@ pub(super) fn format_idle_badge(seconds: u64) -> Option<String> {
     Some(format!("{}d", seconds / 86_400))
 }
 
-/// Glyph used for the "you are here" override on the currently
-/// attached session. Whatever the underlying status, this beats it.
-const FOCUS_GLYPH: &str = "\u{276f}";
-
-/// Icon + color for the two-state session indicator.
-///
-/// `is_current` overrides everything: the attached session always
-/// shows a teal `❯` so you know where your tmux focus is. The actual
-/// state is visible in the main pane next to the sidebar — the icon
-/// would just be redundant. For background sessions:
+/// Icon + color for the two-state session indicator. The currently
+/// viewed session is no longer special-cased here — the sidebar's row
+/// highlight marks it — so every row just reflects its own state:
 ///
 /// - `Working`: spinner frame in green.
 /// - `Idle`: moon glyph, muted — nothing happening here.
 pub(super) fn status_icon<'a>(
     status: SessionStatus,
-    is_current: bool,
     theme: &Theme,
     spinner_frame: &str,
     _blink_on: bool,
     emphasized: bool,
     bg: Color,
 ) -> Span<'a> {
-    if is_current {
-        return Span::styled(FOCUS_GLYPH, Style::default().fg(theme.teal).bg(bg));
-    }
     match status {
         SessionStatus::Working => Span::styled(
             spinner_frame.to_string(),
@@ -163,31 +152,12 @@ pub(super) fn status_icon<'a>(
     }
 }
 
-/// Compact single-character string for the tabs / compact layouts.
-pub(super) fn status_icon_compact(
-    status: SessionStatus,
-    is_current: bool,
-    spinner_frame: &str,
-) -> String {
-    if is_current {
-        return FOCUS_GLYPH.to_string();
-    }
-    match status {
-        SessionStatus::Working => spinner_frame.to_string(),
-        SessionStatus::Idle => "\u{f186}".to_string(),
-    }
-}
-
 pub(super) fn status_color(
     status: SessionStatus,
-    is_current: bool,
     theme: &Theme,
     _blink_on: bool,
     emphasized: bool,
 ) -> Color {
-    if is_current {
-        return theme.teal;
-    }
     match status {
         SessionStatus::Working => theme.green,
         SessionStatus::Idle => {

@@ -22,7 +22,7 @@ use ratatui_textarea::TextArea;
 use super::overlays::{draw_confirm_kill, draw_help, draw_rename_input};
 use super::text::{
     format_idle_badge, idle_color, pack_hint_lines, pad_line, primary_key_string, shorten_dir,
-    status_color, status_icon, status_icon_compact, truncate,
+    status_color, status_icon, truncate,
 };
 use super::{PluginStatus, PluginView, SessionActivity, SessionOrigin, SidebarSession};
 use crate::state::SessionStatus;
@@ -732,7 +732,6 @@ fn render_session_card_expanded(
     let activity_icon = match activity {
         Some(a) => status_icon(
             a.status,
-            a.is_current,
             theme,
             ctx.spinner_frame,
             ctx.blink_on,
@@ -816,27 +815,19 @@ fn compact_activity(
     let Some(a) = activity else {
         return (" ".to_string(), bg);
     };
-    let text = if a.is_current {
-        status_icon_compact(a.status, true, spinner_frame)
-    } else {
-        match a.status {
-            SessionStatus::Working => spinner_frame.to_string(),
-            SessionStatus::Idle => {
-                if a.idle_seconds < 3 {
-                    spinner_frame.to_string()
-                } else {
-                    "󰒲".to_string()
-                }
+    let text = match a.status {
+        SessionStatus::Working => spinner_frame.to_string(),
+        SessionStatus::Idle => {
+            if a.idle_seconds < 3 {
+                spinner_frame.to_string()
+            } else {
+                "󰒲".to_string()
             }
         }
     };
-    let color = if a.is_current {
-        status_color(a.status, true, theme, blink_on, is_focused)
-    } else {
-        match a.status {
-            SessionStatus::Idle => idle_color(theme, a.idle_seconds, is_focused),
-            _ => status_color(a.status, false, theme, blink_on, is_focused),
-        }
+    let color = match a.status {
+        SessionStatus::Idle => idle_color(theme, a.idle_seconds, is_focused),
+        _ => status_color(a.status, theme, blink_on, is_focused),
     };
     (text, color)
 }

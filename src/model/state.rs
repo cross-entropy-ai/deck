@@ -1263,6 +1263,27 @@ impl AppState {
         self.filtered.len() + self.remote_sessions.len()
     }
 
+    /// Flat focusable index of the row for `session` on `host` (`None` =
+    /// local), or `None` if no such row is currently listed. Lets the
+    /// sidebar move its single highlight onto a session switched to
+    /// out-of-band — e.g. an agent-footer click — so the highlight tracks
+    /// the viewed session the same way keyboard navigation does (j/k moves
+    /// the cursor *and* switches). Mirrors the `FocusTarget` numbering:
+    /// local rows first, then remotes.
+    pub fn focusable_index_for(&self, host: Option<&str>, session: &str) -> Option<usize> {
+        match host {
+            None => self
+                .filtered
+                .iter()
+                .position(|&i| self.sessions[i].name == session),
+            Some(h) => self
+                .remote_sessions
+                .iter()
+                .position(|r| r.host == h && r.name == session)
+                .map(|p| self.filtered.len() + p),
+        }
+    }
+
     /// Optimistically mark a host's rows as reconnecting so the sidebar
     /// shows "(connecting...)" the instant the user hits the divider's
     /// reconnect button, before the refresh round returns.
