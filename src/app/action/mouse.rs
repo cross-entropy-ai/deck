@@ -10,6 +10,24 @@ fn hit_rect(rect: &Rect, col: u16, row: u16) -> bool {
 }
 
 pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
+    if state.overlay.confirm_kill {
+        // The kill prompt owns the sidebar while it's up: clicking a
+        // button confirms/cancels, every other click is inert — including
+        // the update banner — so nothing punches through a pending
+        // destructive confirmation.
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            if let Some(hits) = state.kill_confirm_hits {
+                if hit_rect(&hits.yes, mouse.column, mouse.row) {
+                    return Action::ConfirmKill;
+                }
+                if hit_rect(&hits.no, mouse.column, mouse.row) {
+                    return Action::CancelKill;
+                }
+            }
+        }
+        return Action::None;
+    }
+
     if mouse.kind == MouseEventKind::Down(MouseButton::Left)
         && state.banner_upgrade_at(mouse.column, mouse.row)
     {
@@ -34,23 +52,6 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             },
             _ => Action::None,
         };
-    }
-
-    if state.overlay.confirm_kill {
-        // The kill prompt owns the sidebar while it's up: clicking a
-        // button confirms/cancels, clicking anywhere else is inert so a
-        // stray click can't punch through to a session row behind it.
-        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-            if let Some(hits) = state.kill_confirm_hits {
-                if hit_rect(&hits.yes, mouse.column, mouse.row) {
-                    return Action::ConfirmKill;
-                }
-                if hit_rect(&hits.no, mouse.column, mouse.row) {
-                    return Action::CancelKill;
-                }
-            }
-        }
-        return Action::None;
     }
 
     if state.overlay.new_session.is_some() {

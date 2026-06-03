@@ -165,7 +165,7 @@ pub fn draw_sidebar(
         draw_help(frame, sessions_area, props.theme, props.keybindings);
         Vec::new()
     } else if let Some(name) = props.confirm_kill {
-        kill_hits = Some(draw_confirm_kill(frame, sessions_area, props.theme, name));
+        kill_hits = draw_confirm_kill(frame, sessions_area, props.theme, name);
         Vec::new()
     } else if let Some(textarea) = props.rename_input {
         draw_rename_input(frame, sessions_area, props.theme, textarea);

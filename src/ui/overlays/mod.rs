@@ -130,7 +130,7 @@ pub(super) fn draw_confirm_kill(
     area: ratatui::layout::Rect,
     theme: &Theme,
     name: &str,
-) -> KillConfirmHits {
+) -> Option<KillConfirmHits> {
     let lines = vec![
         Line::raw(""),
         Line::from(vec![
@@ -154,6 +154,13 @@ pub(super) fn draw_confirm_kill(
     let yes_rect = hits.yes;
     let btn_row = no_rect.y;
 
+    // If the prompt is too short to render the button row, draw nothing
+    // clickable and publish no hit regions — otherwise a click would land
+    // on invisible buttons and confirm/cancel a kill the user can't see.
+    if btn_row >= area.bottom() {
+        return None;
+    }
+
     let no_style = Style::default()
         .fg(theme.text)
         .bg(theme.surface)
@@ -163,14 +170,18 @@ pub(super) fn draw_confirm_kill(
         .bg(theme.yellow)
         .add_modifier(Modifier::BOLD);
 
-    if btn_row < area.bottom() {
-        Paragraph::new(Line::from(Span::styled(NO_LABEL, no_style))).render(no_rect, frame.buffer_mut());
-        Paragraph::new(Line::from(Span::styled(YES_LABEL, yes_style)))
-            .render(yes_rect, frame.buffer_mut());
+    Paragraph::new(Line::from(Span::styled(NO_LABEL, no_style)))
+        .render(no_rect, frame.buffer_mut());
+    Paragraph::new(Line::from(Span::styled(YES_LABEL, yes_style)))
+        .render(yes_rect, frame.buffer_mut());
 
+    // Hint sits two rows below the buttons — only drawn when that row
+    // exists, so it never overwrites the button row on a short prompt.
+    let hint_row = btn_row.saturating_add(2);
+    if hint_row < area.bottom() {
         let hint_rect = Rect {
             x: area.x,
-            y: btn_row.saturating_add(2).min(area.bottom().saturating_sub(1)),
+            y: hint_row,
             width: area.width,
             height: 1,
         };
@@ -182,7 +193,7 @@ pub(super) fn draw_confirm_kill(
         .render(hint_rect, frame.buffer_mut());
     }
 
-    hits
+    Some(hits)
 }
 
 pub(super) fn draw_rename_input(
