@@ -77,22 +77,49 @@ pub(super) fn kill_button_rects(area: Rect) -> KillConfirmHits {
     let btn_row = area.y.saturating_add(3);
     let no_w = NO_LABEL.len() as u16;
     let yes_w = YES_LABEL.len() as u16;
-    let no_x = area.x.saturating_add(2);
-    let yes_x = area
-        .right()
-        .saturating_sub(yes_w + 2)
-        .max(no_x + no_w + 1);
+
+    let right = area.right();
+
+    // Truncate button widths when the prompt is narrower than the labels.
+    let no_btn_w = no_w.min(area.width);
+    let yes_btn_w = yes_w.min(area.width);
+
+    // Prefer a 2-col indent, but always keep the rect fully within `area`.
+    let no_x = area
+        .x
+        .saturating_add(2)
+        .min(right.saturating_sub(no_btn_w));
+
+    // Right-align Yes with a 2-col inset when possible.
+    let desired_yes_x = right.saturating_sub(yes_btn_w + 2).max(area.x);
+
+    // Keep a 1-col gap when there is room; otherwise allow the buttons to touch.
+    let min_yes_x_gap = no_x.saturating_add(no_btn_w + 1);
+    let min_yes_x_touch = no_x.saturating_add(no_btn_w);
+
+    // Latest x that still keeps the Yes rect fully on-screen.
+    let max_yes_x = right.saturating_sub(yes_btn_w).max(area.x);
+
+    let yes_x = if max_yes_x >= min_yes_x_gap {
+        desired_yes_x.clamp(min_yes_x_gap, max_yes_x)
+    } else if max_yes_x >= min_yes_x_touch {
+        min_yes_x_touch
+    } else {
+        // Too narrow to keep the buttons disjoint; keep Yes as far right as possible.
+        max_yes_x
+    };
+
     KillConfirmHits {
         no: Rect {
             x: no_x,
             y: btn_row,
-            width: no_w,
+            width: no_btn_w,
             height: 1,
         },
         yes: Rect {
             x: yes_x,
             y: btn_row,
-            width: yes_w,
+            width: yes_btn_w,
             height: 1,
         },
     }
