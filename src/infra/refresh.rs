@@ -65,15 +65,15 @@ pub enum RefreshUpdate {
     Local {
         current_session: String,
         rows: Vec<SnapshotRow>,
-        /// Interactive agents on the local tmux server this round.
-        agent_counts: crate::agent::AgentCounts,
+        /// Interactive agents located on the local tmux server this round.
+        agents: Vec<crate::agent::DetectedAgent>,
     },
     Remote {
         rows: Vec<RemoteSnapshotRow>,
-        /// Per-reachable-host agent counts, keyed by host string;
-        /// `apply_remote` stores them under the unified `Some(host)` key.
-        /// Unreachable hosts are absent (stay "not probed").
-        agent_counts: HashMap<String, crate::agent::AgentCounts>,
+        /// Agents per reachable host, keyed by host string; `apply_remote`
+        /// stores them under the unified `Some(host)` key. Unreachable
+        /// hosts are absent (stay "not probed").
+        agents: HashMap<String, Vec<crate::agent::DetectedAgent>>,
     },
 }
 
@@ -141,12 +141,12 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
 
         // Local update synchronously — fast (~ms), users see the
         // sidebar populate immediately on startup.
-        let (current, local_rows, agent_counts) = collect_local(&req);
+        let (current, local_rows, agents) = collect_local(&req);
         if update_tx
             .send(RefreshUpdate::Local {
                 current_session: current,
                 rows: local_rows,
-                agent_counts,
+                agents,
             })
             .is_err()
         {
@@ -166,15 +166,17 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
             let _ = thread::Builder::new()
                 .name("deck-refresh-remote".into())
                 .spawn(move || {
-                    let (rows, agent_counts) = collect_remotes(&remotes);
-                    let _ = tx.send(RefreshUpdate::Remote { rows, agent_counts });
+                    let (rows, agents) = collect_remotes(&remotes);
+                    let _ = tx.send(RefreshUpdate::Remote { rows, agents });
                     flag.store(false, Ordering::Release);
                 });
         }
     }
 }
 
-fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>, crate::agent::AgentCounts) {
+fn collect_local(
+    req: &RefreshRequest,
+) -> (String, Vec<SnapshotRow>, Vec<crate::agent::DetectedAgent>) {
     let current = if req.slave_tty.is_empty() {
         tmux::current_session()
     } else {
@@ -222,10 +224,13 @@ fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>, crate::agen
 
     // Agent detection: walk each pane's process subtree for an
     // interactive Claude Code / Codex. No hooks. Cheap enough to run
-    // every refresh round.
-    let agent_counts = crate::agent::count_agents(&tmux::pane_pids(), &crate::agent::ps_snapshot());
+    // every refresh round. Apply the SAME exclude filter as the session
+    // rows above — an agent in a hidden session must not surface (or be
+    // clickable) in the sidebar footer.
+    let mut agents = crate::agent::detect_agents(&tmux::agent_panes(), &crate::agent::ps_snapshot());
+    agents.retain(|a| !config::session_excluded(&a.session, &compiled));
 
-    (current, rows, agent_counts)
+    (current, rows, agents)
 }
 
 /// Query each remote host for its tmux sessions in parallel: one thread
@@ -235,7 +240,7 @@ fn collect_local(req: &RefreshRequest) -> (String, Vec<SnapshotRow>, crate::agen
 /// host stalls this call by at most that much.
 fn collect_remotes(
     remotes: &[String],
-) -> (Vec<RemoteSnapshotRow>, HashMap<String, crate::agent::AgentCounts>) {
+) -> (Vec<RemoteSnapshotRow>, HashMap<String, Vec<crate::agent::DetectedAgent>>) {
     if remotes.is_empty() {
         return (Vec::new(), HashMap::new());
     }
@@ -247,8 +252,17 @@ fn collect_remotes(
                 .name(format!("deck-remote-{host}"))
                 .spawn(move || {
                     let sessions = remote_tmux::list_sessions(&host);
-                    // Same ssh round as sessions: also probe agents.
-                    let agents = remote_tmux::agent_probe(&host);
+                    // Probe agents ONLY when the host is reachable
+                    // (`list_sessions` returned `Some`, incl. a no-server
+                    // host). An unreachable host already spent one 5s ssh
+                    // timeout here; running `agent_probe` too would double
+                    // the stall and hold the single-flight gate ~10s,
+                    // suppressing every other host's refresh.
+                    let agents = if sessions.is_some() {
+                        remote_tmux::agent_probe(&host)
+                    } else {
+                        None
+                    };
                     (host, sessions, agents)
                 })
                 .ok()
@@ -256,7 +270,7 @@ fn collect_remotes(
         .collect();
 
     let mut out = Vec::new();
-    let mut agent_counts = HashMap::new();
+    let mut agents_by_host = HashMap::new();
     for (host, handle) in remotes.iter().zip(handles) {
         let (host_name, sessions, agents) = match handle.and_then(|h| h.join().ok()) {
             Some(triple) => triple,
@@ -272,8 +286,8 @@ fn collect_remotes(
                 continue;
             }
         };
-        if let Some(counts) = agents {
-            agent_counts.insert(host_name.clone(), counts);
+        if let Some(list) = agents {
+            agents_by_host.insert(host_name.clone(), list);
         }
         match sessions {
             Some(mut sessions) if !sessions.is_empty() => {
@@ -309,7 +323,7 @@ fn collect_remotes(
             }
         }
     }
-    (out, agent_counts)
+    (out, agents_by_host)
 }
 
 /// Returns the proc-derived status for one session.

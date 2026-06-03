@@ -52,8 +52,18 @@ fn classify_ignores_non_agents() {
     assert_eq!(classify(""), None);
 }
 
+fn pane(pid: u32, session: &str, window: &str, pane: &str) -> PaneInfo {
+    PaneInfo {
+        pid,
+        session: session.to_string(),
+        window: window.to_string(),
+        pane: pane.to_string(),
+        pane_id: format!("%{pid}"),
+    }
+}
+
 #[test]
-fn count_agents_one_per_pane_excludes_subagents_and_headless() {
+fn detect_agents_one_per_pane_excludes_subagents_and_headless() {
     // pane 100: shell -> claude -> (sub-agent claude child, must NOT double-count)
     // pane 300: shell -> node wrapper -> native codex (matched at depth 2)
     // pane 500: shell -> vim (no agent)
@@ -68,21 +78,68 @@ fn count_agents_one_per_pane_excludes_subagents_and_headless() {
 500 1 -zsh
 600 500 vim
 700 1 /Users/me/.cursor/native-binary/claude --output-format stream-json";
-    let counts = count_agents(&[100, 300, 500], ps);
-    assert_eq!(counts, AgentCounts { claude: 1, codex: 1 });
+    let panes = [
+        pane(100, "deck", "1", "0"),
+        pane(300, "work", "2", "1"),
+        pane(500, "work", "2", "2"),
+    ];
+    let agents = detect_agents(&panes, ps);
+    assert_eq!(agents.len(), 2);
+    // pane 100 -> claude, located at its session/window/pane, with the
+    // stable pane id carried for switching.
+    assert_eq!(agents[0].kind, AgentKind::Claude);
+    assert_eq!(agents[0].location(), "deck:1.0");
+    assert_eq!(agents[0].pane_id, "%100");
+    // pane 300 -> codex (matched two levels down the wrapper).
+    assert_eq!(agents[1].kind, AgentKind::Codex);
+    assert_eq!(agents[1].location(), "work:2.1");
+    assert_eq!(agents[1].pane_id, "%300");
+    // pane 500 -> no agent (not in the list).
 }
 
 #[test]
-fn count_agents_detects_agent_run_as_pane_root() {
+fn detect_agents_run_as_pane_root() {
     // Some setups exec the agent as the pane's command (pane_pid IS the
     // agent), with no intervening shell.
     let ps = "800 1 claude\n900 1 -zsh";
-    let counts = count_agents(&[800, 900], ps);
-    assert_eq!(counts, AgentCounts { claude: 1, codex: 0 });
+    let agents = detect_agents(&[pane(800, "s", "0", "0"), pane(900, "s", "1", "0")], ps);
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0].kind, AgentKind::Claude);
 }
 
 #[test]
-fn count_agents_empty_inputs() {
-    assert_eq!(count_agents(&[], ""), AgentCounts::default());
-    assert_eq!(count_agents(&[1, 2], ""), AgentCounts::default());
+fn detect_agents_empty_inputs() {
+    assert!(detect_agents(&[], "").is_empty());
+    assert!(detect_agents(&[pane(1, "s", "0", "0")], "").is_empty());
+}
+
+#[test]
+fn excluded_session_agents_are_filtered_out() {
+    // `collect_local` runs this exact retain after detection so an agent
+    // in a hidden session never reaches the sidebar footer.
+    use crate::config;
+    let panes = [pane(100, "work", "1", "0"), pane(200, "_hidden", "1", "0")];
+    let ps = "100 1 -zsh\n150 100 claude\n200 1 -zsh\n250 200 claude";
+    let mut agents = detect_agents(&panes, ps);
+    assert_eq!(agents.len(), 2, "both detected before filtering");
+
+    let compiled = config::compile_patterns(&["_*".to_string()]);
+    agents.retain(|a| !config::session_excluded(&a.session, &compiled));
+
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0].session, "work", "the '_hidden' agent is excluded");
+}
+
+#[test]
+fn parse_panes_reads_tab_fields() {
+    let raw = "56578\tdeck\t1\t0\t%240\n74037\ttpu-spot\t2\t1\t%243\nbad_line";
+    let got = parse_panes(raw);
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0].pid, 56578);
+    assert_eq!(got[0].session, "deck");
+    assert_eq!(got[0].pane_id, "%240");
+    assert_eq!(got[1].pid, 74037);
+    assert_eq!(got[1].window, "2");
+    assert_eq!(got[1].pane, "1");
+    assert_eq!(got[1].pane_id, "%243");
 }

@@ -94,6 +94,9 @@ pub enum Action {
 
     SidebarClickSession(usize),
     NumberKeyJump(usize),
+    /// Switch to (and focus) the pane a detected agent runs in. Fired by
+    /// clicking an agent line in a section footer.
+    SwitchToAgentPane(crate::state::AgentTarget),
 
     ResizeSidebar(u16),
     ResizeSidebarHeight(u16),

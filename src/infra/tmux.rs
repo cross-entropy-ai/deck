@@ -100,12 +100,12 @@ fn persist_session_order_with(runner: &dyn CommandRunner, order: &[String]) {
     let _ = runner.run("tmux", &args_ref, TMUX_TIMEOUT);
 }
 
-/// Root pids of every pane on the local tmux server (`#{pane_pid}`).
-/// Used by agent detection to walk each pane's process subtree. See
+/// Every pane on the local tmux server with the identity agent detection
+/// needs: pid (subtree root) + session/window/pane for locating. See
 /// `crate::agent`.
-pub fn pane_pids() -> Vec<u32> {
-    tmux(&["list-panes", "-a", "-F", "#{pane_pid}"])
-        .map(|raw| raw.lines().filter_map(|l| l.trim().parse().ok()).collect())
+pub fn agent_panes() -> Vec<crate::agent::PaneInfo> {
+    tmux(&["list-panes", "-a", "-F", crate::agent::PANE_FORMAT])
+        .map(|raw| crate::agent::parse_panes(&raw))
         .unwrap_or_default()
 }
 
@@ -199,6 +199,86 @@ pub fn new_session(name: &str, dir: &str) -> Option<String> {
 /// Switch a specific tmux client (by TTY) to a different session.
 pub fn switch_client_for_tty(client_tty: &str, session: &str) {
     let _ = tmux(&["switch-client", "-c", client_tty, "-t", session]);
+}
+
+/// Outcome of an agent-pane focus (local or remote). Distinguishes a true
+/// exact-pane focus — the agent's window+pane were selected and our client
+/// switched to it — from a `SessionOnly` switch, the fallback taken when
+/// another client shares the session (selecting the pane would move that
+/// client, so we switch only our own client and leave the session's
+/// window/pane alone). Callers must mark the agent active only for
+/// `ExactPane`: `SessionOnly` moved the view but did not focus the pane,
+/// so highlighting the agent would lie about what the main pane shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneFocus {
+    ExactPane,
+    SessionOnly,
+    Failed,
+}
+
+/// Focus the pane with the stable id `pane_id` (`%N`) and switch the
+/// client (by tty; empty = current) to its session. One tmux invocation:
+/// select-window, select-pane, then switch-client (`;` is tmux's own
+/// separator, as in `apply_theme`). The pane id is stable across
+/// index renumbering; `session` is only the switch-client target.
+///
+/// Returns the focus outcome — a stale `%id` (pane gone) makes
+/// `select-window` error and aborts the sequence (`Failed`), so the caller
+/// can avoid committing a focus that didn't happen, and `SessionOnly`
+/// signals the highlight must be withheld (see [`PaneFocus`]).
+pub fn focus_local_pane(client_tty: &str, session: &str, pane_id: &str) -> PaneFocus {
+    // `select-window`/`select-pane` are session state, not client state, so
+    // they move every client attached to the session. Only select the exact
+    // window/pane when our client is the sole one on the session; otherwise
+    // switch just our own client (client-scoped) and leave the session's
+    // current window/pane untouched, so we don't yank a co-attached client.
+    let exact = !other_client_on_session(client_tty, session);
+    let mut args: Vec<String> = Vec::new();
+    if exact {
+        args.extend([
+            "select-window".into(),
+            "-t".into(),
+            pane_id.into(),
+            ";".into(),
+            "select-pane".into(),
+            "-t".into(),
+            pane_id.into(),
+            ";".into(),
+        ]);
+    }
+    args.push("switch-client".into());
+    if !client_tty.is_empty() {
+        args.push("-c".into());
+        args.push(client_tty.into());
+    }
+    args.push("-t".into());
+    args.push(session.into());
+    let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+    if tmux(&args_ref).is_none() {
+        PaneFocus::Failed
+    } else if exact {
+        PaneFocus::ExactPane
+    } else {
+        PaneFocus::SessionOnly
+    }
+}
+
+/// Whether a tmux client *other than* `client_tty` is attached to
+/// `session`. Used to avoid the session-global select-window/select-pane
+/// when a focus would otherwise move a co-attached client. An empty
+/// `client_tty` (we don't know our own client) returns `false` — the
+/// caller then falls back to a plain focus, matching the single-client
+/// norm.
+fn other_client_on_session(client_tty: &str, session: &str) -> bool {
+    if client_tty.is_empty() {
+        return false;
+    }
+    let Some(raw) = tmux(&["list-clients", "-t", session, "-F", "#{client_tty}"]) else {
+        return false;
+    };
+    raw.lines()
+        .map(str::trim)
+        .any(|t| !t.is_empty() && t != client_tty)
 }
 
 /// Apply a deck theme to tmux's global options (status bar, pane borders, etc.).

@@ -100,6 +100,10 @@ impl App {
                 }
                 false
             }
+            Action::SwitchToAgentPane(target) => {
+                self.switch_to_agent_pane(target);
+                false
+            }
             Action::SwitchProject => {
                 let fx = action::apply_action(&mut self.state, action);
                 self.execute_side_effects(&fx);
@@ -260,6 +264,7 @@ impl App {
         // Selecting a local session implies returning to the local
         // view if we were watching a remote one.
         self.active_remote = None;
+        self.supersede_agent_focus();
         // Force a clean repaint after the switch — see the note on
         // `needs_full_redraw` for why the host-terminal clear is the
         // reliable fix for switch residue.
@@ -288,6 +293,8 @@ impl App {
             crate::app::RemoteConn {
                 status: crate::app::RemoteConnStatus::Connecting,
                 pane: None,
+                client_marker_id: 0,
+                marker_ready: false,
             },
         );
         self.remote_spawner.spawn(host);
@@ -328,6 +335,14 @@ impl App {
             self.active_remote = None;
             self.needs_full_redraw = true;
         }
+        // Drop the agent highlight if it belonged to the removed host, and
+        // supersede any in-flight focus to it, so we don't keep marking an
+        // agent active on a host that's gone.
+        if self.state.active_agent.as_ref().and_then(|t| t.host.as_deref()) == Some(host) {
+            self.state.active_agent = None;
+            self.needs_full_redraw = true;
+        }
+        self.focus_seq += 1;
     }
 
     /// Switch the main view to a session on a remote host.
@@ -343,12 +358,26 @@ impl App {
     /// starts working again once the pane reconnects.
     pub(super) fn switch_to_remote(&mut self, host: &str, name: &str) {
         use crate::app::RemoteConnStatus;
-        let connected = self.remote_conns.get(host).is_some_and(|c| {
-            matches!(c.status, RemoteConnStatus::Connected) && c.pane.is_some()
-        });
+        let conn = self.remote_conns.get(host);
+        let connected = conn
+            .is_some_and(|c| matches!(c.status, RemoteConnStatus::Connected) && c.pane.is_some());
         if !connected {
             return;
         }
+        // The marker-gated `switch_client` no-ops until the attach prelude
+        // has written the client tty (the connect race / unwritten marker).
+        // Committing `active_remote` then would lie: the UI would show the
+        // host switched while its tmux client stayed put, with no retry. So
+        // hold the switch as pending and let the readiness drain (first PTY
+        // output) fire it once the marker exists.
+        if !conn.is_some_and(|c| c.marker_ready) {
+            self.pending_remote_switch = Some(crate::state::RemoteSwitchRequest {
+                host: host.to_string(),
+                name: name.to_string(),
+            });
+            return;
+        }
+        let marker_id = conn.map(|c| c.client_marker_id).unwrap_or(0);
 
         // Fire-and-forget switch-client. Background thread because the
         // call (even over a warm ControlMaster) costs ~10–30 ms — small
@@ -359,11 +388,157 @@ impl App {
         std::thread::Builder::new()
             .name(format!("deck-switch-{host_owned}"))
             .spawn(move || {
-                crate::remote_tmux::switch_client(&host_owned, &name_owned);
+                crate::remote_tmux::switch_client(&host_owned, marker_id, &name_owned);
             })
             .ok();
 
         self.active_remote = Some(host.to_string());
+        self.supersede_agent_focus();
+        self.needs_full_redraw = true;
+    }
+
+    /// Switch to and focus the pane a clicked agent runs in. Local:
+    /// re-point the client at the session and select the exact
+    /// window/pane (subject to the nesting guard — clicking deck's own
+    /// agent would nest). Remote: switch to that host's session (pane
+    /// focus on remote is a follow-up).
+    fn switch_to_agent_pane(&mut self, target: crate::state::AgentTarget) {
+        // Stamp this click as the newest focus intent; any in-flight remote
+        // focus from a prior click is now stale and won't commit.
+        self.focus_seq += 1;
+        match &target.host {
+            None => {
+                // Local focus is a synchronous tmux call — instant, no
+                // network — so we commit inline on success. A stale `%id`
+                // (pane gone) makes the command fail → no commit, no lie.
+                if let Some(warning) = self.nesting_guard.warning_for_switch(&target.session) {
+                    self.warning_state = Some(warning);
+                    return;
+                }
+                self.warning_state = None;
+                let tty = self.local_terminal.pty.slave_tty.clone();
+                match tmux::focus_local_pane(&tty, &target.session, &target.pane_id) {
+                    tmux::PaneFocus::ExactPane => self.commit_focus(target, true),
+                    tmux::PaneFocus::SessionOnly => self.commit_focus(target, false),
+                    tmux::PaneFocus::Failed => {}
+                }
+            }
+            // Remote focus shells out over ssh, which can stall for the full
+            // timeout — run it off-thread (like `switch_to_remote`) and
+            // commit only when the worker reports success, so a degraded
+            // host can neither freeze the UI nor leave a lying highlight.
+            Some(_) => self.spawn_remote_agent_focus(target),
+        }
+    }
+
+    /// Off-thread remote agent-pane focus: gate on the connection being
+    /// live AND marker-ready (cheap, non-blocking checks), then ssh-focus
+    /// the pane on a worker and report the result (tagged with the current
+    /// `focus_seq`) back via `focus_tx`. No-op (no commit) when the host
+    /// isn't connected or its marker hasn't been written yet — focusing
+    /// then would just bail server-side and waste an ssh round-trip.
+    fn spawn_remote_agent_focus(&mut self, target: crate::state::AgentTarget) {
+        use crate::app::RemoteConnStatus;
+        let Some(host) = target.host.clone() else {
+            return;
+        };
+        let marker_id = self.remote_conns.get(&host).and_then(|c| {
+            (matches!(c.status, RemoteConnStatus::Connected) && c.pane.is_some() && c.marker_ready)
+                .then_some(c.client_marker_id)
+        });
+        let Some(marker_id) = marker_id else {
+            return;
+        };
+        let tx = self.focus_tx.clone();
+        let seq = self.focus_seq;
+        let session = target.session.clone();
+        let pane_id = target.pane_id.clone();
+        std::thread::Builder::new()
+            .name(format!("deck-focus-{host}"))
+            .spawn(move || {
+                let result = crate::remote_tmux::focus_pane(&host, marker_id, &session, &pane_id);
+                let _ = tx.send(super::FocusOutcome {
+                    target,
+                    result,
+                    seq,
+                    marker_id,
+                });
+            })
+            .ok();
+    }
+
+    /// Apply a remote focus completion (drained in the event loop). Act on
+    /// it only when it's still valid: no newer focus action has happened
+    /// (`seq`), the connection is the *same generation* it was spawned
+    /// against (`marker_id` — a reconnect mints a new id, so an outcome
+    /// from a dropped/older PTY is rejected), the host is still connected,
+    /// and the agent is still present. A slow ssh focus that finishes after
+    /// the user moved on — or after a disconnect/reconnect — is dropped
+    /// rather than clobbering the current view. Only `ExactPane` earns the
+    /// agent highlight; `SessionOnly` moved the view without focusing the
+    /// exact pane, so it commits a plain session switch (no highlight).
+    pub(super) fn apply_focus_outcome(&mut self, outcome: super::FocusOutcome) {
+        if outcome.seq != self.focus_seq {
+            return;
+        }
+        let same_generation = outcome
+            .target
+            .host
+            .as_deref()
+            .and_then(|h| self.remote_conns.get(h))
+            .is_some_and(|c| c.client_marker_id == outcome.marker_id);
+        if !same_generation {
+            return;
+        }
+        if !self.agent_focus_target_live(&outcome.target) {
+            return;
+        }
+        match outcome.result {
+            tmux::PaneFocus::ExactPane => self.commit_focus(outcome.target, true),
+            tmux::PaneFocus::SessionOnly => self.commit_focus(outcome.target, false),
+            tmux::PaneFocus::Failed => {}
+        }
+    }
+
+    /// Whether a remote focus target is still actionable: its host is
+    /// connected and the agent is still detected on it. Guards stale
+    /// completions whose host was removed or whose agent has since exited.
+    fn agent_focus_target_live(&self, target: &crate::state::AgentTarget) -> bool {
+        use crate::app::RemoteConnStatus;
+        let Some(host) = target.host.as_deref() else {
+            return true; // local targets are committed inline, not here
+        };
+        let connected = self.remote_conns.get(host).is_some_and(|c| {
+            matches!(c.status, RemoteConnStatus::Connected) && c.pane.is_some()
+        });
+        let still_detected = self
+            .state
+            .agents
+            .get(&target.host)
+            .is_some_and(|list| list.iter().any(|a| a.pane_id == target.pane_id));
+        connected && still_detected
+    }
+
+    /// Commit a focus result — local or remote, same path: point
+    /// `active_remote` at the target's host (`None` = local) and show the
+    /// main pane. `exact` highlights the agent footer line (we focused its
+    /// exact pane); `!exact` is a session-only switch — Deck's client moved
+    /// to the agent's session but its window/pane was deliberately not
+    /// selected (another client shares the session), so we leave
+    /// `active_agent` cleared rather than claim a focus that didn't happen.
+    /// A plain session switch (local or remote) isn't an agent-pane focus:
+    /// drop the agent highlight and bump `focus_seq` so any in-flight
+    /// remote focus's late completion is treated as stale and can't
+    /// re-highlight an agent. Shared by `switch_client` / `switch_to_remote`.
+    fn supersede_agent_focus(&mut self) {
+        self.state.active_agent = None;
+        self.focus_seq += 1;
+    }
+
+    fn commit_focus(&mut self, target: crate::state::AgentTarget, exact: bool) {
+        self.active_remote = target.host.clone();
+        self.state.active_agent = exact.then_some(target);
+        self.state.focus_mode = FocusMode::Main;
         self.needs_full_redraw = true;
     }
 

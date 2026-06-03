@@ -791,7 +791,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
 
         Action::ForwardKey(_) | Action::ForwardMouse(_) => {}
-        Action::SidebarClickSession(_) | Action::NumberKeyJump(_) | Action::MenuClickItem(_) => {}
+        Action::SidebarClickSession(_)
+        | Action::NumberKeyJump(_)
+        | Action::MenuClickItem(_)
+        | Action::SwitchToAgentPane(_) => {}
 
         Action::Quit => {
             fx.quit = true;

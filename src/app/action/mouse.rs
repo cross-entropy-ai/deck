@@ -145,6 +145,13 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             }
         }
 
+        // Agent footer lines: a click switches to (and focuses) that pane.
+        for hit in &state.agent_hits {
+            if hit_rect(&hit.rect, mouse.column, mouse.row) {
+                return Action::SwitchToAgentPane(hit.target.clone());
+            }
+        }
+
         let flat = match state.layout_mode {
             LayoutMode::Horizontal => state.focus_at_row(mouse.row).map(|t| t.0),
             // Both return a unified flat index (local rows then
