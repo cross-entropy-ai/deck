@@ -152,7 +152,7 @@ impl Default for Config {
             theme: "Catppuccin Mocha (Dark)".to_string(),
             layout: LayoutMode::Horizontal,
             show_borders: true,
-            show_agents: true,
+            show_agents: false,
             sidebar_width: 28,
             sidebar_height: SIDEBAR_HEIGHT,
             view_mode: ViewMode::Expanded,
