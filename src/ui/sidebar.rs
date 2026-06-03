@@ -138,7 +138,23 @@ pub fn draw_sidebar(
                 show_borders: props.show_borders,
             },
         );
-        return (banner_bounds, Vec::new(), None);
+        // A pending kill confirmation must render and stay clickable in
+        // tabs mode too: the mouse guard swallows every click while
+        // `confirm_kill` is set, so without drawing the prompt here the
+        // user would face an invisible modal that only y/n could clear.
+        // Overlay it on the inner content (covering the tab row), which
+        // matches the modal "kill prompt owns the sidebar" behavior.
+        let kill_hits = props.confirm_kill.and_then(|name| {
+            let content = draw_sidebar_container(
+                frame,
+                area,
+                props.theme,
+                props.sidebar_active,
+                props.show_borders,
+            );
+            draw_confirm_kill(frame, content, props.theme, name)
+        });
+        return (banner_bounds, Vec::new(), kill_hits);
     }
     let content = draw_sidebar_container(
         frame,

@@ -88,3 +88,69 @@ fn pf_badge_suppressed_at_narrow_width_keeps_buttons_on_screen() {
     let rendered: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(!rendered.contains('\u{21c4}'), "badge should be hidden at narrow width: {rendered:?}");
 }
+
+#[test]
+fn confirm_kill_renders_clickable_in_tabs_mode() {
+    // Regression: in vertical/tabs mode draw_sidebar returned before the
+    // confirm-kill branch, so the prompt never drew and kill_confirm_hits
+    // stayed None. Combined with the mouse guard that swallows every click
+    // while confirm_kill is set, the clickable buttons worked only in
+    // horizontal mode. The prompt must render and publish hit regions in
+    // tabs mode too.
+    use ratatui::{backend::TestBackend, Terminal};
+
+    let theme = &crate::theme::THEMES[0];
+    let layout = SidebarLayout::new();
+    let keybindings = Keybindings::default();
+    let sessions: Vec<&dyn SidebarSession> = Vec::new();
+
+    let backend = TestBackend::new(30, 12);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut kill_hits = None;
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            let (_, _, hits) = super::draw_sidebar(
+                frame,
+                area,
+                SidebarProps {
+                    sessions: &sessions,
+                    local_count: 0,
+                    layout: &layout,
+                    focus_target: None,
+                    sidebar_active: true,
+                    theme,
+                    show_help: false,
+                    confirm_kill: Some("victim"),
+                    rename_input: None,
+                    show_borders: true,
+                    tabs_mode: true,
+                    spinner_frame: "",
+                    view_mode: ViewMode::Expanded,
+                    plugins: &[],
+                    blink_on: false,
+                    keybindings: &keybindings,
+                    update_available: None,
+                },
+            );
+            kill_hits = hits;
+        })
+        .unwrap();
+
+    let hits = kill_hits.expect("kill prompt must publish hit regions in tabs mode");
+    assert_eq!(hits.no.y, hits.yes.y, "buttons share the button row");
+    assert!(
+        hits.no.x + hits.no.width <= hits.yes.x,
+        "No/Yes buttons must not overlap"
+    );
+
+    // The prompt text is actually painted, not just hit regions reported.
+    let buf = terminal.backend().buffer();
+    let mut text = String::new();
+    for y in 0..buf.area.height {
+        for x in 0..buf.area.width {
+            text.push_str(buf[(x, y)].symbol());
+        }
+    }
+    assert!(text.contains("Kill victim"), "prompt text missing: {text:?}");
+}
