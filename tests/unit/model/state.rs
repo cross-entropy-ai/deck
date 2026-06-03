@@ -21,6 +21,7 @@ fn make_state(
         layout_mode,
         ViewMode::Expanded,
         show_borders,
+        true,
         28,
         SIDEBAR_HEIGHT,
         term_width,

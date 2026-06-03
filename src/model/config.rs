@@ -132,6 +132,10 @@ pub struct Config {
     pub theme: String,
     pub layout: LayoutMode,
     pub show_borders: bool,
+    /// Whether the sidebar shows the per-section agent footers
+    /// (`claude X, codex Y` + the detected agents). When false the
+    /// footers are hidden and agent detection is skipped entirely.
+    pub show_agents: bool,
     pub sidebar_width: u16,
     pub sidebar_height: u16,
     pub view_mode: ViewMode,
@@ -148,6 +152,7 @@ impl Default for Config {
             theme: "Catppuccin Mocha (Dark)".to_string(),
             layout: LayoutMode::Horizontal,
             show_borders: true,
+            show_agents: true,
             sidebar_width: 28,
             sidebar_height: SIDEBAR_HEIGHT,
             view_mode: ViewMode::Expanded,

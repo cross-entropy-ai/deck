@@ -305,6 +305,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.resize_pty = true;
             fx.save_config = true;
         }
+        Action::ToggleShowAgents => {
+            // Show/hide the agent footers. No `resize_pty`: it only adds/
+            // removes sidebar footer rows, the pane geometry is unchanged.
+            // The next refresh picks up the flag and starts/stops detection.
+            state.show_agents = !state.show_agents;
+            fx.save_config = true;
+        }
         Action::ToggleViewMode => {
             state.view_mode = match state.view_mode {
                 ViewMode::Expanded => ViewMode::Compact,

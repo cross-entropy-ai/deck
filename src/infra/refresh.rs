@@ -33,6 +33,10 @@ pub struct RefreshRequest {
     /// Hosts to query for remote tmux sessions. Empty (the common
     /// case) skips the remote path entirely.
     pub remotes: Vec<String>,
+    /// Whether to detect interactive agents this round. When false the
+    /// local/remote agent probes are skipped entirely (the "Show Agents"
+    /// toggle is off), so no `ps`/subtree walk and no extra ssh work runs.
+    pub show_agents: bool,
 }
 
 pub struct SnapshotRow {
@@ -161,12 +165,13 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
             && !remote_in_flight.swap(true, Ordering::Acquire)
         {
             let remotes = req.remotes.clone();
+            let probe_agents = req.show_agents;
             let tx = update_tx.clone();
             let flag = remote_in_flight.clone();
             let _ = thread::Builder::new()
                 .name("deck-refresh-remote".into())
                 .spawn(move || {
-                    let (rows, agents) = collect_remotes(&remotes);
+                    let (rows, agents) = collect_remotes(&remotes, probe_agents);
                     let _ = tx.send(RefreshUpdate::Remote { rows, agents });
                     flag.store(false, Ordering::Release);
                 });
@@ -226,9 +231,16 @@ fn collect_local(
     // interactive Claude Code / Codex. No hooks. Cheap enough to run
     // every refresh round. Apply the SAME exclude filter as the session
     // rows above — an agent in a hidden session must not surface (or be
-    // clickable) in the sidebar footer.
-    let mut agents = crate::agent::detect_agents(&tmux::agent_panes(), &crate::agent::ps_snapshot());
-    agents.retain(|a| !config::session_excluded(&a.session, &compiled));
+    // clickable) in the sidebar footer. Skipped (no `ps`/subtree walk)
+    // when the user turned agents off.
+    let agents = if req.show_agents {
+        let mut agents =
+            crate::agent::detect_agents(&tmux::agent_panes(), &crate::agent::ps_snapshot());
+        agents.retain(|a| !config::session_excluded(&a.session, &compiled));
+        agents
+    } else {
+        Vec::new()
+    };
 
     (current, rows, agents)
 }
@@ -240,6 +252,7 @@ fn collect_local(
 /// host stalls this call by at most that much.
 fn collect_remotes(
     remotes: &[String],
+    probe_agents: bool,
 ) -> (Vec<RemoteSnapshotRow>, HashMap<String, Vec<crate::agent::DetectedAgent>>) {
     if remotes.is_empty() {
         return (Vec::new(), HashMap::new());
@@ -252,13 +265,13 @@ fn collect_remotes(
                 .name(format!("deck-remote-{host}"))
                 .spawn(move || {
                     let sessions = remote_tmux::list_sessions(&host);
-                    // Probe agents ONLY when the host is reachable
-                    // (`list_sessions` returned `Some`, incl. a no-server
-                    // host). An unreachable host already spent one 5s ssh
-                    // timeout here; running `agent_probe` too would double
-                    // the stall and hold the single-flight gate ~10s,
+                    // Probe agents ONLY when agents are enabled AND the host
+                    // is reachable (`list_sessions` returned `Some`, incl. a
+                    // no-server host). An unreachable host already spent one
+                    // 5s ssh timeout here; running `agent_probe` too would
+                    // double the stall and hold the single-flight gate ~10s,
                     // suppressing every other host's refresh.
-                    let agents = if sessions.is_some() {
+                    let agents = if probe_agents && sessions.is_some() {
                         remote_tmux::agent_probe(&host)
                     } else {
                         None

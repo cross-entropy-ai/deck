@@ -34,6 +34,12 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         return Action::TriggerUpgrade;
     }
 
+    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        && state.show_agents_checkbox_at(mouse.column, mouse.row)
+    {
+        return Action::ToggleShowAgents;
+    }
+
     if let Some(menu) = state.overlay.context_menu.as_ref() {
         return match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {

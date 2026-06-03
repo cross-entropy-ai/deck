@@ -931,6 +931,11 @@ pub struct AppState {
     pub sidebar_width: u16,
     pub sidebar_height: u16,
     pub show_borders: bool,
+    /// Whether the per-section agent footers render and agent detection
+    /// runs. Toggled by the "Show Agents" checkbox in the sidebar header;
+    /// persisted to config. When false, `sidebar_layout` omits the
+    /// footers and the refresh worker skips agent detection entirely.
+    pub show_agents: bool,
     pub dragging_separator: bool,
 
     /// Transient sidebar overlays — help, kill-confirm, rename, context
@@ -956,6 +961,11 @@ pub struct AppState {
     /// Column range of the clickable "upgrade" span in the footer banner,
     /// captured during render for mouse hit-testing. (y, x_start, x_end).
     pub banner_upgrade_bounds: Option<Rect>,
+
+    /// Click-region of the "Show Agents" checkbox in the sidebar header,
+    /// captured during render for mouse hit-testing. `None` in layouts
+    /// without the header (tabs mode).
+    pub show_agents_checkbox: Option<Rect>,
 
     /// Result of the most recent manual config reload. Rendered in the
     /// sidebar footer and auto-cleared by the main loop after a short
@@ -1029,6 +1039,7 @@ impl AppState {
         layout_mode: LayoutMode,
         view_mode: ViewMode,
         show_borders: bool,
+        show_agents: bool,
         sidebar_width: u16,
         sidebar_height: u16,
         term_width: u16,
@@ -1060,6 +1071,7 @@ impl AppState {
             sidebar_width,
             sidebar_height,
             show_borders,
+            show_agents,
             dragging_separator: false,
             overlay: OverlayState::default(),
             term_width,
@@ -1072,6 +1084,7 @@ impl AppState {
             update_available: None,
             update_last_checked_secs: None,
             banner_upgrade_bounds: None,
+            show_agents_checkbox: None,
             reload_status: None,
             reload_status_at: None,
             divider_hits: Vec::new(),
@@ -1097,6 +1110,14 @@ impl AppState {
 
     pub fn banner_upgrade_at(&self, col: u16, row: u16) -> bool {
         match self.banner_upgrade_bounds {
+            Some(r) => col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height,
+            None => false,
+        }
+    }
+
+    /// Whether `(col, row)` falls on the header's "Show Agents" checkbox.
+    pub fn show_agents_checkbox_at(&self, col: u16, row: u16) -> bool {
+        match self.show_agents_checkbox {
             Some(r) => col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height,
             None => false,
         }
@@ -1350,8 +1371,9 @@ impl AppState {
             layout.push_row(SidebarItemData::Session { session_idx: pos }, card_h);
         }
         // Footer line under the local section: detected agent counts.
-        // Non-focusable (a header), so it can't be selected.
-        if show_headers && !self.filtered.is_empty() {
+        // Non-focusable (a header), so it can't be selected. Skipped
+        // entirely when the user turned agents off.
+        if show_headers && self.show_agents && !self.filtered.is_empty() {
             push_agent_footer(&mut layout, None, self.section_agents(None));
         }
 
@@ -1369,7 +1391,7 @@ impl AppState {
             if new_host {
                 if let Some(ph) = prev_host {
                     // Close the previous host's section with its footer.
-                    if show_headers {
+                    if show_headers && self.show_agents {
                         push_agent_footer(
                             &mut layout,
                             Some(ph.to_string()),
@@ -1405,7 +1427,7 @@ impl AppState {
             );
         }
         // Footer for the last remote host group.
-        if show_headers {
+        if show_headers && self.show_agents {
             if let Some(ph) = prev_host {
                 push_agent_footer(
                     &mut layout,

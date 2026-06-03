@@ -768,6 +768,7 @@ impl App {
         self.state.theme_index = new_theme_index;
         self.state.layout_mode = cfg.layout;
         self.state.show_borders = cfg.show_borders;
+        self.state.show_agents = cfg.show_agents;
         self.state.view_mode = cfg.view_mode;
         self.state.sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
         self.state.sidebar_height = cfg.sidebar_height;

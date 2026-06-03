@@ -47,6 +47,7 @@ pub struct SidebarProps<'a> {
     pub confirm_kill: Option<&'a str>,
     pub rename_input: Option<&'a TextArea<'static>>,
     pub show_borders: bool,
+    pub show_agents: bool,
     pub tabs_mode: bool,
     pub spinner_frame: &'a str,
     pub view_mode: ViewMode,
@@ -115,11 +116,22 @@ struct TabsProps<'a> {
     show_borders: bool,
 }
 
+// Returns the frame's clickable regions for mouse dispatch: banner
+// bounds, divider buttons, kill-prompt buttons, agent footer lines, and
+// the "Show Agents" checkbox. A struct would only add ceremony for a
+// single internal caller.
+#[allow(clippy::type_complexity)]
 pub fn draw_sidebar(
     frame: &mut Frame,
     area: Rect,
     props: SidebarProps<'_>,
-) -> (Option<Rect>, Vec<DividerHit>, Option<KillConfirmHits>, Vec<AgentHit>) {
+) -> (
+    Option<Rect>,
+    Vec<DividerHit>,
+    Option<KillConfirmHits>,
+    Vec<AgentHit>,
+    Option<Rect>,
+) {
     let ctx = SidebarRenderCtx {
         theme: props.theme,
         spinner_frame: props.spinner_frame,
@@ -159,7 +171,8 @@ pub fn draw_sidebar(
             );
             draw_confirm_kill(frame, content, props.theme, name)
         });
-        return (banner_bounds, Vec::new(), kill_hits, Vec::new());
+        // Tabs mode has no "Projects" header, hence no checkbox.
+        return (banner_bounds, Vec::new(), kill_hits, Vec::new(), None);
     }
     let content = draw_sidebar_container(
         frame,
@@ -180,7 +193,13 @@ pub fn draw_sidebar(
     ])
     .areas(content);
 
-    draw_header(frame, header_area, props.local_count, props.theme);
+    let agents_checkbox = draw_header(
+        frame,
+        header_area,
+        props.local_count,
+        props.show_agents,
+        props.theme,
+    );
     let mut kill_hits: Option<KillConfirmHits> = None;
     let (divider_hits, agent_hits) = if props.show_help {
         draw_help(frame, sessions_area, props.theme, props.keybindings);
@@ -220,7 +239,13 @@ pub fn draw_sidebar(
             },
         },
     );
-    (banner_bounds, divider_hits, kill_hits, agent_hits)
+    (
+        banner_bounds,
+        divider_hits,
+        kill_hits,
+        agent_hits,
+        Some(agents_checkbox),
+    )
 }
 
 fn draw_sidebar_container(
@@ -250,7 +275,10 @@ fn draw_sidebar_container(
     }
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, count: usize, theme: &Theme) {
+/// Draws the "Projects (N)" header and a right-aligned "Show Agents"
+/// checkbox on the same row. Returns the checkbox's click rect so mouse
+/// dispatch can toggle it.
+fn draw_header(frame: &mut Frame, area: Rect, count: usize, show_agents: bool, theme: &Theme) -> Rect {
     let title = Line::from(vec![
         Span::styled(" ", Style::default()),
         Span::styled("\u{e795}", Style::default().fg(theme.accent)),
@@ -260,10 +288,45 @@ fn draw_header(frame: &mut Frame, area: Rect, count: usize, theme: &Theme) {
         ),
         Span::styled(format!(" ({})", count), Style::default().fg(theme.dim)),
     ]);
+    let title_w = title.width() as u16;
     frame.render_widget(
         Paragraph::new(vec![title, Line::raw("")]).style(Style::default().bg(theme.bg)),
         area,
     );
+
+    // Right-aligned "Show Agents [x]" checkbox on the header's first row.
+    // ASCII box for terminal-font robustness; accent when on, dim when off.
+    // The label adapts to the width left of the title so it never clobbers
+    // "Projects": full label when there's room, then "Agents", then bare
+    // box; nothing (zero-width rect) if even the box won't fit.
+    let box_glyph = if show_agents { "[x]" } else { "[ ]" };
+    let avail = area.width.saturating_sub(title_w);
+    let prefix = [" Show Agents ", " Agents ", " "]
+        .into_iter()
+        .find(|p| (p.width() + box_glyph.width() + 1) as u16 <= avail);
+    let Some(prefix) = prefix else {
+        return Rect {
+            x: area.x + area.width,
+            y: area.y,
+            width: 0,
+            height: 0,
+        };
+    };
+    let w = (prefix.width() + box_glyph.width() + 1) as u16;
+    let rect = Rect {
+        x: area.x + area.width - w,
+        y: area.y,
+        width: w,
+        height: 1,
+    };
+    let box_color = if show_agents { theme.accent } else { theme.dim };
+    let line = Line::from(vec![
+        Span::styled(prefix, Style::default().fg(theme.dim).bg(theme.bg)),
+        Span::styled(box_glyph, Style::default().fg(box_color).bg(theme.bg)),
+        Span::styled(" ", Style::default().bg(theme.bg)),
+    ]);
+    frame.render_widget(Paragraph::new(line).style(Style::default().bg(theme.bg)), rect);
+    rect
 }
 
 fn draw_sessions(

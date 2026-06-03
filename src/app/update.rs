@@ -14,6 +14,7 @@ impl App {
             theme: THEMES[self.state.theme_index].name.to_string(),
             layout: self.state.layout_mode,
             show_borders: self.state.show_borders,
+            show_agents: self.state.show_agents,
             sidebar_width: self.state.sidebar_width,
             sidebar_height: self.state.sidebar_height,
             view_mode: self.state.view_mode,

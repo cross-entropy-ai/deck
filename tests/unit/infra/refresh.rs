@@ -11,6 +11,7 @@ fn worker_coalesces_pending_requests() {
             slave_tty: String::new(),
             exclude_patterns: vec![],
             remotes: vec![],
+            show_agents: true,
         });
     }
 

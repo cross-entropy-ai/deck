@@ -30,6 +30,8 @@ pub enum Action {
 
     ToggleLayout,
     ToggleBorders,
+    /// Flip the "Show Agents" checkbox in the sidebar header (clicked).
+    ToggleShowAgents,
     ToggleViewMode,
     OpenSettings,
     CloseSettings,

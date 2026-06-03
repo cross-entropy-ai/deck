@@ -19,6 +19,7 @@ impl App {
                 .iter()
                 .map(|r| r.host.clone())
                 .collect(),
+            show_agents: self.state.show_agents,
         }
     }
 

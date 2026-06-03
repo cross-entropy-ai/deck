@@ -19,6 +19,7 @@ fn make_test_state(n: usize) -> AppState {
         LayoutMode::Horizontal,
         ViewMode::Expanded,
         true,
+        true,
         28,
         crate::state::SIDEBAR_HEIGHT,
         120,
