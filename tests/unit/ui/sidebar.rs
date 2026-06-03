@@ -110,7 +110,7 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
     terminal
         .draw(|frame| {
             let area = frame.area();
-            let (_, _, hits) = super::draw_sidebar(
+            let (_, _, hits, _) = super::draw_sidebar(
                 frame,
                 area,
                 SidebarProps {
@@ -131,6 +131,7 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
                     blink_on: false,
                     keybindings: &keybindings,
                     update_available: None,
+                    active_agent: None,
                 },
             );
             kill_hits = hits;

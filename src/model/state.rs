@@ -106,6 +106,11 @@ pub enum SessionStatus {
 
 pub const SETTINGS_ITEM_COUNT: usize = 7;
 
+/// Blank rows appended under each section's agent-count footer, as a gap
+/// before the next section. The footer item is `1 + this` rows tall;
+/// `sidebar_layout` (height) and the renderer (blank lines) both use it.
+pub const AGENT_FOOTER_GAP_ROWS: u16 = 2;
+
 // --- Context menu ---
 
 #[derive(Debug, Clone)]
@@ -439,12 +444,37 @@ pub enum SidebarItemData {
     /// built in render order; storage routing happens via
     /// `AppState::session_target` in the action layer.
     Session { session_idx: usize },
+    /// Non-selectable footer at the bottom of a section: a `claude X,
+    /// codex Y` count line, then one line per agent's session/window/pane
+    /// (each clickable → switch). `host` keys the section (`None` = local)
+    /// so a clicked line knows where to switch. `agents` is `None` while
+    /// the section hasn't been probed yet ("claude …, codex …").
+    AgentCount {
+        host: Option<String>,
+        agents: Option<Vec<crate::agent::DetectedAgent>>,
+    },
 }
 
 /// Sidebar layout — built on top of `ratatui_sectioned_list::SectionedList`
 /// so geometry, focus-driven scroll, and mouse hit-testing are shared
 /// across the renderer and the action layer.
 pub type SidebarLayout = ratatui_sectioned_list::SectionedList<SidebarItemData>;
+
+/// Push a section's non-selectable agent footer: a count line, one line
+/// per located agent, then a `AGENT_FOOTER_GAP_ROWS` gap. The layout
+/// height must match what the renderer draws, so it's computed from the
+/// agent count here. `None` agents = not probed yet (just the "…" line).
+fn push_agent_footer(
+    layout: &mut SidebarLayout,
+    host: Option<String>,
+    agents: Option<Vec<crate::agent::DetectedAgent>>,
+) {
+    let n = agents.as_ref().map_or(0, Vec::len) as u16;
+    layout.push_header(
+        SidebarItemData::AgentCount { host, agents },
+        1 + n + AGENT_FOOTER_GAP_ROWS,
+    );
+}
 
 /// Which button on a divider a `DividerHit` targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -468,6 +498,26 @@ pub struct DividerHit {
     pub host: String,
     pub rect: Rect,
     pub kind: DividerButton,
+}
+
+/// A detected agent's switch target, keyed by host the usual way
+/// (`None` = local). `pane_id` is the stable `%N` handle used to focus
+/// the exact pane; `session` is kept for the nesting-guard check (and as
+/// the `switch-client` target, which only renames — not renumbers).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentTarget {
+    pub host: Option<String>,
+    pub session: String,
+    pub pane_id: String,
+}
+
+/// Click-region for one agent line in a section footer. The sidebar
+/// renderer fills `agent_hits` after each render; a left click in `rect`
+/// switches to (and focuses) that agent's pane.
+#[derive(Debug, Clone)]
+pub struct AgentHit {
+    pub rect: Rect,
+    pub target: AgentTarget,
 }
 
 /// Click-regions for the two buttons in the kill-confirmation prompt.
@@ -917,6 +967,16 @@ pub struct AppState {
     /// renderer each frame. Read by mouse dispatch.
     pub divider_hits: Vec<DividerHit>,
 
+    /// Click-regions for agent footer lines, refilled by the sidebar
+    /// renderer each frame. A left click switches to that agent's pane.
+    pub agent_hits: Vec<AgentHit>,
+
+    /// The agent deck last switched to (via an agent-line click). Its
+    /// footer line renders highlighted as "you are here". Identified by
+    /// `(host, pane_id)` so the highlight is uniform for local and remote
+    /// — never branches on origin. Cleared by any non-agent switch.
+    pub active_agent: Option<AgentTarget>,
+
     /// Click-regions for the kill-confirmation `[No]` / `[Yes]` buttons,
     /// refilled by the sidebar renderer while the prompt is up.
     /// Read by mouse dispatch. `None` when the prompt is not shown.
@@ -930,6 +990,16 @@ pub struct AppState {
     /// Per-forward liveness, refreshed each probe tick by the port-forward
     /// worker. Keyed by `ForwardKey`. Missing key = `Probing` (not yet seen).
     pub forward_health: HashMap<ForwardKey, ForwardHealth>,
+
+    /// Interactive coding agents (Claude Code / Codex) detected per
+    /// sidebar section, keyed by host the same way the rest of deck keys
+    /// local-vs-remote: `None` = the local tmux server, `Some(host)` = a
+    /// remote one. A key absent from the map hasn't been probed yet
+    /// (rendered "claude …, codex …"). The layout/render just look a
+    /// section up by key — they never branch on local vs remote. Each
+    /// value lists the located agents (count + session/window/pane).
+    /// See `crate::agent`.
+    pub agents: HashMap<Option<String>, Vec<crate::agent::DetectedAgent>>,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -1008,6 +1078,9 @@ impl AppState {
             kill_confirm_hits: None,
             config_remotes: Vec::new(),
             forward_health: HashMap::new(),
+            agents: HashMap::new(),
+            agent_hits: Vec::new(),
+            active_agent: None,
         }
     }
 
@@ -1190,6 +1263,27 @@ impl AppState {
         self.filtered.len() + self.remote_sessions.len()
     }
 
+    /// Flat focusable index of the row for `session` on `host` (`None` =
+    /// local), or `None` if no such row is currently listed. Lets the
+    /// sidebar move its single highlight onto a session switched to
+    /// out-of-band — e.g. an agent-footer click — so the highlight tracks
+    /// the viewed session the same way keyboard navigation does (j/k moves
+    /// the cursor *and* switches). Mirrors the `FocusTarget` numbering:
+    /// local rows first, then remotes.
+    pub fn focusable_index_for(&self, host: Option<&str>, session: &str) -> Option<usize> {
+        match host {
+            None => self
+                .filtered
+                .iter()
+                .position(|&i| self.sessions[i].name == session),
+            Some(h) => self
+                .remote_sessions
+                .iter()
+                .position(|r| r.host == h && r.name == session)
+                .map(|p| self.filtered.len() + p),
+        }
+    }
+
     /// Optimistically mark a host's rows as reconnecting so the sidebar
     /// shows "(connecting...)" the instant the user hits the divider's
     /// reconnect button, before the refresh round returns.
@@ -1200,6 +1294,39 @@ impl AppState {
                 row.unreachable = false;
             }
         }
+    }
+
+    /// Agents detected in a sidebar section, addressed uniformly by host
+    /// (`None` = local). `None` result = not probed yet. The layout uses
+    /// this without caring whether the section is local or remote.
+    pub fn section_agents(&self, host: Option<&str>) -> Option<Vec<crate::agent::DetectedAgent>> {
+        self.agents.get(&host.map(str::to_string)).cloned()
+    }
+
+    /// Fold a remote refresh round's agent detection into `agents`.
+    /// `covered_hosts` is every host the round queried; `fresh` is the
+    /// per-host result for hosts whose probe succeeded. A host covered
+    /// this round but missing from `fresh` had a failed probe, so its
+    /// stale list is dropped (otherwise dead pane ids keep rendering as
+    /// clickable footer lines). The local `None` key is untouched, and
+    /// hosts no longer configured are pruned.
+    pub fn apply_remote_agents(
+        &mut self,
+        covered_hosts: std::collections::HashSet<String>,
+        fresh: HashMap<String, Vec<crate::agent::DetectedAgent>>,
+    ) {
+        for host in covered_hosts {
+            if !fresh.contains_key(&host) {
+                self.agents.remove(&Some(host));
+            }
+        }
+        for (host, list) in fresh {
+            self.agents.insert(Some(host), list);
+        }
+        let configured: std::collections::HashSet<&str> =
+            self.config_remotes.iter().map(|r| r.host.as_str()).collect();
+        self.agents
+            .retain(|k, _| k.as_deref().is_none_or(|h| configured.contains(h)));
     }
 
     /// Build the unified sidebar layout: a flat list of header /
@@ -1222,19 +1349,33 @@ impl AppState {
         for pos in 0..self.filtered.len() {
             layout.push_row(SidebarItemData::Session { session_idx: pos }, card_h);
         }
+        // Footer line under the local section: detected agent counts.
+        // Non-focusable (a header), so it can't be selected.
+        if show_headers && !self.filtered.is_empty() {
+            push_agent_footer(&mut layout, None, self.section_agents(None));
+        }
 
         // Remote groups: detect host transitions in render order
         // (which matches focus order — `remote_sessions` is already
         // grouped by host because the refresh worker emits hosts in
         // config order, one block at a time). Flat index for a remote
-        // row is filtered.len() + remote_idx.
+        // row is filtered.len() + remote_idx. Each group gets an
+        // `@host` divider above and an agent-count footer below.
         let local_count = self.filtered.len();
         let mut host_idx: usize = 0;
         let mut prev_host: Option<&str> = None;
         for (remote_idx, r) in self.remote_sessions.iter().enumerate() {
             let new_host = Some(r.host.as_str()) != prev_host;
             if new_host {
-                if prev_host.is_some() {
+                if let Some(ph) = prev_host {
+                    // Close the previous host's section with its footer.
+                    if show_headers {
+                        push_agent_footer(
+                            &mut layout,
+                            Some(ph.to_string()),
+                            self.section_agents(Some(ph)),
+                        );
+                    }
                     host_idx += 1;
                 }
                 if show_headers {
@@ -1262,6 +1403,16 @@ impl AppState {
                 },
                 card_h,
             );
+        }
+        // Footer for the last remote host group.
+        if show_headers {
+            if let Some(ph) = prev_host {
+                push_agent_footer(
+                    &mut layout,
+                    Some(ph.to_string()),
+                    self.section_agents(Some(ph)),
+                );
+            }
         }
 
         layout

@@ -51,16 +51,20 @@ impl App {
 
     pub(super) fn apply_update(&mut self, update: RefreshUpdate) {
         match update {
-            RefreshUpdate::Local { current_session, rows } => {
-                self.apply_local(current_session, rows);
+            RefreshUpdate::Local { current_session, rows, agents } => {
+                self.apply_local(current_session, rows, agents);
             }
-            RefreshUpdate::Remote { rows } => {
-                self.apply_remote(rows);
+            RefreshUpdate::Remote { rows, agents } => {
+                self.apply_remote(rows, agents);
             }
         }
     }
 
-    fn apply_remote(&mut self, rows: Vec<RemoteSnapshotRow>) {
+    fn apply_remote(
+        &mut self,
+        rows: Vec<RemoteSnapshotRow>,
+        agents: std::collections::HashMap<String, Vec<crate::agent::DetectedAgent>>,
+    ) {
         // `config_remotes` is the single source of truth for which hosts are
         // configured: rows for hosts the user just removed (query was in flight
         // when "Remove from list" landed) are dropped so they can't blink back.
@@ -70,6 +74,13 @@ impl App {
             .iter()
             .map(|r| r.host.as_str())
             .collect();
+
+        // Hosts this round actually queried — `collect_remotes` emits ≥1 row
+        // per queried host (including an "(unreachable)" placeholder). Captured
+        // before `rows` is consumed so we can drop stale agents on hosts whose
+        // probe failed (covered here but absent from `agents`).
+        let covered_hosts: std::collections::HashSet<String> =
+            rows.iter().map(|r| r.host.clone()).collect();
 
         // Fresh rows from this snapshot, grouped by host. `collect_remotes`
         // emits ≥1 row per host it queried, so a configured host absent from
@@ -154,9 +165,21 @@ impl App {
         // host status we just settled so the badge/overlay agree with the
         // divider (connected → green, unreachable → error).
         self.state.sync_remote_forward_health();
+
+        // Apply this round's agent detection: store probed hosts, drop
+        // stale agents on covered-but-failed hosts, prune to configured.
+        // (Logic lives on AppState so it's unit-testable; see its tests.)
+        self.state.apply_remote_agents(covered_hosts, agents);
     }
 
-    fn apply_local(&mut self, current: String, rows: Vec<SnapshotRow>) {
+    fn apply_local(
+        &mut self,
+        current: String,
+        rows: Vec<SnapshotRow>,
+        agents: Vec<crate::agent::DetectedAgent>,
+    ) {
+        // Local section is the `None`-host key.
+        self.state.agents.insert(None, agents);
         if let Some(warning) = self
             .nesting_guard
             .warning_for_current_session(Some(current.as_str()))

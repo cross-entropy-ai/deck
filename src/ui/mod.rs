@@ -55,11 +55,6 @@ pub enum SessionOrigin<'a> {
 pub struct SessionActivity {
     pub status: SessionStatus,
     pub idle_seconds: u64,
-    /// True iff this session is the one tmux is currently attached to.
-    /// The status icon is overridden to a "you are here" marker for
-    /// the current session — anything live there is already visible
-    /// in the main pane, so the icon's job is just to confirm focus.
-    pub is_current: bool,
 }
 
 /// The single abstraction the sidebar renderer consumes. Anything that
@@ -102,7 +97,6 @@ impl SidebarSession for SessionRow {
         Some(SessionActivity {
             status: self.status,
             idle_seconds: self.idle_seconds,
-            is_current: self.is_current,
         })
     }
 }

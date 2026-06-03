@@ -11,8 +11,8 @@ use crate::layout::{
     plugin_block_rows, BANNER_MIN_WIDTH, TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR,
 };
 use crate::state::{
-    DividerButton, DividerHit, FocusTarget, HostStatus, KillConfirmHits, PfBadge, PfBadgeColor,
-    SidebarItemData, SidebarLayout, ViewMode,
+    AgentHit, AgentTarget, DividerButton, DividerHit, FocusTarget, HostStatus, KillConfirmHits,
+    PfBadge, PfBadgeColor, SidebarItemData, SidebarLayout, ViewMode, AGENT_FOOTER_GAP_ROWS,
 };
 use ratatui_sectioned_list::Item;
 use crate::theme::Theme;
@@ -22,7 +22,7 @@ use ratatui_textarea::TextArea;
 use super::overlays::{draw_confirm_kill, draw_help, draw_rename_input};
 use super::text::{
     format_idle_badge, idle_color, pack_hint_lines, pad_line, primary_key_string, shorten_dir,
-    status_color, status_icon, status_icon_compact, truncate,
+    status_color, status_icon, truncate,
 };
 use super::{PluginStatus, PluginView, SessionActivity, SessionOrigin, SidebarSession};
 use crate::state::SessionStatus;
@@ -54,6 +54,8 @@ pub struct SidebarProps<'a> {
     pub blink_on: bool,
     pub keybindings: &'a Keybindings,
     pub update_available: Option<&'a UpdateStatus>,
+    /// The agent deck switched to, highlighted in its footer line.
+    pub active_agent: Option<&'a AgentTarget>,
 }
 
 #[derive(Clone, Copy)]
@@ -69,6 +71,9 @@ struct SessionsProps<'a> {
     layout: &'a SidebarLayout,
     focus_target: Option<FocusTarget>,
     view_mode: ViewMode,
+    /// The agent deck switched to — its footer line highlights as "you
+    /// are here". Matched by `(host, pane_id)`, uniform for local/remote.
+    active_agent: Option<&'a AgentTarget>,
 }
 
 #[derive(Clone, Copy)]
@@ -114,7 +119,7 @@ pub fn draw_sidebar(
     frame: &mut Frame,
     area: Rect,
     props: SidebarProps<'_>,
-) -> (Option<Rect>, Vec<DividerHit>, Option<KillConfirmHits>) {
+) -> (Option<Rect>, Vec<DividerHit>, Option<KillConfirmHits>, Vec<AgentHit>) {
     let ctx = SidebarRenderCtx {
         theme: props.theme,
         spinner_frame: props.spinner_frame,
@@ -154,7 +159,7 @@ pub fn draw_sidebar(
             );
             draw_confirm_kill(frame, content, props.theme, name)
         });
-        return (banner_bounds, Vec::new(), kill_hits);
+        return (banner_bounds, Vec::new(), kill_hits, Vec::new());
     }
     let content = draw_sidebar_container(
         frame,
@@ -177,15 +182,15 @@ pub fn draw_sidebar(
 
     draw_header(frame, header_area, props.local_count, props.theme);
     let mut kill_hits: Option<KillConfirmHits> = None;
-    let divider_hits = if props.show_help {
+    let (divider_hits, agent_hits) = if props.show_help {
         draw_help(frame, sessions_area, props.theme, props.keybindings);
-        Vec::new()
+        (Vec::new(), Vec::new())
     } else if let Some(name) = props.confirm_kill {
         kill_hits = draw_confirm_kill(frame, sessions_area, props.theme, name);
-        Vec::new()
+        (Vec::new(), Vec::new())
     } else if let Some(textarea) = props.rename_input {
         draw_rename_input(frame, sessions_area, props.theme, textarea);
-        Vec::new()
+        (Vec::new(), Vec::new())
     } else {
         draw_sessions(
             frame,
@@ -196,6 +201,7 @@ pub fn draw_sidebar(
                 layout: props.layout,
                 focus_target: props.focus_target,
                 view_mode: props.view_mode,
+                active_agent: props.active_agent,
             },
         )
     };
@@ -214,7 +220,7 @@ pub fn draw_sidebar(
             },
         },
     );
-    (banner_bounds, divider_hits, kill_hits)
+    (banner_bounds, divider_hits, kill_hits, agent_hits)
 }
 
 fn draw_sidebar_container(
@@ -265,14 +271,14 @@ fn draw_sessions(
     area: Rect,
     ctx: &SidebarRenderCtx<'_>,
     props: SessionsProps<'_>,
-) -> Vec<DividerHit> {
+) -> (Vec<DividerHit>, Vec<AgentHit>) {
     if props.sessions.is_empty() {
         frame.render_widget(
             Paragraph::new("  No projects")
                 .style(Style::default().fg(ctx.theme.muted).bg(ctx.theme.bg)),
             area,
         );
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
 
     let width = area.width as usize;
@@ -281,6 +287,9 @@ fn draw_sessions(
     // resolve absolute screen coordinates after computing the scroll offset.
     let mut pending_hits: Vec<(usize, std::ops::Range<usize>, String, DividerButton)> =
         Vec::new();
+    // Pending agent-line hits: (line_index, switch target) → full-width
+    // clickable rows, resolved to screen rects after the scroll offset.
+    let mut pending_agent_hits: Vec<(usize, AgentTarget)> = Vec::new();
 
     for item in props.layout.items().iter() {
         let is_focused = is_item_focused(item, props.focus_target);
@@ -301,6 +310,67 @@ fn draw_sessions(
                 let more_range = render_local_header(&mut lines, ctx.theme.accent, width, ctx.theme);
                 // Local divider carries no host; the menu it opens is fixed.
                 pending_hits.push((line_idx, more_range, String::new(), DividerButton::LocalMore));
+            }
+            SidebarItemData::AgentCount { host, agents } => {
+                // Count line. Until the first probe lands (`None`), show
+                // ellipses rather than a misleading "0".
+                let count_line = match agents {
+                    Some(list) => {
+                        use crate::agent::AgentKind;
+                        let claude = list.iter().filter(|a| a.kind == AgentKind::Claude).count();
+                        let codex = list.iter().filter(|a| a.kind == AgentKind::Codex).count();
+                        format!("  claude {claude}, codex {codex}")
+                    }
+                    None => "  claude …, codex …".to_string(),
+                };
+                lines.push(pad_line(
+                    vec![Span::styled(
+                        count_line,
+                        Style::default().fg(ctx.theme.dim).bg(ctx.theme.bg),
+                    )],
+                    ctx.theme.bg,
+                    width,
+                ));
+                // One clickable line per located agent: `kind
+                // session:window.pane`. Highlight the line for the local
+                // session deck is currently attached to ("you are here").
+                if let Some(list) = agents {
+                    for a in list {
+                        let here = props
+                            .active_agent
+                            .is_some_and(|t| &t.host == host && t.pane_id == a.pane_id);
+                        let style = if here {
+                            Style::default()
+                                .fg(ctx.theme.green)
+                                .bg(ctx.theme.bg)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(ctx.theme.muted).bg(ctx.theme.bg)
+                        };
+                        let marker = if here { "  ▸ " } else { "    " };
+                        let label = format!("{}{} {}", marker, a.kind.label(), a.location());
+                        let line_idx = lines.len();
+                        lines.push(pad_line(
+                            vec![Span::styled(truncate(&label, width), style)],
+                            ctx.theme.bg,
+                            width,
+                        ));
+                        pending_agent_hits.push((
+                            line_idx,
+                            AgentTarget {
+                                host: host.clone(),
+                                session: a.session.clone(),
+                                pane_id: a.pane_id.clone(),
+                            },
+                        ));
+                    }
+                }
+                // Blank rows as a gap before the next section. Keep the
+                // total (count + agents + gap) in sync with the item height
+                // in `sidebar_layout` / `push_agent_footer`.
+                for _ in 0..AGENT_FOOTER_GAP_ROWS {
+                    lines.push(pad_line(Vec::new(), ctx.theme.bg, width));
+                }
             }
             SidebarItemData::Header {
                 host,
@@ -392,7 +462,29 @@ fn draw_sessions(
             },
         });
     }
-    hits
+
+    // Agent lines are clickable across their whole width.
+    let mut agent_hits = Vec::with_capacity(pending_agent_hits.len());
+    for (line_idx, target) in pending_agent_hits {
+        if line_idx < scroll {
+            continue;
+        }
+        let viewport_row = line_idx - scroll;
+        if viewport_row >= visible_height {
+            continue;
+        }
+        agent_hits.push(AgentHit {
+            target,
+            rect: Rect {
+                x: area.x,
+                y: area.y + viewport_row as u16,
+                width: area.width,
+                height: 1,
+            },
+        });
+    }
+
+    (hits, agent_hits)
 }
 
 fn is_item_focused(item: &Item<SidebarItemData>, focus_target: Option<FocusTarget>) -> bool {
@@ -640,7 +732,6 @@ fn render_session_card_expanded(
     let activity_icon = match activity {
         Some(a) => status_icon(
             a.status,
-            a.is_current,
             theme,
             ctx.spinner_frame,
             ctx.blink_on,
@@ -724,27 +815,19 @@ fn compact_activity(
     let Some(a) = activity else {
         return (" ".to_string(), bg);
     };
-    let text = if a.is_current {
-        status_icon_compact(a.status, true, spinner_frame)
-    } else {
-        match a.status {
-            SessionStatus::Working => spinner_frame.to_string(),
-            SessionStatus::Idle => {
-                if a.idle_seconds < 3 {
-                    spinner_frame.to_string()
-                } else {
-                    "󰒲".to_string()
-                }
+    let text = match a.status {
+        SessionStatus::Working => spinner_frame.to_string(),
+        SessionStatus::Idle => {
+            if a.idle_seconds < 3 {
+                spinner_frame.to_string()
+            } else {
+                "󰒲".to_string()
             }
         }
     };
-    let color = if a.is_current {
-        status_color(a.status, true, theme, blink_on, is_focused)
-    } else {
-        match a.status {
-            SessionStatus::Idle => idle_color(theme, a.idle_seconds, is_focused),
-            _ => status_color(a.status, false, theme, blink_on, is_focused),
-        }
+    let color = match a.status {
+        SessionStatus::Idle => idle_color(theme, a.idle_seconds, is_focused),
+        _ => status_color(a.status, theme, blink_on, is_focused),
     };
     (text, color)
 }

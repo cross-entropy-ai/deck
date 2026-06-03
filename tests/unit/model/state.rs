@@ -85,6 +85,73 @@ fn sidebar_header_status_reflects_host_reachability() {
 }
 
 #[test]
+fn agent_footers_carry_section_host() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.remote_sessions = vec![remote_row("h1", false, false)];
+    state.recompute_filter();
+    let layout = state.sidebar_layout(ViewMode::Expanded);
+
+    // Footers appear in section order: local (`None`) then each host.
+    let hosts: Vec<Option<String>> = layout
+        .items()
+        .iter()
+        .filter_map(|i| match &i.data {
+            SidebarItemData::AgentCount { host, .. } => Some(host.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(hosts, vec![None, Some("h1".to_string())]);
+}
+
+fn detected(session: &str, pane_id: &str) -> crate::agent::DetectedAgent {
+    crate::agent::DetectedAgent {
+        kind: crate::agent::AgentKind::Claude,
+        session: session.to_string(),
+        window: "1".to_string(),
+        pane: "0".to_string(),
+        pane_id: pane_id.to_string(),
+    }
+}
+
+#[test]
+fn apply_remote_agents_drops_stale_on_failed_probe() {
+    use crate::config::RemoteConfig;
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.config_remotes = vec![
+        RemoteConfig { host: "h1".into(), forwards: vec![] },
+        RemoteConfig { host: "h2".into(), forwards: vec![] },
+    ];
+    // Prior round: local + both hosts had detected agents.
+    state.agents.insert(None, vec![detected("local", "%1")]);
+    state.agents.insert(Some("h1".into()), vec![detected("h1old", "%10")]);
+    state.agents.insert(Some("h2".into()), vec![detected("h2old", "%20")]);
+
+    // This round queried both hosts; only h1's probe succeeded.
+    let covered: std::collections::HashSet<String> =
+        ["h1".to_string(), "h2".to_string()].into_iter().collect();
+    let mut fresh = std::collections::HashMap::new();
+    fresh.insert("h1".to_string(), vec![detected("h1new", "%11")]);
+    state.apply_remote_agents(covered, fresh);
+
+    // h1 updated, h2 (failed probe) cleared, local untouched.
+    assert_eq!(state.agents[&Some("h1".to_string())][0].pane_id, "%11");
+    assert!(
+        !state.agents.contains_key(&Some("h2".to_string())),
+        "stale agents on a failed-probe host must be dropped"
+    );
+    assert!(state.agents.contains_key(&None), "local entry untouched");
+}
+
+#[test]
+fn apply_remote_agents_prunes_unconfigured_hosts() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    // No remotes configured; a leftover host entry should be pruned.
+    state.agents.insert(Some("ghost".into()), vec![detected("s", "%1")]);
+    state.apply_remote_agents(Default::default(), Default::default());
+    assert!(!state.agents.contains_key(&Some("ghost".to_string())));
+}
+
+#[test]
 fn sidebar_layout_adds_local_header_in_expanded() {
     let state = make_state(LayoutMode::Horizontal, false, 80, 24);
     let layout = state.sidebar_layout(ViewMode::Expanded);

@@ -18,6 +18,7 @@
 //!    demand by `App::respawn_remote_host` — via the reconnect button,
 //!    refresh-driven auto-recovery, and host onboarding.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
@@ -26,6 +27,16 @@ use portable_pty::PtySize;
 use crate::pty::Pty;
 
 use super::TerminalPane;
+
+/// Allocates a process-unique id for each PTY (re)spawn so every
+/// connection gets its own client-tty marker file — see
+/// `remote_tmux::client_marker_path` for why connection-scoping (not just
+/// process-scoping) closes the reconnect race. Starts at 1; `0` is
+/// reserved for the placeholder `RemoteConn` that has no live PTY yet.
+fn next_marker_id() -> u64 {
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
+}
 
 /// One result per spawn attempt.
 ///
@@ -37,9 +48,22 @@ pub(super) enum RemoteSpawnEvent {
     Spawned {
         host: String,
         pane: Box<TerminalPane>,
+        /// Id of the client-tty marker this PTY's attach wrapper writes;
+        /// stored on the `RemoteConn` so switch/focus read *this*
+        /// connection's marker.
+        marker_id: u64,
     },
     Failed {
         host: String,
+    },
+    /// The connection's client-tty marker has been confirmed written on
+    /// the host (out of band — see `remote_tmux::wait_for_client_marker`).
+    /// Carries the `marker_id` so a stale confirmation from a prior
+    /// connection generation can be rejected. Until this arrives,
+    /// switch/focus stay deferred.
+    MarkerReady {
+        host: String,
+        marker_id: u64,
     },
 }
 
@@ -47,7 +71,9 @@ impl RemoteSpawnEvent {
     /// The host this event is about, regardless of outcome.
     pub(super) fn host(&self) -> &str {
         match self {
-            RemoteSpawnEvent::Spawned { host, .. } | RemoteSpawnEvent::Failed { host } => host,
+            RemoteSpawnEvent::Spawned { host, .. }
+            | RemoteSpawnEvent::Failed { host }
+            | RemoteSpawnEvent::MarkerReady { host, .. } => host,
         }
     }
 }
@@ -101,28 +127,55 @@ fn spawn_one(host: String, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
             // `PATH=...` prefix makes tmux discoverable when the remote
             // user's tmux isn't on the default non-interactive PATH
             // (e.g. Homebrew on macOS).
+            //
+            // Before handing the terminal to tmux, record *this* client's
+            // tty (the `-tt` pty, which is exactly tmux's `#{client_tty}`)
+            // to a per-connection marker file (keyed by `marker_id`). Later
+            // one-shot `switch-client` calls read it back and target this
+            // client explicitly (`-c`), so they can't re-point some *other*
+            // attached client. The `rm` first clears any marker this Deck
+            // wrote for the host on a prior connection, so stale ttys don't
+            // linger. `tty`'s output is redirected to the file, so nothing
+            // dirties the terminal before tmux paints. The write is
+            // best-effort; readiness is confirmed out of band below.
+            let marker_id = next_marker_id();
+            let remote_cmd = format!(
+                "mkdir -p {dir} 2>/dev/null ; rm -f {glob} 2>/dev/null ; tty > {marker} 2>/dev/null ; {path} tmux attach",
+                dir = crate::remote_tmux::client_cache_dir_token(),
+                glob = crate::remote_tmux::client_marker_glob_token(&host_for_args),
+                marker = crate::remote_tmux::client_marker_token(&host_for_args, marker_id),
+                path = crate::remote_tmux::REMOTE_PATH_PREFIX,
+            );
             let mut argv: Vec<&str> = vec!["-tt"];
             argv.extend_from_slice(crate::ssh::CONTROL_OPTS);
-            argv.extend_from_slice(&[
-                host_for_args.as_str(),
-                crate::remote_tmux::REMOTE_PATH_PREFIX,
-                "tmux",
-                "attach",
-            ]);
-            let event = match Pty::spawn("ssh", &argv, size) {
+            argv.push(host_for_args.as_str());
+            argv.push(remote_cmd.as_str());
+            let spawned = match Pty::spawn("ssh", &argv, size) {
                 Ok(pty) => {
                     let parser = vt100::Parser::new(size.rows, size.cols, 0);
-                    RemoteSpawnEvent::Spawned {
-                        host,
-                        pane: Box::new(TerminalPane {
-                            pty,
-                            parser,
-                            alive: true,
-                        }),
-                    }
+                    Some(Box::new(TerminalPane {
+                        pty,
+                        parser,
+                        alive: true,
+                    }))
                 }
-                Err(_) => RemoteSpawnEvent::Failed { host },
+                Err(_) => None,
             };
-            let _ = tx.send(event);
+            let Some(pane) = spawned else {
+                let _ = tx.send(RemoteSpawnEvent::Failed { host });
+                return;
+            };
+            let _ = tx.send(RemoteSpawnEvent::Spawned {
+                host: host.clone(),
+                pane,
+                marker_id,
+            });
+            // Confirm the marker actually got written before signaling
+            // readiness — switch/focus stay deferred until then, and never
+            // commit against an absent marker. The wait is one bounded ssh
+            // call on this same worker thread (the PTY is already live).
+            if crate::remote_tmux::wait_for_client_marker(&host, marker_id) {
+                let _ = tx.send(RemoteSpawnEvent::MarkerReady { host, marker_id });
+            }
         });
 }

@@ -55,6 +55,7 @@ impl App {
         let mut captured_banner_bounds: Option<Rect> = None;
         let mut captured_divider_hits: Vec<crate::state::DividerHit> = Vec::new();
         let mut captured_kill_hits: Option<crate::state::KillConfirmHits> = None;
+        let mut captured_agent_hits: Vec<crate::state::AgentHit> = Vec::new();
         terminal.draw(|frame| {
             // Unified slice the sidebar consumes: local rows first
             // (flat index == filtered_pos), then remotes (flat index
@@ -145,7 +146,7 @@ impl App {
 
             let layout = self.state.sidebar_layout(view_mode);
             let focus_target = self.state.focus_target();
-            let (banner_bounds, divider_hits, kill_hits) = ui::draw_sidebar(
+            let (banner_bounds, divider_hits, kill_hits, agent_hits) = ui::draw_sidebar(
                 frame,
                 sidebar_area,
                 ui::SidebarProps {
@@ -166,11 +167,13 @@ impl App {
                     blink_on,
                     keybindings: &self.state.keybindings,
                     update_available: update_available.as_ref(),
+                    active_agent: self.state.active_agent.as_ref(),
                 },
             );
             captured_banner_bounds = banner_bounds;
             captured_divider_hits = divider_hits;
             captured_kill_hits = kill_hits;
+            captured_agent_hits = agent_hits;
 
             if let Some(gap) = gap_area {
                 let (sep_char, sep_fg) = if dragging_sep {
@@ -407,6 +410,7 @@ impl App {
         self.state.banner_upgrade_bounds = captured_banner_bounds;
         self.state.divider_hits = captured_divider_hits;
         self.state.kill_confirm_hits = captured_kill_hits;
+        self.state.agent_hits = captured_agent_hits;
 
         Ok(())
     }

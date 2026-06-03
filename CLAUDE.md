@@ -33,6 +33,42 @@ The rendering path: `app.run()` loop -> build `SessionView` slices (borrowed, no
 
 `vt100` is pinned to a long-lived `deck` branch on a fork (`Junyi-99/vt100-rust`) via `[patch.crates-io]` in `Cargo.toml`. See `docs/vt100-fork.md` for what's patched and how to add new fixes.
 
+### Local vs remote: one type, key by `Option<String>` host
+
+deck talks to a local tmux server and N remote ones, but the **high-level
+layers must not branch on local vs remote**. When adding any
+per-session/per-host feature:
+
+- **One data type for both.** Local and remote produce the *same* shape
+  (e.g. `SessionInfo`, `DetectedAgent`, `AgentTarget`). Never introduce a parallel
+  `foo` + `remote_foo` pair with different shapes (e.g. a scalar for
+  local and a map for remote) — that leaks the distinction upward.
+- **Key by host the way the rest of deck does:** `Option<String>`, where
+  `None` = local and `Some(host)` = a remote host (see `KillRequest`,
+  `RenameRequest`, `CreateSessionRequest`, `AppState.agents`). One
+  store (`HashMap<Option<String>, T>`); absence = "not known yet".
+- **Only the data-gathering branches.** `tmux.rs` (local) and
+  `remote_tmux.rs` (ssh) gather inputs differently, then feed the *same*
+  pure logic (`agent::detect_agents`, `tmux_parse::parse_sessions`). The
+  renderer consumes `&[&dyn SidebarSession]` and never asks "is this
+  remote?". Push the local/remote split as low as it goes.
+
+### Remote ssh commands: mind the remote shell
+
+`remote_tmux` sends commands as ssh argv that the **remote login shell
+re-parses** (argv boundaries are lost). Two recurring traps:
+
+- **Shell-special leading characters.** A separator/marker token must not
+  start with `=` (zsh *equals-expansion* `=word` → command path — it ate
+  a `===…===` probe marker on a zsh host while a bash host was fine) nor
+  `-` (echo flag). Use plain `__like_this__`. Quote literal `#` formats as
+  `$'#{…}'` so they aren't read as comments; single-quote user values
+  (`shell_single_quote`); to pass a literal `;` to *tmux* (not the shell)
+  single-quote it, but leave `;` bare when you *want* a shell separator.
+- **Test against more than one host.** Remote shells differ (bash vs zsh,
+  macOS vs Linux `ps`). A probe that works on one host can silently
+  return nothing on another — verify across the configured hosts.
+
 ## Workflow Rules
 
 Development work (bug fix or new feature):

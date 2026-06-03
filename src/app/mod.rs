@@ -74,6 +74,19 @@ pub(super) enum RemoteConnStatus {
 pub(super) struct RemoteConn {
     pub(super) status: RemoteConnStatus,
     pub(super) pane: Option<TerminalPane>,
+    /// Id of the client-tty marker file this connection's attach wrapper
+    /// wrote (see `remote_spawn`). Switch/focus pass it to `remote_tmux`
+    /// so they read *this* connection's marker, never a prior one's. `0`
+    /// for a placeholder with no live PTY yet.
+    pub(super) client_marker_id: u64,
+    /// Whether this connection's attach prelude has confirmed writing its
+    /// client-tty marker. `Spawned` fires the instant `ssh` starts —
+    /// before the remote `tty > marker; tmux attach` prelude runs — so for
+    /// that window the marker is absent and a marker-gated switch/focus
+    /// would silently no-op. Set only once the marker is confirmed written
+    /// out of band (the `MarkerReady` event, from
+    /// `remote_tmux::wait_for_client_marker`); switches are held until then.
+    pub(super) marker_ready: bool,
 }
 
 pub struct App {
@@ -113,6 +126,33 @@ pub struct App {
     port_forward_tx: std::sync::mpsc::Sender<crate::app::port_forward_task::Op>,
     /// Results coming back from the port-forward worker.
     port_forward_rx: std::sync::mpsc::Receiver<crate::app::port_forward_task::OpResult>,
+    /// Completion signals from remote agent-pane focus threads. Remote
+    /// focus runs off-thread (ssh can stall), so `active_agent` is only
+    /// committed when a `true` outcome lands here — see
+    /// `switch_to_agent_pane` / `apply_focus_outcome`.
+    focus_tx: std::sync::mpsc::Sender<FocusOutcome>,
+    focus_rx: std::sync::mpsc::Receiver<FocusOutcome>,
+    /// Monotonic id stamped on each focus-affecting action (agent click,
+    /// session switch). A remote focus worker captures the id at spawn;
+    /// its outcome is committed only if no newer action has bumped this
+    /// since — so a slow ssh focus can't clobber a later user action.
+    focus_seq: u64,
+}
+
+/// Result of a remote agent-pane focus attempt, sent back from the
+/// worker thread to the event loop.
+pub(super) struct FocusOutcome {
+    pub target: crate::state::AgentTarget,
+    /// Which branch the remote focus took — `ExactPane` is the only one
+    /// that earns the agent highlight (see `apply_focus_outcome`).
+    pub result: crate::tmux::PaneFocus,
+    /// `focus_seq` at spawn time — stale if it no longer matches.
+    pub seq: u64,
+    /// The target connection's `client_marker_id` at spawn time. If the
+    /// host has since reconnected (new id) or dropped, the outcome is from
+    /// an older PTY generation and must not commit — see
+    /// `apply_focus_outcome`.
+    pub marker_id: u64,
 }
 
 impl App {
@@ -202,6 +242,8 @@ impl App {
                     RemoteConn {
                         status: RemoteConnStatus::Connecting,
                         pane: None,
+                        client_marker_id: 0,
+                        marker_ready: false,
                     },
                 )
             })
@@ -224,6 +266,7 @@ impl App {
 
         let (pf_result_tx, pf_result_rx) = std::sync::mpsc::channel();
         let port_forward_tx = crate::app::port_forward_task::spawn(pf_result_tx);
+        let (focus_tx, focus_rx) = std::sync::mpsc::channel();
 
         let mut app = App {
             state,
@@ -244,6 +287,9 @@ impl App {
             needs_full_redraw: false,
             port_forward_tx,
             port_forward_rx: pf_result_rx,
+            focus_tx,
+            focus_rx,
+            focus_seq: 0,
         };
 
         tmux::apply_theme(&THEMES[theme_index]);
@@ -364,24 +410,27 @@ impl App {
                     continue;
                 }
                 match ev {
-                    remote_spawn::RemoteSpawnEvent::Spawned { host, pane } => {
+                    remote_spawn::RemoteSpawnEvent::Spawned {
+                        host,
+                        pane,
+                        marker_id,
+                    } => {
                         self.remote_conns.insert(
                             host.clone(),
                             RemoteConn {
                                 status: RemoteConnStatus::Connected,
                                 pane: Some(*pane),
+                                client_marker_id: marker_id,
+                                // Not ready until the marker write is
+                                // confirmed out of band (`MarkerReady`
+                                // below). A pending switch (create-on-empty-
+                                // host, or one requested during the connect
+                                // race) drains there, not here — switching
+                                // now would no-op against the not-yet-written
+                                // marker.
+                                marker_ready: false,
                             },
                         );
-                        // A create-on-empty-host deferred its switch until
-                        // the PTY came up — fire it now that it's live.
-                        if self
-                            .pending_remote_switch
-                            .as_ref()
-                            .is_some_and(|req| req.host == host)
-                        {
-                            let req = self.pending_remote_switch.take().unwrap();
-                            self.switch_to_remote(&req.host, &req.name);
-                        }
                     }
                     remote_spawn::RemoteSpawnEvent::Failed { host } => {
                         // The deferred switch can't happen; drop it so a
@@ -398,8 +447,31 @@ impl App {
                             RemoteConn {
                                 status: RemoteConnStatus::Failed,
                                 pane: None,
+                                client_marker_id: 0,
+                                marker_ready: false,
                             },
                         );
+                    }
+                    remote_spawn::RemoteSpawnEvent::MarkerReady { host, marker_id } => {
+                        // The marker is confirmed written — but only honor
+                        // it for the *same* connection generation (a
+                        // reconnect mints a new id). Mark ready and fire any
+                        // switch that was held while it wasn't.
+                        let current = self
+                            .remote_conns
+                            .get_mut(&host)
+                            .filter(|c| c.client_marker_id == marker_id);
+                        if let Some(conn) = current {
+                            conn.marker_ready = true;
+                            if self
+                                .pending_remote_switch
+                                .as_ref()
+                                .is_some_and(|req| req.host == host)
+                            {
+                                let req = self.pending_remote_switch.take().unwrap();
+                                self.switch_to_remote(&req.host, &req.name);
+                            }
+                        }
                     }
                 }
             }
@@ -442,6 +514,18 @@ impl App {
                 // them back to local so the screen doesn't freeze.
                 if self.active_remote.as_deref() == Some(host.as_str()) {
                     self.active_remote = None;
+                    self.needs_full_redraw = true;
+                }
+                // Invalidate any in-flight focus to this host and drop its
+                // agent highlight: bumping `focus_seq` makes a slow
+                // `deck-focus-*` worker's late completion stale (so a
+                // reconnect can't let it silently re-grab focus), and a
+                // dead host shouldn't keep a footer line marked active.
+                self.focus_seq += 1;
+                if self.state.active_agent.as_ref().and_then(|t| t.host.as_deref())
+                    == Some(host.as_str())
+                {
+                    self.state.active_agent = None;
                     self.needs_full_redraw = true;
                 }
             }
@@ -579,6 +663,12 @@ impl App {
                 }
             }
 
+            // Drain remote agent-focus completions: commit the highlight /
+            // view only for focuses that actually landed.
+            while let Ok(outcome) = self.focus_rx.try_recv() {
+                self.apply_focus_outcome(outcome);
+            }
+
             self.tick_update_check();
 
             if !pty_alive {
@@ -599,3 +689,4 @@ impl App {
         Ok(())
     }
 }
+

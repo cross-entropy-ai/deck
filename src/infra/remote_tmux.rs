@@ -12,9 +12,24 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use crate::agent::DetectedAgent;
 use crate::infra::command::{CommandError, CommandRunner, RealRunner};
-use crate::infra::tmux::SessionInfo;
+use crate::infra::tmux::{PaneFocus, SessionInfo};
 use crate::infra::tmux_parse::{parse_sessions, parse_window_activity};
+
+/// Marker separating the pane-pid list from the `ps` snapshot in the
+/// single combined ssh `agent_probe` runs. Must not start with `=` (zsh
+/// equals-expansion would treat it as a command path and eat it) nor with
+/// `-` (echo flag); plain underscores are safe in any remote shell.
+const AGENT_PROBE_MARKER: &str = "__DECK_AGENT_PROBE__";
+
+/// Markers the remote focus script echoes to report which branch ran:
+/// `EXACT` when the agent's window+pane were selected, `SESSION` when only
+/// Deck's own client was switched (another client shared the session, so
+/// the session-global selects were skipped). Plain underscores → safe in
+/// any remote shell, like [`AGENT_PROBE_MARKER`].
+const FOCUS_EXACT_MARKER: &str = "__DECK_FOCUS_EXACT__";
+const FOCUS_SESSION_MARKER: &str = "__DECK_FOCUS_SESSION__";
 
 /// Hard cap on a single remote ssh+tmux call. Generous compared to the
 /// local 1s budget because the first call to a host may have to wait
@@ -98,6 +113,38 @@ fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Sess
     }
 }
 
+/// Probe `host` for interactive agents running in its tmux panes, in one
+/// ssh hop: list panes, then a `ps` snapshot, separated by a marker. The
+/// pure `crate::agent::detect_agents` does the rest — identical to the
+/// local path, just fed over ssh. `None` if the host is unreachable (the
+/// section then stays "probing"); `Some(empty)` for a reachable host with
+/// no agents (→ `claude 0, codex 0`).
+pub fn agent_probe(host: &str) -> Option<Vec<DetectedAgent>> {
+    agent_probe_with(default_runner(), host)
+}
+
+fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<DetectedAgent>> {
+    // Two commands joined by a bare `;` (a shell separator, so the remote
+    // shell runs them in sequence). `$'…'` protects the `#`/tabs in the
+    // tmux format; `2>/dev/null` swallows tmux's "no server" noise so a
+    // server-less host still yields a clean ps. The marker must be
+    // shell-safe (see `AGENT_PROBE_MARKER`).
+    let format = format!("$'{}'", crate::agent::PANE_FORMAT.replace('\t', "\\t"));
+    let raw = run_ssh(
+        runner,
+        host,
+        &[
+            "tmux", "list-panes", "-a", "-F", &format, "2>/dev/null", ";",
+            "echo", AGENT_PROBE_MARKER, ";",
+            "ps", "-axo", "pid=,ppid=,args=",
+        ],
+    )
+    .ok()?;
+    let (panes_part, ps_part) = raw.split_once(AGENT_PROBE_MARKER)?;
+    let panes = crate::agent::parse_panes(panes_part);
+    Some(crate::agent::detect_agents(&panes, ps_part))
+}
+
 /// Whether a failed remote `tmux` call means "reachable host, no tmux
 /// server up" — as opposed to ssh not reaching the host, or tmux failing
 /// for some other reason we shouldn't paper over as "no sessions".
@@ -151,13 +198,192 @@ fn shell_quote_remote_path(path: &str) -> String {
     shell_single_quote(path)
 }
 
-/// Tell the remote tmux server to switch its (only) attached client to
+/// Remote-shell snippet that reads Deck's recorded client tty for this
+/// connection (`host` + `marker_id`) into shell variable `C`. Prefixed to
+/// the switch/focus command; both then run tmux **only** when `C` is
+/// non-empty and pass it as an explicit `-c "$C"` target — so a missing
+/// marker (the reconnect race before the attach wrapper writes it, or an
+/// unwritable `~/.cache`) results in no tmux command at all, rather than
+/// an untargeted operation that could move another attached client.
+/// Writing `-c "$C"` directly (two shell words) avoids the `${C:+…}`
+/// zsh word-splitting trap; the guarding `[ -n "$C" ]` is portable.
+fn read_client_tty(host: &str, marker_id: u64) -> String {
+    format!(
+        "C=$(cat {marker} 2>/dev/null)",
+        marker = client_marker_token(host, marker_id),
+    )
+}
+
+/// Sanitized `host` component for the marker filename: keep it shell-safe
+/// (alphanumerics, `-`, `_`), everything else → `_`.
+fn marker_host_part(host: &str) -> String {
+    host.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Logical remote path of the per-*connection* file where Deck's attach
+/// wrapper records the tty of *its* tmux client (the `ssh -tt` pty, which
+/// is exactly tmux's `#{client_tty}`). One-shot `switch-client` calls read
+/// it back and pass it as an explicit `-c` target so they re-point Deck's
+/// own client, not whatever tmux treats as current when several clients
+/// are attached.
+///
+/// Keyed by Deck's local pid + host + a per-spawn `marker_id` — the id is
+/// what makes it *connection*-scoped, not just process-scoped: each
+/// (re)connect allocates a fresh id, so a switch/focus issued during the
+/// reconnect race reads the *new* path (absent until the wrapper writes
+/// it → empty → safe fallback) and can never pick up the previous
+/// connection's stale tty. Lives under `~/.cache` so it's disposable.
+fn client_marker_path(host: &str, marker_id: u64) -> String {
+    let pid = std::process::id();
+    format!("~/.cache/deck/client-{pid}-{}-{marker_id}", marker_host_part(host))
+}
+
+/// [`client_marker_path`] quoted for safe interpolation into a remote
+/// shell command (`~` → `"$HOME"`). Used by both the attach wrapper
+/// (writer, in `remote_spawn`) and the switch/focus calls (reader).
+pub(crate) fn client_marker_token(host: &str, marker_id: u64) -> String {
+    shell_quote_remote_path(&client_marker_path(host, marker_id))
+}
+
+/// Unquoted glob token matching *all* of this Deck process's marker files
+/// for `host` (any `marker_id`). The attach wrapper `rm`s these before
+/// writing the fresh one, so stale markers from prior connections don't
+/// accumulate. `$HOME` is expanded by the remote shell; the rest is
+/// shell-safe (digits + sanitized host), and the trailing `*` must stay
+/// unquoted to glob.
+pub(crate) fn client_marker_glob_token(host: &str) -> String {
+    let pid = std::process::id();
+    format!(
+        "\"$HOME\"/.cache/deck/client-{pid}-{}-*",
+        marker_host_part(host)
+    )
+}
+
+/// The `~/.cache/deck` directory token the attach wrapper `mkdir -p`s
+/// before writing the marker file.
+pub(crate) fn client_cache_dir_token() -> String {
+    shell_quote_remote_path("~/.cache/deck")
+}
+
+/// Confirm — out of band from the PTY stream — that this connection's
+/// client-tty marker actually got written, so switch/focus only commit
+/// once the `-c` target they need really exists. Returns `true` iff the
+/// marker file is present and non-empty.
+///
+/// Readiness is deliberately NOT inferred from PTY output: that stream can
+/// carry shell banners / forced-command noise / arbitrary chunking before
+/// (or instead of) any marker, which made stream-sentinel detection both
+/// miss real markers and accept absent ones. A dedicated `[ -s marker ]`
+/// check answers exactly the question that matters. The brief connect race
+/// (the attach prelude writes the marker just after `ssh` connects) is
+/// covered by a couple of in-shell retries — the wait happens remotely in
+/// one bounded ssh call, so a stalled host is capped by the ssh timeout,
+/// not app-side polling.
+pub fn wait_for_client_marker(host: &str, marker_id: u64) -> bool {
+    wait_for_client_marker_with(default_runner(), host, marker_id)
+}
+
+fn wait_for_client_marker_with(runner: &dyn CommandRunner, host: &str, marker_id: u64) -> bool {
+    let marker = client_marker_token(host, marker_id);
+    // Check immediately, then retry twice at 1s steps (integer `sleep` for
+    // POSIX portability). The marker is written ~instantly by the PTY
+    // prelude so the first check usually wins; the retries cover the race.
+    // Starts with `[` (a simple command) so run_ssh's `PATH=…` prefix
+    // attaches cleanly. Total wait stays well under REMOTE_TIMEOUT.
+    let cmd = format!(
+        "[ -s {marker} ] || {{ sleep 1; [ -s {marker} ]; }} || {{ sleep 1; [ -s {marker} ]; }}"
+    );
+    run_ssh(runner, host, &[cmd.as_str()]).is_ok()
+}
+
+/// Tell the remote tmux server to switch *Deck's own* attached client to
 /// `session`. Fire-and-forget: errors are swallowed because the user
 /// will see the failure to switch reflected in the UI anyway.
-pub fn switch_client(host: &str, session: &str) {
-    let runner = default_runner();
+///
+/// The client is targeted explicitly (`-c`) via the tty our attach
+/// wrapper recorded for this host — see [`client_marker_token`] — so we
+/// don't re-point whatever client tmux happens to consider "current"
+/// when more than one client is attached to the same server.
+pub fn switch_client(host: &str, marker_id: u64, session: &str) {
+    switch_client_with(default_runner(), host, marker_id, session);
+}
+
+fn switch_client_with(runner: &dyn CommandRunner, host: &str, marker_id: u64, session: &str) {
     let target = shell_single_quote(session);
-    let _ = run_ssh(runner, host, &["tmux", "switch-client", "-t", target.as_str()]);
+    // No-op unless we can target Deck's OWN client: switch only when the
+    // recorded tty is known. An untargeted `switch-client` could re-point
+    // another attached client, so when the marker is missing we do nothing
+    // and let a later call (after the marker lands) switch.
+    let cmd = format!(
+        "{read_c} ; [ -n \"$C\" ] && tmux switch-client -c \"$C\" -t {target}",
+        read_c = read_client_tty(host, marker_id),
+    );
+    let _ = run_ssh(runner, host, &[cmd.as_str()]);
+}
+
+/// Focus a specific pane (by stable id `%N`) on the remote tmux server
+/// and switch the remote client to its session — the remote analog of
+/// `tmux::focus_local_pane`. One ssh hop, one tmux command sequence; the
+/// `;` is single-quoted so the remote shell hands it to tmux as its
+/// separator (not a shell one), and the pane id / session are
+/// single-quoted so `%`/specials stay literal.
+pub fn focus_pane(host: &str, marker_id: u64, session: &str, pane_id: &str) -> PaneFocus {
+    focus_pane_with(default_runner(), host, marker_id, session, pane_id)
+}
+
+/// Returns the focus outcome. The remote script echoes a marker so we know
+/// which branch ran on the host: [`FOCUS_EXACT_MARKER`] when it selected
+/// the exact window/pane, [`FOCUS_SESSION_MARKER`] when it switched only
+/// Deck's client (a co-attached client shared the session). A stale `%id`
+/// or ssh failure aborts before any marker is echoed → `Failed`, so the
+/// caller won't commit a focus that didn't land.
+fn focus_pane_with(
+    runner: &dyn CommandRunner,
+    host: &str,
+    marker_id: u64,
+    session: &str,
+    pane_id: &str,
+) -> PaneFocus {
+    let pane = shell_single_quote(pane_id);
+    let sess = shell_single_quote(session);
+    // Act only when we can target Deck's own client (`-c "$C"`). A missing
+    // marker (`C` empty — the reconnect race before the attach wrapper
+    // writes it, or an unwritable `~/.cache`) bails immediately: no tmux
+    // command runs and no marker is echoed → `Failed`, so we never issue an
+    // untargeted op that could move another attached client.
+    //
+    // When the tty is known: `switch-client` is client-scoped (`-c`), but
+    // `select-window`/`select-pane` are *session* state — running them
+    // moves every client attached to the session. So only select the exact
+    // window/pane when Deck's client is the SOLE client on the session;
+    // when another client shares it, switch just our own client and leave
+    // the session's current window/pane alone. Each branch echoes a marker
+    // (only after its tmux command succeeds) so the caller learns whether
+    // the exact pane was actually focused.
+    let cmd = format!(
+        "{read_c} ; [ -z \"$C\" ] && exit 0 ; \
+         if tmux list-clients -t {sess} -F '#{{client_tty}}' 2>/dev/null | grep -qvxF \"$C\"; then \
+         tmux switch-client -c \"$C\" -t {sess} && echo {session_marker} ; \
+         else \
+         tmux select-window -t {pane} ';' select-pane -t {pane} ';' switch-client -c \"$C\" -t {sess} && echo {exact_marker} ; \
+         fi",
+        read_c = read_client_tty(host, marker_id),
+        session_marker = FOCUS_SESSION_MARKER,
+        exact_marker = FOCUS_EXACT_MARKER,
+    );
+    match run_ssh(runner, host, &[cmd.as_str()]) {
+        Ok(out) if out.contains(FOCUS_EXACT_MARKER) => PaneFocus::ExactPane,
+        Ok(out) if out.contains(FOCUS_SESSION_MARKER) => PaneFocus::SessionOnly,
+        _ => PaneFocus::Failed,
+    }
 }
 
 /// Kill a session on the remote tmux server. The `(host, name)` tuple
@@ -334,6 +560,12 @@ mod tests {
         /// Joined-arg string of every `run` call, for asserting what was
         /// issued (e.g. the persisted order's set-option chain).
         calls: Mutex<Vec<String>>,
+        /// When set, every non-`list-sessions` call fails — simulating an
+        /// unreachable host / failed ssh for the focus path.
+        fail_others: bool,
+        /// Canned stdout for non-`list-sessions` calls — lets a focus test
+        /// simulate the remote script echoing its branch marker.
+        other_stdout: String,
     }
 
     impl FakeRunner {
@@ -341,7 +573,26 @@ mod tests {
             Self {
                 list_sessions: Mutex::new(Some(list_sessions)),
                 calls: Mutex::new(Vec::new()),
+                fail_others: false,
+                other_stdout: String::new(),
             }
+        }
+
+        /// A runner whose every call fails (ssh can't reach the host).
+        fn failing() -> Self {
+            Self {
+                list_sessions: Mutex::new(None),
+                calls: Mutex::new(Vec::new()),
+                fail_others: true,
+                other_stdout: String::new(),
+            }
+        }
+
+        /// Canned stdout for non-`list-sessions` calls (e.g. the focus
+        /// script's echoed branch marker).
+        fn with_other_stdout(mut self, stdout: &str) -> Self {
+            self.other_stdout = stdout.to_string();
+            self
         }
 
         fn calls(&self) -> Vec<String> {
@@ -352,11 +603,17 @@ mod tests {
     impl CommandRunner for FakeRunner {
         fn run(
             &self,
-            _program: &str,
+            program: &str,
             args: &[&str],
             _timeout: Duration,
         ) -> Result<Output, CommandError> {
             self.calls.lock().unwrap().push(args.join(" "));
+            if self.fail_others && !args.contains(&"list-sessions") {
+                return Err(CommandError::Timeout {
+                    program: program.to_string(),
+                    elapsed: Duration::from_secs(1),
+                });
+            }
             if args.contains(&"list-sessions") {
                 self.list_sessions
                     .lock()
@@ -364,7 +621,9 @@ mod tests {
                     .take()
                     .expect("list-sessions should be called once")
             } else {
-                Ok(Output { stdout: Vec::new() })
+                Ok(Output {
+                    stdout: self.other_stdout.clone().into_bytes(),
+                })
             }
         }
     }
@@ -413,6 +672,139 @@ mod tests {
         let runner = FakeRunner::new(ok(""));
         persist_session_order_with(&runner, "box", &[]);
         assert!(runner.calls().is_empty());
+    }
+
+    #[test]
+    fn focus_pane_selects_pane_by_stable_id_over_ssh() {
+        // Remote echoed the EXACT marker → sole client, exact pane focused.
+        let runner = FakeRunner::new(ok("")).with_other_stdout(FOCUS_EXACT_MARKER);
+        assert_eq!(
+            focus_pane_with(&runner, "box", 7, "work", "%240"),
+            PaneFocus::ExactPane,
+            "success path"
+        );
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 1, "one ssh hop");
+        // Pane id and session single-quoted; `;` quoted so tmux (not the
+        // remote shell) treats it as its command separator. The
+        // session-global select-window/select-pane only run in the else
+        // branch — i.e. when Deck is the sole client on the session — and
+        // `switch-client` is always `-c "$C"` scoped to Deck's own client.
+        assert!(
+            calls[0].contains(
+                "select-window -t '%240' ';' select-pane -t '%240' ';' switch-client -c \"$C\" -t 'work'"
+            ),
+            "got: {}",
+            calls[0]
+        );
+        // Reads the per-connection recorded client tty.
+        assert!(
+            calls[0].contains("C=$(cat") && calls[0].contains(".cache/deck/client-"),
+            "reads recorded client tty: {}",
+            calls[0]
+        );
+        // Missing marker bails before any tmux command — never an
+        // untargeted op that could move another client.
+        assert!(
+            calls[0].contains("[ -z \"$C\" ] && exit 0"),
+            "bails when the client tty is unknown: {}",
+            calls[0]
+        );
+        // The exact-pane selection is gated on Deck being the only client
+        // attached to the session, so a click cannot move a co-attached
+        // client's window/pane.
+        assert!(
+            calls[0].contains("tmux list-clients -t 'work' -F '#{client_tty}'")
+                && calls[0].contains("grep -qvxF \"$C\""),
+            "guards session-global selects behind a sole-client check: {}",
+            calls[0]
+        );
+    }
+
+    #[test]
+    fn switch_client_targets_deck_client_explicitly() {
+        // A plain remote session switch must also re-point only Deck's own
+        // client — same scoping as focus_pane — and no-op when the marker is
+        // missing rather than switch an untargeted client.
+        let runner = FakeRunner::new(ok(""));
+        switch_client_with(&runner, "box", 7, "work");
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 1, "one ssh hop");
+        assert!(
+            calls[0].contains("C=$(cat") && calls[0].contains(".cache/deck/client-"),
+            "reads recorded client tty: {}",
+            calls[0]
+        );
+        // Switch runs only when the tty is known, and is always `-c "$C"`
+        // scoped. Writing `-c "$C"` directly (two words) avoids the zsh
+        // `${C:+…}` single-word-collapse trap.
+        assert!(
+            calls[0].contains("[ -n \"$C\" ] && tmux switch-client -c \"$C\" -t 'work'"),
+            "no-op unless the client tty is known: {}",
+            calls[0]
+        );
+    }
+
+    #[test]
+    fn focus_pane_reports_failure_when_ssh_fails() {
+        // A failed focus must report `Failed` so the caller won't mark the
+        // agent active / switch the view for a focus that never landed.
+        let runner = FakeRunner::failing();
+        assert_eq!(
+            focus_pane_with(&runner, "box", 7, "work", "%240"),
+            PaneFocus::Failed
+        );
+    }
+
+    #[test]
+    fn wait_for_client_marker_checks_the_marker_file() {
+        // Readiness is confirmed by checking the per-connection marker file
+        // out of band (not by parsing the PTY stream). ssh exit 0 → ready.
+        let runner = FakeRunner::new(ok(""));
+        assert!(wait_for_client_marker_with(&runner, "box", 7));
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 1, "one ssh hop");
+        assert!(
+            calls[0].contains("[ -s ") && calls[0].contains(".cache/deck/client-"),
+            "checks the marker file's presence: {}",
+            calls[0]
+        );
+    }
+
+    #[test]
+    fn wait_for_client_marker_false_when_absent() {
+        // ssh non-zero (marker never appeared, or host unreachable) → not
+        // ready, so switch/focus keep deferring rather than committing
+        // against a marker that was never written.
+        let runner = FakeRunner::failing();
+        assert!(!wait_for_client_marker_with(&runner, "box", 7));
+    }
+
+    #[test]
+    fn focus_pane_fails_when_marker_missing() {
+        // No recorded client tty (reconnect race / unwritable cache): the
+        // remote script bails (`[ -z "$C" ] && exit 0`) before any tmux
+        // command and echoes no marker, so focus_pane reports `Failed` and
+        // the caller commits nothing — never an untargeted select/switch.
+        // Empty stdout models that bail.
+        let runner = FakeRunner::new(ok("")).with_other_stdout("");
+        assert_eq!(
+            focus_pane_with(&runner, "box", 7, "work", "%240"),
+            PaneFocus::Failed
+        );
+    }
+
+    #[test]
+    fn focus_pane_reports_session_only_when_co_attached() {
+        // When another client shares the session the remote script skips the
+        // exact-pane selects and echoes the SESSION marker. focus_pane must
+        // surface that as `SessionOnly` so the caller withholds the agent
+        // highlight (the main pane may show a different pane).
+        let runner = FakeRunner::new(ok("")).with_other_stdout(FOCUS_SESSION_MARKER);
+        assert_eq!(
+            focus_pane_with(&runner, "box", 7, "work", "%240"),
+            PaneFocus::SessionOnly
+        );
     }
 
     #[test]
