@@ -1,7 +1,5 @@
 use super::{apply_action, Action};
-use crate::state::{
-    AppState, FocusMode, LayoutMode, MainView, RenameState, SessionRow, ViewMode,
-};
+use crate::state::{AppState, FocusMode, LayoutMode, MainView, RenameState, SessionRow, ViewMode};
 
 fn make_session(name: &str, idle: u64) -> SessionRow {
     SessionRow {
@@ -428,8 +426,14 @@ fn exclude_editor_add_pattern() {
     apply_action(&mut state, Action::OpenExcludeEditor);
     apply_action(&mut state, Action::ExcludeEditorStartAdd);
     assert!(state.overlay.exclude_editor.as_ref().unwrap().adding);
-    apply_action(&mut state, Action::ExcludeEditorInputKey(key(KeyCode::Char('t'))));
-    apply_action(&mut state, Action::ExcludeEditorInputKey(key(KeyCode::Char('*'))));
+    apply_action(
+        &mut state,
+        Action::ExcludeEditorInputKey(key(KeyCode::Char('t'))),
+    );
+    apply_action(
+        &mut state,
+        Action::ExcludeEditorInputKey(key(KeyCode::Char('*'))),
+    );
     let fx = apply_action(&mut state, Action::ExcludeEditorConfirm);
     assert_eq!(state.exclude_patterns, vec!["_*", "t*"]);
     assert!(fx.save_config);
@@ -457,7 +461,10 @@ fn exclude_editor_invalid_regex_shows_error() {
     apply_action(&mut state, Action::OpenExcludeEditor);
     apply_action(&mut state, Action::ExcludeEditorStartAdd);
     for ch in "/[invalid/".chars() {
-        apply_action(&mut state, Action::ExcludeEditorInputKey(key(KeyCode::Char(ch))));
+        apply_action(
+            &mut state,
+            Action::ExcludeEditorInputKey(key(KeyCode::Char(ch))),
+        );
     }
     apply_action(&mut state, Action::ExcludeEditorConfirm);
     let editor = state.overlay.exclude_editor.as_ref().unwrap();
@@ -593,7 +600,10 @@ fn ns_name_str(state: &AppState) -> &str {
 fn new_session_input_inserts_at_cursor() {
     use crossterm::event::KeyCode;
     let mut state = picker_state_with("~/foo/", vec!["bar".into(), "baz".into()]);
-    let fx = apply_action(&mut state, Action::NewSessionInputKey(key(KeyCode::Char('b'))));
+    let fx = apply_action(
+        &mut state,
+        Action::NewSessionInputKey(key(KeyCode::Char('b'))),
+    );
     let ns = state.overlay.new_session.as_ref().unwrap();
     assert_eq!(ns.input_str(), "~/foo/b");
     assert_eq!(ns.filtered, vec![0, 1]); // both still match "b"
@@ -604,7 +614,10 @@ fn new_session_input_inserts_at_cursor() {
 fn new_session_input_crossing_slash_sets_reread() {
     use crossterm::event::KeyCode;
     let mut state = picker_state_with("~/foo", vec!["foo".into()]);
-    let fx = apply_action(&mut state, Action::NewSessionInputKey(key(KeyCode::Char('/'))));
+    let fx = apply_action(
+        &mut state,
+        Action::NewSessionInputKey(key(KeyCode::Char('/'))),
+    );
     assert_eq!(ns_input_str(&state), "~/foo/");
     assert!(fx.reread_new_session_entries);
 }
@@ -661,7 +674,10 @@ fn new_session_input_routes_to_name_when_focused_on_name() {
     let mut state = picker_state_with("~/foo/", vec![]);
     state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
 
-    apply_action(&mut state, Action::NewSessionInputKey(key(KeyCode::Char('x'))));
+    apply_action(
+        &mut state,
+        Action::NewSessionInputKey(key(KeyCode::Char('x'))),
+    );
     assert_eq!(ns_name_str(&state), "x");
     assert_eq!(ns_input_str(&state), "~/foo/"); // dir untouched
 }
@@ -687,7 +703,11 @@ fn open_host_divider_menu_uses_host_kind() {
     let mut state = make_test_state(1);
     crate::action::apply_action(
         &mut state,
-        Action::OpenHostDividerMenu { host: "h1".into(), x: 10, y: 5 },
+        Action::OpenHostDividerMenu {
+            host: "h1".into(),
+            x: 10,
+            y: 5,
+        },
     );
     let menu = state.overlay.context_menu.as_ref().expect("menu opened");
     match &menu.kind {
@@ -749,7 +769,11 @@ fn pf_task_result_persists_forward_when_overlay_closed() {
         },
     );
 
-    let remote = state.config_remotes.iter().find(|r| r.host == "h1").unwrap();
+    let remote = state
+        .config_remotes
+        .iter()
+        .find(|r| r.host == "h1")
+        .unwrap();
     assert_eq!(remote.forwards.len(), 1);
     assert_eq!(remote.forwards[0].listen_port, 8080);
 }
@@ -777,7 +801,10 @@ fn pf_task_result_marks_host_unreachable_on_master_failure() {
     );
 
     let row = &state.remote_sessions[0];
-    assert!(row.unreachable, "host should be flagged unreachable after master failure");
+    assert!(
+        row.unreachable,
+        "host should be flagged unreachable after master failure"
+    );
     assert!(!row.loading, "loading should clear after master failure");
 }
 
@@ -798,10 +825,26 @@ fn open_form_with_focus(
         add_form: Some(crate::state::PfAddForm {
             mode: crate::config::ForwardMode::Local,
             focus: field,
-            bind_addr: if matches!(field, crate::state::PfField::BindAddr) { ta(value) } else { ta("") },
-            listen_port: if matches!(field, crate::state::PfField::ListenPort) { ta(value) } else { ta("") },
-            target_host: if matches!(field, crate::state::PfField::TargetHost) { ta(value) } else { ta("") },
-            target_port: if matches!(field, crate::state::PfField::TargetPort) { ta(value) } else { ta("") },
+            bind_addr: if matches!(field, crate::state::PfField::BindAddr) {
+                ta(value)
+            } else {
+                ta("")
+            },
+            listen_port: if matches!(field, crate::state::PfField::ListenPort) {
+                ta(value)
+            } else {
+                ta("")
+            },
+            target_host: if matches!(field, crate::state::PfField::TargetHost) {
+                ta(value)
+            } else {
+                ta("")
+            },
+            target_port: if matches!(field, crate::state::PfField::TargetPort) {
+                ta(value)
+            } else {
+                ta("")
+            },
             submitting: false,
         }),
         status: None,
@@ -816,7 +859,14 @@ fn pf_add_input_key_appends_to_focused_textarea() {
     for c in ['8', '0', '8', '0'] {
         crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char(c))));
     }
-    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    let f = state
+        .overlay
+        .port_forward
+        .as_ref()
+        .unwrap()
+        .add_form
+        .as_ref()
+        .unwrap();
     assert_eq!(f.field_text(crate::state::PfField::ListenPort), "8080");
 }
 
@@ -828,7 +878,14 @@ fn pf_add_input_drops_non_digits_in_port_fields() {
     for c in ['8', 'a', '0', '.', '8', '0'] {
         crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char(c))));
     }
-    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    let f = state
+        .overlay
+        .port_forward
+        .as_ref()
+        .unwrap()
+        .add_form
+        .as_ref()
+        .unwrap();
     assert_eq!(f.field_text(crate::state::PfField::ListenPort), "8080");
 }
 
@@ -840,7 +897,14 @@ fn pf_add_input_allows_non_digits_in_host_fields() {
     for c in ['h', '-', '1', '.', 'x'] {
         crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char(c))));
     }
-    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    let f = state
+        .overlay
+        .port_forward
+        .as_ref()
+        .unwrap()
+        .add_form
+        .as_ref()
+        .unwrap();
     assert_eq!(f.field_text(crate::state::PfField::TargetHost), "h-1.x");
 }
 
@@ -851,12 +915,26 @@ fn pf_add_input_rejects_out_of_range_ports() {
     // "6553" is fine, but appending '6' would yield "65536" > u16::MAX.
     open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "6553");
     crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char('6'))));
-    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    let f = state
+        .overlay
+        .port_forward
+        .as_ref()
+        .unwrap()
+        .add_form
+        .as_ref()
+        .unwrap();
     assert_eq!(f.field_text(crate::state::PfField::ListenPort), "6553");
 
     // "65535" should be acceptable.
     crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char('5'))));
-    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    let f = state
+        .overlay
+        .port_forward
+        .as_ref()
+        .unwrap()
+        .add_form
+        .as_ref()
+        .unwrap();
     assert_eq!(f.field_text(crate::state::PfField::ListenPort), "65535");
 }
 
@@ -868,7 +946,14 @@ fn pf_add_input_blocks_whitespace_in_host_fields() {
     for c in ['1', ' ', '2', '\t', '7'] {
         crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char(c))));
     }
-    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    let f = state
+        .overlay
+        .port_forward
+        .as_ref()
+        .unwrap()
+        .add_form
+        .as_ref()
+        .unwrap();
     assert_eq!(f.field_text(crate::state::PfField::TargetHost), "127");
 }
 
@@ -877,8 +962,14 @@ fn remove_remote_from_list_drops_host_and_signals_stop() {
     use crate::state::RemoteSessionRow;
     let mut state = make_test_state(0);
     state.config_remotes = vec![
-        crate::config::RemoteConfig { host: "h1".into(), forwards: vec![] },
-        crate::config::RemoteConfig { host: "h2".into(), forwards: vec![] },
+        crate::config::RemoteConfig {
+            host: "h1".into(),
+            forwards: vec![],
+        },
+        crate::config::RemoteConfig {
+            host: "h2".into(),
+            forwards: vec![],
+        },
     ];
     state.remote_sessions = vec![
         RemoteSessionRow {
@@ -1020,7 +1111,14 @@ fn pf_add_field_next_changes_focus() {
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "8");
     crate::action::apply_action(&mut state, Action::PfAddFieldNext);
-    let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
+    let f = state
+        .overlay
+        .port_forward
+        .as_ref()
+        .unwrap()
+        .add_form
+        .as_ref()
+        .unwrap();
     assert_eq!(f.focus, crate::state::PfField::TargetHost);
 }
 

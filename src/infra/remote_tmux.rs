@@ -134,9 +134,19 @@ fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Detect
         runner,
         host,
         &[
-            "tmux", "list-panes", "-a", "-F", &format, "2>/dev/null", ";",
-            "echo", AGENT_PROBE_MARKER, ";",
-            "ps", "-axo", "pid=,ppid=,args=",
+            "tmux",
+            "list-panes",
+            "-a",
+            "-F",
+            &format,
+            "2>/dev/null",
+            ";",
+            "echo",
+            AGENT_PROBE_MARKER,
+            ";",
+            "ps",
+            "-axo",
+            "pid=,ppid=,args=",
         ],
     )
     .ok()?;
@@ -243,7 +253,10 @@ fn marker_host_part(host: &str) -> String {
 /// connection's stale tty. Lives under `~/.cache` so it's disposable.
 fn client_marker_path(host: &str, marker_id: u64) -> String {
     let pid = std::process::id();
-    format!("~/.cache/deck/client-{pid}-{}-{marker_id}", marker_host_part(host))
+    format!(
+        "~/.cache/deck/client-{pid}-{}-{marker_id}",
+        marker_host_part(host)
+    )
 }
 
 /// [`client_marker_path`] quoted for safe interpolation into a remote
@@ -394,7 +407,11 @@ fn focus_pane_with(
 pub fn kill_session(host: &str, name: &str) {
     let runner = default_runner();
     let target = shell_single_quote(name);
-    let _ = run_ssh(runner, host, &["tmux", "kill-session", "-t", target.as_str()]);
+    let _ = run_ssh(
+        runner,
+        host,
+        &["tmux", "kill-session", "-t", target.as_str()],
+    );
 }
 
 /// Rename a session on the remote tmux server. As with `kill_session`,
@@ -660,7 +677,8 @@ mod tests {
         // Names and the `;` separator are single-quoted so the remote shell
         // passes them literally to tmux (tmux interprets the `;`).
         assert!(
-            calls[0].contains("set-option -t 'a' @deck_order 0 ';' set-option -t 'b' @deck_order 1"),
+            calls[0]
+                .contains("set-option -t 'a' @deck_order 0 ';' set-option -t 'b' @deck_order 1"),
             "got: {}",
             calls[0]
         );

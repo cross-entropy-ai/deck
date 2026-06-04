@@ -86,11 +86,21 @@ pub enum Action {
     SetFocusSidebar,
     ToggleFocus,
 
-    OpenSessionMenu { target: crate::state::FocusTarget, x: u16, y: u16 },
-    OpenGlobalMenu { x: u16, y: u16 },
+    OpenSessionMenu {
+        target: crate::state::FocusTarget,
+        x: u16,
+        y: u16,
+    },
+    OpenGlobalMenu {
+        x: u16,
+        y: u16,
+    },
     /// Open the `@local` divider's `[…]` menu (local "New session";
     /// Port Forward / Remove from list greyed out).
-    OpenLocalDividerMenu { x: u16, y: u16 },
+    OpenLocalDividerMenu {
+        x: u16,
+        y: u16,
+    },
     MenuNext,
     MenuPrev,
     MenuConfirm,
@@ -120,8 +130,14 @@ pub enum Action {
     Quit,
 
     // Port-forward overlay (per-host)
-    OpenHostDividerMenu { host: String, x: u16, y: u16 },
-    ReconnectHost { host: String },
+    OpenHostDividerMenu {
+        host: String,
+        x: u16,
+        y: u16,
+    },
+    ReconnectHost {
+        host: String,
+    },
     OpenPortForward(String),
     PfClose,
     PfFocusUp,

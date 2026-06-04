@@ -188,7 +188,9 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         }
         let target = match state.layout_mode {
             LayoutMode::Horizontal => state.focus_at_row(mouse.row),
-            LayoutMode::Vertical => state.session_at_col(mouse.column, mouse.row).map(FocusTarget),
+            LayoutMode::Vertical => state
+                .session_at_col(mouse.column, mouse.row)
+                .map(FocusTarget),
         };
         return if let Some(target) = target {
             Action::OpenSessionMenu {

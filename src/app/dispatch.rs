@@ -23,7 +23,10 @@ fn session_name_format_error(name: &str) -> Option<&'static str> {
     }
 }
 
-fn validate_session_name(name: &str, sessions: &[crate::state::SessionRow]) -> Option<&'static str> {
+fn validate_session_name(
+    name: &str,
+    sessions: &[crate::state::SessionRow],
+) -> Option<&'static str> {
     session_name_format_error(name).or_else(|| {
         sessions
             .iter()
@@ -43,9 +46,8 @@ fn new_session_list_query(ns: &crate::new_session::NewSessionState) -> (Option<S
     match &ns.remote_host {
         Some(host) => (Some(host.clone()), parent.to_string()),
         None => {
-            let home = std::path::PathBuf::from(
-                std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
-            );
+            let home =
+                std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
             let expanded = crate::new_session::expand_path(parent, &home);
             (None, expanded.to_string_lossy().to_string())
         }
@@ -153,7 +155,10 @@ impl App {
                 let (program, args_owned): (String, Vec<String>) = match detect_install_method() {
                     InstallMethod::Brew => (
                         "brew".to_string(),
-                        vec!["upgrade".to_string(), "cross-entropy-ai/tap/deck".to_string()],
+                        vec![
+                            "upgrade".to_string(),
+                            "cross-entropy-ai/tap/deck".to_string(),
+                        ],
                     ),
                     InstallMethod::DirectDownload => {
                         if target_triple().is_none() {
@@ -176,11 +181,10 @@ impl App {
                         // We can't write to where deck lives (e.g.
                         // /usr/local/bin without brew). Point the user at
                         // the install methods instead.
-                        self.warning_state =
-                            Some(crate::state::WarningState::Proactive {
-                                text: "deck can't self-update from this location",
-                                detail: manual_upgrade_hint(&latest),
-                            });
+                        self.warning_state = Some(crate::state::WarningState::Proactive {
+                            text: "deck can't self-update from this location",
+                            detail: manual_upgrade_hint(&latest),
+                        });
                         return false;
                     }
                 };
@@ -268,7 +272,11 @@ impl App {
     /// FIFO worker. Fire-and-forget from the UI thread's perspective: the
     /// op runs off-thread and its outcome (if any completion effect is
     /// needed) drains back through `apply_session_outcome`.
-    pub(super) fn submit_session(&mut self, host: Option<String>, op: crate::session::executor::SessionOp) {
+    pub(super) fn submit_session(
+        &mut self,
+        host: Option<String>,
+        op: crate::session::executor::SessionOp,
+    ) {
         let backend = self.control(host.as_deref());
         self.session_exec.submit(host, backend, op);
     }
@@ -340,9 +348,12 @@ impl App {
         // The local backend reproduces the tty-vs-bare `switch-client`
         // choice exactly; it runs on the executor so a slow `switch-client`
         // can't stall the UI thread (uniform with remote).
-        self.submit_session(None, crate::session::executor::SessionOp::Switch {
-            name: session.to_string(),
-        });
+        self.submit_session(
+            None,
+            crate::session::executor::SessionOp::Switch {
+                name: session.to_string(),
+            },
+        );
         // Selecting a local session implies returning to the local
         // view if we were watching a remote one.
         self.active_remote = None;
@@ -392,19 +403,16 @@ impl App {
         self.respawn_remote_host(host);
         // Avoid duplicating a placeholder if one is already there
         // (e.g. add → remove → add in quick succession).
-        if !self
-            .state
-            .remote_sessions
-            .iter()
-            .any(|s| s.host == host)
-        {
-            self.state.remote_sessions.push(crate::state::RemoteSessionRow {
-                host: host.to_string(),
-                name: String::new(),
-                dir: String::new(),
-                unreachable: false,
-                loading: true,
-            });
+        if !self.state.remote_sessions.iter().any(|s| s.host == host) {
+            self.state
+                .remote_sessions
+                .push(crate::state::RemoteSessionRow {
+                    host: host.to_string(),
+                    name: String::new(),
+                    dir: String::new(),
+                    unreachable: false,
+                    loading: true,
+                });
         }
     }
 
@@ -422,7 +430,13 @@ impl App {
         // Drop the agent highlight if it belonged to the removed host, and
         // supersede any in-flight focus to it, so we don't keep marking an
         // agent active on a host that's gone.
-        if self.state.active_agent.as_ref().and_then(|t| t.host.as_deref()) == Some(host) {
+        if self
+            .state
+            .active_agent
+            .as_ref()
+            .and_then(|t| t.host.as_deref())
+            == Some(host)
+        {
             self.state.active_agent = None;
             self.needs_full_redraw = true;
         }
@@ -468,9 +482,12 @@ impl App {
         // we just queued for this host. `control()` reads this connection's
         // marker id; the readiness gate above guarantees it's written.
         let marker_id = conn.map(|c| c.client_marker_id).unwrap_or(0);
-        self.submit_session(Some(host.to_string()), crate::session::executor::SessionOp::Switch {
-            name: name.to_string(),
-        });
+        self.submit_session(
+            Some(host.to_string()),
+            crate::session::executor::SessionOp::Switch {
+                name: name.to_string(),
+            },
+        );
         // Record what we submitted so the `Switched` outcome can confirm it
         // ran against the live marker and re-fire if the connection
         // respawned (new marker) while the op waited in the FIFO.
@@ -618,9 +635,10 @@ impl App {
         let Some(host) = target.host.as_deref() else {
             return true; // local targets are committed inline, not here
         };
-        let connected = self.remote_conns.get(host).is_some_and(|c| {
-            matches!(c.status, RemoteConnStatus::Connected) && c.pane.is_some()
-        });
+        let connected = self
+            .remote_conns
+            .get(host)
+            .is_some_and(|c| matches!(c.status, RemoteConnStatus::Connected) && c.pane.is_some());
         let still_detected = self
             .state
             .agents
@@ -787,9 +805,9 @@ impl App {
         if let Some(ref host) = fx.remove_remote_host {
             // Tear down the ControlMaster (and any forwards riding on
             // it) so the host stops occupying SSH state once detached.
-            let _ = self.port_forward_tx.send(
-                crate::app::port_forward_task::Op::StopHost { host: host.clone() },
-            );
+            let _ = self
+                .port_forward_tx
+                .send(crate::app::port_forward_task::Op::StopHost { host: host.clone() });
             // Drop the per-host runtime state (PTY, conn status, active
             // pointer) so a later re-add of the same host gets a fresh
             // connection instead of inheriting stale `Failed` status.
@@ -860,10 +878,7 @@ impl App {
             self.state.focus_mode = FocusMode::Sidebar;
         }
 
-        let new_theme_index = THEMES
-            .iter()
-            .position(|t| t.name == cfg.theme)
-            .unwrap_or(0);
+        let new_theme_index = THEMES.iter().position(|t| t.name == cfg.theme).unwrap_or(0);
         let theme_changed = new_theme_index != self.state.theme_index;
 
         self.state.theme_index = new_theme_index;
@@ -893,9 +908,11 @@ impl App {
         // Hosts only in old → stop master + offboard runtime state.
         for old in &old_remotes {
             if !new_remotes.iter().any(|n| n.host == old.host) {
-                let _ = self.port_forward_tx.send(
-                    crate::app::port_forward_task::Op::StopHost { host: old.host.clone() },
-                );
+                let _ = self
+                    .port_forward_tx
+                    .send(crate::app::port_forward_task::Op::StopHost {
+                        host: old.host.clone(),
+                    });
                 self.offboard_remote_host(&old.host);
             }
         }
@@ -919,12 +936,17 @@ impl App {
                 .unwrap_or(&empty);
             for op in crate::config::diff_forwards(old_fwds, &n.forwards) {
                 let msg = match op {
-                    crate::config::ForwardOp::Add(spec) => crate::app::port_forward_task::Op::AddForward {
-                        host: n.host.clone(),
-                        spec,
-                    },
+                    crate::config::ForwardOp::Add(spec) => {
+                        crate::app::port_forward_task::Op::AddForward {
+                            host: n.host.clone(),
+                            spec,
+                        }
+                    }
                     crate::config::ForwardOp::Cancel(spec) => {
-                        crate::app::port_forward_task::Op::CancelForward { host: n.host.clone(), spec }
+                        crate::app::port_forward_task::Op::CancelForward {
+                            host: n.host.clone(),
+                            spec,
+                        }
                     }
                 };
                 let _ = self.port_forward_tx.send(msg);
@@ -971,9 +993,7 @@ impl App {
     }
 
     fn open_new_session_picker(&mut self) {
-        use crate::new_session::{
-            auto_session_name, make_textarea, NewSessionState, PickerFocus,
-        };
+        use crate::new_session::{auto_session_name, make_textarea, NewSessionState, PickerFocus};
 
         // Starting dir: focused session's dir if any, else $HOME.
         let start_dir = self
@@ -1020,9 +1040,7 @@ impl App {
     /// browser lists remote directories over ssh and confirming creates
     /// the session on that host. Starts at the remote home (`~`).
     fn open_remote_new_session_picker(&mut self, host: &str) {
-        use crate::new_session::{
-            auto_session_name, make_textarea, NewSessionState, PickerFocus,
-        };
+        use crate::new_session::{auto_session_name, make_textarea, NewSessionState, PickerFocus};
 
         let input_str = "~/".to_string();
 
@@ -1072,8 +1090,8 @@ impl App {
                 .remote_sessions
                 .iter()
                 .any(|r| r.host == host && r.name == name);
-            let err = session_name_format_error(&name)
-                .or_else(|| dup.then_some("name already in use"));
+            let err =
+                session_name_format_error(&name).or_else(|| dup.then_some("name already in use"));
             if let Some(err) = err {
                 if let Some(ns) = self.state.overlay.new_session.as_mut() {
                     ns.error = Some(err.to_string());
@@ -1101,10 +1119,15 @@ impl App {
         }
 
         // Now resolve and validate dir.
-        let input = self.state.overlay.new_session.as_ref()?.input_str().to_string();
-        let home = std::path::PathBuf::from(
-            std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
-        );
+        let input = self
+            .state
+            .overlay
+            .new_session
+            .as_ref()?
+            .input_str()
+            .to_string();
+        let home =
+            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
         let resolved = expand_path(&input, &home);
         match std::fs::metadata(&resolved) {
             Ok(m) if m.is_dir() => {
@@ -1198,8 +1221,7 @@ impl App {
             None => self.switch_client(name),
             Some(host) => {
                 let connected = self.remote_conns.get(&host).is_some_and(|c| {
-                    matches!(c.status, crate::app::RemoteConnStatus::Connected)
-                        && c.pane.is_some()
+                    matches!(c.status, crate::app::RemoteConnStatus::Connected) && c.pane.is_some()
                 });
                 if connected {
                     self.switch_to_remote(&host, name);
@@ -1253,15 +1275,17 @@ impl App {
                     .any(|f| crate::state::ForwardKey::from_spec(&host, f) == key)
             });
         if already_exists {
-            overlay.status =
-                Some(format!("Port {} is already being forwarded.", spec.listen_port));
+            overlay.status = Some(format!(
+                "Port {} is already being forwarded.",
+                spec.listen_port
+            ));
             return;
         }
         form.submitting = true;
         overlay.status = Some("applying...".into());
-        let _ = self.port_forward_tx.send(
-            crate::app::port_forward_task::Op::AddForward { host, spec },
-        );
+        let _ = self
+            .port_forward_tx
+            .send(crate::app::port_forward_task::Op::AddForward { host, spec });
     }
 
     /// Cancel-then-remove. Spec semantics: remove from config regardless
@@ -1287,12 +1311,7 @@ impl App {
             (host, spec)
         };
 
-        persist_forward(
-            &mut self.state.config_remotes,
-            &host,
-            spec.clone(),
-            false,
-        );
+        persist_forward(&mut self.state.config_remotes, &host, spec.clone(), false);
         self.save_config();
 
         let new_len = self
@@ -1309,9 +1328,9 @@ impl App {
             overlay.status = Some("cancelling...".into());
         }
 
-        let _ = self.port_forward_tx.send(
-            crate::app::port_forward_task::Op::CancelForward { host, spec },
-        );
+        let _ = self
+            .port_forward_tx
+            .send(crate::app::port_forward_task::Op::CancelForward { host, spec });
     }
 }
 

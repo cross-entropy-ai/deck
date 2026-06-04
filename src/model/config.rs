@@ -185,7 +185,9 @@ fn config_path() -> PathBuf {
 /// treat that as "no change to react to", letting the watcher stay
 /// quiet when the user hasn't created a config yet.
 pub fn config_mtime() -> Option<std::time::SystemTime> {
-    fs::metadata(config_path()).ok().and_then(|m| m.modified().ok())
+    fs::metadata(config_path())
+        .ok()
+        .and_then(|m| m.modified().ok())
 }
 
 /// Pre-YAML config locations, newest first: deck's former `config.json`,

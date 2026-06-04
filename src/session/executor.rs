@@ -51,7 +51,10 @@ pub enum OpOutcome {
     Killed,
     /// new-session: `name` is the requested name, `created` whether tmux
     /// reported success. Drives the post-create switch on the UI thread.
-    Created { name: String, created: bool },
+    Created {
+        name: String,
+        created: bool,
+    },
     OrderPersisted,
     /// list_dir: `path` is the listed parent, echoed back so the UI can
     /// drop a stale listing if the user has since typed a different parent.
@@ -136,7 +139,8 @@ fn worker_loop(rx: Receiver<Job>, outcome_tx: Sender<SessionOutcome>) {
         // dead worker would leave a sticky sender in the executor's map and
         // silently drop every later op for this backend. On panic we skip
         // the outcome (no completion effect runs) but keep draining.
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(job.backend, job.op)));
+        let outcome =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(job.backend, job.op)));
         match outcome {
             Ok(result) => {
                 if outcome_tx.send(SessionOutcome { host, result }).is_err() {

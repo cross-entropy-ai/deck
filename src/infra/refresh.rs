@@ -158,9 +158,7 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
         // gated by `remote_in_flight` so back-to-back refresh ticks
         // don't dispatch overlapping ssh storms. The next tick that
         // arrives after this finishes is free to start its own round.
-        if !req.remotes.is_empty()
-            && !remote_in_flight.swap(true, Ordering::Acquire)
-        {
+        if !req.remotes.is_empty() && !remote_in_flight.swap(true, Ordering::Acquire) {
             let remotes = req.remotes.clone();
             let probe_agents = req.show_agents;
             let tx = update_tx.clone();
@@ -234,7 +232,10 @@ fn collect_local(
 fn collect_remotes(
     remotes: &[String],
     probe_agents: bool,
-) -> (Vec<RemoteSnapshotRow>, HashMap<String, Vec<crate::agent::DetectedAgent>>) {
+) -> (
+    Vec<RemoteSnapshotRow>,
+    HashMap<String, Vec<crate::agent::DetectedAgent>>,
+) {
     if remotes.is_empty() {
         return (Vec::new(), HashMap::new());
     }

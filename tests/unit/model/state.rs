@@ -119,13 +119,23 @@ fn apply_remote_agents_drops_stale_on_failed_probe() {
     use crate::config::RemoteConfig;
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.config_remotes = vec![
-        RemoteConfig { host: "h1".into(), forwards: vec![] },
-        RemoteConfig { host: "h2".into(), forwards: vec![] },
+        RemoteConfig {
+            host: "h1".into(),
+            forwards: vec![],
+        },
+        RemoteConfig {
+            host: "h2".into(),
+            forwards: vec![],
+        },
     ];
     // Prior round: local + both hosts had detected agents.
     state.agents.insert(None, vec![detected("local", "%1")]);
-    state.agents.insert(Some("h1".into()), vec![detected("h1old", "%10")]);
-    state.agents.insert(Some("h2".into()), vec![detected("h2old", "%20")]);
+    state
+        .agents
+        .insert(Some("h1".into()), vec![detected("h1old", "%10")]);
+    state
+        .agents
+        .insert(Some("h2".into()), vec![detected("h2old", "%20")]);
 
     // This round queried both hosts; only h1's probe succeeded.
     let covered: std::collections::HashSet<String> =
@@ -147,7 +157,9 @@ fn apply_remote_agents_drops_stale_on_failed_probe() {
 fn apply_remote_agents_prunes_unconfigured_hosts() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     // No remotes configured; a leftover host entry should be pruned.
-    state.agents.insert(Some("ghost".into()), vec![detected("s", "%1")]);
+    state
+        .agents
+        .insert(Some("ghost".into()), vec![detected("s", "%1")]);
     state.apply_remote_agents(Default::default(), Default::default());
     assert!(!state.agents.contains_key(&Some("ghost".to_string())));
 }
@@ -454,7 +466,11 @@ fn validate_bind_addr_passthrough() {
 #[test]
 fn rollup_down_dominates() {
     use crate::state::{rollup_color, ForwardHealth, PfBadgeColor};
-    let healths = [ForwardHealth::Up, ForwardHealth::Down, ForwardHealth::Probing];
+    let healths = [
+        ForwardHealth::Up,
+        ForwardHealth::Down,
+        ForwardHealth::Probing,
+    ];
     assert_eq!(rollup_color(&healths), PfBadgeColor::Degraded);
 }
 
@@ -499,7 +515,7 @@ fn confirm_kill_name_resolves_remote_focused_row() {
     // lives in.
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.remote_sessions = vec![remote_row("h1", false, false)]; // named "s"
-    // Flat index 2 == local_count(2) + remote_idx(0): the remote row.
+                                                                  // Flat index 2 == local_count(2) + remote_idx(0): the remote row.
     state.focused = 2;
     state.overlay.confirm_kill = true;
     assert_eq!(state.confirm_kill_name().as_deref(), Some("s"));
@@ -533,9 +549,10 @@ fn collapsed_local_group_hides_rows_and_omits_footer() {
 
     assert!(layout.is_collapsible());
     // No AgentCount footer for the collapsed local group.
-    let local_footer = layout.items().iter().any(|i| {
-        matches!(&i.data, SidebarItemData::AgentCount { host: None, .. })
-    });
+    let local_footer = layout
+        .items()
+        .iter()
+        .any(|i| matches!(&i.data, SidebarItemData::AgentCount { host: None, .. }));
     assert!(!local_footer, "collapsed local group must omit its footer");
 
     // The local header is collapsed; its rows (idx 0,1) are hidden.
@@ -547,9 +564,10 @@ fn collapsed_local_group_hides_rows_and_omits_footer() {
 fn expanded_local_group_keeps_footer_and_shows_rows() {
     let state = make_state(LayoutMode::Horizontal, false, 80, 24);
     let layout = state.sidebar_layout(ViewMode::Expanded);
-    let local_footer = layout.items().iter().any(|i| {
-        matches!(&i.data, SidebarItemData::AgentCount { host: None, .. })
-    });
+    let local_footer = layout
+        .items()
+        .iter()
+        .any(|i| matches!(&i.data, SidebarItemData::AgentCount { host: None, .. }));
     assert!(local_footer, "expanded local group must keep its footer");
     assert!(!layout.is_row_hidden(0));
 }

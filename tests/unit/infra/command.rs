@@ -51,4 +51,3 @@ fn real_runner_kills_after_timeout() {
         "timeout path took too long: {elapsed:?}"
     );
 }
-

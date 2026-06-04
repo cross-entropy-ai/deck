@@ -1,8 +1,8 @@
+mod add_remote;
 pub mod bridge;
 pub mod form;
 pub mod layout;
 mod menu;
-mod add_remote;
 mod new_session;
 pub mod overlays;
 mod reload;
@@ -15,8 +15,8 @@ pub mod widgets;
 use crate::keybindings::Keybindings;
 use crate::state::{LayoutMode, RemoteSessionRow, SessionRow, ViewMode};
 
-pub use menu::draw_context_menu;
 pub use add_remote::draw_add_remote;
+pub use menu::draw_context_menu;
 pub use new_session::draw_new_session;
 pub use reload::{draw_reload_bar, reload_row_count};
 pub use settings::{draw_settings_page, draw_theme_picker};

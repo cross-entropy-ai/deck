@@ -369,7 +369,7 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
     }
     constraints.push(Constraint::Length(1)); // blank
     constraints.push(Constraint::Length(1)); // help
-    constraints.push(Constraint::Min(0));    // tail
+    constraints.push(Constraint::Min(0)); // tail
 
     let rows = Layout::vertical(constraints).split(inner);
     let mut row_idx: usize = 0;

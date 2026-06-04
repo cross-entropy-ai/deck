@@ -229,7 +229,10 @@ fn try_load_from_invalid_yaml_returns_err() {
     let path = std::env::temp_dir().join("deck-try-load-bad.yaml");
     fs::write(&path, "{ this is not: valid: yaml: ]").unwrap();
     let err = Config::try_load_from(&path).unwrap_err();
-    assert!(err.starts_with("parse:"), "expected parse error, got: {err}");
+    assert!(
+        err.starts_with("parse:"),
+        "expected parse error, got: {err}"
+    );
     // Path must not leak into the message — footer is too narrow.
     assert!(
         !err.contains(path.to_str().unwrap()),
@@ -334,9 +337,16 @@ fn remote_config_without_forwards_field_deserializes() {
 
 #[test]
 fn remote_config_empty_forwards_not_emitted() {
-    let r = RemoteConfig { host: "server-1".into(), forwards: vec![] };
+    let r = RemoteConfig {
+        host: "server-1".into(),
+        forwards: vec![],
+    };
     let s = serde_json::to_string(&r).unwrap();
-    assert!(!s.contains("forwards"), "empty forwards should be skipped: {}", s);
+    assert!(
+        !s.contains("forwards"),
+        "empty forwards should be skipped: {}",
+        s
+    );
 }
 
 #[test]
@@ -397,7 +407,10 @@ fn diff_forwards_mixed() {
     let new = vec![fwd(8080), fwd(7070)];
     let ops = diff_forwards(&old, &new);
     assert_eq!(ops.len(), 2);
-    assert!(ops.iter().any(|o| matches!(o, ForwardOp::Cancel(s) if s.listen_port == 9090)));
-    assert!(ops.iter().any(|o| matches!(o, ForwardOp::Add(s) if s.listen_port == 7070)));
+    assert!(ops
+        .iter()
+        .any(|o| matches!(o, ForwardOp::Cancel(s) if s.listen_port == 9090)));
+    assert!(ops
+        .iter()
+        .any(|o| matches!(o, ForwardOp::Add(s) if s.listen_port == 7070)));
 }
-

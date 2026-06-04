@@ -82,9 +82,25 @@ fn classify(args: &str) -> Option<AgentKind> {
             let non_interactive = matches!(
                 sub,
                 Some(
-                    "exec" | "e" | "review" | "login" | "logout" | "mcp" | "mcp-server"
-                        | "app-server" | "remote-control" | "app" | "completion" | "update"
-                        | "doctor" | "sandbox" | "debug" | "apply" | "a" | "plugin" | "cloud"
+                    "exec"
+                        | "e"
+                        | "review"
+                        | "login"
+                        | "logout"
+                        | "mcp"
+                        | "mcp-server"
+                        | "app-server"
+                        | "remote-control"
+                        | "app"
+                        | "completion"
+                        | "update"
+                        | "doctor"
+                        | "sandbox"
+                        | "debug"
+                        | "apply"
+                        | "a"
+                        | "plugin"
+                        | "cloud"
                 )
             );
             (!non_interactive).then_some(AgentKind::Codex)

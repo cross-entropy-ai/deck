@@ -9,8 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::PluginConfig;
 use crate::keybindings::Keybindings;
 use crate::layout::{
-    card_height, context_menu_width, plugin_block_rows, tab_col_ranges, tab_label,
-    BANNER_MIN_WIDTH,
+    card_height, context_menu_width, plugin_block_rows, tab_col_ranges, tab_label, BANNER_MIN_WIDTH,
 };
 use crate::new_session::{make_textarea, textarea_line, NewSessionState};
 use crate::update::{UpdateCheckMode, UpdateStatus};
@@ -1375,8 +1374,11 @@ impl AppState {
         for (host, list) in fresh {
             self.agents.insert(Some(host), list);
         }
-        let configured: std::collections::HashSet<&str> =
-            self.config_remotes.iter().map(|r| r.host.as_str()).collect();
+        let configured: std::collections::HashSet<&str> = self
+            .config_remotes
+            .iter()
+            .map(|r| r.host.as_str())
+            .collect();
         self.agents
             .retain(|k, _| k.as_deref().is_none_or(|h| configured.contains(h)));
     }

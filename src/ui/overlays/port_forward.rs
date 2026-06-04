@@ -6,11 +6,11 @@ use ratatui::widgets::{Paragraph, Widget, Wrap};
 use ratatui_textarea::TextArea;
 
 use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
-use std::collections::HashMap;
 use crate::state::{ForwardHealth, ForwardKey, PfAddForm, PfField, PortForwardOverlay};
 use crate::theme::Theme;
 use crate::ui::form::field_row;
 use crate::ui::widgets::{centered_rect, popup_frame, PopupStyle, TextAreaColors};
+use std::collections::HashMap;
 
 const OVERLAY_WIDTH: u16 = 64;
 
@@ -78,7 +78,9 @@ fn draw_list(
         for (i, f) in forwards.iter().enumerate() {
             let marker = if i == overlay.selected { ">" } else { " " };
             let style = if i == overlay.selected {
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme.text)
             };
@@ -87,9 +89,9 @@ fn draw_list(
                 .copied()
                 .unwrap_or(ForwardHealth::Probing);
             let (dot, dot_fg) = match h {
-                ForwardHealth::Up => ("\u{25cf}", theme.green),       // ●
-                ForwardHealth::Down => ("\u{2715}", theme.pink),      // ✕
-                ForwardHealth::Probing => ("\u{00b7}", theme.muted),  // ·
+                ForwardHealth::Up => ("\u{25cf}", theme.green),  // ●
+                ForwardHealth::Down => ("\u{2715}", theme.pink), // ✕
+                ForwardHealth::Probing => ("\u{00b7}", theme.muted), // ·
             };
             lines.push(Line::from(vec![
                 Span::raw("  "),
@@ -157,30 +159,54 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
     .render(rows[1], buf);
 
     let target_active = !matches!(form.mode, ForwardMode::Dynamic);
-    render_field_row(buf, rows[3], form, theme, FieldRow {
-        field: PfField::BindAddr,
-        label: "  bind addr:   ",
-        textarea: &form.bind_addr,
-        enabled: true,
-    });
-    render_field_row(buf, rows[4], form, theme, FieldRow {
-        field: PfField::ListenPort,
-        label: "  listen port: ",
-        textarea: &form.listen_port,
-        enabled: true,
-    });
-    render_field_row(buf, rows[5], form, theme, FieldRow {
-        field: PfField::TargetHost,
-        label: "  target host: ",
-        textarea: &form.target_host,
-        enabled: target_active,
-    });
-    render_field_row(buf, rows[6], form, theme, FieldRow {
-        field: PfField::TargetPort,
-        label: "  target port: ",
-        textarea: &form.target_port,
-        enabled: target_active,
-    });
+    render_field_row(
+        buf,
+        rows[3],
+        form,
+        theme,
+        FieldRow {
+            field: PfField::BindAddr,
+            label: "  bind addr:   ",
+            textarea: &form.bind_addr,
+            enabled: true,
+        },
+    );
+    render_field_row(
+        buf,
+        rows[4],
+        form,
+        theme,
+        FieldRow {
+            field: PfField::ListenPort,
+            label: "  listen port: ",
+            textarea: &form.listen_port,
+            enabled: true,
+        },
+    );
+    render_field_row(
+        buf,
+        rows[5],
+        form,
+        theme,
+        FieldRow {
+            field: PfField::TargetHost,
+            label: "  target host: ",
+            textarea: &form.target_host,
+            enabled: target_active,
+        },
+    );
+    render_field_row(
+        buf,
+        rows[6],
+        form,
+        theme,
+        FieldRow {
+            field: PfField::TargetPort,
+            label: "  target port: ",
+            textarea: &form.target_port,
+            enabled: target_active,
+        },
+    );
 
     Paragraph::new(flow_line(form, theme)).render(rows[8], buf);
     // Surface the add result here (e.g. validation error, "already
@@ -232,7 +258,9 @@ fn render_field_row(
 ) {
     let focused = form.focus == row.field && row.enabled;
     let label_style = if focused {
-        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD)
     } else if row.enabled {
         Style::default().fg(theme.text)
     } else {
@@ -263,7 +291,11 @@ fn render_field_row(
 fn flow_line<'a>(form: &PfAddForm, theme: &Theme) -> Line<'a> {
     let read = |field: PfField| -> String {
         let t = form.field_text(field);
-        if t.is_empty() { "?".into() } else { t.to_string() }
+        if t.is_empty() {
+            "?".into()
+        } else {
+            t.to_string()
+        }
     };
     let bind = read(PfField::BindAddr);
     let listen = read(PfField::ListenPort);

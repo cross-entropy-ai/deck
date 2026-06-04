@@ -50,7 +50,11 @@ impl App {
 
     pub(super) fn apply_update(&mut self, update: RefreshUpdate) {
         match update {
-            RefreshUpdate::Local { current_session, rows, agents } => {
+            RefreshUpdate::Local {
+                current_session,
+                rows,
+                agents,
+            } => {
                 self.apply_local(current_session, rows, agents);
             }
             RefreshUpdate::Remote { rows, agents } => {
@@ -252,10 +256,7 @@ impl App {
 /// PTY connection isn't live (`is_live` returns false) — i.e. the attach
 /// PTY dropped and needs rebuilding. Unreachable and still-loading rows
 /// are skipped; the result is deduplicated by host.
-fn hosts_needing_respawn(
-    rows: &[RemoteSessionRow],
-    is_live: impl Fn(&str) -> bool,
-) -> Vec<String> {
+fn hosts_needing_respawn(rows: &[RemoteSessionRow], is_live: impl Fn(&str) -> bool) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for row in rows {
         // Only real sessions are attachable. A reachable host with no

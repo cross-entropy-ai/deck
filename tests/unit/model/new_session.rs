@@ -57,19 +57,28 @@ fn expand_path_tilde() {
 #[test]
 fn expand_path_absolute() {
     let home = PathBuf::from("/home/u");
-    assert_eq!(expand_path("/etc/hosts", &home), PathBuf::from("/etc/hosts"));
+    assert_eq!(
+        expand_path("/etc/hosts", &home),
+        PathBuf::from("/etc/hosts")
+    );
 }
 
 #[test]
 fn expand_path_relative_resolves_under_home() {
     let home = PathBuf::from("/home/u");
-    assert_eq!(expand_path("projects/foo", &home), PathBuf::from("/home/u/projects/foo"));
+    assert_eq!(
+        expand_path("projects/foo", &home),
+        PathBuf::from("/home/u/projects/foo")
+    );
 }
 
 #[test]
 fn expand_path_normalizes_parent_dir() {
     let home = PathBuf::from("/home/u");
-    assert_eq!(expand_path("~/foo/../bar", &home), PathBuf::from("/home/u/bar"));
+    assert_eq!(
+        expand_path("~/foo/../bar", &home),
+        PathBuf::from("/home/u/bar")
+    );
     assert_eq!(expand_path("~/./bar", &home), PathBuf::from("/home/u/bar"));
 }
 

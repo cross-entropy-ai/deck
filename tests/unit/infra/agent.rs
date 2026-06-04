@@ -34,12 +34,27 @@ fn classify_codex_interactive_vs_subcommands() {
     assert_eq!(classify("codex resume"), Some(AgentKind::Codex));
     assert_eq!(classify("codex --model o3 fork"), Some(AgentKind::Codex));
     assert_eq!(
-        classify("/Users/me/.bun/.../@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex"),
+        classify(
+            "/Users/me/.bun/.../@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex"
+        ),
         Some(AgentKind::Codex)
     );
     // Non-interactive subcommands are not counted.
-    for sub in ["exec", "review", "mcp", "mcp-server", "app-server", "remote-control", "cloud", "login"] {
-        assert_eq!(classify(&format!("codex {sub} --flag")), None, "codex {sub}");
+    for sub in [
+        "exec",
+        "review",
+        "mcp",
+        "mcp-server",
+        "app-server",
+        "remote-control",
+        "cloud",
+        "login",
+    ] {
+        assert_eq!(
+            classify(&format!("codex {sub} --flag")),
+            None,
+            "codex {sub}"
+        );
     }
 }
 

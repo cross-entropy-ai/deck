@@ -17,15 +17,27 @@ use crate::config::ForwardSpec;
 #[derive(Debug)]
 pub enum Op {
     /// Bring up master + apply every spec, host-by-host, in given order.
-    Bootstrap { hosts: Vec<(String, Vec<ForwardSpec>)> },
-    AddForward { host: String, spec: ForwardSpec },
-    CancelForward { host: String, spec: ForwardSpec },
+    Bootstrap {
+        hosts: Vec<(String, Vec<ForwardSpec>)>,
+    },
+    AddForward {
+        host: String,
+        spec: ForwardSpec,
+    },
+    CancelForward {
+        host: String,
+        spec: ForwardSpec,
+    },
     /// Tear down the host's master entirely (used when a host is removed
     /// from config via hot-reload).
-    StopHost { host: String },
+    StopHost {
+        host: String,
+    },
     /// Classify the liveness of each given forward. Enumerates local listeners
     /// once when any item is `-L`/`-D`.
-    Probe { items: Vec<crate::state::ForwardKey> },
+    Probe {
+        items: Vec<crate::state::ForwardKey>,
+    },
 }
 
 /// Identifier for what the result is reporting on. Mirrored on
@@ -213,8 +225,16 @@ impl<R: Runner> Worker<R> {
 
 fn result_from(kind: OpKind, r: Result<(), String>) -> OpResult {
     match r {
-        Ok(()) => OpResult { kind, ok: true, message: String::new() },
-        Err(message) => OpResult { kind, ok: false, message },
+        Ok(()) => OpResult {
+            kind,
+            ok: true,
+            message: String::new(),
+        },
+        Err(message) => OpResult {
+            kind,
+            ok: false,
+            message,
+        },
     }
 }
 

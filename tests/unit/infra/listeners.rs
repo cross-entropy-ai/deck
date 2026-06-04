@@ -12,7 +12,11 @@ tcp4       0      0  127.0.0.1.52345        93.184.216.34.443      ESTABLISHED";
     assert!(ports.contains(&8080), "8080 should be LISTEN");
     assert!(ports.contains(&1080), "1080 should be LISTEN");
     assert!(!ports.contains(&52345), "ESTABLISHED row must be ignored");
-    assert_eq!(ports.len(), 2, "8080 appears twice (v4+v6), deduped, plus 1080");
+    assert_eq!(
+        ports.len(),
+        2,
+        "8080 appears twice (v4+v6), deduped, plus 1080"
+    );
 }
 
 #[test]

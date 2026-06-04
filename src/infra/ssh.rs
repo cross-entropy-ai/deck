@@ -166,7 +166,10 @@ mod tests {
     use super::*;
 
     fn cfg(pairs: &[(&str, &str)]) -> SshEffectiveConfig {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]

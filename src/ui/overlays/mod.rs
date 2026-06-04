@@ -85,10 +85,7 @@ pub(super) fn kill_button_rects(area: Rect) -> KillConfirmHits {
     let yes_btn_w = yes_w.min(area.width);
 
     // Prefer a 2-col indent, but always keep the rect fully within `area`.
-    let no_x = area
-        .x
-        .saturating_add(2)
-        .min(right.saturating_sub(no_btn_w));
+    let no_x = area.x.saturating_add(2).min(right.saturating_sub(no_btn_w));
 
     // Right-align Yes with a 2-col inset when possible.
     let desired_yes_x = right.saturating_sub(yes_btn_w + 2).max(area.x);
@@ -222,11 +219,7 @@ pub(super) fn draw_rename_input(
 
     // Render the textarea into the field row, indented by 2.
     let field_area = rows[3];
-    let cols = Layout::horizontal([
-        Constraint::Length(2),
-        Constraint::Min(0),
-    ])
-    .split(field_area);
+    let cols = Layout::horizontal([Constraint::Length(2), Constraint::Min(0)]).split(field_area);
 
     let mut ta = textarea.clone();
     style_textarea(
@@ -287,7 +280,12 @@ mod tests {
     fn kill_buttons_spread_apart_at_wide_width() {
         // At a roomy width the destructive Yes is right-aligned, leaving a
         // wide gap from No so a misclick can't flip the choice.
-        let area = Rect { x: 0, y: 0, width: 60, height: 10 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 60,
+            height: 10,
+        };
         let hits = kill_button_rects(area);
         let gap = hits.yes.x - (hits.no.x + hits.no.width);
         assert!(gap >= 10, "expected a wide gap, got {gap}");

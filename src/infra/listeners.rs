@@ -60,7 +60,9 @@ pub fn parse_ss(output: &str) -> HashSet<u16> {
         let Some(state_idx) = cols.iter().position(|c| *c == "LISTEN") else {
             continue;
         };
-        let Some(local) = cols.get(state_idx + 3) else { continue };
+        let Some(local) = cols.get(state_idx + 3) else {
+            continue;
+        };
         if let Some((_, port)) = local.rsplit_once(':') {
             if let Ok(p) = port.parse::<u16>() {
                 ports.insert(p);
@@ -87,7 +89,10 @@ pub fn local_listen_ports() -> Option<HashSet<u16>> {
     }
     #[cfg(target_os = "linux")]
     {
-        let out = std::process::Command::new("ss").args(["-ltn"]).output().ok()?;
+        let out = std::process::Command::new("ss")
+            .args(["-ltn"])
+            .output()
+            .ok()?;
         if !out.status.success() {
             return None;
         }

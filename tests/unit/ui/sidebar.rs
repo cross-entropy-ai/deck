@@ -38,8 +38,16 @@ fn pf_badge_does_not_shift_right_aligned_buttons() {
     let theme = &crate::theme::THEMES[0];
 
     let mut without = Vec::new();
-    let hits_no =
-        super::render_group_header(&mut without, "@h", theme.teal, HostStatus::Connected, 60, theme, None, false);
+    let hits_no = super::render_group_header(
+        &mut without,
+        "@h",
+        theme.teal,
+        HostStatus::Connected,
+        60,
+        theme,
+        None,
+        false,
+    );
 
     let mut with = Vec::new();
     let hits_yes = super::render_group_header(
@@ -49,22 +57,40 @@ fn pf_badge_does_not_shift_right_aligned_buttons() {
         HostStatus::Connected,
         60,
         theme,
-        Some(PfBadge { count: 2, color: PfBadgeColor::Healthy }),
+        Some(PfBadge {
+            count: 2,
+            color: PfBadgeColor::Healthy,
+        }),
         false,
     );
 
     // The badge eats into the dash run, so the buttons stay put.
-    assert_eq!(hits_yes.reconnect.start, hits_no.reconnect.start, "reconnect button must not move");
-    assert_eq!(hits_yes.more.start, hits_no.more.start, "more button must not move");
+    assert_eq!(
+        hits_yes.reconnect.start, hits_no.reconnect.start,
+        "reconnect button must not move"
+    );
+    assert_eq!(
+        hits_yes.more.start, hits_no.more.start,
+        "more button must not move"
+    );
 
     // No forwards => no badge hit; with forwards => a clickable badge region.
-    assert!(hits_no.badge.is_none(), "badge hit must be absent with no forwards");
+    assert!(
+        hits_no.badge.is_none(),
+        "badge hit must be absent with no forwards"
+    );
     let badge = hits_yes.badge.expect("badge hit region must be present");
 
     // And the badge text is actually rendered, within the reported hit range.
     let rendered: String = with[0].spans.iter().map(|s| s.content.as_ref()).collect();
-    assert!(rendered.contains("\u{21c4}2"), "badge text missing: {rendered:?}");
-    assert!(badge.end <= hits_yes.reconnect.start, "badge must sit left of the buttons");
+    assert!(
+        rendered.contains("\u{21c4}2"),
+        "badge text missing: {rendered:?}"
+    );
+    assert!(
+        badge.end <= hits_yes.reconnect.start,
+        "badge must sit left of the buttons"
+    );
 }
 
 #[test]
@@ -80,15 +106,29 @@ fn pf_badge_suppressed_at_narrow_width_keeps_buttons_on_screen() {
         HostStatus::Connected,
         width,
         theme,
-        Some(PfBadge { count: 12, color: PfBadgeColor::Degraded }),
+        Some(PfBadge {
+            count: 12,
+            color: PfBadgeColor::Degraded,
+        }),
         false,
     );
     // Both button ranges must stay within the line width.
-    assert!(hits.more.end <= width, "more button end {} exceeds width {}", hits.more.end, width);
+    assert!(
+        hits.more.end <= width,
+        "more button end {} exceeds width {}",
+        hits.more.end,
+        width
+    );
     // Badge must be suppressed: no hit region and no ⇄ glyph at this width.
-    assert!(hits.badge.is_none(), "badge hit must be absent at narrow width");
+    assert!(
+        hits.badge.is_none(),
+        "badge hit must be absent at narrow width"
+    );
     let rendered: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
-    assert!(!rendered.contains('\u{21c4}'), "badge should be hidden at narrow width: {rendered:?}");
+    assert!(
+        !rendered.contains('\u{21c4}'),
+        "badge should be hidden at narrow width: {rendered:?}"
+    );
 }
 
 #[test]
@@ -155,5 +195,8 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
             text.push_str(buf[(x, y)].symbol());
         }
     }
-    assert!(text.contains("Kill victim"), "prompt text missing: {text:?}");
+    assert!(
+        text.contains("Kill victim"),
+        "prompt text missing: {text:?}"
+    );
 }

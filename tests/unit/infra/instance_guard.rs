@@ -80,8 +80,7 @@ fn force_acquires_over_corrupt_lock_without_killing() {
     fs::write(&path, "garbage\n").unwrap();
 
     let _guard =
-        InstanceGuard::acquire_forcing_at(path.clone(), std::process::id(), never_kill)
-            .unwrap();
+        InstanceGuard::acquire_forcing_at(path.clone(), std::process::id(), never_kill).unwrap();
     assert!(path.exists());
 }
 
@@ -93,8 +92,7 @@ fn force_acquires_over_stale_non_deck_pid_without_killing() {
     fs::write(&path, "1\n").unwrap();
 
     let _guard =
-        InstanceGuard::acquire_forcing_at(path.clone(), std::process::id(), never_kill)
-            .unwrap();
+        InstanceGuard::acquire_forcing_at(path.clone(), std::process::id(), never_kill).unwrap();
     assert!(path.exists());
 }
 
@@ -103,8 +101,7 @@ fn force_rejects_when_lock_holds_own_pid() {
     let path = test_lock_path("force-self-pid");
     fs::write(&path, format!("{}\n", std::process::id())).unwrap();
 
-    let result =
-        InstanceGuard::acquire_forcing_at(path.clone(), std::process::id(), never_kill);
+    let result = InstanceGuard::acquire_forcing_at(path.clone(), std::process::id(), never_kill);
     assert!(matches!(
         result,
         Err(AcquireError::AlreadyRunning { pid: Some(pid) }) if pid == std::process::id()
@@ -123,8 +120,7 @@ fn force_kills_and_acquires_when_lock_holds_deck_pid() {
     KILL_CALLS.store(0, Ordering::SeqCst);
 
     let _guard =
-        InstanceGuard::acquire_forcing_at(path.clone(), std::process::id(), counting_kill)
-            .unwrap();
+        InstanceGuard::acquire_forcing_at(path.clone(), std::process::id(), counting_kill).unwrap();
 
     assert_eq!(KILL_CALLS.load(Ordering::SeqCst), 1);
     assert!(path.exists());
@@ -201,11 +197,8 @@ fn force_surfaces_permission_denied() {
 
     fs::write(&path, format!("{victim_pid}\n")).unwrap();
 
-    let result = InstanceGuard::acquire_forcing_at(
-        path.clone(),
-        std::process::id(),
-        permission_denied_kill,
-    );
+    let result =
+        InstanceGuard::acquire_forcing_at(path.clone(), std::process::id(), permission_denied_kill);
     assert!(matches!(
         result,
         Err(AcquireError::ForceKillDenied { pid }) if pid == victim_pid

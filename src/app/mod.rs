@@ -530,7 +530,11 @@ impl App {
                 // reconnect can't let it silently re-grab focus), and a
                 // dead host shouldn't keep a footer line marked active.
                 self.focus_seq += 1;
-                if self.state.active_agent.as_ref().and_then(|t| t.host.as_deref())
+                if self
+                    .state
+                    .active_agent
+                    .as_ref()
+                    .and_then(|t| t.host.as_deref())
                     == Some(host.as_str())
                 {
                     self.state.active_agent = None;
@@ -689,4 +693,3 @@ impl App {
         Ok(())
     }
 }
-

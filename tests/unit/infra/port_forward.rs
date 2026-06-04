@@ -4,17 +4,34 @@ use crate::infra::port_forward::{
 };
 
 fn args_of(cmd: &std::process::Command) -> Vec<String> {
-    cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect()
+    cmd.get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect()
 }
 
 #[test]
 fn ssh_args_uses_shared_control_options() {
     let args = ssh_args_for_host("server-1");
     let joined = args.join(" ");
-    assert!(joined.contains("ControlMaster=auto"), "missing ControlMaster: {}", joined);
-    assert!(joined.contains("ControlPath="), "missing ControlPath: {}", joined);
-    assert!(joined.contains("ControlPersist="), "missing ControlPersist: {}", joined);
-    assert!(args.contains(&"server-1".to_string()), "host missing from args");
+    assert!(
+        joined.contains("ControlMaster=auto"),
+        "missing ControlMaster: {}",
+        joined
+    );
+    assert!(
+        joined.contains("ControlPath="),
+        "missing ControlPath: {}",
+        joined
+    );
+    assert!(
+        joined.contains("ControlPersist="),
+        "missing ControlPersist: {}",
+        joined
+    );
+    assert!(
+        args.contains(&"server-1".to_string()),
+        "host missing from args"
+    );
 }
 
 #[test]

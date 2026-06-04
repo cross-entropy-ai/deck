@@ -213,10 +213,7 @@ impl App {
                 _ => None,
             };
             let background_screen = match (warning_state.as_ref(), main_view) {
-                (
-                    Some(crate::state::WarningState::Proactive { .. }),
-                    _,
-                ) => None,
+                (Some(crate::state::WarningState::Proactive { .. }), _) => None,
                 // Dead local pane (no sessions to attach to) renders the
                 // empty-state placeholder below instead of a stale screen.
                 (None, MainView::Terminal) if local_active_dead => None,

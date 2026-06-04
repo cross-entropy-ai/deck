@@ -14,9 +14,9 @@ use crate::state::{
     AgentHit, AgentTarget, DividerButton, DividerHit, FocusTarget, HostStatus, KillConfirmHits,
     PfBadge, PfBadgeColor, SidebarItemData, SidebarLayout, ViewMode, AGENT_FOOTER_GAP_ROWS,
 };
-use ratatui_sectioned_list::{Item, ItemKind};
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
+use ratatui_sectioned_list::{Item, ItemKind};
 use ratatui_textarea::TextArea;
 
 use super::overlays::{draw_confirm_kill, draw_help, draw_rename_input};
@@ -274,7 +274,13 @@ fn draw_sidebar_container(
 /// Draws the "Projects (N)" header and a right-aligned "Show Agents"
 /// checkbox on the same row. Returns the checkbox's click rect so mouse
 /// dispatch can toggle it.
-fn draw_header(frame: &mut Frame, area: Rect, count: usize, show_agents: bool, theme: &Theme) -> Rect {
+fn draw_header(
+    frame: &mut Frame,
+    area: Rect,
+    count: usize,
+    show_agents: bool,
+    theme: &Theme,
+) -> Rect {
     let title = Line::from(vec![
         Span::styled(" ", Style::default()),
         Span::styled("\u{e795}", Style::default().fg(theme.accent)),
@@ -321,7 +327,10 @@ fn draw_header(frame: &mut Frame, area: Rect, count: usize, show_agents: bool, t
         Span::styled(box_glyph, Style::default().fg(box_color).bg(theme.bg)),
         Span::styled(" ", Style::default().bg(theme.bg)),
     ]);
-    frame.render_widget(Paragraph::new(line).style(Style::default().bg(theme.bg)), rect);
+    frame.render_widget(
+        Paragraph::new(line).style(Style::default().bg(theme.bg)),
+        rect,
+    );
     rect
 }
 
@@ -344,8 +353,7 @@ fn draw_sessions(
     let mut lines: Vec<Line> = Vec::new();
     // Pending hits: (line_index_in_lines, col_range, host, button). We
     // resolve absolute screen coordinates after computing the scroll offset.
-    let mut pending_hits: Vec<(usize, std::ops::Range<usize>, String, DividerButton)> =
-        Vec::new();
+    let mut pending_hits: Vec<(usize, std::ops::Range<usize>, String, DividerButton)> = Vec::new();
     // Pending agent-line hits: (line_index, switch target) → full-width
     // clickable rows, resolved to screen rects after the scroll offset.
     let mut pending_agent_hits: Vec<(usize, AgentTarget)> = Vec::new();
@@ -385,7 +393,12 @@ fn draw_sessions(
                 let more_range =
                     render_local_header(&mut lines, ctx.theme.accent, width, ctx.theme, collapsed);
                 // Local divider carries no host; the menu it opens is fixed.
-                pending_hits.push((line_idx, more_range, String::new(), DividerButton::LocalMore));
+                pending_hits.push((
+                    line_idx,
+                    more_range,
+                    String::new(),
+                    DividerButton::LocalMore,
+                ));
             }
             SidebarItemData::AgentCount { host, agents } => {
                 // Count line. Until the first probe lands (`None`), show
@@ -466,7 +479,12 @@ fn draw_sessions(
                     &mut lines, &label, accent, *status, width, ctx.theme, *pf, collapsed,
                 );
                 if let Some(badge_range) = badge_range {
-                    pending_hits.push((line_idx, badge_range, host.clone(), DividerButton::PfBadge));
+                    pending_hits.push((
+                        line_idx,
+                        badge_range,
+                        host.clone(),
+                        DividerButton::PfBadge,
+                    ));
                 }
                 pending_hits.push((
                     line_idx,
@@ -603,14 +621,16 @@ fn render_local_header(
     let spacer_w = 1;
     let button_w = 3; // "[…]"
     let gap = 1; // space before the button
-    // Collapse chevron sits before the label: `▸` collapsed, `▾` expanded,
-    // then a space. Costs 2 cells, taken out of the label budget.
+                 // Collapse chevron sits before the label: `▸` collapsed, `▾` expanded,
+                 // then a space. Costs 2 cells, taken out of the label budget.
     let chevron = collapse_chevron(collapsed);
     let chevron_w = chevron.width() + 1;
 
     // Reserve the button column first so it stays on screen, then give the
     // label what's left and let the rule fill any remaining gap.
-    let avail = width.saturating_sub(leading_w).saturating_sub(gap + button_w);
+    let avail = width
+        .saturating_sub(leading_w)
+        .saturating_sub(gap + button_w);
     let label_budget = avail.saturating_sub(spacer_w).saturating_sub(chevron_w);
     let label_text = truncate("@local", label_budget);
     let label_w = label_text.as_str().width();
@@ -669,7 +689,7 @@ fn render_group_header(
     let spacer_w = 1;
     let button_w = 3; // "[⟳]" / "[…]"
     let gap = 1; // space before each button
-    // Collapse chevron + a space, before the label (costs 2 cells).
+                 // Collapse chevron + a space, before the label (costs 2 cells).
     let chevron = collapse_chevron(collapsed);
     let chevron_w = chevron.width() + 1;
     // Right side of the divider: gap [⟳] gap […]. Always reserved first so the
@@ -684,7 +704,10 @@ fn render_group_header(
         PfBadgeColor::Degraded => theme.pink,
         PfBadgeColor::Probing => theme.yellow,
     });
-    let want_badge_w = badge_text.as_ref().map(|s| gap + s.as_str().width()).unwrap_or(0);
+    let want_badge_w = badge_text
+        .as_ref()
+        .map(|s| gap + s.as_str().width())
+        .unwrap_or(0);
 
     // Budget for everything between the leading space and the buttons,
     // less the collapse chevron that sits just before the label.
@@ -736,13 +759,22 @@ fn render_group_header(
     if show_badge {
         if let (Some(text), Some(fg)) = (&badge_text, badge_fg) {
             spans.push(Span::styled(" ", Style::default().bg(theme.bg)));
-            spans.push(Span::styled(text.clone(), Style::default().fg(fg).bg(theme.bg)));
+            spans.push(Span::styled(
+                text.clone(),
+                Style::default().fg(fg).bg(theme.bg),
+            ));
         }
     }
     spans.push(Span::styled(" ", Style::default().bg(theme.bg)));
-    spans.push(Span::styled("[\u{27f3}]", Style::default().fg(reconnect_fg).bg(theme.bg)));
+    spans.push(Span::styled(
+        "[\u{27f3}]",
+        Style::default().fg(reconnect_fg).bg(theme.bg),
+    ));
     spans.push(Span::styled(" ", Style::default().bg(theme.bg)));
-    spans.push(Span::styled("[\u{2026}]", Style::default().fg(accent).bg(theme.bg)));
+    spans.push(Span::styled(
+        "[\u{2026}]",
+        Style::default().fg(accent).bg(theme.bg),
+    ));
 
     lines.push(pad_line(spans, theme.bg, width));
 
@@ -1080,8 +1112,9 @@ fn draw_footer(
         )])]
     };
 
-    let rows_capacity =
-        usize::from(3 + plugin_block_rows(props.plugins.len()) + props.update_available.is_some() as u16);
+    let rows_capacity = usize::from(
+        3 + plugin_block_rows(props.plugins.len()) + props.update_available.is_some() as u16,
+    );
     let mut rows: Vec<Line> = Vec::with_capacity(rows_capacity);
     rows.push(sep);
 

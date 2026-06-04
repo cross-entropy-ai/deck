@@ -135,7 +135,10 @@ pub fn run_self_upgrade(version: &str) -> Result<(), String> {
         .update()
         .map_err(|e| e.to_string())?;
 
-    println!("\nUpgraded to {}. Restart deck to use it.", status.version());
+    println!(
+        "\nUpgraded to {}. Restart deck to use it.",
+        status.version()
+    );
     Ok(())
 }
 

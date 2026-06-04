@@ -60,7 +60,9 @@ fn parse_errors() {
 
 #[test]
 fn format_roundtrip() {
-    let cases = &["j", "?", "enter", "esc", "up", "alt-up", "ctrl-s", "f1", "tab"];
+    let cases = &[
+        "j", "?", "enter", "esc", "up", "alt-up", "ctrl-s", "f1", "tab",
+    ];
     for s in cases {
         let parsed = parse_key(s).unwrap();
         let re = parse_key(&format_key(&parsed)).unwrap();
@@ -256,7 +258,10 @@ fn migrate_syntax_rewrites_legacy_modifiers() {
 fn migrate_syntax_is_idempotent() {
     let mut map = cfg(&[
         ("toggle_focus", KeyBindingValue::Single("C-s".into())),
-        ("toggle_help", KeyBindingValue::Multi(vec!["h".into(), "?".into()])),
+        (
+            "toggle_help",
+            KeyBindingValue::Multi(vec!["h".into(), "?".into()]),
+        ),
     ]);
     assert!(migrate_keybinding_syntax(&mut map));
     // Second pass over already-migrated values changes nothing.

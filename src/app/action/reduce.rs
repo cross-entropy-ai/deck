@@ -276,9 +276,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             };
             let (name, host) = match state.session_target(target) {
                 Some(SessionTargetRef::Local(row)) => (row.name.clone(), None),
-                Some(SessionTargetRef::Remote(row)) => {
-                    (row.name.clone(), Some(row.host.clone()))
-                }
+                Some(SessionTargetRef::Remote(row)) => (row.name.clone(), Some(row.host.clone())),
                 None => return fx,
             };
             state.overlay.renaming = Some(RenameState::new(name.clone(), name, host));
@@ -548,10 +546,14 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                         ns.name.input(key);
                     }
                     PickerFocus::Dir => {
-                        let parent_before = crate::new_session::split_input(ns.input_str()).0.to_string();
+                        let parent_before = crate::new_session::split_input(ns.input_str())
+                            .0
+                            .to_string();
                         ns.input.input(key);
                         ns.refilter();
-                        let parent_after = crate::new_session::split_input(ns.input_str()).0.to_string();
+                        let parent_after = crate::new_session::split_input(ns.input_str())
+                            .0
+                            .to_string();
                         if parent_before != parent_after {
                             fx.reread_new_session_entries = true;
                         }
@@ -571,7 +573,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::NewSessionDirUp => {
             if let Some(ns) = state.overlay.new_session.as_mut() {
-                let parent_before = crate::new_session::split_input(ns.input_str()).0.to_string();
+                let parent_before = crate::new_session::split_input(ns.input_str())
+                    .0
+                    .to_string();
                 let mut s = ns.input_str().to_string();
                 if s.ends_with('/') && s.len() > 1 {
                     s.pop();
@@ -580,7 +584,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 s.truncate(new_end);
                 ns.input = crate::new_session::make_textarea(&s);
                 ns.refilter();
-                let parent_after = crate::new_session::split_input(ns.input_str()).0.to_string();
+                let parent_after = crate::new_session::split_input(ns.input_str())
+                    .0
+                    .to_string();
                 if parent_before != parent_after {
                     fx.reread_new_session_entries = true;
                 }
@@ -942,7 +948,12 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         // the worker is dispatched in `dispatch.rs` (Task 9).
         Action::PfAddSubmit | Action::PfDelete => {}
 
-        Action::PfTaskResult { host, op, ok, message } => {
+        Action::PfTaskResult {
+            host,
+            op,
+            ok,
+            message,
+        } => {
             fx.merge(apply_pf_task_result(state, &host, &op, ok, &message));
         }
 
@@ -1055,7 +1066,11 @@ fn prev_field(f: PfField, mode: ForwardMode) -> PfField {
 fn set_mode(o: &mut Option<PortForwardOverlay>, delta: i32) {
     if let Some(o) = o.as_mut() {
         if let Some(f) = o.add_form.as_mut() {
-            let modes = [ForwardMode::Local, ForwardMode::Remote, ForwardMode::Dynamic];
+            let modes = [
+                ForwardMode::Local,
+                ForwardMode::Remote,
+                ForwardMode::Dynamic,
+            ];
             let i = modes.iter().position(|m| *m == f.mode).unwrap_or(0) as i32;
             let n = modes.len() as i32;
             let j = ((i + delta) % n + n) % n;
@@ -1088,7 +1103,9 @@ fn handle_pf_input(f: &mut PfAddForm, key: crossterm::event::KeyEvent) {
         }
     }
     let port_field = matches!(f.focus, PfField::ListenPort | PfField::TargetPort);
-    let Some(ta) = f.focused_textarea_mut() else { return; };
+    let Some(ta) = f.focused_textarea_mut() else {
+        return;
+    };
     let snapshot = ta.clone();
     ta.input(key);
 

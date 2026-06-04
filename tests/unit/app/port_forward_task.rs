@@ -58,7 +58,10 @@ fn spec(port: u16) -> ForwardSpec {
 fn add_forward_starts_master_first_time() {
     let runner = MockRunner::default();
     let mut w = Worker::new(runner.clone());
-    let results = w.handle(Op::AddForward { host: "h1".into(), spec: spec(8080) });
+    let results = w.handle(Op::AddForward {
+        host: "h1".into(),
+        spec: spec(8080),
+    });
     let log = runner.log.lock().unwrap().clone();
     assert_eq!(log, vec!["master h1", "forward h1 8080"]);
     assert!(results.iter().all(|r| r.ok));
@@ -68,9 +71,15 @@ fn add_forward_starts_master_first_time() {
 fn add_forward_second_time_skips_master() {
     let runner = MockRunner::default();
     let mut w = Worker::new(runner.clone());
-    w.handle(Op::AddForward { host: "h1".into(), spec: spec(8080) });
+    w.handle(Op::AddForward {
+        host: "h1".into(),
+        spec: spec(8080),
+    });
     runner.log.lock().unwrap().clear();
-    w.handle(Op::AddForward { host: "h1".into(), spec: spec(9090) });
+    w.handle(Op::AddForward {
+        host: "h1".into(),
+        spec: spec(9090),
+    });
     let log = runner.log.lock().unwrap().clone();
     assert_eq!(log, vec!["forward h1 9090"]);
 }
@@ -80,7 +89,10 @@ fn add_forward_master_failure_skips_forward() {
     let runner = MockRunner::default();
     runner.fail_master.lock().unwrap().push("h1".into());
     let mut w = Worker::new(runner.clone());
-    let results = w.handle(Op::AddForward { host: "h1".into(), spec: spec(8080) });
+    let results = w.handle(Op::AddForward {
+        host: "h1".into(),
+        spec: spec(8080),
+    });
     let log = runner.log.lock().unwrap().clone();
     assert_eq!(log, vec!["master h1"]);
     assert!(!results[0].ok);
@@ -90,9 +102,15 @@ fn add_forward_master_failure_skips_forward() {
 fn cancel_forward_does_not_touch_master() {
     let runner = MockRunner::default();
     let mut w = Worker::new(runner.clone());
-    w.handle(Op::AddForward { host: "h1".into(), spec: spec(8080) });
+    w.handle(Op::AddForward {
+        host: "h1".into(),
+        spec: spec(8080),
+    });
     runner.log.lock().unwrap().clear();
-    w.handle(Op::CancelForward { host: "h1".into(), spec: spec(8080) });
+    w.handle(Op::CancelForward {
+        host: "h1".into(),
+        spec: spec(8080),
+    });
     let log = runner.log.lock().unwrap().clone();
     assert_eq!(log, vec!["cancel h1 8080"]);
 }

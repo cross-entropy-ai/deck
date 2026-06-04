@@ -57,7 +57,7 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
         row_constraints.push(Constraint::Length(1));
     }
     row_constraints.push(Constraint::Length(1)); // footer
-    row_constraints.push(Constraint::Min(0));    // tail
+    row_constraints.push(Constraint::Min(0)); // tail
     let rows = Layout::vertical(row_constraints).split(inner);
 
     let mut row_idx: usize = 0;
