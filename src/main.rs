@@ -1,6 +1,7 @@
 mod app;
 mod infra;
 mod model;
+mod session;
 mod ui;
 
 pub(crate) use app::action;

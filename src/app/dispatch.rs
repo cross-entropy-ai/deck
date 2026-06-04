@@ -1,43 +1,14 @@
 use crate::action::{self, Action};
 use crate::config::Config;
 use crate::keybindings::{self, Keybindings};
+use crate::session::local::LocalControl;
+use crate::session::remote::RemoteControl;
+use crate::session::SessionControl;
 use crate::state::{FocusMode, MainView, ReloadStatus, SideEffect, SIDEBAR_MAX, SIDEBAR_MIN};
 use crate::theme::THEMES;
 use crate::tmux;
 
 use super::App;
-
-/// Read a directory and return (sorted dir names, error message). On
-/// any failure the entries list is empty and the error is set.
-fn read_dir_entries(path: &std::path::Path) -> (Vec<String>, Option<String>) {
-    match std::fs::read_dir(path) {
-        Ok(rd) => {
-            let mut names: Vec<String> = rd
-                .filter_map(|e| e.ok())
-                .filter(|e| e.metadata().is_ok_and(|m| m.is_dir()))
-                .filter_map(|e| e.file_name().into_string().ok())
-                .collect();
-            names.sort();
-            (names, None)
-        }
-        Err(e) => {
-            let msg = match e.kind() {
-                std::io::ErrorKind::NotFound => "not found".to_string(),
-                std::io::ErrorKind::PermissionDenied => "permission denied".to_string(),
-                _ => {
-                    let s = e.to_string();
-                    if s.chars().count() > 40 {
-                        let truncated: String = s.chars().take(39).collect();
-                        format!("{truncated}…")
-                    } else {
-                        s
-                    }
-                }
-            };
-            (Vec::new(), Some(msg))
-        }
-    }
-}
 
 /// tmux session-name format rules, shared by local and remote creation
 /// (uniqueness is checked separately against the relevant session list).
@@ -252,15 +223,26 @@ impl App {
         }
     }
 
+    /// Build the control-plane backend for a host: `None` -> the local
+    /// in-process tmux backend (seeded with deck's own client tty), `Some(h)`
+    /// -> the remote ssh backend for `h`. Selection by `Option<&str>` host is
+    /// the same key the rest of deck uses; the App-level orchestration
+    /// (nesting guard, `active_remote`, background-thread switch, kill
+    /// pre-switch, rename order-patch) stays in App — only the leaf
+    /// tmux/ssh call routes through the returned trait object.
+    fn control(&self, host: Option<&str>) -> Box<dyn SessionControl> {
+        match host {
+            None => Box::new(LocalControl::new(self.local_terminal.pty.slave_tty.clone())),
+            Some(h) => Box::new(RemoteControl::new(h.to_string())),
+        }
+    }
+
     fn switch_client(&mut self, session: &str) {
         // Re-point the existing embedded tmux client at the target
         // session. Target the client by its tty when we know it, so we
-        // don't accidentally switch some other attached client.
-        if self.local_terminal.pty.slave_tty.is_empty() {
-            tmux::switch_session(session);
-        } else {
-            tmux::switch_client_for_tty(&self.local_terminal.pty.slave_tty, session);
-        }
+        // don't accidentally switch some other attached client. The local
+        // backend reproduces the tty-vs-bare `switch-client` choice exactly.
+        self.control(None).switch_to_session(session);
         // Selecting a local session implies returning to the local
         // view if we were watching a remote one.
         self.active_remote = None;
@@ -580,38 +562,37 @@ impl App {
         }
 
         if let Some(ref rename) = fx.rename_session {
-            match &rename.host {
-                None => {
-                    tmux::rename_session(&rename.old_name, &rename.new_name);
-                    if let Some(pos) = self
-                        .state
-                        .session_order
-                        .iter()
-                        .position(|n| n == &rename.old_name)
-                    {
-                        self.state.session_order[pos] = rename.new_name.clone();
-                    }
-                }
-                Some(host) => {
-                    // Remote rename: blocking ssh is acceptable here
-                    // because the user explicitly initiated it and
-                    // waits on the result.
-                    crate::remote_tmux::rename_session(
-                        host,
-                        &rename.old_name,
-                        &rename.new_name,
-                    );
+            // Leaf tmux/ssh call routes through the backend; the local
+            // `session_order` in-place patch stays in App (it mutates App
+            // state). Remote stays a blocking ssh call, as before — the user
+            // initiated it and waits on the result.
+            self.control(rename.host.as_deref())
+                .rename(&rename.old_name, &rename.new_name);
+            if rename.host.is_none() {
+                if let Some(pos) = self
+                    .state
+                    .session_order
+                    .iter()
+                    .position(|n| n == &rename.old_name)
+                {
+                    self.state.session_order[pos] = rename.new_name.clone();
                 }
             }
         }
 
         if let Some(ref kill) = fx.kill_session {
+            // App-level orchestration around the kill stays in App; only the
+            // leaf kill call routes through the backend. The trait's
+            // `switch_to` arg is the doomed-session pre-switch contract, but
+            // both backends ignore it today (local pre-switches via the
+            // nesting-guarded `switch_to_session_if_safe`, remote via the
+            // `active_remote` reset), so it stays `None` here — behaviour is
+            // unchanged.
             match &kill.host {
                 None => {
                     if let Some(ref alt_name) = kill.switch_to {
                         self.switch_to_session_if_safe(alt_name);
                     }
-                    tmux::kill_session(&kill.name);
                 }
                 Some(host) => {
                     // If the user was attached to this remote session,
@@ -625,9 +606,9 @@ impl App {
                         self.active_remote = None;
                         self.needs_full_redraw = true;
                     }
-                    crate::remote_tmux::kill_session(host, &kill.name);
                 }
             }
+            self.control(kill.host.as_deref()).kill(&kill.name, None);
         }
 
         if let Some(ref req) = fx.create_session {
@@ -651,7 +632,8 @@ impl App {
         }
 
         if fx.save_session_order {
-            tmux::persist_session_order(&self.state.session_order);
+            self.control(None)
+                .persist_order(&self.state.session_order);
         }
 
         if let Some(ref host) = fx.save_remote_session_order {
@@ -665,7 +647,7 @@ impl App {
                 .filter(|r| &r.host == host && r.is_attachable_session())
                 .map(|r| r.name.clone())
                 .collect();
-            crate::remote_tmux::persist_session_order(host, &names);
+            self.control(Some(host)).persist_order(&names);
         }
 
         if let Some(ref host) = fx.remove_remote_host {
@@ -689,24 +671,39 @@ impl App {
         }
 
         if fx.reread_new_session_entries {
-            if let Some(ns) = self.state.overlay.new_session.as_mut() {
-                use crate::new_session::{expand_path, split_input};
+            // Read the inputs under an immutable borrow first, run the
+            // backend list_dir while no mutable borrow of `state` is held,
+            // then re-borrow `ns` mutably to store the result. (Routing
+            // through `self.control(..)` borrows `self`, so it can't overlap
+            // a `&mut ns` from `self.state`.)
+            let query = self.state.overlay.new_session.as_ref().map(|ns| {
+                use crate::new_session::split_input;
                 let input_owned = ns.input_str().to_string();
                 let (parent, _leaf) = split_input(&input_owned);
-                let (entries, error) = match ns.remote_host.clone() {
+                (parent.to_string(), ns.remote_host.clone())
+            });
+            if let Some((parent, remote_host)) = query {
+                let (entries, error) = match remote_host {
                     // Remote: list over ssh, passing the raw `~`-path the
                     // remote shell will expand (no local expand_path).
-                    Some(host) => crate::remote_tmux::list_dir(&host, parent),
+                    Some(host) => self.control(Some(&host)).list_dir(&parent),
                     None => {
+                        // Local: expand `~` here (path expansion stays at the
+                        // call site, matching the backend's raw-`&str`
+                        // contract) and list the expanded path.
+                        use crate::new_session::expand_path;
                         let home = std::path::PathBuf::from(
                             std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
                         );
-                        read_dir_entries(&expand_path(parent, &home))
+                        let expanded = expand_path(&parent, &home);
+                        self.control(None).list_dir(&expanded.to_string_lossy())
                     }
                 };
-                ns.entries = entries;
-                ns.error = error;
-                ns.refilter();
+                if let Some(ns) = self.state.overlay.new_session.as_mut() {
+                    ns.entries = entries;
+                    ns.error = error;
+                    ns.refilter();
+                }
             }
         }
 
@@ -892,7 +889,7 @@ impl App {
         );
         let (parent, _leaf) = split_input(&input_str);
         let parent_path = expand_path(parent, &home);
-        let (entries, error) = read_dir_entries(&parent_path);
+        let (entries, error) = self.control(None).list_dir(&parent_path.to_string_lossy());
 
         let existing: Vec<&str> = self
             .state
@@ -926,7 +923,7 @@ impl App {
 
         let input_str = "~/".to_string();
         let (parent, _leaf) = split_input(&input_str);
-        let (entries, error) = crate::remote_tmux::list_dir(host, parent);
+        let (entries, error) = self.control(Some(host)).list_dir(parent);
 
         // Name must be unique among this host's live sessions.
         let existing: Vec<&str> = self
@@ -1039,7 +1036,7 @@ impl App {
         let expanded = crate::new_session::expand_path(dir, &home_path);
         let dir_str = expanded.to_string_lossy().to_string();
 
-        if tmux::new_session(name, &dir_str).is_some() {
+        if self.control(None).new_session(name, &dir_str).is_some() {
             self.switch_client(name);
         }
     }
@@ -1054,7 +1051,7 @@ impl App {
     /// reconnect now that a session exists and defer the switch until the
     /// PTY comes up — the spawner's `Spawned` event fires it.
     fn create_remote_session(&mut self, host: &str, name: &str, dir: &str) {
-        if !crate::remote_tmux::new_session(host, name, dir) {
+        if self.control(Some(host)).new_session(name, dir).is_none() {
             return;
         }
         let connected = self.remote_conns.get(host).is_some_and(|c| {
