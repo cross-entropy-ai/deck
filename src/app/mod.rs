@@ -109,11 +109,22 @@ pub struct App {
     /// had no tmux server, so there was nothing to attach to); fired from
     /// the spawner's `Spawned` event so the user lands on the new session.
     pending_remote_switch: Option<crate::state::RemoteSwitchRequest>,
+    /// Per-host record of the last remote `switch-client` submitted to the
+    /// executor: `(target session, marker id captured at submit)`. When the
+    /// `Switched` outcome lands we re-read the host's current marker; if it
+    /// advanced (the connection respawned while the switch sat in the FIFO),
+    /// the switch ran against a dead marker and no-op'd, so we re-fire to the
+    /// target with the current marker. Removed when its outcome is verified.
+    remote_switch_verify: HashMap<String, (String, u64)>,
     spinner: rattles::Rattler<rattles::presets::braille::Dots>,
     nesting_guard: NestingGuard,
     warning_state: Option<WarningState>,
     plugin_instances: Vec<Option<PluginInstance>>,
     refresh_worker: RefreshWorker,
+    /// Runs mutating control-plane ops (switch/rename/kill/new/order) and
+    /// on-demand `list_dir` off the UI thread, one FIFO worker per backend.
+    /// See `crate::session::executor`.
+    session_exec: crate::session::executor::SessionExecutor,
     raw_keybindings: BTreeMap<String, KeyBindingValue>,
     update_checker: Option<crate::update::UpdateChecker>,
     upgrade_instance: Option<PluginInstance>,
@@ -277,11 +288,13 @@ impl App {
             remote_spawner,
             active_remote: None,
             pending_remote_switch: None,
+            remote_switch_verify: HashMap::new(),
             spinner: rattles::presets::braille::dots(),
             nesting_guard,
             warning_state: None,
             plugin_instances: (0..plugin_count).map(|_| None).collect(),
             refresh_worker: RefreshWorker::spawn(),
+            session_exec: crate::session::executor::SessionExecutor::new(),
             raw_keybindings: cfg.keybindings.clone(),
             update_checker,
             upgrade_instance: None,
@@ -625,6 +638,10 @@ impl App {
 
             while let Some(update) = self.refresh_worker.try_recv() {
                 self.apply_update(update);
+            }
+
+            while let Some(outcome) = self.session_exec.try_recv() {
+                self.apply_session_outcome(outcome);
             }
 
             if last_refresh.elapsed() >= REFRESH_INTERVAL {

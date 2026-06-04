@@ -20,6 +20,7 @@
 
 use crate::infra::tmux::SessionInfo;
 
+pub mod executor;
 pub mod local;
 pub mod remote;
 

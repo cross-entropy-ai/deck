@@ -1,0 +1,188 @@
+//! Async session control-plane executor.
+//!
+//! Generalises the refresh-worker pattern (see `infra::refresh`) to the
+//! *mutating* control-plane ops plus on-demand `list_dir`. Each backend key
+//! (`Option<String>` host, `None` = local) gets its own FIFO worker thread,
+//! so ops on one backend run in submission order while different backends
+//! run in parallel. Each op runs via the `SessionControl` backend captured
+//! at submit time on the UI thread, so a local op sees the current client
+//! tty and a remote op the current marker. Outcomes drain back to the UI
+//! thread, which runs any result-dependent completion effect (new-session
+//! -> switch, dir-listing -> picker overlay).
+//!
+//! Boundary: this executor owns the on-demand mutating ops + `list_dir`.
+//! Session *listing* for the sidebar stays in `infra::refresh` — a coalesced
+//! ~1s poll with its own single-flight, a different access pattern.
+//!
+//! Ordering & staleness: the per-key FIFO guarantees a backend's ops apply
+//! in submission order. The refresh poll runs independently, so a refresh
+//! can still capture pre-op state and apply slightly stale rows; this
+//! self-corrects on the next ~1s tick, and the UI thread also requests a
+//! fresh refresh when an op's outcome lands (see `apply_session_outcome`),
+//! which tightens the window. Same bounded staleness the inline ops had.
+
+use std::collections::HashMap;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
+
+use super::SessionControl;
+
+/// What to run on a worker. Built on the UI thread; the backend that runs
+/// it is captured separately at submit time.
+pub enum SessionOp {
+    Switch { name: String },
+    Rename { old: String, new: String },
+    Kill { name: String },
+    NewSession { name: String, dir: String },
+    PersistOrder { order: Vec<String> },
+    ListDir { path: String },
+}
+
+/// Delivered back to the UI thread once an op finishes. `host` tags which
+/// backend ran it (`None` = local) so the completion handler can route.
+pub struct SessionOutcome {
+    pub host: Option<String>,
+    pub result: OpOutcome,
+}
+
+pub enum OpOutcome {
+    Switched,
+    Renamed,
+    Killed,
+    /// new-session: `name` is the requested name, `created` whether tmux
+    /// reported success. Drives the post-create switch on the UI thread.
+    Created { name: String, created: bool },
+    OrderPersisted,
+    /// list_dir: `path` is the listed parent, echoed back so the UI can
+    /// drop a stale listing if the user has since typed a different parent.
+    DirListed {
+        path: String,
+        entries: Vec<String>,
+        error: Option<String>,
+    },
+}
+
+struct Job {
+    backend: Box<dyn SessionControl + Send>,
+    op: SessionOp,
+    host: Option<String>,
+}
+
+/// Owns one FIFO worker thread per backend key and a single result channel
+/// the UI thread drains. Workers are spawned lazily on first use for a key
+/// and live until the executor is dropped (their `recv` then ends).
+pub struct SessionExecutor {
+    senders: HashMap<Option<String>, Sender<Job>>,
+    outcome_tx: Sender<SessionOutcome>,
+    outcome_rx: Receiver<SessionOutcome>,
+}
+
+impl SessionExecutor {
+    pub fn new() -> Self {
+        let (outcome_tx, outcome_rx) = mpsc::channel();
+        Self {
+            senders: HashMap::new(),
+            outcome_tx,
+            outcome_rx,
+        }
+    }
+
+    /// Enqueue `op` on `host`'s FIFO worker, running it via `backend`
+    /// (captured now so it sees the current tty/marker). Spawns the worker
+    /// lazily on first use for that key. Fire-and-forget: a dead worker
+    /// (channel send error) is silently dropped — the next refresh tick
+    /// reconciles state, exactly as the old inline path relied on.
+    pub fn submit(
+        &mut self,
+        host: Option<String>,
+        backend: Box<dyn SessionControl + Send>,
+        op: SessionOp,
+    ) {
+        let key = host.clone();
+        let outcome_tx = self.outcome_tx.clone();
+        let tx = self.senders.entry(key.clone()).or_insert_with(|| {
+            let (tx, rx) = mpsc::channel::<Job>();
+            let name = match &key {
+                None => "deck-session-local".to_string(),
+                Some(h) => format!("deck-session-{h}"),
+            };
+            let _ = thread::Builder::new()
+                .name(name)
+                .spawn(move || worker_loop(rx, outcome_tx));
+            tx
+        });
+        let _ = tx.send(Job { backend, op, host });
+    }
+
+    /// Non-blocking drain of one completed outcome, if any.
+    pub fn try_recv(&self) -> Option<SessionOutcome> {
+        self.outcome_rx.try_recv().ok()
+    }
+}
+
+impl Default for SessionExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn worker_loop(rx: Receiver<Job>, outcome_tx: Sender<SessionOutcome>) {
+    // One thread draining a FIFO channel => this backend's ops run in
+    // submission order. recv() returns Err (ends the loop) once the
+    // executor — and thus the sender — is dropped at shutdown.
+    while let Ok(job) = rx.recv() {
+        let host = job.host.clone();
+        // Isolate a panicking backend call so it can't kill the worker: a
+        // dead worker would leave a sticky sender in the executor's map and
+        // silently drop every later op for this backend. On panic we skip
+        // the outcome (no completion effect runs) but keep draining.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(job.backend, job.op)));
+        match outcome {
+            Ok(result) => {
+                if outcome_tx.send(SessionOutcome { host, result }).is_err() {
+                    break;
+                }
+            }
+            Err(_) => {
+                debug_assert!(false, "session executor op panicked for {host:?}");
+            }
+        }
+    }
+}
+
+fn run(backend: Box<dyn SessionControl + Send>, op: SessionOp) -> OpOutcome {
+    match op {
+        SessionOp::Switch { name } => {
+            backend.switch_to_session(&name);
+            OpOutcome::Switched
+        }
+        SessionOp::Rename { old, new } => {
+            backend.rename(&old, &new);
+            OpOutcome::Renamed
+        }
+        SessionOp::Kill { name } => {
+            // The doomed-session pre-switch stays on the UI thread (it
+            // depends on App-level nesting/active_remote state), so the
+            // worker just runs the kill — matching today's backends, which
+            // ignore `switch_to`.
+            backend.kill(&name, None);
+            OpOutcome::Killed
+        }
+        SessionOp::NewSession { name, dir } => {
+            let created = backend.new_session(&name, &dir).is_some();
+            OpOutcome::Created { name, created }
+        }
+        SessionOp::PersistOrder { order } => {
+            backend.persist_order(&order);
+            OpOutcome::OrderPersisted
+        }
+        SessionOp::ListDir { path } => {
+            let (entries, error) = backend.list_dir(&path);
+            OpOutcome::DirListed {
+                path,
+                entries,
+                error,
+            }
+        }
+    }
+}

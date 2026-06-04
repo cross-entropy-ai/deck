@@ -32,6 +32,26 @@ fn validate_session_name(name: &str, sessions: &[crate::state::SessionRow]) -> O
     })
 }
 
+/// The `(host, list_path)` the new-session picker should list for its
+/// current input: `None` host = local with the `~`-expanded parent dir;
+/// `Some(host)` = remote with the raw parent (the remote shell expands the
+/// `~`). Used both to submit the `list_dir` op and, when the `DirListed`
+/// outcome lands, to re-derive the expected key and drop a stale listing.
+fn new_session_list_query(ns: &crate::new_session::NewSessionState) -> (Option<String>, String) {
+    let input = ns.input_str().to_string();
+    let (parent, _leaf) = crate::new_session::split_input(&input);
+    match &ns.remote_host {
+        Some(host) => (Some(host.clone()), parent.to_string()),
+        None => {
+            let home = std::path::PathBuf::from(
+                std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
+            );
+            let expanded = crate::new_session::expand_path(parent, &home);
+            (None, expanded.to_string_lossy().to_string())
+        }
+    }
+}
+
 impl App {
     pub(super) fn dispatch(&mut self, action: Action) -> bool {
         match action {
@@ -225,24 +245,108 @@ impl App {
 
     /// Build the control-plane backend for a host: `None` -> the local
     /// in-process tmux backend (seeded with deck's own client tty), `Some(h)`
-    /// -> the remote ssh backend for `h`. Selection by `Option<&str>` host is
-    /// the same key the rest of deck uses; the App-level orchestration
-    /// (nesting guard, `active_remote`, background-thread switch, kill
-    /// pre-switch, rename order-patch) stays in App — only the leaf
-    /// tmux/ssh call routes through the returned trait object.
-    fn control(&self, host: Option<&str>) -> Box<dyn SessionControl> {
+    /// -> the remote ssh backend for `h` (seeded with that connection's
+    /// client-tty marker id, `0` when unknown). Selection by `Option<&str>`
+    /// host is the same key the rest of deck uses; the App-level
+    /// orchestration (nesting guard, `active_remote`, the pending-switch
+    /// marker dance, kill pre-switch, rename order-patch) stays in App — only
+    /// the leaf tmux/ssh call runs, off the UI thread, via the executor.
+    ///
+    /// The backend is `Send` so it can be moved onto the executor's worker
+    /// thread; it captures the current tty/marker at build time.
+    fn control(&self, host: Option<&str>) -> Box<dyn SessionControl + Send> {
         match host {
             None => Box::new(LocalControl::new(self.local_terminal.pty.slave_tty.clone())),
-            Some(h) => Box::new(RemoteControl::new(h.to_string())),
+            Some(h) => {
+                let marker_id = self
+                    .remote_conns
+                    .get(h)
+                    .map(|c| c.client_marker_id)
+                    .unwrap_or(0);
+                Box::new(RemoteControl::new(h.to_string(), marker_id))
+            }
+        }
+    }
+
+    /// Build the backend for `host` and hand `op` to the executor's per-host
+    /// FIFO worker. Fire-and-forget from the UI thread's perspective: the
+    /// op runs off-thread and its outcome (if any completion effect is
+    /// needed) drains back through `apply_session_outcome`.
+    pub(super) fn submit_session(&mut self, host: Option<String>, op: crate::session::executor::SessionOp) {
+        let backend = self.control(host.as_deref());
+        self.session_exec.submit(host, backend, op);
+    }
+
+    /// Handle a completed executor op on the UI thread: run any
+    /// result-dependent effect (new-session -> switch, dir-listing ->
+    /// picker) and reconcile the sidebar.
+    pub(super) fn apply_session_outcome(
+        &mut self,
+        outcome: crate::session::executor::SessionOutcome,
+    ) {
+        use crate::session::executor::OpOutcome;
+        let host = outcome.host;
+        match outcome.result {
+            OpOutcome::Created { name, created } => {
+                if created {
+                    self.post_create_switch(host, &name);
+                }
+                // The submit-time `refresh_sessions` likely ran before the
+                // create finished (it's async now), so refresh again to
+                // surface the new row promptly under its group.
+                self.request_refresh();
+            }
+            OpOutcome::Renamed | OpOutcome::Killed => {
+                // Refresh so the renamed/removed row reconciles right after
+                // the op lands rather than waiting for the next poll tick.
+                self.request_refresh();
+            }
+            OpOutcome::DirListed {
+                path,
+                entries,
+                error,
+            } => {
+                // Apply only if the picker is still open on the same
+                // (host, parent); a listing for a parent the user has since
+                // edited is stale — drop it. Re-derive the expected key the
+                // same way the submit did.
+                let still_current = self
+                    .state
+                    .overlay
+                    .new_session
+                    .as_ref()
+                    .map(new_session_list_query)
+                    .is_some_and(|(h, p)| h == host && p == path);
+                if still_current {
+                    if let Some(ns) = self.state.overlay.new_session.as_mut() {
+                        ns.entries = entries;
+                        ns.error = error;
+                        ns.refilter();
+                    }
+                }
+            }
+            OpOutcome::Switched => {
+                // A remote switch needs confirming against the live marker
+                // (see `verify_remote_switch`); a local switch needs nothing
+                // — its highlight reconciles on the next refresh tick.
+                if let Some(host) = host {
+                    self.verify_remote_switch(&host);
+                }
+            }
+            // `@deck_order` persistence needs no follow-up: the in-memory
+            // order already updated immediately at reorder time.
+            OpOutcome::OrderPersisted => {}
         }
     }
 
     fn switch_client(&mut self, session: &str) {
-        // Re-point the existing embedded tmux client at the target
-        // session. Target the client by its tty when we know it, so we
-        // don't accidentally switch some other attached client. The local
-        // backend reproduces the tty-vs-bare `switch-client` choice exactly.
-        self.control(None).switch_to_session(session);
+        // Re-point the existing embedded tmux client at the target session.
+        // The local backend reproduces the tty-vs-bare `switch-client`
+        // choice exactly; it runs on the executor so a slow `switch-client`
+        // can't stall the UI thread (uniform with remote).
+        self.submit_session(None, crate::session::executor::SessionOp::Switch {
+            name: session.to_string(),
+        });
         // Selecting a local session implies returning to the local
         // view if we were watching a remote one.
         self.active_remote = None;
@@ -361,26 +465,55 @@ impl App {
             });
             return;
         }
+        // Run the actual `switch-client` on the executor's per-host FIFO
+        // worker instead of an ad-hoc thread. The call costs ~10–30 ms even
+        // over a warm ControlMaster — enough to stall j/k scrolling inline —
+        // and the per-host FIFO also keeps it ordered behind any rename/kill
+        // we just queued for this host. `control()` reads this connection's
+        // marker id; the readiness gate above guarantees it's written.
         let marker_id = conn.map(|c| c.client_marker_id).unwrap_or(0);
+        self.submit_session(Some(host.to_string()), crate::session::executor::SessionOp::Switch {
+            name: name.to_string(),
+        });
+        // Record what we submitted so the `Switched` outcome can confirm it
+        // ran against the live marker and re-fire if the connection
+        // respawned (new marker) while the op waited in the FIFO.
+        self.remote_switch_verify
+            .insert(host.to_string(), (name.to_string(), marker_id));
 
-        // Fire-and-forget switch-client. Background thread because the
-        // call (even over a warm ControlMaster) costs ~10–30 ms — small
-        // but enough to noticeably stall j/k scrolling if we ran it
-        // inline.
-        let host_owned = host.to_string();
-        let name_owned = name.to_string();
-        std::thread::Builder::new()
-            .name(format!("deck-switch-{host_owned}"))
-            .spawn(move || {
-                crate::remote_tmux::switch_client(&host_owned, marker_id, &name_owned);
-            })
-            .ok();
-
+        // `active_remote` is host-level and correct to commit now (we *are*
+        // viewing this host); the within-host session lands when the switch
+        // runs, and `verify_remote_switch` heals it if the marker went stale.
         self.active_remote = Some(host.to_string());
         self.supersede_agent_focus();
         // No full redraw on switch — see `switch_client`. We flip
         // `active_remote` and let the diff repaint from the target
         // host's vt100 screen.
+    }
+
+    /// Confirm a remote `switch-client` submitted to the executor actually
+    /// targeted the live client, run when its `Switched` outcome drains. If
+    /// the user has since navigated away from this host, the switch is moot.
+    /// If the host's marker advanced since submit, the connection respawned
+    /// while the op sat in the FIFO and the switch no-op'd against a dead
+    /// marker — re-fire to the intended session (which re-reads the current
+    /// marker, or holds via `pending_remote_switch` if the new connection
+    /// isn't ready yet).
+    fn verify_remote_switch(&mut self, host: &str) {
+        let Some((name, submitted_marker)) = self.remote_switch_verify.remove(host) else {
+            return;
+        };
+        if self.active_remote.as_deref() != Some(host) {
+            return;
+        }
+        let current_marker = self
+            .remote_conns
+            .get(host)
+            .map(|c| c.client_marker_id)
+            .unwrap_or(0);
+        if current_marker != submitted_marker {
+            self.switch_to_remote(host, &name);
+        }
     }
 
     /// Switch to and focus the pane a clicked agent runs in. Local:
@@ -562,12 +695,11 @@ impl App {
         }
 
         if let Some(ref rename) = fx.rename_session {
-            // Leaf tmux/ssh call routes through the backend; the local
-            // `session_order` in-place patch stays in App (it mutates App
-            // state). Remote stays a blocking ssh call, as before — the user
-            // initiated it and waits on the result.
-            self.control(rename.host.as_deref())
-                .rename(&rename.old_name, &rename.new_name);
+            // The rename runs on the executor (off the UI thread). The local
+            // `session_order` in-place patch stays in App and runs now: it
+            // mutates App state, not tmux, and doesn't depend on the rename's
+            // result — patching immediately keeps the manual order from
+            // flickering while the async rename is in flight.
             if rename.host.is_none() {
                 if let Some(pos) = self
                     .state
@@ -578,6 +710,13 @@ impl App {
                     self.state.session_order[pos] = rename.new_name.clone();
                 }
             }
+            self.submit_session(
+                rename.host.clone(),
+                crate::session::executor::SessionOp::Rename {
+                    old: rename.old_name.clone(),
+                    new: rename.new_name.clone(),
+                },
+            );
         }
 
         if let Some(ref kill) = fx.kill_session {
@@ -608,7 +747,12 @@ impl App {
                     }
                 }
             }
-            self.control(kill.host.as_deref()).kill(&kill.name, None);
+            self.submit_session(
+                kill.host.clone(),
+                crate::session::executor::SessionOp::Kill {
+                    name: kill.name.clone(),
+                },
+            );
         }
 
         if let Some(ref req) = fx.create_session {
@@ -632,14 +776,18 @@ impl App {
         }
 
         if fx.save_session_order {
-            self.control(None)
-                .persist_order(&self.state.session_order);
+            self.submit_session(
+                None,
+                crate::session::executor::SessionOp::PersistOrder {
+                    order: self.state.session_order.clone(),
+                },
+            );
         }
 
         if let Some(ref host) = fx.save_remote_session_order {
-            // Persist this host's group order to its remote tmux server.
-            // Blocking ssh, like remote rename/kill — the user just acted
-            // and the connection's ControlMaster is already warm.
+            // Persist this host's group order to its remote tmux server, on
+            // the executor's per-host FIFO (ordered behind any rename/kill
+            // for the host, and off the UI thread).
             let names: Vec<String> = self
                 .state
                 .remote_sessions
@@ -647,7 +795,10 @@ impl App {
                 .filter(|r| &r.host == host && r.is_attachable_session())
                 .map(|r| r.name.clone())
                 .collect();
-            self.control(Some(host)).persist_order(&names);
+            self.submit_session(
+                Some(host.clone()),
+                crate::session::executor::SessionOp::PersistOrder { order: names },
+            );
         }
 
         if let Some(ref host) = fx.remove_remote_host {
@@ -671,40 +822,10 @@ impl App {
         }
 
         if fx.reread_new_session_entries {
-            // Read the inputs under an immutable borrow first, run the
-            // backend list_dir while no mutable borrow of `state` is held,
-            // then re-borrow `ns` mutably to store the result. (Routing
-            // through `self.control(..)` borrows `self`, so it can't overlap
-            // a `&mut ns` from `self.state`.)
-            let query = self.state.overlay.new_session.as_ref().map(|ns| {
-                use crate::new_session::split_input;
-                let input_owned = ns.input_str().to_string();
-                let (parent, _leaf) = split_input(&input_owned);
-                (parent.to_string(), ns.remote_host.clone())
-            });
-            if let Some((parent, remote_host)) = query {
-                let (entries, error) = match remote_host {
-                    // Remote: list over ssh, passing the raw `~`-path the
-                    // remote shell will expand (no local expand_path).
-                    Some(host) => self.control(Some(&host)).list_dir(&parent),
-                    None => {
-                        // Local: expand `~` here (path expansion stays at the
-                        // call site, matching the backend's raw-`&str`
-                        // contract) and list the expanded path.
-                        use crate::new_session::expand_path;
-                        let home = std::path::PathBuf::from(
-                            std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
-                        );
-                        let expanded = expand_path(&parent, &home);
-                        self.control(None).list_dir(&expanded.to_string_lossy())
-                    }
-                };
-                if let Some(ns) = self.state.overlay.new_session.as_mut() {
-                    ns.entries = entries;
-                    ns.error = error;
-                    ns.refilter();
-                }
-            }
+            // Re-list the picker's current parent dir on the executor; the
+            // `DirListed` outcome populates the overlay (and drops itself if
+            // the user has since typed a different parent).
+            self.request_new_session_listing();
         }
 
         if fx.open_new_session_picker {
@@ -868,7 +989,7 @@ impl App {
 
     fn open_new_session_picker(&mut self) {
         use crate::new_session::{
-            auto_session_name, expand_path, make_textarea, split_input, NewSessionState, PickerFocus,
+            auto_session_name, make_textarea, NewSessionState, PickerFocus,
         };
 
         // Starting dir: focused session's dir if any, else $HOME.
@@ -884,13 +1005,6 @@ impl App {
             input_str.push('/');
         }
 
-        let home = std::path::PathBuf::from(
-            std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
-        );
-        let (parent, _leaf) = split_input(&input_str);
-        let parent_path = expand_path(parent, &home);
-        let (entries, error) = self.control(None).list_dir(&parent_path.to_string_lossy());
-
         let existing: Vec<&str> = self
             .state
             .sessions
@@ -899,18 +1013,24 @@ impl App {
             .collect();
         let name_str = auto_session_name(&existing, self.state.sessions.len());
 
+        // Open with an empty listing and fill it asynchronously: the
+        // `list_dir` runs on the executor and the `DirListed` outcome
+        // populates `entries`. (Local listing is fast, but routing it
+        // through the executor keeps the picker uniform with the remote one
+        // and off the UI thread.)
         let mut ns = NewSessionState {
             name: make_textarea(&name_str),
             focus: PickerFocus::Name,
             input: make_textarea(&input_str),
-            entries,
+            entries: vec![],
             filtered: vec![],
             selected: 0,
-            error,
+            error: None,
             remote_host: None,
         };
         ns.refilter();
         self.state.overlay.new_session = Some(ns);
+        self.request_new_session_listing();
     }
 
     /// Open the new-session picker targeting a remote `host`: the dir
@@ -918,12 +1038,10 @@ impl App {
     /// the session on that host. Starts at the remote home (`~`).
     fn open_remote_new_session_picker(&mut self, host: &str) {
         use crate::new_session::{
-            auto_session_name, make_textarea, split_input, NewSessionState, PickerFocus,
+            auto_session_name, make_textarea, NewSessionState, PickerFocus,
         };
 
         let input_str = "~/".to_string();
-        let (parent, _leaf) = split_input(&input_str);
-        let (entries, error) = self.control(Some(host)).list_dir(parent);
 
         // Name must be unique among this host's live sessions.
         let existing: Vec<&str> = self
@@ -935,18 +1053,22 @@ impl App {
             .collect();
         let name_str = auto_session_name(&existing, existing.len());
 
+        // Open with an empty listing; the remote `list_dir` (blocking ssh)
+        // runs on the executor and the `DirListed` outcome fills `entries`,
+        // so opening the picker no longer stalls the UI on the network.
         let mut ns = NewSessionState {
             name: make_textarea(&name_str),
             focus: PickerFocus::Name,
             input: make_textarea(&input_str),
-            entries,
+            entries: vec![],
             filtered: vec![],
             selected: 0,
-            error,
+            error: None,
             remote_host: Some(host.to_string()),
         };
         ns.refilter();
         self.state.overlay.new_session = Some(ns);
+        self.request_new_session_listing();
     }
 
     fn confirm_new_session(&mut self) -> Option<crate::state::CreateSessionRequest> {
@@ -1030,41 +1152,82 @@ impl App {
         }
     }
 
+    /// Submit a `list_dir` for the new-session picker's current parent dir
+    /// to the executor (keyed by the picker's host). No-op if the picker is
+    /// closed. The `DirListed` outcome populates the overlay; it re-derives
+    /// this same `(host, path)` to drop a listing that arrives after the
+    /// user typed a different parent.
+    fn request_new_session_listing(&mut self) {
+        let Some((host, path)) = self
+            .state
+            .overlay
+            .new_session
+            .as_ref()
+            .map(new_session_list_query)
+        else {
+            return;
+        };
+        self.submit_session(host, crate::session::executor::SessionOp::ListDir { path });
+    }
+
     fn create_new_session(&mut self, name: &str, dir: &str) {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
         let home_path = std::path::PathBuf::from(&home);
         let expanded = crate::new_session::expand_path(dir, &home_path);
         let dir_str = expanded.to_string_lossy().to_string();
 
-        if self.control(None).new_session(name, &dir_str).is_some() {
-            self.switch_client(name);
-        }
+        // Create on the executor; the post-create switch happens when the
+        // `Created` outcome lands (see `post_create_switch`), since whether
+        // to switch depends on the create succeeding.
+        self.submit_session(
+            None,
+            crate::session::executor::SessionOp::NewSession {
+                name: name.to_string(),
+                dir: dir_str,
+            },
+        );
     }
 
-    /// Create a session on a remote host (blocking ssh, user-initiated)
-    /// and switch to it. `dir` keeps its `~` for the remote shell to
-    /// expand. The accompanying `refresh_sessions` side effect re-queries
-    /// the host so the new row shows under its `@host` group.
-    ///
-    /// If the host's attach PTY is already live, switch immediately.
-    /// Otherwise the host had no tmux server (nothing to attach to), so
-    /// reconnect now that a session exists and defer the switch until the
-    /// PTY comes up — the spawner's `Spawned` event fires it.
+    /// Create a session on a remote host (on the executor's per-host FIFO)
+    /// and switch to it once it's created. `dir` keeps its `~` for the
+    /// remote shell to expand. The accompanying `refresh_sessions` side
+    /// effect re-queries the host so the new row shows under its `@host`
+    /// group. The switch is wired in `post_create_switch`, run when the
+    /// `Created` outcome drains back.
     fn create_remote_session(&mut self, host: &str, name: &str, dir: &str) {
-        if self.control(Some(host)).new_session(name, dir).is_none() {
-            return;
-        }
-        let connected = self.remote_conns.get(host).is_some_and(|c| {
-            matches!(c.status, crate::app::RemoteConnStatus::Connected) && c.pane.is_some()
-        });
-        if connected {
-            self.switch_to_remote(host, name);
-        } else {
-            self.pending_remote_switch = Some(crate::state::RemoteSwitchRequest {
-                host: host.to_string(),
+        self.submit_session(
+            Some(host.to_string()),
+            crate::session::executor::SessionOp::NewSession {
                 name: name.to_string(),
-            });
-            self.respawn_remote_host(host);
+                dir: dir.to_string(),
+            },
+        );
+    }
+
+    /// Switch to a session just created via the executor, run when the
+    /// `Created` outcome drains. Local: re-point the client. Remote: if the
+    /// host's attach PTY is live, switch immediately; otherwise the host had
+    /// no tmux server (nothing was attachable), so reconnect now that a
+    /// session exists and defer the switch until the PTY comes up — the
+    /// spawner's `Spawned` event fires it.
+    fn post_create_switch(&mut self, host: Option<String>, name: &str) {
+        match host {
+            None => self.switch_client(name),
+            Some(host) => {
+                let connected = self.remote_conns.get(&host).is_some_and(|c| {
+                    matches!(c.status, crate::app::RemoteConnStatus::Connected)
+                        && c.pane.is_some()
+                });
+                if connected {
+                    self.switch_to_remote(&host, name);
+                } else {
+                    self.pending_remote_switch = Some(crate::state::RemoteSwitchRequest {
+                        host: host.clone(),
+                        name: name.to_string(),
+                    });
+                    self.respawn_remote_host(&host);
+                }
+            }
         }
     }
 

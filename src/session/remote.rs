@@ -14,21 +14,25 @@ use super::{Reachability, SessionControl, Transport};
 /// Remote control-plane backend for a single host.
 ///
 /// Holds the `host` (the ssh destination, e.g. an `~/.ssh/config` alias) —
-/// every remote call is `ssh <host> tmux ...`. The per-connection
-/// client-tty marker that the marker-gated switch/focus calls read lives on
-/// the remote end and is keyed by `(host, marker_id)`; capturing the remote
-/// client tty into this backend is a later-phase concern (see the design
-/// doc). For now switch/current keep using today's marker mechanism, so the
-/// skeleton only needs the host.
+/// every remote call is `ssh <host> tmux ...` — and the `marker_id` of the
+/// connection's client-tty marker file. `switch_client` reads that marker
+/// to target the right client; the marker lives on the remote end, keyed by
+/// `(host, marker_id)`. The id is App state (it lives on the `RemoteConn`),
+/// so the call site reads it when building this backend; `0` is the
+/// "unknown" sentinel and makes the marker-gated switch a no-op, matching
+/// dispatch's `conn.map(...).unwrap_or(0)` fallback.
 pub struct RemoteControl {
     /// ssh destination for this backend (config alias or hostname).
     pub host: String,
+    /// This connection's client-tty marker id (`0` = unknown / unwritten).
+    pub marker_id: u64,
 }
 
 impl RemoteControl {
-    /// Build a remote backend targeting `host`.
-    pub fn new(host: String) -> Self {
-        Self { host }
+    /// Build a remote backend targeting `host` with marker id `marker_id`
+    /// (`0` when unknown; only `switch_to_session` consults it).
+    pub fn new(host: String, marker_id: u64) -> Self {
+        Self { host, marker_id }
     }
 }
 
@@ -53,15 +57,15 @@ impl SessionControl for RemoteControl {
     }
 
     fn switch_to_session(&self, name: &str) {
-        // Plain, sync re-home of today's `remote_tmux::switch_client`. The
-        // background-thread spawn and the Connected gate stay in
-        // `App::switch_to_remote` (unchanged); this trait method is just the
-        // control-plane call. The per-connection `marker_id` is App state
-        // (it lives on the `RemoteConn`, not on this backend), so use the
-        // same `0` fallback dispatch already applies when it's unknown
-        // (`conn.map(...).unwrap_or(0)`). Capturing the marker into this
-        // backend is a later-phase concern.
-        remote_tmux::switch_client(&self.host, 0, name);
+        // The control-plane leaf of today's `remote_tmux::switch_client`.
+        // The Connected/marker_ready gate, the `pending_remote_switch`
+        // hold-until-marker dance, and the `active_remote` flip all stay on
+        // the UI thread in `App::switch_to_remote` (they read PTY/conn
+        // state); the executor only runs this ssh call off-thread. The
+        // marker id was read from the `RemoteConn` when this backend was
+        // built (`0` = unknown, which makes the call a no-op, exactly as
+        // dispatch's `conn.map(...).unwrap_or(0)` did inline).
+        remote_tmux::switch_client(&self.host, self.marker_id, name);
     }
 
     fn rename(&self, old: &str, new: &str) {
