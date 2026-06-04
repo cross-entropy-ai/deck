@@ -1,3 +1,5 @@
 /target
 error.log
 .DS_Store
+.cursor/
+.claude/
