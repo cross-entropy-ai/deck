@@ -171,16 +171,13 @@ impl Default for Config {
     }
 }
 
-fn config_path_for(app_name: &str) -> PathBuf {
+fn config_dir_for(app_name: &str) -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
-        .join(".config")
-        .join(app_name)
-        .join("config.json")
+    PathBuf::from(home).join(".config").join(app_name)
 }
 
 fn config_path() -> PathBuf {
-    config_path_for("deck")
+    config_dir_for("deck").join("config.yaml")
 }
 
 /// Modification time of the on-disk config file, if present. Returns
@@ -191,32 +188,48 @@ pub fn config_mtime() -> Option<std::time::SystemTime> {
     fs::metadata(config_path()).ok().and_then(|m| m.modified().ok())
 }
 
-fn legacy_config_path() -> PathBuf {
-    config_path_for("tmux-sidebar")
+/// Pre-YAML config locations, newest first: deck's former `config.json`,
+/// then the original `tmux-sidebar/config.json`. Read once to migrate a
+/// user forward to `config.yaml`.
+fn legacy_json_paths() -> [PathBuf; 2] {
+    [
+        config_dir_for("deck").join("config.json"),
+        config_dir_for("tmux-sidebar").join("config.json"),
+    ]
+}
+
+fn load_legacy_json() -> Option<Config> {
+    for path in legacy_json_paths() {
+        if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(config) = serde_json::from_str::<Config>(&content) {
+                return Some(config);
+            }
+        }
+    }
+    None
 }
 
 impl Config {
     pub fn load() -> Self {
         let path = config_path();
-        if let Ok(content) = fs::read_to_string(&path) {
-            let mut config: Config = serde_json::from_str(&content).unwrap_or_default();
-            // Strip obsolete/unknown keybindings and rewrite the file once,
-            // so it self-heals instead of warning on every launch.
+        if path.exists() {
+            let mut config: Config = confy::load_path(&path).unwrap_or_default();
+            // Migrate keybindings (command renames, legacy key syntax,
+            // unknown sweep) and rewrite once so the file self-heals.
             if migrate_keybindings(&mut config.keybindings) {
                 config.save();
             }
             return config;
         }
 
-        let legacy_path = legacy_config_path();
-        let Ok(content) = fs::read_to_string(&legacy_path) else {
-            return Config::default();
-        };
+        // First launch on the YAML format: migrate a legacy JSON config.
+        if let Some(mut config) = load_legacy_json() {
+            migrate_keybindings(&mut config.keybindings);
+            config.save();
+            return config;
+        }
 
-        let mut config: Config = serde_json::from_str(&content).unwrap_or_default();
-        migrate_keybindings(&mut config.keybindings);
-        config.save();
-        config
+        Config::default()
     }
 
     /// Strict loader used by the manual-reload path. Unlike `load()` this
@@ -228,36 +241,33 @@ impl Config {
     }
 
     fn try_load_from(path: &std::path::Path) -> Result<Self, String> {
-        // Keep messages compact — the sidebar footer is narrow and users
-        // already know which file they just edited. Serde's own error
-        // format carries the useful line/column info.
-        match fs::read_to_string(path) {
-            Ok(content) => serde_json::from_str(&content)
-                .map(|mut config: Config| {
-                    // Clean obsolete/unknown keybindings in memory so a
-                    // reload doesn't resurrect the warning; the file itself
-                    // self-heals on the next launch via `load`.
-                    migrate_keybindings(&mut config.keybindings);
-                    config
-                })
-                .map_err(|e| format!("parse: {}", e)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
-            Err(e) => Err(format!("read: {}", e)),
+        if !path.exists() {
+            return Ok(Config::default());
         }
-    }
-
-    pub fn to_json(&self) -> String {
-        let mut out = serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string());
-        out.push('\n');
-        out
+        // Keep messages compact — the sidebar footer is narrow and users
+        // already know which file they just edited. confy's error carries
+        // the useful line/column info and omits the path.
+        match confy::load_path::<Config>(path) {
+            Ok(mut config) => {
+                // Clean obsolete/unknown keybindings in memory so a reload
+                // doesn't resurrect the warning; the file self-heals on the
+                // next launch via `load`.
+                migrate_keybindings(&mut config.keybindings);
+                Ok(config)
+            }
+            Err(e) => Err(format!("parse: {}", e)),
+        }
     }
 
     pub fn save(&self) {
-        let path = config_path();
+        let _ = self.save_to(&config_path());
+    }
+
+    fn save_to(&self, path: &std::path::Path) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let _ = fs::write(&path, self.to_json());
+        confy::store_path(path, self).map_err(|e| e.to_string())
     }
 }
 

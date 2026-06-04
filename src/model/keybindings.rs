@@ -1,43 +1,28 @@
 use std::collections::{BTreeMap, HashMap};
+use std::sync::OnceLock;
 
+use crokey::{key, KeyCombination, KeyCombinationFormat};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::config::{KeyBindingValue, PluginConfig};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct KeyBinding {
-    pub code: KeyCode,
-    pub modifiers: KeyModifiers,
+/// A single bound key chord, backed by crokey's `KeyCombination`. Its
+/// `normalized()` canonicalizes shift/case so `shift-j` and the runtime
+/// `Char('J')` events (with or without the SHIFT flag) all compare equal.
+pub type KeyChord = KeyCombination;
+
+/// Convert a runtime crossterm event into the canonical chord we key on.
+fn chord_from_event(key: &KeyEvent) -> KeyChord {
+    KeyCombination::from(*key).normalized()
 }
 
-impl KeyBinding {
-    pub fn new(code: KeyCode, modifiers: KeyModifiers) -> Self {
-        let mut kb = Self { code, modifiers };
-        kb.normalize();
-        kb
-    }
-
-    fn normalize(&mut self) {
-        // Only keep the modifiers we model (CTRL, ALT, SHIFT). Drop everything
-        // else — crossterm may emit SUPER/HYPER/META or flags we don't bind on.
-        let relevant = KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT;
-        self.modifiers &= relevant;
-
-        // Letter case encodes SHIFT. Canonical form: uppercase letter + SHIFT.
-        // This makes `"J"`, `"S-j"`, and the runtime events `Char('J') NONE` /
-        // `Char('J') SHIFT` all match the same KeyBinding.
-        if let KeyCode::Char(c) = self.code {
-            if c.is_ascii_uppercase() {
-                self.modifiers |= KeyModifiers::SHIFT;
-            } else if c.is_ascii_lowercase() && self.modifiers.contains(KeyModifiers::SHIFT) {
-                self.code = KeyCode::Char(c.to_ascii_uppercase());
-            }
-        }
-    }
-
-    pub fn from_event(key: &KeyEvent) -> Self {
-        Self::new(key.code, key.modifiers)
-    }
+/// Shared display/serialization formatter, used for both the help footer
+/// and config values, so its output must round-trip through `crokey::parse`.
+/// No implicit shift: crokey reads a bare uppercase letter as the plain
+/// key, so a shifted letter must serialize explicitly as `shift-x`.
+fn formatter() -> &'static KeyCombinationFormat {
+    static FMT: OnceLock<KeyCombinationFormat> = OnceLock::new();
+    FMT.get_or_init(|| KeyCombinationFormat::default().with_lowercase_modifiers())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -138,62 +123,40 @@ impl Command {
         matches!(self, Command::ToggleFocus)
     }
 
-    fn default_keys(self) -> Vec<KeyBinding> {
-        match self {
-            Command::FocusNext => vec![
-                KeyBinding::new(KeyCode::Char('j'), KeyModifiers::NONE),
-                KeyBinding::new(KeyCode::Down, KeyModifiers::NONE),
-            ],
-            Command::FocusPrev => vec![
-                KeyBinding::new(KeyCode::Char('k'), KeyModifiers::NONE),
-                KeyBinding::new(KeyCode::Up, KeyModifiers::NONE),
-            ],
-            Command::SwitchProject => vec![KeyBinding::new(KeyCode::Enter, KeyModifiers::NONE)],
-            Command::KillSession => vec![KeyBinding::new(KeyCode::Char('x'), KeyModifiers::NONE)],
-            Command::ReorderUp => vec![KeyBinding::new(KeyCode::Up, KeyModifiers::ALT)],
-            Command::ReorderDown => vec![KeyBinding::new(KeyCode::Down, KeyModifiers::ALT)],
-            Command::OpenSettings => vec![KeyBinding::new(KeyCode::Char('s'), KeyModifiers::NONE)],
-            Command::OpenThemePicker => {
-                vec![KeyBinding::new(KeyCode::Char('t'), KeyModifiers::NONE)]
-            }
-            Command::ToggleBorders => {
-                vec![KeyBinding::new(KeyCode::Char('b'), KeyModifiers::NONE)]
-            }
-            Command::ToggleLayout => vec![KeyBinding::new(KeyCode::Char('l'), KeyModifiers::NONE)],
-            Command::ToggleViewMode => {
-                vec![KeyBinding::new(KeyCode::Char('c'), KeyModifiers::NONE)]
-            }
-            Command::ToggleSection => {
-                vec![KeyBinding::new(KeyCode::Char('z'), KeyModifiers::NONE)]
-            }
-            Command::ToggleHelp => vec![
-                KeyBinding::new(KeyCode::Char('h'), KeyModifiers::NONE),
-                KeyBinding::new(KeyCode::Char('?'), KeyModifiers::NONE),
-            ],
-            Command::FocusMain => vec![KeyBinding::new(KeyCode::Esc, KeyModifiers::NONE)],
-            Command::Quit => vec![KeyBinding::new(KeyCode::Char('q'), KeyModifiers::NONE)],
-            Command::ToggleFocus => {
-                vec![KeyBinding::new(KeyCode::Char('s'), KeyModifiers::CONTROL)]
-            }
-            Command::TriggerUpgrade => {
-                vec![KeyBinding::new(KeyCode::Char('u'), KeyModifiers::NONE)]
-            }
-            Command::ReloadConfig => {
-                vec![KeyBinding::new(KeyCode::Char('r'), KeyModifiers::NONE)]
-            }
-        }
+    fn default_keys(self) -> Vec<KeyChord> {
+        let raw = match self {
+            Command::FocusNext => vec![key!(j), key!(down)],
+            Command::FocusPrev => vec![key!(k), key!(up)],
+            Command::SwitchProject => vec![key!(enter)],
+            Command::KillSession => vec![key!(x)],
+            Command::ReorderUp => vec![key!(alt - up)],
+            Command::ReorderDown => vec![key!(alt - down)],
+            Command::OpenSettings => vec![key!(s)],
+            Command::OpenThemePicker => vec![key!(t)],
+            Command::ToggleBorders => vec![key!(b)],
+            Command::ToggleLayout => vec![key!(l)],
+            Command::ToggleViewMode => vec![key!(c)],
+            Command::ToggleSection => vec![key!(z)],
+            Command::ToggleHelp => vec![key!(h), key!('?')],
+            Command::FocusMain => vec![key!(esc)],
+            Command::Quit => vec![key!(q)],
+            Command::ToggleFocus => vec![key!(ctrl - s)],
+            Command::TriggerUpgrade => vec![key!(u)],
+            Command::ReloadConfig => vec![key!(r)],
+        };
+        raw.into_iter().map(|k| k.normalized()).collect()
     }
 }
 
 pub struct Keybindings {
-    map: HashMap<KeyBinding, Command>,
-    reverse: HashMap<Command, Vec<KeyBinding>>,
+    map: HashMap<KeyChord, Command>,
+    reverse: HashMap<Command, Vec<KeyChord>>,
 }
 
 impl Default for Keybindings {
     fn default() -> Self {
-        let mut reverse: HashMap<Command, Vec<KeyBinding>> = HashMap::new();
-        let mut map: HashMap<KeyBinding, Command> = HashMap::new();
+        let mut reverse: HashMap<Command, Vec<KeyChord>> = HashMap::new();
+        let mut map: HashMap<KeyChord, Command> = HashMap::new();
         for &cmd in Command::ALL {
             let keys = cmd.default_keys();
             for kb in &keys {
@@ -212,13 +175,45 @@ impl Default for Keybindings {
 /// unknown-key sweep below discards them).
 const KEYBINDING_RENAMES: &[(&str, &str)] = &[];
 
-/// Migrate a raw keybindings map in place: apply known renames, then
-/// drop every entry whose command name the binary no longer recognizes.
-/// Returns `true` if the map changed, so the caller can rewrite
-/// `config.json` to self-heal. Removed commands (e.g. `cycle_filter`,
-/// dropped with the filter tabs) are silently discarded by the sweep.
+/// Migrate a raw keybindings map in place: apply known command renames,
+/// rewrite legacy key strings into crokey syntax, then drop every entry
+/// whose command name the binary no longer recognizes. Returns `true` if
+/// the map changed, so the caller can rewrite the config to self-heal.
+/// Removed commands (e.g. `cycle_filter`, dropped with the filter tabs)
+/// are silently discarded by the sweep.
 pub fn migrate_keybindings(map: &mut BTreeMap<String, KeyBindingValue>) -> bool {
-    migrate_keybindings_with(map, KEYBINDING_RENAMES)
+    let mut changed = migrate_keybindings_with(map, KEYBINDING_RENAMES);
+    changed |= migrate_keybinding_syntax(map);
+    changed
+}
+
+/// Rewrite legacy deck key strings (`C-x`, `A-Up`, `S-Tab`) into crokey
+/// syntax (`ctrl-x`, `alt-up`, `shift-tab`) in place. Idempotent: a value
+/// already in crokey form either fails the legacy parse (modifier chords)
+/// or formats back to itself (plain keys), so re-running changes nothing.
+/// Returns `true` if any value was rewritten.
+pub fn migrate_keybinding_syntax(map: &mut BTreeMap<String, KeyBindingValue>) -> bool {
+    fn convert(s: &mut String, changed: &mut bool) {
+        if let Some(new) = parse_legacy(s).map(|kc| format_key(&kc)) {
+            if &new != s {
+                *s = new;
+                *changed = true;
+            }
+        }
+    }
+    let mut changed = false;
+    for value in map.values_mut() {
+        match value {
+            KeyBindingValue::Single(s) => convert(s, &mut changed),
+            KeyBindingValue::Multi(list) => {
+                for s in list.iter_mut() {
+                    convert(s, &mut changed);
+                }
+            }
+            KeyBindingValue::Unbind => {}
+        }
+    }
+    changed
 }
 
 fn migrate_keybindings_with(
@@ -253,7 +248,7 @@ impl Keybindings {
         plugins: &[PluginConfig],
     ) -> (Self, Vec<String>) {
         let mut warnings = Vec::new();
-        let mut reverse: HashMap<Command, Vec<KeyBinding>> = HashMap::new();
+        let mut reverse: HashMap<Command, Vec<KeyChord>> = HashMap::new();
 
         // 1. Seed with defaults.
         for &cmd in Command::ALL {
@@ -316,7 +311,7 @@ impl Keybindings {
         let mut sorted_cmds: Vec<Command> = Command::ALL.to_vec();
         sorted_cmds.sort_by_key(|c| c.name());
 
-        let mut map: HashMap<KeyBinding, Command> = HashMap::new();
+        let mut map: HashMap<KeyChord, Command> = HashMap::new();
         for cmd in sorted_cmds {
             let keys = reverse.get(&cmd).cloned().unwrap_or_default();
             let mut kept = Vec::new();
@@ -340,7 +335,10 @@ impl Keybindings {
 
         // 4. Plugin collision detection. Plugin keys win.
         for plugin in plugins {
-            let kb = KeyBinding::new(KeyCode::Char(plugin.key), KeyModifiers::NONE);
+            let kb = chord_from_event(&KeyEvent::new(
+                KeyCode::Char(plugin.key),
+                KeyModifiers::NONE,
+            ));
             if let Some(&cmd) = map.get(&kb) {
                 map.remove(&kb);
                 if let Some(list) = reverse.get_mut(&cmd) {
@@ -359,48 +357,46 @@ impl Keybindings {
     }
 
     pub fn lookup(&self, key: &KeyEvent) -> Option<Command> {
-        let kb = KeyBinding::from_event(key);
+        let kb = chord_from_event(key);
         self.map.get(&kb).copied()
     }
 
-    pub fn keys_for(&self, cmd: Command) -> &[KeyBinding] {
+    pub fn keys_for(&self, cmd: Command) -> &[KeyChord] {
         self.reverse.get(&cmd).map(|v| v.as_slice()).unwrap_or(&[])
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum ParseError {
-    Empty,
-    DanglingModifier,
-    UnknownKey(String),
+/// Parse a key string in crokey syntax (`ctrl-x`, `alt-up`, `shift-tab`,
+/// `j`, `?`, `enter`) into a canonical [`KeyChord`]. The error string is
+/// crokey's own diagnostic, surfaced to the user as a config warning.
+pub fn parse_key(s: &str) -> Result<KeyChord, String> {
+    crokey::parse(s)
+        .map(|kc| kc.normalized())
+        .map_err(|e| e.to_string())
 }
 
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ParseError::Empty => write!(f, "empty key string"),
-            ParseError::DanglingModifier => write!(f, "modifier without a key"),
-            ParseError::UnknownKey(s) => write!(f, "unknown key `{}`", s),
-        }
-    }
-}
-
-pub fn parse_key(s: &str) -> Result<KeyBinding, ParseError> {
+/// Parse a *legacy* deck key string (`C-x`, `A-Up`, `S-Tab`, `J`, `j`,
+/// named keys, `F1`..`F12`, single chars) into a [`KeyChord`], or `None`
+/// if it isn't valid legacy syntax. Used only by the one-time syntax
+/// migration; new config is parsed by [`parse_key`].
+fn parse_legacy(s: &str) -> Option<KeyChord> {
     if s.is_empty() {
-        return Err(ParseError::Empty);
+        return None;
     }
 
-    // Special case: if the whole string is a single character, treat it
-    // literally. This lets users bind "-" or " " without grammar clashes.
+    // A lone character is taken literally (lets `-` or ` ` bind cleanly).
     let mut chars = s.chars();
     if let (Some(only), None) = (chars.next(), chars.next()) {
-        return Ok(KeyBinding::new(KeyCode::Char(only), KeyModifiers::NONE));
+        return Some(chord_from_event(&KeyEvent::new(
+            KeyCode::Char(only),
+            KeyModifiers::NONE,
+        )));
     }
 
     let mut modifiers = KeyModifiers::NONE;
     let mut rest = s;
 
-    // Strip modifier prefixes in any order.
+    // Strip `C-`/`A-`/`S-` modifier prefixes in any order.
     loop {
         let upper = rest
             .get(..2)
@@ -424,7 +420,7 @@ pub fn parse_key(s: &str) -> Result<KeyBinding, ParseError> {
     }
 
     if rest.is_empty() {
-        return Err(ParseError::DanglingModifier);
+        return None;
     }
 
     // Named keys — case-insensitive match.
@@ -444,28 +440,24 @@ pub fn parse_key(s: &str) -> Result<KeyBinding, ParseError> {
         "pageup" | "pgup" => KeyCode::PageUp,
         "pagedown" | "pgdown" | "pgdn" => KeyCode::PageDown,
         other if other.starts_with('f') && other.len() >= 2 && other.len() <= 3 => {
-            if let Ok(n) = other[1..].parse::<u8>() {
-                if (1..=12).contains(&n) {
-                    KeyCode::F(n)
-                } else {
-                    return Err(ParseError::UnknownKey(rest.to_string()));
-                }
+            let n = other[1..].parse::<u8>().ok()?;
+            if (1..=12).contains(&n) {
+                KeyCode::F(n)
             } else {
-                return Err(ParseError::UnknownKey(rest.to_string()));
+                return None;
             }
         }
         _ => {
-            // Single character fallback.
+            // Single character fallback (e.g. `C-x` where rest == "x").
             let mut cs = rest.chars();
-            if let (Some(c), None) = (cs.next(), cs.next()) {
-                KeyCode::Char(c)
-            } else {
-                return Err(ParseError::UnknownKey(rest.to_string()));
+            match (cs.next(), cs.next()) {
+                (Some(c), None) => KeyCode::Char(c),
+                _ => return None,
             }
         }
     };
 
-    Ok(KeyBinding::new(code, modifiers))
+    Some(chord_from_event(&KeyEvent::new(code, modifiers)))
 }
 
 /// Fill the raw keybindings map with defaults for every command that the
@@ -488,45 +480,11 @@ pub fn ensure_complete(raw: &mut BTreeMap<String, KeyBindingValue>) -> bool {
     inserted
 }
 
-pub fn format_key(kb: &KeyBinding) -> String {
-    let mut out = String::new();
-    let mods = kb.modifiers;
-
-    if mods.contains(KeyModifiers::CONTROL) {
-        out.push_str("C-");
-    }
-    if mods.contains(KeyModifiers::ALT) {
-        out.push_str("A-");
-    }
-
-    // SHIFT is encoded in letter case when the key is an ASCII letter;
-    // emit "S-" only for keys where case doesn't carry shift.
-    let shift_in_case = matches!(kb.code, KeyCode::Char(c) if c.is_ascii_alphabetic());
-    if mods.contains(KeyModifiers::SHIFT) && !shift_in_case {
-        out.push_str("S-");
-    }
-
-    match kb.code {
-        KeyCode::Char(' ') => out.push_str("Space"),
-        KeyCode::Char(c) => out.push(c),
-        KeyCode::Enter => out.push_str("Enter"),
-        KeyCode::Esc => out.push_str("Esc"),
-        KeyCode::Up => out.push_str("Up"),
-        KeyCode::Down => out.push_str("Down"),
-        KeyCode::Left => out.push_str("Left"),
-        KeyCode::Right => out.push_str("Right"),
-        KeyCode::Tab => out.push_str("Tab"),
-        KeyCode::Backspace => out.push_str("Backspace"),
-        KeyCode::Delete => out.push_str("Delete"),
-        KeyCode::Home => out.push_str("Home"),
-        KeyCode::End => out.push_str("End"),
-        KeyCode::PageUp => out.push_str("PageUp"),
-        KeyCode::PageDown => out.push_str("PageDown"),
-        KeyCode::F(n) => out.push_str(&format!("F{}", n)),
-        _ => out.push('?'),
-    }
-
-    out
+/// Render a chord back to a string for the help footer and for
+/// serializing defaults into the config. The output round-trips through
+/// [`parse_key`].
+pub fn format_key(kb: &KeyChord) -> String {
+    formatter().to_string(*kb)
 }
 
 #[cfg(test)]

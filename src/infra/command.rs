@@ -18,15 +18,15 @@
 //! "infinite hang" risk and to make tmux/git parsing unit-testable.
 //! Higher-level streaming or environment-control APIs are out of scope.
 //!
-//! Behaviour note: on timeout, `RealRunner` sends `SIGKILL` to the
-//! straggler so the OS reaps it. We don't try to recover its partial
+//! Behaviour note: on timeout, `RealRunner` kills the straggler's whole
+//! process group via `duct` so the OS reaps it (and any grandchildren a
+//! shell-wrapped command spawned). We don't try to recover its partial
 //! stdout — by the time we hit a timeout the data is suspect anyway.
 
 use std::io;
-use std::process::{Command, ExitStatus, Stdio};
-use std::sync::mpsc;
+use std::process::ExitStatus;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Successful command output. Mirrors `std::process::Output` but only
 /// carries the fields infra layers actually use, and guarantees the
@@ -95,103 +95,67 @@ pub trait CommandRunner: Send + Sync {
     fn run(&self, program: &str, args: &[&str], timeout: Duration) -> Result<Output, CommandError>;
 }
 
-/// Production runner backed by `std::process::Command`. The wait is
-/// implemented by handing the child to a one-shot worker thread and
-/// `recv_timeout`-ing on a channel; on timeout we kill the child.
-///
-/// Zero-cost in the success path — we still go through one thread spawn
-/// per call, but external commands here run at most a few times per
-/// second so the overhead is negligible compared to the spawn itself.
+/// Poll interval for the timeout loop. Small enough that the success path
+/// returns near-instantly for deck's sub-second commands.
+const POLL_INTERVAL: Duration = Duration::from_millis(2);
+
+/// Production runner backed by [`duct`]. The timeout is enforced by
+/// polling `try_wait` rather than blocking a worker thread; at deck's call
+/// rate the 2ms poll is negligible against the spawn cost.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RealRunner;
 
 impl CommandRunner for RealRunner {
     fn run(&self, program: &str, args: &[&str], timeout: Duration) -> Result<Output, CommandError> {
-        let mut cmd = Command::new(program);
-        cmd.args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        // `unchecked()` so a non-zero exit surfaces as a captured Output
+        // we classify ourselves (into `NonZero`) rather than a duct error.
+        let handle = duct::cmd(program, args.iter().copied())
+            .stdin_null()
+            .stdout_capture()
+            .stderr_capture()
+            .unchecked()
+            .start()
+            .map_err(|source| CommandError::Spawn {
+                program: program.to_string(),
+                source,
+            })?;
 
-        let child = cmd.spawn().map_err(|source| CommandError::Spawn {
-            program: program.to_string(),
-            source,
-        })?;
-
-        wait_with_timeout(program, child, timeout)
-    }
-}
-
-/// Run a `Command` and enforce `timeout`. Factored out so it can be
-/// covered by tests without poking at private internals.
-fn wait_with_timeout(
-    program: &str,
-    child: std::process::Child,
-    timeout: Duration,
-) -> Result<Output, CommandError> {
-    let (tx, rx) = mpsc::channel();
-    // Move the child into a helper thread that blocks on
-    // `wait_with_output`. If the timeout fires first, the main thread
-    // grabs the pid we stashed and SIGKILLs it; the helper then
-    // unblocks and its send fails silently (we've already returned).
-    let pid = child.id();
-    let prog_owned = program.to_string();
-    thread::Builder::new()
-        .name(format!("cmd-{prog_owned}"))
-        .spawn(move || {
-            let result = child.wait_with_output();
-            let _ = tx.send(result);
-        })
-        .map_err(|source| CommandError::Spawn {
-            program: program.to_string(),
-            source,
-        })?;
-
-    match rx.recv_timeout(timeout) {
-        Ok(Ok(out)) => {
-            if out.status.success() {
-                Ok(Output { stdout: out.stdout })
-            } else {
-                Err(CommandError::NonZero {
-                    program: program.to_string(),
-                    status: out.status,
-                    stderr: out.stderr,
-                })
+        let deadline = Instant::now() + timeout;
+        loop {
+            match handle.try_wait() {
+                Ok(Some(out)) => {
+                    return if out.status.success() {
+                        Ok(Output {
+                            stdout: out.stdout.clone(),
+                        })
+                    } else {
+                        Err(CommandError::NonZero {
+                            program: program.to_string(),
+                            status: out.status,
+                            stderr: out.stderr.clone(),
+                        })
+                    };
+                }
+                Ok(None) => {
+                    if Instant::now() >= deadline {
+                        // Best-effort process-group kill; ignore errors
+                        // (most likely the child raced us to exit).
+                        let _ = handle.kill();
+                        return Err(CommandError::Timeout {
+                            program: program.to_string(),
+                            elapsed: timeout,
+                        });
+                    }
+                    thread::sleep(POLL_INTERVAL);
+                }
+                Err(source) => {
+                    return Err(CommandError::Spawn {
+                        program: program.to_string(),
+                        source,
+                    });
+                }
             }
         }
-        Ok(Err(source)) => Err(CommandError::Spawn {
-            program: program.to_string(),
-            source,
-        }),
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            // Best-effort kill. We can't use the moved `Child` handle
-            // anymore so we go through libc directly.
-            kill_pid(pid);
-            Err(CommandError::Timeout {
-                program: program.to_string(),
-                elapsed: timeout,
-            })
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err(CommandError::Spawn {
-            program: program.to_string(),
-            source: io::Error::other("command worker thread disappeared"),
-        }),
-    }
-}
-
-fn kill_pid(pid: u32) {
-    // SAFETY: `kill(2)` with SIGKILL on a numeric pid is always defined
-    // on POSIX. The worst case is ESRCH (already exited) which we
-    // ignore.
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(pid as libc::pid_t, libc::SIGKILL);
-    }
-    // Windows isn't a supported target for deck (it requires tmux), so
-    // we leave a noop here rather than pull in extra deps.
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
     }
 }
 

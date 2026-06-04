@@ -20,21 +20,18 @@
 //!   platform — deck prints a curl/tar one-liner tailored to the
 //!   running architecture instead of trying to write where it can't.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone)]
 pub enum InstallMethod {
     Brew,
-    DirectDownload {
-        /// Resolved (symlinks-followed) path to the current deck
-        /// binary. Tarball is extracted next to it and renamed over
-        /// it; both files live on the same filesystem so the
-        /// `rename(2)` is atomic.
-        dest: PathBuf,
-    },
+    /// The binary lives in a user-writable directory, so `self_update`
+    /// can download a release and replace it in place (it resolves the
+    /// current exe path itself — see `run_self_upgrade`).
+    DirectDownload,
     /// We can't safely write to the binary's location. Caller should
-    /// surface a manual upgrade command (see `manual_upgrade_command`).
+    /// surface a manual upgrade hint (see `manual_upgrade_hint`).
     Manual,
 }
 
@@ -71,7 +68,7 @@ pub fn detect_install_method() -> InstallMethod {
     if !is_dir_writable(parent) {
         return InstallMethod::Manual;
     }
-    InstallMethod::DirectDownload { dest: exe }
+    InstallMethod::DirectDownload
 }
 
 fn is_brew_managed(exe: &Path) -> bool {
@@ -110,72 +107,48 @@ fn is_dir_writable(dir: &Path) -> bool {
     }
 }
 
-/// Build the shell pipeline that runs inside the upgrade PTY for a
-/// direct (non-brew) install. Quoted with single quotes around all
-/// substituted paths so a `dest` containing spaces or shell metachars
-/// is handled correctly; `version` and `target` we control.
-pub fn direct_upgrade_command(version: &str, dest: &Path, target: &str) -> String {
-    let url = release_url(version, target);
-    let dest_str = shell_single_quote(&dest.display().to_string());
-    format!(
-        "set -e\n\
-         DEST={dest}\n\
-         echo \"Downloading deck v{ver} for {tgt}...\"\n\
-         echo\n\
-         TMP=$(mktemp -d)\n\
-         trap 'rm -rf \"$TMP\"' EXIT\n\
-         curl -fL --progress-bar '{url}' | tar xz -C \"$TMP\" --strip-components=1\n\
-         chmod +x \"$TMP/deck\"\n\
-         mv -f \"$TMP/deck\" \"$DEST.new\"\n\
-         mv -f \"$DEST.new\" \"$DEST\"\n\
-         echo\n\
-         echo \"Upgraded to v{ver}. Restart deck to use it.\"\n",
-        dest = dest_str,
-        ver = version,
-        tgt = target,
-        url = url,
-    )
+/// Perform a direct (non-brew) self-upgrade to `version` via the
+/// `self_update` crate: fetch the GitHub release asset for `target`,
+/// extract the `deck` binary, and replace the running executable in place.
+///
+/// Runs in the upgrade PTY subprocess (`deck __upgrade-self`), so
+/// `show_download_progress` renders live in the pane. Blocks until done.
+pub fn run_self_upgrade(version: &str) -> Result<(), String> {
+    let target = target_triple().ok_or_else(|| {
+        "no prebuilt binary ships for this platform; rebuild from source".to_string()
+    })?;
+
+    // deck tags releases `vX.Y.Z` and names assets
+    // `deck-v{ver}-{target}.tar.gz`; the asset name contains `target`,
+    // which is how self_update matches it.
+    let status = self_update::backends::github::Update::configure()
+        .repo_owner("cross-entropy-ai")
+        .repo_name("deck")
+        .bin_name("deck")
+        .target(target)
+        .target_version_tag(&format!("v{version}"))
+        .current_version(env!("CARGO_PKG_VERSION"))
+        .show_download_progress(true)
+        .no_confirm(true)
+        .build()
+        .map_err(|e| e.to_string())?
+        .update()
+        .map_err(|e| e.to_string())?;
+
+    println!("\nUpgraded to {}. Restart deck to use it.", status.version());
+    Ok(())
 }
 
-/// Print the same logic in human form, for the Manual fallback when
-/// deck can't safely overwrite its own binary.
-pub fn manual_upgrade_command(version: &str, dest: &Path, target: &str) -> String {
-    let url = release_url(version, target);
+/// Human-readable fallback shown when deck can't write its own binary
+/// (`InstallMethod::Manual`) — e.g. a root-owned `/usr/local/bin` with no
+/// brew. We can't self-replace, so point the user at the install methods.
+pub fn manual_upgrade_hint(version: &str) -> String {
     format!(
-        "# deck can't self-update from {dest}.\n\
-         # Run this manually (you may need sudo for the final mv):\n\
-         curl -fL '{url}' | tar xz\n\
-         mv 'deck-v{ver}-{tgt}/deck' '{dest}'\n",
-        dest = dest.display(),
-        ver = version,
-        tgt = target,
-        url = url,
+        "deck can't self-update from this location (the binary isn't writable).\n\
+         Upgrade with your package manager, or download deck v{version} from:\n\
+         https://github.com/cross-entropy-ai/deck/releases/latest\n\
+         or rebuild: cargo install --git https://github.com/cross-entropy-ai/deck"
     )
-}
-
-fn release_url(version: &str, target: &str) -> String {
-    format!(
-        "https://github.com/cross-entropy-ai/deck/releases/download/v{ver}/deck-v{ver}-{tgt}.tar.gz",
-        ver = version,
-        tgt = target,
-    )
-}
-
-/// Wrap `s` in single quotes, escaping any embedded single quotes
-/// using the POSIX `'\''` trick. Keeps the upgrade shell command safe
-/// against pathologically-named install paths.
-fn shell_single_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('\'');
-    for c in s.chars() {
-        if c == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(c);
-        }
-    }
-    out.push('\'');
-    out
 }
 
 #[cfg(test)]
@@ -183,28 +156,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn quote_handles_normal_path() {
-        assert_eq!(shell_single_quote("/usr/local/bin/deck"), "'/usr/local/bin/deck'");
-    }
-
-    #[test]
-    fn quote_escapes_single_quote() {
-        assert_eq!(shell_single_quote("a'b"), "'a'\\''b'");
-    }
-
-    #[test]
-    fn url_matches_release_yml_format() {
-        let url = release_url("0.3.0", "aarch64-apple-darwin");
-        assert_eq!(
-            url,
-            "https://github.com/cross-entropy-ai/deck/releases/download/v0.3.0/deck-v0.3.0-aarch64-apple-darwin.tar.gz"
-        );
-    }
-
-    #[test]
     fn target_triple_known_for_supported_platforms() {
         // The test runner runs on one of the supported targets, so
         // we should always get Some(_).
         assert!(target_triple().is_some());
+    }
+
+    #[test]
+    fn manual_hint_mentions_version() {
+        assert!(manual_upgrade_hint("1.2.3").contains("1.2.3"));
     }
 }

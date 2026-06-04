@@ -136,8 +136,7 @@ impl App {
             }
             Action::TriggerUpgrade => {
                 use crate::self_update::{
-                    detect_install_method, direct_upgrade_command, manual_upgrade_command,
-                    target_triple, InstallMethod,
+                    detect_install_method, manual_upgrade_hint, target_triple, InstallMethod,
                 };
                 let Some(latest) = self
                     .state
@@ -147,13 +146,17 @@ impl App {
                 else {
                     return false;
                 };
-                let (program, args_owned): (&str, Vec<String>) = match detect_install_method() {
+                // (program, args). For a direct download we re-exec our own
+                // binary in a hidden `__upgrade-self` mode that drives the
+                // `self_update` crate, so its progress bar renders live in
+                // the upgrade pane and it replaces the binary in place.
+                let (program, args_owned): (String, Vec<String>) = match detect_install_method() {
                     InstallMethod::Brew => (
-                        "brew",
+                        "brew".to_string(),
                         vec!["upgrade".to_string(), "cross-entropy-ai/tap/deck".to_string()],
                     ),
-                    InstallMethod::DirectDownload { dest } => {
-                        let Some(target) = target_triple() else {
+                    InstallMethod::DirectDownload => {
+                        if target_triple().is_none() {
                             self.warning_state =
                                 Some(crate::state::WarningState::Proactive {
                                     text: "Unsupported platform",
@@ -163,33 +166,26 @@ impl App {
                                         .to_string(),
                                 });
                             return false;
-                        };
-                        let cmd = direct_upgrade_command(&latest, &dest, target);
-                        ("sh", vec!["-c".to_string(), cmd])
+                        }
+                        let exe = std::env::current_exe()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or_else(|_| "deck".to_string());
+                        (exe, vec!["__upgrade-self".to_string(), latest.clone()])
                     }
                     InstallMethod::Manual => {
                         // We can't write to where deck lives (e.g.
-                        // /usr/local/bin without brew). Hand the user
-                        // the exact command for their platform.
-                        let dest = std::env::current_exe()
-                            .and_then(std::fs::canonicalize)
-                            .unwrap_or_else(|_| std::path::PathBuf::from("/path/to/deck"));
-                        let detail = match target_triple() {
-                            Some(target) => manual_upgrade_command(&latest, &dest, target),
-                            None => "Rebuild from source: `cargo install --git \
-                                     https://github.com/cross-entropy-ai/deck`."
-                                .to_string(),
-                        };
+                        // /usr/local/bin without brew). Point the user at
+                        // the install methods instead.
                         self.warning_state =
                             Some(crate::state::WarningState::Proactive {
                                 text: "deck can't self-update from this location",
-                                detail,
+                                detail: manual_upgrade_hint(&latest),
                             });
                         return false;
                     }
                 };
                 let args_ref: Vec<&str> = args_owned.iter().map(String::as_str).collect();
-                if let Err(e) = self.spawn_upgrade_pty(program, &args_ref) {
+                if let Err(e) = self.spawn_upgrade_pty(&program, &args_ref) {
                     eprintln!("deck: failed to spawn upgrade: {}", e);
                     return false;
                 }
