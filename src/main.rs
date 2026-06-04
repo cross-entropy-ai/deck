@@ -31,6 +31,10 @@ enum ParsedCommand {
     RemoteAdd(String),
     RemoteList,
     RemoteRemove(String),
+    /// Hidden: re-exec entrypoint that performs an in-place self-upgrade
+    /// to the given version via the `self_update` crate. Spawned by the
+    /// running TUI inside the upgrade pane so its progress renders live.
+    UpgradeSelf(String),
 }
 
 fn main() -> io::Result<()> {
@@ -45,6 +49,15 @@ fn main() -> io::Result<()> {
         }
         Ok(Some(ParsedCommand::RemoteRemove(host))) => {
             std::process::exit(run_remote_remove(&host));
+        }
+        Ok(Some(ParsedCommand::UpgradeSelf(version))) => {
+            match self_update::run_self_upgrade(&version) {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    eprintln!("deck: upgrade failed: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
         Ok(None) => return Ok(()),
         Err(code) => std::process::exit(code),
@@ -106,6 +119,16 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<ParsedCo
         if first == "remote" {
             iter.next();
             return parse_remote_args(iter);
+        }
+        if first == "__upgrade-self" {
+            iter.next();
+            return match iter.next() {
+                Some(version) => Ok(Some(ParsedCommand::UpgradeSelf(version))),
+                None => {
+                    eprintln!("deck: __upgrade-self requires a version argument");
+                    Err(1)
+                }
+            };
         }
     }
 

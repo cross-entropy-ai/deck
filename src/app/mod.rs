@@ -171,9 +171,10 @@ impl App {
     ) -> io::Result<Self> {
         let mut cfg = Config::load();
 
-        let before = cfg.to_json();
-        crate::keybindings::ensure_complete(&mut cfg.keybindings);
-        if cfg.to_json() != before {
+        // Backfill defaults for any commands the user hasn't listed and
+        // persist once if that added anything, so the file stays
+        // self-documenting.
+        if crate::keybindings::ensure_complete(&mut cfg.keybindings) {
             cfg.save();
         }
 

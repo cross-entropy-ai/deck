@@ -100,13 +100,16 @@ fn parse_json_without_view_mode_uses_default() {
 }
 
 #[test]
-fn config_to_json_includes_view_mode() {
+fn config_roundtrip_preserves_view_mode() {
+    let path = std::env::temp_dir().join("deck-roundtrip-viewmode.yaml");
     let config = Config {
         view_mode: ViewMode::Compact,
         ..Config::default()
     };
-    let json = config.to_json();
-    assert!(json.contains(r#""view_mode": "compact""#));
+    config.save_to(&path).unwrap();
+    let loaded: Config = confy::load_path(&path).unwrap();
+    assert_eq!(loaded.view_mode, ViewMode::Compact);
+    let _ = fs::remove_file(&path);
 }
 
 #[test]
@@ -183,8 +186,13 @@ fn keybindings_roundtrip() {
         keybindings: kb.clone(),
         ..Config::default()
     };
-    let roundtrip: Config = serde_json::from_str(&config.to_json()).unwrap();
+    // Raw serialize/deserialize round-trip (no migration): every value
+    // shape — Single, Multi, and Unbind (null) — survives YAML.
+    let path = std::env::temp_dir().join("deck-roundtrip-keybindings.yaml");
+    config.save_to(&path).unwrap();
+    let roundtrip: Config = confy::load_path(&path).unwrap();
     assert_eq!(roundtrip.keybindings, kb);
+    let _ = fs::remove_file(&path);
 }
 
 #[test]
@@ -210,16 +218,16 @@ fn parse_json_without_update_check_defaults_to_enabled() {
 
 #[test]
 fn try_load_from_missing_path_returns_defaults() {
-    let path = std::env::temp_dir().join("deck-try-load-missing.json");
+    let path = std::env::temp_dir().join("deck-try-load-missing.yaml");
     let _ = fs::remove_file(&path);
     let cfg = Config::try_load_from(&path).expect("missing file is not an error");
     assert_eq!(cfg.theme, Config::default().theme);
 }
 
 #[test]
-fn try_load_from_invalid_json_returns_err() {
-    let path = std::env::temp_dir().join("deck-try-load-bad.json");
-    fs::write(&path, "{ this is not json").unwrap();
+fn try_load_from_invalid_yaml_returns_err() {
+    let path = std::env::temp_dir().join("deck-try-load-bad.yaml");
+    fs::write(&path, "{ this is not: valid: yaml: ]").unwrap();
     let err = Config::try_load_from(&path).unwrap_err();
     assert!(err.starts_with("parse:"), "expected parse error, got: {err}");
     // Path must not leak into the message — footer is too narrow.
@@ -231,14 +239,14 @@ fn try_load_from_invalid_json_returns_err() {
 }
 
 #[test]
-fn try_load_from_valid_json_round_trips() {
-    let path = std::env::temp_dir().join("deck-try-load-ok.json");
+fn try_load_from_valid_yaml_round_trips() {
+    let path = std::env::temp_dir().join("deck-try-load-ok.yaml");
     let original = Config {
         theme: "Nord".to_string(),
         sidebar_width: 42,
         ..Config::default()
     };
-    fs::write(&path, original.to_json()).unwrap();
+    original.save_to(&path).unwrap();
     let loaded = Config::try_load_from(&path).unwrap();
     assert_eq!(loaded.theme, "Nord");
     assert_eq!(loaded.sidebar_width, 42);
@@ -249,9 +257,11 @@ fn try_load_from_valid_json_round_trips() {
 fn empty_keybindings_still_serialize() {
     // Default config has an empty keybindings map. We always emit it so
     // the config file stays self-documenting after backfill runs.
-    let config = Config::default();
-    let json = config.to_json();
-    assert!(json.contains("\"keybindings\""));
+    let path = std::env::temp_dir().join("deck-empty-keybindings.yaml");
+    Config::default().save_to(&path).unwrap();
+    let yaml = fs::read_to_string(&path).unwrap();
+    assert!(yaml.contains("keybindings"), "yaml: {yaml}");
+    let _ = fs::remove_file(&path);
 }
 
 #[test]
@@ -390,3 +400,4 @@ fn diff_forwards_mixed() {
     assert!(ops.iter().any(|o| matches!(o, ForwardOp::Cancel(s) if s.listen_port == 9090)));
     assert!(ops.iter().any(|o| matches!(o, ForwardOp::Add(s) if s.listen_port == 7070)));
 }
+

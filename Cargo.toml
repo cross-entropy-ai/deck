@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 ratatui = "0.30"
 crossterm = "0.29"
+crokey = "1.4"
 portable-pty = "0.9"
 vt100 = "0.16"
 unicode-width = "0.2"
@@ -13,10 +14,13 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libc = "0.2"
+duct = "0.13"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+self_update = { version = "0.42", default-features = false, features = ["rustls", "archive-tar", "compression-flate2"] }
 semver = "1"
 ratatui-sectioned-list = "0.1"
 ratatui-textarea = "0.9.1"
+confy = { version = "2.0.0", default-features = false, features = ["yaml_conf"] }
 
 [patch.crates-io]
 # Track our long-lived `deck` branch on Junyi-99/vt100-rust, which

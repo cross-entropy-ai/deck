@@ -1,96 +1,66 @@
 use super::*;
+use crokey::key;
 
-fn kb(code: KeyCode, mods: KeyModifiers) -> KeyBinding {
-    KeyBinding::new(code, mods)
+fn ev(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
+    KeyEvent::new(code, mods)
 }
 
-// --- parse_key ---
+// --- parse_key (crokey syntax) ---
 
 #[test]
 fn parse_plain_char() {
-    assert_eq!(
-        parse_key("j").unwrap(),
-        kb(KeyCode::Char('j'), KeyModifiers::NONE)
-    );
+    assert_eq!(parse_key("j").unwrap(), key!(j).normalized());
+    assert_eq!(parse_key("?").unwrap(), key!('?').normalized());
     assert_eq!(
         parse_key("1").unwrap(),
-        kb(KeyCode::Char('1'), KeyModifiers::NONE)
+        KeyCombination::from(ev(KeyCode::Char('1'), KeyModifiers::NONE)).normalized()
     );
-    assert_eq!(
-        parse_key("?").unwrap(),
-        kb(KeyCode::Char('?'), KeyModifiers::NONE)
-    );
-}
-
-#[test]
-fn parse_space_both_ways() {
-    let expected = kb(KeyCode::Char(' '), KeyModifiers::NONE);
-    assert_eq!(parse_key(" ").unwrap(), expected);
-    assert_eq!(parse_key("Space").unwrap(), expected);
-    assert_eq!(parse_key("space").unwrap(), expected);
 }
 
 #[test]
 fn parse_named_keys() {
-    assert_eq!(parse_key("Enter").unwrap().code, KeyCode::Enter);
-    assert_eq!(parse_key("Esc").unwrap().code, KeyCode::Esc);
-    assert_eq!(parse_key("escape").unwrap().code, KeyCode::Esc);
-    assert_eq!(parse_key("Up").unwrap().code, KeyCode::Up);
-    assert_eq!(parse_key("PageDown").unwrap().code, KeyCode::PageDown);
-    assert_eq!(parse_key("Tab").unwrap().code, KeyCode::Tab);
-    assert_eq!(parse_key("F1").unwrap().code, KeyCode::F(1));
-    assert_eq!(parse_key("F12").unwrap().code, KeyCode::F(12));
+    assert_eq!(parse_key("enter").unwrap(), key!(enter).normalized());
+    assert_eq!(parse_key("esc").unwrap(), key!(esc).normalized());
+    assert_eq!(parse_key("up").unwrap(), key!(up).normalized());
+    assert_eq!(parse_key("tab").unwrap(), key!(tab).normalized());
+    assert_eq!(parse_key("f1").unwrap(), key!(f1).normalized());
+    assert_eq!(parse_key("f12").unwrap(), key!(f12).normalized());
 }
 
 #[test]
 fn parse_modifiers() {
+    assert_eq!(parse_key("ctrl-s").unwrap(), key!(ctrl - s).normalized());
+    assert_eq!(parse_key("alt-up").unwrap(), key!(alt - up).normalized());
     assert_eq!(
-        parse_key("C-s").unwrap(),
-        kb(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        parse_key("ctrl-alt-x").unwrap(),
+        key!(ctrl - alt - x).normalized()
     );
-    assert_eq!(
-        parse_key("A-Up").unwrap(),
-        kb(KeyCode::Up, KeyModifiers::ALT)
-    );
-    assert_eq!(
-        parse_key("C-A-x").unwrap(),
-        kb(
-            KeyCode::Char('x'),
-            KeyModifiers::CONTROL | KeyModifiers::ALT
-        )
-    );
-}
-
-#[test]
-fn modifier_order_insensitive() {
-    assert_eq!(parse_key("A-C-x").unwrap(), parse_key("C-A-x").unwrap());
-    assert_eq!(parse_key("S-A-Up").unwrap(), parse_key("A-S-Up").unwrap());
 }
 
 #[test]
 fn shift_case_normalization() {
-    // "J" and "S-j" should match the same KeyBinding.
-    assert_eq!(parse_key("J").unwrap(), parse_key("S-j").unwrap());
-    let expected = kb(KeyCode::Char('J'), KeyModifiers::SHIFT);
-    assert_eq!(parse_key("J").unwrap(), expected);
+    // crokey reads a bare uppercase letter as the plain key; shift must be
+    // explicit. `shift-j` canonicalizes to the uppercase+SHIFT chord that
+    // runtime events normalize to.
+    assert_eq!(parse_key("J").unwrap(), parse_key("j").unwrap());
+    assert_eq!(
+        parse_key("shift-j").unwrap(),
+        KeyCombination::from(ev(KeyCode::Char('J'), KeyModifiers::SHIFT)).normalized()
+    );
 }
 
 #[test]
 fn parse_errors() {
-    assert_eq!(parse_key(""), Err(ParseError::Empty));
-    assert_eq!(parse_key("C-"), Err(ParseError::DanglingModifier));
-    assert!(parse_key("Nope").is_err());
-    assert!(parse_key("F99").is_err());
-    assert!(parse_key("C-Nope").is_err());
+    assert!(parse_key("").is_err());
+    assert!(parse_key("nope").is_err());
+    assert!(parse_key("f99").is_err());
 }
 
-// --- format_key ---
+// --- format_key (round-trips through parse_key) ---
 
 #[test]
 fn format_roundtrip() {
-    let cases = &[
-        "j", "?", "Enter", "Esc", "Up", "A-Up", "C-s", "F1", "Space", "Tab",
-    ];
+    let cases = &["j", "?", "enter", "esc", "up", "alt-up", "ctrl-s", "f1", "tab"];
     for s in cases {
         let parsed = parse_key(s).unwrap();
         let re = parse_key(&format_key(&parsed)).unwrap();
@@ -99,16 +69,21 @@ fn format_roundtrip() {
 }
 
 #[test]
-fn format_encodes_shift_in_case_for_letters() {
-    assert_eq!(format_key(&parse_key("J").unwrap()), "J");
-    assert_eq!(format_key(&parse_key("S-j").unwrap()), "J");
+fn format_shift_letter_is_explicit_and_roundtrips() {
+    // A shifted letter serializes with an explicit `shift-` prefix and
+    // round-trips back to the same chord.
+    let shifted = parse_key("shift-j").unwrap();
+    let s = format_key(&shifted);
+    assert!(s.contains("shift"), "expected explicit shift in {s:?}");
+    assert_eq!(parse_key(&s).unwrap(), shifted);
 }
 
 #[test]
-fn format_shift_for_non_letter() {
-    // Shift+F1 must survive as "S-F1"
-    let bound = KeyBinding::new(KeyCode::F(1), KeyModifiers::SHIFT);
-    assert_eq!(format_key(&bound), "S-F1");
+fn format_shift_for_non_letter_roundtrips() {
+    // Shift+F1 must survive a format -> parse cycle.
+    let bound = KeyCombination::from(ev(KeyCode::F(1), KeyModifiers::SHIFT)).normalized();
+    let re = parse_key(&format_key(&bound)).unwrap();
+    assert_eq!(bound, re);
 }
 
 // --- Keybindings::default ---
@@ -117,23 +92,23 @@ fn format_shift_for_non_letter() {
 fn default_bindings_present() {
     let kb = Keybindings::default();
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)),
+        kb.lookup(&ev(KeyCode::Char('j'), KeyModifiers::NONE)),
         Some(Command::FocusNext)
     );
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+        kb.lookup(&ev(KeyCode::Down, KeyModifiers::NONE)),
         Some(Command::FocusNext)
     );
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+        kb.lookup(&ev(KeyCode::Char('x'), KeyModifiers::NONE)),
         Some(Command::KillSession)
     );
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
+        kb.lookup(&ev(KeyCode::Char('s'), KeyModifiers::CONTROL)),
         Some(Command::ToggleFocus)
     );
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Up, KeyModifiers::ALT)),
+        kb.lookup(&ev(KeyCode::Up, KeyModifiers::ALT)),
         Some(Command::ReorderUp)
     );
 }
@@ -152,22 +127,19 @@ fn from_empty_config_equals_defaults() {
     let (kb, warnings) = Keybindings::from_config(&BTreeMap::new(), &[]);
     assert!(warnings.is_empty());
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)),
+        kb.lookup(&ev(KeyCode::Char('j'), KeyModifiers::NONE)),
         Some(Command::FocusNext)
     );
 }
 
 #[test]
 fn single_rebind_replaces_default() {
-    let map = cfg(&[("kill_session", KeyBindingValue::Single("X".into()))]);
+    let map = cfg(&[("kill_session", KeyBindingValue::Single("shift-x".into()))]);
     let (kb, warnings) = Keybindings::from_config(&map, &[]);
     assert!(warnings.is_empty());
+    assert_eq!(kb.lookup(&ev(KeyCode::Char('x'), KeyModifiers::NONE)), None);
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
-        None
-    );
-    assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT)),
+        kb.lookup(&ev(KeyCode::Char('X'), KeyModifiers::SHIFT)),
         Some(Command::KillSession)
     );
 }
@@ -176,16 +148,16 @@ fn single_rebind_replaces_default() {
 fn multi_rebind() {
     let map = cfg(&[(
         "toggle_help",
-        KeyBindingValue::Multi(vec!["h".into(), "?".into(), "F1".into()]),
+        KeyBindingValue::Multi(vec!["h".into(), "?".into(), "f1".into()]),
     )]);
     let (kb, warnings) = Keybindings::from_config(&map, &[]);
     assert!(warnings.is_empty());
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE)),
+        kb.lookup(&ev(KeyCode::Char('h'), KeyModifiers::NONE)),
         Some(Command::ToggleHelp)
     );
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE)),
+        kb.lookup(&ev(KeyCode::F(1), KeyModifiers::NONE)),
         Some(Command::ToggleHelp)
     );
 }
@@ -195,33 +167,25 @@ fn null_unbinds() {
     let map = cfg(&[("toggle_borders", KeyBindingValue::Unbind)]);
     let (kb, warnings) = Keybindings::from_config(&map, &[]);
     assert!(warnings.is_empty());
-    assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE)),
-        None
-    );
+    assert_eq!(kb.lookup(&ev(KeyCode::Char('b'), KeyModifiers::NONE)), None);
     assert!(kb.keys_for(Command::ToggleBorders).is_empty());
 }
 
 #[test]
 fn unknown_command_silently_ignored_keeps_defaults() {
-    // from_config no longer warns on unknown command names — they are
-    // stripped on load by migrate_keybindings. Any straggler is ignored.
     let map = cfg(&[("made_up_cmd", KeyBindingValue::Single("z".into()))]);
     let (kb, warnings) = Keybindings::from_config(&map, &[]);
     assert!(warnings.is_empty());
-    // Defaults unchanged.
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)),
+        kb.lookup(&ev(KeyCode::Char('j'), KeyModifiers::NONE)),
         Some(Command::FocusNext)
     );
 }
 
-// --- migrate_keybindings ---
+// --- migrate_keybindings (renames + unknown sweep) ---
 
 #[test]
 fn migrate_drops_unknown_command() {
-    // `cycle_filter` was removed with the filter tabs (#23); the sweep must
-    // discard it while leaving valid commands in place.
     let mut map = cfg(&[
         ("cycle_filter", KeyBindingValue::Single("f".into())),
         ("quit", KeyBindingValue::Single("q".into())),
@@ -232,7 +196,7 @@ fn migrate_drops_unknown_command() {
 }
 
 #[test]
-fn migrate_leaves_valid_bindings_untouched() {
+fn migrate_leaves_valid_crokey_bindings_untouched() {
     let mut map = cfg(&[("quit", KeyBindingValue::Single("q".into()))]);
     assert!(!migrate_keybindings(&mut map));
     assert_eq!(map.len(), 1);
@@ -254,38 +218,98 @@ fn migrate_rename_does_not_clobber_existing() {
         ("quit", KeyBindingValue::Single("q".into())),
     ]);
     assert!(migrate_keybindings_with(&mut map, &[("old_quit", "quit")]));
-    // The explicit `quit` binding wins; the renamed value is discarded.
     assert_eq!(map.get("quit"), Some(&KeyBindingValue::Single("q".into())));
     assert!(!map.contains_key("old_quit"));
+}
+
+// --- migrate_keybinding_syntax (legacy deck DSL -> crokey) ---
+
+#[test]
+fn migrate_syntax_rewrites_legacy_modifiers() {
+    let mut map = cfg(&[
+        ("toggle_focus", KeyBindingValue::Single("C-s".into())),
+        ("reorder_up", KeyBindingValue::Single("A-Up".into())),
+    ]);
+    assert!(migrate_keybinding_syntax(&mut map));
+    // The rewritten strings parse, and resolve to the same chords the
+    // legacy strings denoted.
+    let toggle = match map.get("toggle_focus").unwrap() {
+        KeyBindingValue::Single(s) => s.clone(),
+        other => panic!("expected Single, got {other:?}"),
+    };
+    assert_ne!(toggle, "C-s");
+    assert_eq!(
+        parse_key(&toggle).unwrap(),
+        KeyCombination::from(ev(KeyCode::Char('s'), KeyModifiers::CONTROL)).normalized()
+    );
+    let reorder = match map.get("reorder_up").unwrap() {
+        KeyBindingValue::Single(s) => s.clone(),
+        other => panic!("expected Single, got {other:?}"),
+    };
+    assert_eq!(
+        parse_key(&reorder).unwrap(),
+        KeyCombination::from(ev(KeyCode::Up, KeyModifiers::ALT)).normalized()
+    );
+}
+
+#[test]
+fn migrate_syntax_is_idempotent() {
+    let mut map = cfg(&[
+        ("toggle_focus", KeyBindingValue::Single("C-s".into())),
+        ("toggle_help", KeyBindingValue::Multi(vec!["h".into(), "?".into()])),
+    ]);
+    assert!(migrate_keybinding_syntax(&mut map));
+    // Second pass over already-migrated values changes nothing.
+    assert!(!migrate_keybinding_syntax(&mut map));
+}
+
+#[test]
+fn migrate_syntax_preserves_plain_keys() {
+    // Plain single-key bindings are already valid crokey syntax.
+    let mut map = cfg(&[("quit", KeyBindingValue::Single("q".into()))]);
+    assert!(!migrate_keybinding_syntax(&mut map));
+    assert_eq!(map.get("quit"), Some(&KeyBindingValue::Single("q".into())));
+}
+
+#[test]
+fn legacy_config_resolves_after_full_migration() {
+    // A config written in the old DSL must still bind correctly once
+    // run through the full migration that `Config::load` applies.
+    let mut map = cfg(&[("toggle_focus", KeyBindingValue::Single("C-s".into()))]);
+    migrate_keybindings(&mut map);
+    let (kb, warnings) = Keybindings::from_config(&map, &[]);
+    assert!(warnings.is_empty(), "warnings: {warnings:?}");
+    assert_eq!(
+        kb.lookup(&ev(KeyCode::Char('s'), KeyModifiers::CONTROL)),
+        Some(Command::ToggleFocus)
+    );
 }
 
 #[test]
 fn bad_key_string_warns() {
     let map = cfg(&[(
         "toggle_help",
-        KeyBindingValue::Multi(vec!["h".into(), "Nope".into()]),
+        KeyBindingValue::Multi(vec!["h".into(), "nope".into()]),
     )]);
     let (kb, warnings) = Keybindings::from_config(&map, &[]);
     assert_eq!(warnings.len(), 1);
-    assert!(warnings[0].contains("Nope"));
-    // `h` still works despite the bad sibling.
+    assert!(warnings[0].contains("nope"));
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE)),
+        kb.lookup(&ev(KeyCode::Char('h'), KeyModifiers::NONE)),
         Some(Command::ToggleHelp)
     );
 }
 
 #[test]
 fn same_key_two_commands_first_wins() {
-    // Bind both kill_session and quit to 'X'. Lexicographic winner: kill_session.
     let map = cfg(&[
-        ("kill_session", KeyBindingValue::Single("X".into())),
-        ("quit", KeyBindingValue::Single("X".into())),
+        ("kill_session", KeyBindingValue::Single("shift-x".into())),
+        ("quit", KeyBindingValue::Single("shift-x".into())),
     ]);
     let (kb, warnings) = Keybindings::from_config(&map, &[]);
     assert_eq!(warnings.len(), 1);
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT)),
+        kb.lookup(&ev(KeyCode::Char('X'), KeyModifiers::SHIFT)),
         Some(Command::KillSession)
     );
 }
@@ -300,26 +324,20 @@ fn plugin_key_wins_over_binding() {
     let (kb, warnings) = Keybindings::from_config(&BTreeMap::new(), &plugins);
     assert_eq!(warnings.len(), 1);
     assert!(warnings[0].contains("plugin"));
-    // 'l' no longer maps to toggle_layout.
-    assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE)),
-        None
-    );
+    assert_eq!(kb.lookup(&ev(KeyCode::Char('l'), KeyModifiers::NONE)), None);
     assert!(kb.keys_for(Command::ToggleLayout).is_empty());
 }
 
 #[test]
 fn runtime_uppercase_event_matches_bound_uppercase() {
-    // User binds "X". Terminal may emit `Char('X'), NONE` OR `Char('X'), SHIFT`.
-    // Both should match.
-    let map = cfg(&[("kill_session", KeyBindingValue::Single("X".into()))]);
+    let map = cfg(&[("kill_session", KeyBindingValue::Single("shift-x".into()))]);
     let (kb, _) = Keybindings::from_config(&map, &[]);
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('X'), KeyModifiers::NONE)),
+        kb.lookup(&ev(KeyCode::Char('X'), KeyModifiers::NONE)),
         Some(Command::KillSession)
     );
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT)),
+        kb.lookup(&ev(KeyCode::Char('X'), KeyModifiers::SHIFT)),
         Some(Command::KillSession)
     );
 }
@@ -328,7 +346,7 @@ fn runtime_uppercase_event_matches_bound_uppercase() {
 fn trigger_upgrade_default_key_is_u() {
     let kb = Keybindings::default();
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE)),
+        kb.lookup(&ev(KeyCode::Char('u'), KeyModifiers::NONE)),
         Some(Command::TriggerUpgrade)
     );
 }
@@ -346,15 +364,13 @@ fn trigger_upgrade_appears_in_all() {
 fn reload_config_default_key_is_r() {
     let kb = Keybindings::default();
     assert_eq!(
-        kb.lookup(&KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)),
+        kb.lookup(&ev(KeyCode::Char('r'), KeyModifiers::NONE)),
         Some(Command::ReloadConfig)
     );
 }
 
 #[test]
 fn reload_config_is_not_global() {
-    // Reload must only fire when the sidebar is focused; `is_global`
-    // would bypass that gate in `key_to_action`.
     assert!(!Command::ReloadConfig.is_global());
 }
 
@@ -379,28 +395,31 @@ fn ensure_complete_fills_missing_commands() {
     let changed = ensure_complete(&mut map);
     assert!(changed);
 
-    // User-set values preserved.
     assert_eq!(
         map.get("kill_session"),
         Some(&KeyBindingValue::Single("X".into()))
     );
     assert_eq!(map.get("toggle_borders"), Some(&KeyBindingValue::Unbind));
 
-    // Every command present.
     for &cmd in Command::ALL {
         assert!(map.contains_key(cmd.name()), "missing {}", cmd.name());
-    }
-
-    // Multi-key default round-trips.
-    match map.get("focus_next").unwrap() {
-        KeyBindingValue::Multi(v) => assert_eq!(v, &vec!["j".to_string(), "Down".to_string()]),
-        other => panic!("expected Multi, got {:?}", other),
     }
 
     // Single-key default round-trips.
     match map.get("quit").unwrap() {
         KeyBindingValue::Single(s) => assert_eq!(s, "q"),
         other => panic!("expected Single, got {:?}", other),
+    }
+
+    // Multi-key default is present and parseable.
+    match map.get("focus_next").unwrap() {
+        KeyBindingValue::Multi(v) => {
+            assert_eq!(v.len(), 2);
+            for s in v {
+                assert!(parse_key(s).is_ok(), "default `{s}` should parse");
+            }
+        }
+        other => panic!("expected Multi, got {:?}", other),
     }
 }
 
@@ -417,6 +436,6 @@ fn keys_for_returns_bindings_in_insertion_order() {
     let kb = Keybindings::default();
     let focus_next = kb.keys_for(Command::FocusNext);
     assert_eq!(focus_next.len(), 2);
-    assert_eq!(focus_next[0].code, KeyCode::Char('j'));
-    assert_eq!(focus_next[1].code, KeyCode::Down);
+    assert_eq!(focus_next[0], key!(j).normalized());
+    assert_eq!(focus_next[1], key!(down).normalized());
 }
