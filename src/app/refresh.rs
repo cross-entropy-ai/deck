@@ -243,6 +243,19 @@ impl App {
         }
 
         self.state.current_session = current;
+
+        // Re-attach the local PTY if it died (last session killed, or the
+        // user detached) and the refresh now shows a local session again.
+        // When there are no local sessions we deliberately stay dead and
+        // render an empty state — deck no longer quits on an empty local
+        // server. Gated on this snapshot showing a session so re-attach
+        // doesn't fire (and create one via `ensure_attach_target`) in the
+        // empty state. A few-ms race remains — if the last session is killed
+        // between this snapshot and `respawn_pty`'s own re-check, it recreates
+        // one rather than staying empty; harmless and self-corrects next tick.
+        if !self.local_terminal.alive && !self.state.sessions.is_empty() {
+            let _ = self.respawn_pty();
+        }
     }
 }
 

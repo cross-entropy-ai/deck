@@ -544,11 +544,6 @@ impl App {
                     self.needs_full_redraw = true;
                 }
             }
-            // `pty_alive` mirrors the local terminal's liveness; the
-            // local PTY exiting (e.g. its tmux client got detached) is
-            // the only condition that should rebuild the main view, so
-            // remote panes don't factor in.
-            let pty_alive = self.local_terminal.alive;
             for inst in self.plugin_instances.iter_mut().flatten() {
                 for event in inst.pty.drain() {
                     match event {
@@ -690,19 +685,12 @@ impl App {
 
             self.tick_update_check();
 
-            if !pty_alive {
-                if tmux::list_sessions().is_empty() {
-                    break;
-                }
-                match self.respawn_pty() {
-                    Ok(()) => {
-                        // respawn_pty rebuilt the local TerminalPane
-                        // with `alive: true`; no separate flag to reset.
-                        self.request_refresh();
-                    }
-                    Err(_) => break,
-                }
-            }
+            // Re-attaching a dead local PTY is driven by the refresh cycle
+            // (see `apply_local`): it re-attaches when a local session
+            // reappears and otherwise leaves the pane dead, rendered as an
+            // empty state. deck no longer quits when the local tmux server
+            // empties out — it may still have remote hosts, and the user can
+            // create a new session. (Quit is only the explicit `q`.)
         }
 
         Ok(())

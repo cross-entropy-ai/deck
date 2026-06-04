@@ -194,6 +194,10 @@ impl App {
                 }
             }
 
+            // The local attach PTY is dead and it's the active view (no
+            // remote selected): there are no local sessions to show, so we
+            // render an empty-state placeholder instead of a stale screen.
+            let local_active_dead = self.active_remote.is_none() && !self.local_terminal.alive;
             let screen = self.active_terminal().parser.screen();
             let plugin_screen = match main_view {
                 MainView::Plugin(idx) => self
@@ -218,6 +222,9 @@ impl App {
                     ),
                     _,
                 ) => None,
+                // Dead local pane (no sessions to attach to) renders the
+                // empty-state placeholder below instead of a stale screen.
+                (None, MainView::Terminal) if local_active_dead => None,
                 (None, MainView::Terminal) => Some(screen),
                 (None, MainView::Plugin(_)) => plugin_screen,
                 (None, MainView::Upgrade) => upgrade_screen,
@@ -268,6 +275,27 @@ impl App {
                 }
                 main_area
             };
+
+            // Empty-state placeholder for a dead local pane (no sessions to
+            // attach to). deck stays open instead of quitting; the user can
+            // create a session from the sidebar (or `q` to quit).
+            if warning_state.is_none() && main_view == MainView::Terminal && local_active_dead {
+                let lines = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "No local sessions",
+                        Style::default().fg(theme.text),
+                    )),
+                    Line::from(Span::styled(
+                        "Create one from the sidebar to attach here",
+                        Style::default().fg(theme.dim),
+                    )),
+                ];
+                let placeholder = Paragraph::new(lines)
+                    .alignment(Alignment::Center)
+                    .wrap(Wrap { trim: true });
+                frame.render_widget(placeholder, main_inner);
+            }
 
             // Built only when the Settings page is actually showing —
             // it allocates the update-check help string, which would
