@@ -1,4 +1,3 @@
-use crate::nesting_guard::WarningState;
 use crate::refresh::{RefreshRequest, RefreshUpdate, RemoteSnapshotRow, SnapshotRow};
 use crate::state::{RemoteSessionRow, SessionRow};
 
@@ -24,7 +23,6 @@ impl App {
     }
 
     pub(super) fn request_refresh(&mut self) {
-        self.nesting_guard.refresh();
         self.refresh_worker.request(self.build_refresh_request());
     }
 
@@ -181,14 +179,6 @@ impl App {
     ) {
         // Local section is the `None`-host key.
         self.state.agents.insert(None, agents);
-        if let Some(warning) = self
-            .nesting_guard
-            .warning_for_current_session(Some(current.as_str()))
-        {
-            self.warning_state = Some(warning);
-        } else if matches!(self.warning_state, Some(WarningState::Detected(_))) {
-            self.warning_state = None;
-        }
 
         // On first load, restore the manual order persisted on each
         // session's `@deck_order` rank (written by ReorderSession).

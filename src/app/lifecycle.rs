@@ -1,5 +1,4 @@
 use crate::action::Action;
-use crate::nesting_guard::NestingGuard;
 use crate::tmux;
 
 use super::App;
@@ -15,12 +14,9 @@ impl App {
         )
     }
 
-    pub(super) fn ensure_attach_target(
-        nesting_guard: &NestingGuard,
-        attach_override: Option<&str>,
-    ) -> Option<String> {
+    pub(super) fn ensure_attach_target(attach_override: Option<&str>) -> Option<String> {
         let sessions = tmux::list_sessions();
-        if let Some(name) = Self::pick_attach_target(nesting_guard, attach_override, &sessions) {
+        if let Some(name) = Self::pick_attach_target(attach_override, &sessions) {
             return Some(name);
         }
 
@@ -40,7 +36,6 @@ impl App {
     }
 
     pub(super) fn pick_attach_target(
-        nesting_guard: &NestingGuard,
         attach_override: Option<&str>,
         sessions: &[tmux::SessionInfo],
     ) -> Option<String> {
@@ -49,7 +44,13 @@ impl App {
                 return Some(name.to_string());
             }
         }
-        nesting_guard.preferred_attach_target(sessions)
+        // Pick the most recently active session that isn't hidden
+        // (names starting with '_' are internal/scratch sessions).
+        sessions
+            .iter()
+            .filter(|session| !session.name.starts_with('_'))
+            .max_by_key(|session| session.activity)
+            .map(|session| session.name.clone())
     }
 }
 

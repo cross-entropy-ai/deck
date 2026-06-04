@@ -155,7 +155,7 @@ impl App {
                     InstallMethod::DirectDownload { dest } => {
                         let Some(target) = target_triple() else {
                             self.warning_state =
-                                Some(crate::nesting_guard::WarningState::Proactive {
+                                Some(crate::state::WarningState::Proactive {
                                     text: "Unsupported platform",
                                     detail: "deck doesn't ship a prebuilt binary for this \
                                              platform. Rebuild from source via \
@@ -181,7 +181,7 @@ impl App {
                                 .to_string(),
                         };
                         self.warning_state =
-                            Some(crate::nesting_guard::WarningState::Proactive {
+                            Some(crate::state::WarningState::Proactive {
                                 text: "deck can't self-update from this location",
                                 detail,
                             });
@@ -248,9 +248,9 @@ impl App {
     /// -> the remote ssh backend for `h` (seeded with that connection's
     /// client-tty marker id, `0` when unknown). Selection by `Option<&str>`
     /// host is the same key the rest of deck uses; the App-level
-    /// orchestration (nesting guard, `active_remote`, the pending-switch
-    /// marker dance, kill pre-switch, rename order-patch) stays in App — only
-    /// the leaf tmux/ssh call runs, off the UI thread, via the executor.
+    /// orchestration (`active_remote`, the pending-switch marker dance, kill
+    /// pre-switch, rename order-patch) stays in App — only the leaf tmux/ssh
+    /// call runs, off the UI thread, via the executor.
     ///
     /// The backend is `Send` so it can be moved onto the executor's worker
     /// thread; it captures the current tty/marker at build time.
@@ -518,9 +518,8 @@ impl App {
 
     /// Switch to and focus the pane a clicked agent runs in. Local:
     /// re-point the client at the session and select the exact
-    /// window/pane (subject to the nesting guard — clicking deck's own
-    /// agent would nest). Remote: switch to that host's session (pane
-    /// focus on remote is a follow-up).
+    /// window/pane. Remote: switch to that host's session (pane focus on
+    /// remote is a follow-up).
     fn switch_to_agent_pane(&mut self, target: crate::state::AgentTarget) {
         // Stamp this click as the newest focus intent; any in-flight remote
         // focus from a prior click is now stale and won't commit.
@@ -530,10 +529,6 @@ impl App {
                 // Local focus is a synchronous tmux call — instant, no
                 // network — so we commit inline on success. A stale `%id`
                 // (pane gone) makes the command fail → no commit, no lie.
-                if let Some(warning) = self.nesting_guard.warning_for_switch(&target.session) {
-                    self.warning_state = Some(warning);
-                    return;
-                }
                 self.warning_state = None;
                 let tty = self.local_terminal.pty.slave_tty.clone();
                 match tmux::focus_local_pane(&tty, &target.session, &target.pane_id) {
@@ -673,19 +668,12 @@ impl App {
     }
 
     fn switch_to_session_if_safe(&mut self, session: &str) -> bool {
-        if let Some(warning) = self.nesting_guard.warning_for_switch(session) {
-            self.warning_state = Some(warning);
-            return false;
-        }
-
         self.warning_state = None;
         self.switch_client(session);
         true
     }
 
     fn execute_side_effects(&mut self, fx: &crate::state::SideEffect) {
-        self.nesting_guard.refresh();
-
         if let Some(ref name) = fx.switch_session {
             self.switch_to_session_if_safe(name);
         }
@@ -723,10 +711,9 @@ impl App {
             // App-level orchestration around the kill stays in App; only the
             // leaf kill call routes through the backend. The trait's
             // `switch_to` arg is the doomed-session pre-switch contract, but
-            // both backends ignore it today (local pre-switches via the
-            // nesting-guarded `switch_to_session_if_safe`, remote via the
-            // `active_remote` reset), so it stays `None` here — behaviour is
-            // unchanged.
+            // both backends ignore it today (local pre-switches via
+            // `switch_to_session_if_safe`, remote via the `active_remote`
+            // reset), so it stays `None` here — behaviour is unchanged.
             match &kill.host {
                 None => {
                     if let Some(ref alt_name) = kill.switch_to {

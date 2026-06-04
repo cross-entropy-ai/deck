@@ -216,10 +216,7 @@ impl App {
             };
             let background_screen = match (warning_state.as_ref(), main_view) {
                 (
-                    Some(
-                        crate::nesting_guard::WarningState::Proactive { .. }
-                        | crate::nesting_guard::WarningState::Detected(_),
-                    ),
+                    Some(crate::state::WarningState::Proactive { .. }),
                     _,
                 ) => None,
                 // Dead local pane (no sessions to attach to) renders the
@@ -345,22 +342,13 @@ impl App {
             if let Some(warning_state) = warning_state {
                 let (title, border_color, main_style, sub_style, warning_text, detail_text) =
                     match warning_state {
-                        crate::nesting_guard::WarningState::Proactive { text, detail } => (
+                        crate::state::WarningState::Proactive { text, detail } => (
                             " Heads up ",
                             theme.yellow,
                             Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
                             Style::default().fg(theme.dim),
                             text.to_string(),
                             detail,
-                        ),
-                        crate::nesting_guard::WarningState::Detected(text) => (
-                            " Warning ",
-                            theme.pink,
-                            Style::default().fg(theme.pink).add_modifier(Modifier::BOLD),
-                            Style::default().fg(theme.dim),
-                            text.to_string(),
-                            "This session now contains deck.\nSwitch away from it in the sidebar."
-                                .to_string(),
                         ),
                     };
 

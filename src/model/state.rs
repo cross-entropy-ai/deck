@@ -502,8 +502,8 @@ pub struct DividerHit {
 
 /// A detected agent's switch target, keyed by host the usual way
 /// (`None` = local). `pane_id` is the stable `%N` handle used to focus
-/// the exact pane; `session` is kept for the nesting-guard check (and as
-/// the `switch-client` target, which only renames — not renumbers).
+/// the exact pane; `session` is the `switch-client` target (which only
+/// renames — not renumbers).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentTarget {
     pub host: Option<String>,
@@ -859,18 +859,25 @@ pub struct PortForwardOverlay {
     pub status: Option<String>,
 }
 
+// --- Warning overlay state ---
+
+/// Modal warning banner shown over the main pane. Used by the
+/// self-update flow to surface "can't self-update from here" /
+/// "unsupported platform" messages. Lives on `App` (as
+/// `warning_state: Option<WarningState>`) rather than in `OverlayState`
+/// because the dispatch loop's "block actions while a warning is up"
+/// gate reads it from App directly.
+#[derive(Clone)]
+pub enum WarningState {
+    Proactive { text: &'static str, detail: String },
+}
+
 // --- Overlay state ---
 
 /// UI state for transient sidebar overlays — help screen, kill-confirm
 /// prompt, in-progress rename, right-click context menu, and the
 /// exclude-pattern editor popup. Grouped so the renderer and key
 /// dispatcher have a single place to ask "is any overlay active?".
-///
-/// `warning_state` (the nesting-detection banner) lives on `App` rather
-/// than here because it is produced by the `NestingGuard` that App
-/// owns, and the dispatch loop's "block actions while a warning is
-/// up" gate reads it from App directly. Lifting it into AppState would
-/// add an indirection without consolidating any logic.
 #[derive(Debug, Default)]
 pub struct OverlayState {
     pub show_help: bool,

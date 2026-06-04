@@ -19,10 +19,9 @@ use ratatui::DefaultTerminal;
 use crate::action::Action;
 use crate::config::{Config, KeyBindingValue};
 use crate::keybindings::Keybindings;
-use crate::nesting_guard::{NestingGuard, WarningState};
 use crate::pty::{Pty, PtyEvent};
 use crate::refresh::RefreshWorker;
-use crate::state::{AppState, FocusMode, MainView, SIDEBAR_MAX, SIDEBAR_MIN};
+use crate::state::{AppState, FocusMode, MainView, WarningState, SIDEBAR_MAX, SIDEBAR_MIN};
 use crate::theme::THEMES;
 use crate::tmux;
 use crate::update::UpdateCheckMode;
@@ -117,7 +116,6 @@ pub struct App {
     /// target with the current marker. Removed when its outcome is verified.
     remote_switch_verify: HashMap<String, (String, u64)>,
     spinner: rattles::Rattler<rattles::presets::braille::Dots>,
-    nesting_guard: NestingGuard,
     warning_state: Option<WarningState>,
     plugin_instances: Vec<Option<PluginInstance>>,
     refresh_worker: RefreshWorker,
@@ -220,14 +218,8 @@ impl App {
             (None, None)
         };
 
-        let nesting_guard = NestingGuard::new();
-
         let (pty_rows, pty_cols) = state.pty_size();
-        let pty = Self::spawn_tmux_pty(
-            (pty_rows, pty_cols),
-            &nesting_guard,
-            attach_override.as_deref(),
-        )?;
+        let pty = Self::spawn_tmux_pty((pty_rows, pty_cols), attach_override.as_deref())?;
         let parser = vt100::Parser::new(pty_rows, pty_cols, 0);
         let local_terminal = TerminalPane {
             pty,
@@ -290,7 +282,6 @@ impl App {
             pending_remote_switch: None,
             remote_switch_verify: HashMap::new(),
             spinner: rattles::presets::braille::dots(),
-            nesting_guard,
             warning_state: None,
             plugin_instances: (0..plugin_count).map(|_| None).collect(),
             refresh_worker: RefreshWorker::spawn(),

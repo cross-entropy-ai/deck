@@ -151,12 +151,6 @@ pub fn current_session() -> Option<String> {
     tmux(&["display-message", "-p", "#{session_name}"])
 }
 
-/// Get the session name for the pane running this process.
-pub fn host_session() -> Option<String> {
-    let pane = std::env::var("TMUX_PANE").ok()?;
-    tmux(&["display-message", "-p", "-t", &pane, "#{session_name}"])
-}
-
 /// Get the session name for a specific client TTY.
 pub fn current_session_for_tty(client_tty: &str) -> Option<String> {
     let raw = tmux(&["list-clients", "-F", "#{client_tty}\t#{session_name}"])?;

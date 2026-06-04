@@ -1,8 +1,6 @@
 use super::App;
 use crate::action::Action;
-use crate::nesting_guard::NestingGuard;
 use crate::tmux::SessionInfo;
-use std::collections::HashSet;
 
 #[test]
 fn warning_only_blocks_main_pane_actions() {
@@ -22,32 +20,32 @@ fn session(name: &str, activity: u64) -> SessionInfo {
     }
 }
 
-fn empty_guard() -> NestingGuard {
-    NestingGuard::from_parts(None, HashSet::new())
-}
-
 #[test]
 fn pick_attach_target_honors_override_when_session_exists() {
-    let guard = empty_guard();
     let sessions = vec![session("alpha", 5), session("beta", 100)];
-    let target = App::pick_attach_target(&guard, Some("alpha"), &sessions);
+    let target = App::pick_attach_target(Some("alpha"), &sessions);
     assert_eq!(target.as_deref(), Some("alpha"));
 }
 
 #[test]
 fn pick_attach_target_falls_back_when_override_missing() {
-    let guard = empty_guard();
     let sessions = vec![session("alpha", 5), session("beta", 100)];
     // override names a session that does not exist - fall back to the
-    // nesting-guard's preferred pick (most active session, here "beta").
-    let target = App::pick_attach_target(&guard, Some("gone"), &sessions);
+    // most active session (here "beta").
+    let target = App::pick_attach_target(Some("gone"), &sessions);
     assert_eq!(target.as_deref(), Some("beta"));
 }
 
 #[test]
-fn pick_attach_target_without_override_uses_guard() {
-    let guard = empty_guard();
+fn pick_attach_target_without_override_picks_most_active() {
     let sessions = vec![session("alpha", 5), session("beta", 100)];
-    let target = App::pick_attach_target(&guard, None, &sessions);
+    let target = App::pick_attach_target(None, &sessions);
+    assert_eq!(target.as_deref(), Some("beta"));
+}
+
+#[test]
+fn pick_attach_target_skips_hidden_sessions() {
+    let sessions = vec![session("_scratch", 200), session("beta", 100)];
+    let target = App::pick_attach_target(None, &sessions);
     assert_eq!(target.as_deref(), Some("beta"));
 }

@@ -20,10 +20,6 @@ use super::{Reachability, SessionControl, Transport};
 ///   `switch-client -t` when it's empty (see `app::dispatch::switch_client`
 ///   and `tmux::current_session_for_tty`). Empty string = unknown, matching
 ///   the existing `slave_tty.is_empty()` check.
-///
-/// The nesting guard (which session encloses deck's process) stays an
-/// App-level concern per the design doc, so it is intentionally NOT held
-/// here — local needs only its own client tty for the control plane.
 pub struct LocalControl {
     /// deck's own tmux client tty; empty when unknown.
     pub client_tty: String,
@@ -67,7 +63,7 @@ impl SessionControl for LocalControl {
         // Replicate `App::switch_client` (src/app/dispatch.rs): re-point
         // deck's own embedded tmux client. Target it by tty when known so we
         // don't switch some other attached client; bare `switch-client -t`
-        // otherwise. The nesting guard and `active_remote` reset stay in App.
+        // otherwise. The `active_remote` reset stays in App.
         if self.client_tty.is_empty() {
             tmux::switch_session(name);
         } else {
@@ -83,8 +79,8 @@ impl SessionControl for LocalControl {
 
     fn kill(&self, name: &str, _switch_to: Option<&str>) {
         // The pre-switch off the doomed session (`switch_to_session_if_safe`)
-        // stays in App, since it depends on the App-level nesting guard.
-        // This method just runs the kill, matching the local kill handler.
+        // stays in App. This method just runs the kill, matching the local
+        // kill handler.
         tmux::kill_session(name);
     }
 
