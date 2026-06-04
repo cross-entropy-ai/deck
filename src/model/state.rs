@@ -1243,11 +1243,15 @@ impl AppState {
         let Some((layout, viewport_y, scroll, visible_height)) = self.session_row_hit(row) else {
             return false;
         };
-        layout.visible_items(scroll, visible_height).any(|v| {
+        // Bind the result before the block ends so the `VisibleIter`
+        // (which borrows `layout`) drops before `layout` does — its Drop
+        // impl in ratatui-sectioned-list 0.1.1 otherwise outlives the borrow.
+        let hit = layout.visible_items(scroll, visible_height).any(|v| {
             v.item.kind == ItemKind::Header
                 && viewport_y >= v.viewport_y
                 && viewport_y < v.viewport_y + v.visible_height
-        })
+        });
+        hit
     }
 
     /// Map a screen column to a tab index in vertical/tabs mode.
