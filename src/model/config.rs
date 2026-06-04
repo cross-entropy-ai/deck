@@ -188,10 +188,9 @@ pub fn config_mtime() -> Option<std::time::SystemTime> {
     fs::metadata(config_path()).ok().and_then(|m| m.modified().ok())
 }
 
-/// Pre-YAML config locations, newest first: deck's own former
-/// `config.json`, then the original `tmux-sidebar/config.json`. Read once
-/// to migrate a user forward to `config.yaml` (JSON is valid YAML, but we
-/// re-serialize so the on-disk file matches the active format).
+/// Pre-YAML config locations, newest first: deck's former `config.json`,
+/// then the original `tmux-sidebar/config.json`. Read once to migrate a
+/// user forward to `config.yaml`.
 fn legacy_json_paths() -> [PathBuf; 2] {
     [
         config_dir_for("deck").join("config.json"),

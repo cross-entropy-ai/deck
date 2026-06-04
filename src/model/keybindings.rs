@@ -6,12 +6,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::config::{KeyBindingValue, PluginConfig};
 
-/// A single bound key chord. We use crokey's `KeyCombination` directly:
-/// it is `Copy + Eq + Hash`, converts to/from crossterm `KeyEvent`, and
-/// `normalized()` does exactly the canonicalization deck used to hand-roll
-/// (uppercase a letter when SHIFT is held, and add SHIFT when the letter
-/// is uppercase) so `J`, `shift-j`, and the runtime `Char('J')` events
-/// with or without the SHIFT flag all compare equal.
+/// A single bound key chord, backed by crokey's `KeyCombination`. Its
+/// `normalized()` canonicalizes shift/case so `shift-j` and the runtime
+/// `Char('J')` events (with or without the SHIFT flag) all compare equal.
 pub type KeyChord = KeyCombination;
 
 /// Convert a runtime crossterm event into the canonical chord we key on.
@@ -19,13 +16,10 @@ fn chord_from_event(key: &KeyEvent) -> KeyChord {
     KeyCombination::from(*key).normalized()
 }
 
-/// Shared display/serialization formatter. Lowercase modifier names
-/// (`ctrl-`, `alt-`, `shift-`) keep the output both human-readable in the
-/// help footer and round-trippable through `crokey::parse`. We do *not*
-/// use implicit shift: crokey parses a bare uppercase letter as the plain
-/// lowercase key, so a shifted letter must serialize explicitly as
-/// `shift-x` to round-trip (legacy `X` / `S-x` configs are rewritten to
-/// this form by `migrate_keybinding_syntax`).
+/// Shared display/serialization formatter, used for both the help footer
+/// and config values, so its output must round-trip through `crokey::parse`.
+/// No implicit shift: crokey reads a bare uppercase letter as the plain
+/// key, so a shifted letter must serialize explicitly as `shift-x`.
 fn formatter() -> &'static KeyCombinationFormat {
     static FMT: OnceLock<KeyCombinationFormat> = OnceLock::new();
     FMT.get_or_init(|| KeyCombinationFormat::default().with_lowercase_modifiers())

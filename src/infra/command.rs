@@ -95,19 +95,13 @@ pub trait CommandRunner: Send + Sync {
     fn run(&self, program: &str, args: &[&str], timeout: Duration) -> Result<Output, CommandError>;
 }
 
-/// How often the timeout poll loop checks whether the child has exited.
-/// Small enough that the success path returns near-instantly for the
-/// sub-second external commands deck runs, large enough to not busy-spin.
+/// Poll interval for the timeout loop. Small enough that the success path
+/// returns near-instantly for deck's sub-second commands.
 const POLL_INTERVAL: Duration = Duration::from_millis(2);
 
-/// Production runner backed by [`duct`]. `duct` spawns the child in its
-/// own process group and `kill()` tears the whole group down, so a
-/// shell-wrapped command that forks grandchildren is reaped cleanly on
-/// timeout — something the old single-pid `SIGKILL` couldn't guarantee.
-///
-/// The timeout is enforced by polling `try_wait` rather than blocking a
-/// worker thread: external commands here run at most a few times per
-/// second, so a 2ms poll is negligible against the spawn cost.
+/// Production runner backed by [`duct`]. The timeout is enforced by
+/// polling `try_wait` rather than blocking a worker thread; at deck's call
+/// rate the 2ms poll is negligible against the spawn cost.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RealRunner;
 

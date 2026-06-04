@@ -107,15 +107,12 @@ fn is_dir_writable(dir: &Path) -> bool {
     }
 }
 
-/// Perform a direct (non-brew) self-upgrade to `version` using the
-/// `self_update` crate: it fetches the matching GitHub release asset for
-/// the running `target`, extracts the `deck` binary from the `.tar.gz`,
-/// and atomically replaces the current executable in place (via
-/// `self-replace`, which is safe to run against a live binary).
+/// Perform a direct (non-brew) self-upgrade to `version` via the
+/// `self_update` crate: fetch the GitHub release asset for `target`,
+/// extract the `deck` binary, and replace the running executable in place.
 ///
-/// This runs *in the upgrade PTY subprocess* (`deck __upgrade-self`), so
-/// `show_download_progress` renders a live progress bar in the pane.
-/// Blocks until done; returns a human-readable error on failure.
+/// Runs in the upgrade PTY subprocess (`deck __upgrade-self`), so
+/// `show_download_progress` renders live in the pane. Blocks until done.
 pub fn run_self_upgrade(version: &str) -> Result<(), String> {
     let target = target_triple().ok_or_else(|| {
         "no prebuilt binary ships for this platform; rebuild from source".to_string()
