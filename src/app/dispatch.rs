@@ -166,7 +166,7 @@ impl App {
                                         .to_string(),
                                 });
                             return false;
-                        };
+                        }
                         let exe = std::env::current_exe()
                             .map(|p| p.to_string_lossy().into_owned())
                             .unwrap_or_else(|_| "deck".to_string());
