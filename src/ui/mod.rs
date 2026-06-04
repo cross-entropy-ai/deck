@@ -13,7 +13,7 @@ pub mod theme;
 pub mod widgets;
 
 use crate::keybindings::Keybindings;
-use crate::state::{LayoutMode, RemoteSessionRow, SessionRow, SessionStatus, ViewMode};
+use crate::state::{LayoutMode, RemoteSessionRow, SessionRow, ViewMode};
 
 pub use menu::draw_context_menu;
 pub use add_remote::draw_add_remote;
@@ -53,7 +53,6 @@ pub enum SessionOrigin<'a> {
 /// and the renderer picks it up uniformly.
 #[derive(Debug, Clone, Copy)]
 pub struct SessionActivity {
-    pub status: SessionStatus,
     pub idle_seconds: u64,
 }
 
@@ -95,7 +94,6 @@ impl SidebarSession for SessionRow {
     }
     fn activity(&self) -> Option<SessionActivity> {
         Some(SessionActivity {
-            status: self.status,
             idle_seconds: self.idle_seconds,
         })
     }

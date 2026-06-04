@@ -199,7 +199,6 @@ impl App {
                 name: r.name,
                 dir: r.dir,
                 idle_seconds: r.idle_seconds,
-                status: r.status,
             })
             .collect();
 

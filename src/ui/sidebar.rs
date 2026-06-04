@@ -22,10 +22,9 @@ use ratatui_textarea::TextArea;
 use super::overlays::{draw_confirm_kill, draw_help, draw_rename_input};
 use super::text::{
     format_idle_badge, idle_color, pack_hint_lines, pad_line, primary_key_string, shorten_dir,
-    status_color, status_icon, truncate,
+    truncate,
 };
 use super::{PluginStatus, PluginView, SessionActivity, SessionOrigin, SidebarSession};
-use crate::state::SessionStatus;
 
 /// Inputs needed to draw the sidebar. Grouping these into one props
 /// object keeps the public API readable as the sidebar gains display
@@ -49,7 +48,6 @@ pub struct SidebarProps<'a> {
     pub show_borders: bool,
     pub show_agents: bool,
     pub tabs_mode: bool,
-    pub spinner_frame: &'a str,
     pub view_mode: ViewMode,
     pub plugins: &'a [PluginView<'a>],
     pub blink_on: bool,
@@ -62,7 +60,6 @@ pub struct SidebarProps<'a> {
 #[derive(Clone, Copy)]
 struct SidebarRenderCtx<'a> {
     theme: &'a Theme,
-    spinner_frame: &'a str,
     blink_on: bool,
     keybindings: &'a Keybindings,
 }
@@ -134,7 +131,6 @@ pub fn draw_sidebar(
 ) {
     let ctx = SidebarRenderCtx {
         theme: props.theme,
-        spinner_frame: props.spinner_frame,
         blink_on: props.blink_on,
         keybindings: props.keybindings,
     };
@@ -793,13 +789,11 @@ fn render_session_card_expanded(
     // Keeping the slot reserved avoids name-column reflow between rows
     // that do/don't have activity data.
     let activity_icon = match activity {
-        Some(a) => status_icon(
-            a.status,
-            theme,
-            ctx.spinner_frame,
-            ctx.blink_on,
-            is_focused,
-            bg,
+        Some(a) => Span::styled(
+            "\u{f04b2}",
+            Style::default()
+                .fg(idle_color(theme, a.idle_seconds, is_focused))
+                .bg(bg),
         ),
         None => Span::styled(" ", Style::default().bg(bg)),
     };
@@ -866,32 +860,20 @@ fn render_session_card_expanded(
 }
 
 /// Compact-mode activity glyph + color. `None` activity returns
-/// `(" ", bg)` so the slot stays the same width across rows.
+/// `(" ", bg)` so the slot stays the same width across rows. The
+/// indicator derives only from `idle_seconds`: the idle glyph, colored
+/// by how long the session has been idle.
 fn compact_activity(
     activity: Option<SessionActivity>,
     theme: &Theme,
-    spinner_frame: &str,
-    blink_on: bool,
     is_focused: bool,
     bg: Color,
 ) -> (String, Color) {
     let Some(a) = activity else {
         return (" ".to_string(), bg);
     };
-    let text = match a.status {
-        SessionStatus::Working => spinner_frame.to_string(),
-        SessionStatus::Idle => {
-            if a.idle_seconds < 3 {
-                spinner_frame.to_string()
-            } else {
-                "󰒲".to_string()
-            }
-        }
-    };
-    let color = match a.status {
-        SessionStatus::Idle => idle_color(theme, a.idle_seconds, is_focused),
-        _ => status_color(a.status, theme, blink_on, is_focused),
-    };
+    let text = "󰒲".to_string();
+    let color = idle_color(theme, a.idle_seconds, is_focused);
     (text, color)
 }
 
@@ -926,14 +908,7 @@ fn render_session_card_compact(
     let activity = session.activity();
     let head = row_head(theme, session, is_focused, bg);
 
-    let (activity_text, activity_color) = compact_activity(
-        activity,
-        theme,
-        ctx.spinner_frame,
-        ctx.blink_on,
-        is_focused,
-        bg,
-    );
+    let (activity_text, activity_color) = compact_activity(activity, theme, is_focused, bg);
 
     let label = compact_label(session);
     lines.push(pad_line(

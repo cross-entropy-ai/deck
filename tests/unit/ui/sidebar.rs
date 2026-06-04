@@ -126,7 +126,6 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
                     show_borders: true,
                     show_agents: true,
                     tabs_mode: true,
-                    spinner_frame: "",
                     view_mode: ViewMode::Expanded,
                     plugins: &[],
                     blink_on: false,

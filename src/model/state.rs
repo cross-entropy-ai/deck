@@ -93,17 +93,6 @@ pub enum ViewMode {
     Compact,
 }
 
-/// Two-state session activity model.
-///
-/// - `Idle`: nothing demanding attention — shell at prompt or a passive program.
-/// - `Working`: something is actively running in the pane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SessionStatus {
-    #[default]
-    Idle,
-    Working,
-}
-
 pub const SETTINGS_ITEM_COUNT: usize = 7;
 
 /// Blank rows appended under each section's agent-count footer, as a gap
@@ -255,8 +244,6 @@ pub struct SessionRow {
     pub dir: String,
     pub is_current: bool,
     pub idle_seconds: u64,
-    /// Raw activity status, pre-ack.
-    pub status: SessionStatus,
 }
 
 /// One tmux session living on a remote host. Modeled separately from

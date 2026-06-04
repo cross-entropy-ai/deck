@@ -25,13 +25,6 @@ pub struct SessionInfo {
     pub order: Option<u32>,
 }
 
-/// A single pane within a tmux session. Populated by `list_panes`.
-#[derive(Debug, Clone)]
-pub struct TmuxPane {
-    pub session: String,
-    pub current_command: String,
-}
-
 /// Process-wide runner. Module-private so callers can't override it;
 /// tests reach the parsers + `_with_runner` helpers instead.
 fn default_runner() -> &'static dyn CommandRunner {
@@ -107,34 +100,6 @@ pub fn agent_panes() -> Vec<crate::agent::PaneInfo> {
     tmux(&["list-panes", "-a", "-F", crate::agent::PANE_FORMAT])
         .map(|raw| crate::agent::parse_panes(&raw))
         .unwrap_or_default()
-}
-
-/// List every pane across every session, with the info deck needs to
-/// derive session status (current_command for the proc heuristic).
-pub fn list_panes() -> Vec<TmuxPane> {
-    list_panes_with(default_runner())
-}
-
-fn list_panes_with(runner: &dyn CommandRunner) -> Vec<TmuxPane> {
-    let format = "#{session_name}\t#{pane_current_command}";
-    let Ok(raw) = tmux_with(runner, &["list-panes", "-a", "-F", format]) else {
-        return Vec::new();
-    };
-    parse_panes(&raw)
-}
-
-fn parse_panes(raw: &str) -> Vec<TmuxPane> {
-    raw.lines()
-        .filter_map(|line| {
-            let mut parts = line.splitn(2, '\t');
-            let session = parts.next()?.to_string();
-            let current_command = parts.next()?.to_string();
-            Some(TmuxPane {
-                session,
-                current_command,
-            })
-        })
-        .collect()
 }
 
 /// Get the max window_activity timestamp per session.

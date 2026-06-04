@@ -115,7 +115,6 @@ pub struct App {
     /// the switch ran against a dead marker and no-op'd, so we re-fire to the
     /// target with the current marker. Removed when its outcome is verified.
     remote_switch_verify: HashMap<String, (String, u64)>,
-    spinner: rattles::Rattler<rattles::presets::braille::Dots>,
     warning_state: Option<WarningState>,
     plugin_instances: Vec<Option<PluginInstance>>,
     refresh_worker: RefreshWorker,
@@ -281,7 +280,6 @@ impl App {
             active_remote: None,
             pending_remote_switch: None,
             remote_switch_verify: HashMap::new(),
-            spinner: rattles::presets::braille::dots(),
             warning_state: None,
             plugin_instances: (0..plugin_count).map(|_| None).collect(),
             refresh_worker: RefreshWorker::spawn(),

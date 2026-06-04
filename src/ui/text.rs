@@ -1,9 +1,8 @@
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::keybindings::{format_key, Command, Keybindings};
-use crate::state::SessionStatus;
 use crate::theme::Theme;
 
 pub(super) fn pad_line<'a>(
@@ -124,50 +123,6 @@ pub(super) fn format_idle_badge(seconds: u64) -> Option<String> {
         return Some(format!("{}h", seconds / 3600));
     }
     Some(format!("{}d", seconds / 86_400))
-}
-
-/// Icon + color for the two-state session indicator. The currently
-/// viewed session is no longer special-cased here — the sidebar's row
-/// highlight marks it — so every row just reflects its own state:
-///
-/// - `Working`: spinner frame in green.
-/// - `Idle`: moon glyph, muted — nothing happening here.
-pub(super) fn status_icon<'a>(
-    status: SessionStatus,
-    theme: &Theme,
-    spinner_frame: &str,
-    _blink_on: bool,
-    emphasized: bool,
-    bg: Color,
-) -> Span<'a> {
-    match status {
-        SessionStatus::Working => Span::styled(
-            spinner_frame.to_string(),
-            Style::default().fg(theme.green).bg(bg),
-        ),
-        SessionStatus::Idle => {
-            let fg = if emphasized { theme.dim } else { theme.muted };
-            Span::styled("\u{f186}", Style::default().fg(fg).bg(bg))
-        }
-    }
-}
-
-pub(super) fn status_color(
-    status: SessionStatus,
-    theme: &Theme,
-    _blink_on: bool,
-    emphasized: bool,
-) -> Color {
-    match status {
-        SessionStatus::Working => theme.green,
-        SessionStatus::Idle => {
-            if emphasized {
-                theme.dim
-            } else {
-                theme.muted
-            }
-        }
-    }
 }
 
 pub(super) fn idle_color(

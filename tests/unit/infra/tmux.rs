@@ -62,33 +62,6 @@ impl CommandRunner for FakeRunner {
     }
 }
 
-// --- parse_panes ---
-
-#[test]
-fn parse_panes_handles_normal_output() {
-    let raw = "alpha\tvim\nbeta\tzsh";
-    let got = parse_panes(raw);
-    assert_eq!(got.len(), 2);
-    assert_eq!(got[0].session, "alpha");
-    assert_eq!(got[0].current_command, "vim");
-    assert_eq!(got[1].session, "beta");
-    assert_eq!(got[1].current_command, "zsh");
-}
-
-#[test]
-fn parse_panes_skips_lines_missing_command() {
-    let raw = "alpha\nbeta\tzsh";
-    let got = parse_panes(raw);
-    assert_eq!(got.len(), 1);
-    assert_eq!(got[0].session, "beta");
-}
-
-#[test]
-fn parse_panes_empty_input() {
-    let got = parse_panes("");
-    assert!(got.is_empty());
-}
-
 // --- parse_client_session_for_tty ---
 
 #[test]
@@ -172,38 +145,6 @@ fn list_sessions_with_runner_returns_empty_on_timeout() {
         FakeResponse::Timeout,
     );
     assert!(list_sessions_with(&runner).is_empty());
-}
-
-#[test]
-fn list_panes_with_runner_returns_parsed_rows() {
-    let runner = FakeRunner::new();
-    runner.set(
-        &[
-            "list-panes",
-            "-a",
-            "-F",
-            "#{session_name}\t#{pane_current_command}",
-        ],
-        FakeResponse::Ok("a\tvim".to_string()),
-    );
-    let got = list_panes_with(&runner);
-    assert_eq!(got.len(), 1);
-    assert_eq!(got[0].current_command, "vim");
-}
-
-#[test]
-fn list_panes_with_runner_returns_empty_on_timeout() {
-    let runner = FakeRunner::new();
-    runner.set(
-        &[
-            "list-panes",
-            "-a",
-            "-F",
-            "#{session_name}\t#{pane_current_command}",
-        ],
-        FakeResponse::Timeout,
-    );
-    assert!(list_panes_with(&runner).is_empty());
 }
 
 #[test]

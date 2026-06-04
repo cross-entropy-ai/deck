@@ -1,6 +1,6 @@
 use super::{apply_action, Action};
 use crate::state::{
-    AppState, FocusMode, LayoutMode, MainView, RenameState, SessionRow, SessionStatus, ViewMode,
+    AppState, FocusMode, LayoutMode, MainView, RenameState, SessionRow, ViewMode,
 };
 
 fn make_session(name: &str, idle: u64) -> SessionRow {
@@ -9,7 +9,6 @@ fn make_session(name: &str, idle: u64) -> SessionRow {
         dir: format!("/tmp/{}", name),
         is_current: false,
         idle_seconds: idle,
-        status: SessionStatus::default(),
     }
 }
 
@@ -945,13 +944,12 @@ fn remote_session_menu_has_no_switch_or_remove() {
 
 #[test]
 fn local_menu_has_no_switch_or_remove() {
-    use crate::state::{session_menu_items, SessionRow, SessionStatus, SessionTargetRef};
+    use crate::state::{session_menu_items, SessionRow, SessionTargetRef};
     let row = SessionRow {
         name: "s".into(),
         dir: "/".into(),
         is_current: false,
         idle_seconds: 0,
-        status: SessionStatus::default(),
     };
     let items = session_menu_items(&SessionTargetRef::Local(&row));
     assert!(!items.contains(&"Switch"));
@@ -991,7 +989,7 @@ fn remote(host: &str, name: &str) -> crate::state::RemoteSessionRow {
 
 #[test]
 fn remote_session_with_siblings_disables_nothing() {
-    use crate::state::{session_menu_disabled, SessionRow, SessionStatus, SessionTargetRef};
+    use crate::state::{session_menu_disabled, SessionRow, SessionTargetRef};
     // Host "h" has two live sessions, so killing either is fine.
     let sessions = vec![remote("h", "work"), remote("h", "other")];
     assert!(session_menu_disabled(&SessionTargetRef::Remote(&sessions[0]), &sessions).is_empty());
@@ -1001,7 +999,6 @@ fn remote_session_with_siblings_disables_nothing() {
         dir: "/".into(),
         is_current: false,
         idle_seconds: 0,
-        status: SessionStatus::default(),
     };
     assert!(session_menu_disabled(&SessionTargetRef::Local(&local), &sessions).is_empty());
 }

@@ -4,7 +4,6 @@ fn make_session(name: &str) -> SessionRow {
     SessionRow {
         name: name.to_string(),
         dir: format!("/tmp/{name}"),
-        status: SessionStatus::default(),
         is_current: false,
         idle_seconds: 0,
     }

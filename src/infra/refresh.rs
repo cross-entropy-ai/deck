@@ -22,10 +22,8 @@ use std::sync::Arc;
 use std::thread;
 
 use crate::config::{self, ExcludePattern};
-use crate::proc_status;
 use crate::remote_tmux;
-use crate::state::SessionStatus;
-use crate::tmux::{self, TmuxPane};
+use crate::tmux;
 
 pub struct RefreshRequest {
     pub slave_tty: String,
@@ -43,7 +41,6 @@ pub struct SnapshotRow {
     pub name: String,
     pub dir: String,
     pub idle_seconds: u64,
-    pub status: SessionStatus,
     /// Persisted display rank from the session's `@deck_order` option,
     /// or `None` if it was never reordered. Used to restore the manual
     /// arrangement on first load after a deck restart.
@@ -197,31 +194,15 @@ fn collect_local(
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    // Gather panes once per refresh so the proc heuristic can derive
-    // SessionStatus without repeatedly shelling out per session.
-    let panes_by_session: HashMap<String, Vec<TmuxPane>> = {
-        let mut map: HashMap<String, Vec<TmuxPane>> = HashMap::new();
-        for pane in tmux::list_panes() {
-            map.entry(pane.session.clone()).or_default().push(pane);
-        }
-        map
-    };
     let rows = sessions
         .into_iter()
         .filter(|s| !config::session_excluded(&s.name, &compiled))
         .map(|s| {
             let idle_seconds = now.saturating_sub(s.activity);
-            let status = compute_status(
-                panes_by_session
-                    .get(&s.name)
-                    .map(|v| v.as_slice())
-                    .unwrap_or(&[]),
-            );
             SnapshotRow {
                 name: s.name,
                 dir: s.dir,
                 idle_seconds,
-                status,
                 order: s.order,
             }
         })
@@ -337,11 +318,6 @@ fn collect_remotes(
         }
     }
     (out, agents_by_host)
-}
-
-/// Returns the proc-derived status for one session.
-fn compute_status(panes: &[TmuxPane]) -> SessionStatus {
-    proc_status::status_for_session(panes)
 }
 
 #[cfg(test)]

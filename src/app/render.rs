@@ -48,7 +48,6 @@ impl App {
 
         let confirm_name = s.confirm_kill_name();
 
-        let spinner_frame = self.spinner.current_frame();
         let update_available = s.update_available.clone();
         let reload_status = s.reload_status.clone();
         let dragging_sep = s.dragging_separator;
@@ -165,7 +164,6 @@ impl App {
                         show_borders,
                         show_agents,
                         tabs_mode: layout_mode == LayoutMode::Vertical,
-                        spinner_frame,
                         view_mode,
                         plugins: &plugin_views,
                         blink_on,

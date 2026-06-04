@@ -4,7 +4,6 @@ pub mod instance_guard;
 pub mod listeners;
 pub mod port_forward;
 pub mod preflight_guard;
-pub mod proc_status;
 pub mod pty;
 pub mod refresh;
 pub mod remote_tmux;
