@@ -24,7 +24,7 @@ use super::text::{
     format_idle_badge, idle_color, pack_hint_lines, pad_line, primary_key_string, shorten_dir,
     truncate,
 };
-use super::{PluginStatus, PluginView, SessionActivity, SessionOrigin, SidebarSession};
+use super::{PluginStatus, PluginView, SessionOrigin, SidebarSession};
 
 /// Inputs needed to draw the sidebar. Grouping these into one props
 /// object keeps the public API readable as the sidebar gains display
@@ -784,27 +784,12 @@ fn render_session_card_expanded(
     let activity = session.activity();
     let head = row_head(theme, session, is_focused, bg);
 
-    // Status icon slot: real glyph when activity is known, blank space
-    // of the same width when the backend doesn't collect activity yet.
-    // Keeping the slot reserved avoids name-column reflow between rows
-    // that do/don't have activity data.
-    let activity_icon = match activity {
-        Some(a) => Span::styled(
-            "\u{f04b2}",
-            Style::default()
-                .fg(idle_color(theme, a.idle_seconds, is_focused))
-                .bg(bg),
-        ),
-        None => Span::styled(" ", Style::default().bg(bg)),
-    };
-
     let text_width = width.saturating_sub(6);
     let name_display = truncate(&head.label, text_width);
     let before = lines.len();
     lines.push(pad_line(
         vec![
             Span::styled(head.accent_span.0, head.accent_span.1),
-            activity_icon,
             Span::styled(idx_hint(session, props.session_idx), head.index_style),
             Span::styled("  ", Style::default().bg(bg)),
             Span::styled(name_display, head.name_style),
@@ -859,24 +844,6 @@ fn render_session_card_expanded(
     }
 }
 
-/// Compact-mode activity glyph + color. `None` activity returns
-/// `(" ", bg)` so the slot stays the same width across rows. The
-/// indicator derives only from `idle_seconds`: the idle glyph, colored
-/// by how long the session has been idle.
-fn compact_activity(
-    activity: Option<SessionActivity>,
-    theme: &Theme,
-    is_focused: bool,
-    bg: Color,
-) -> (String, Color) {
-    let Some(a) = activity else {
-        return (" ".to_string(), bg);
-    };
-    let text = "󰒲".to_string();
-    let color = idle_color(theme, a.idle_seconds, is_focused);
-    (text, color)
-}
-
 /// Compact-mode label: prefix the session name with its origin so the
 /// reader can tell local/remote apart on a single line. Falls back to
 /// the loading placeholder for not-yet-refreshed remote rows.
@@ -905,16 +872,12 @@ fn render_session_card_compact(
         ..
     } = props.chrome;
     let theme = ctx.theme;
-    let activity = session.activity();
     let head = row_head(theme, session, is_focused, bg);
-
-    let (activity_text, activity_color) = compact_activity(activity, theme, is_focused, bg);
 
     let label = compact_label(session);
     lines.push(pad_line(
         vec![
             Span::styled(head.accent_span.0, head.accent_span.1),
-            Span::styled(activity_text, Style::default().fg(activity_color).bg(bg)),
             Span::styled(idx_hint(session, props.session_idx), head.index_style),
             Span::styled("  ", Style::default().bg(bg)),
             Span::styled(truncate(&label, width.saturating_sub(6)), head.name_style),
