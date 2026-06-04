@@ -184,6 +184,8 @@ impl App {
         let view_mode = cfg.view_mode;
         let sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
         let sidebar_height = cfg.sidebar_height;
+        let collapsed_sections: std::collections::HashSet<Option<String>> =
+            cfg.collapsed_sections.iter().cloned().collect();
 
         let exclude_patterns = cfg.exclude_patterns.clone();
         let plugins = cfg.plugins.clone();
@@ -208,6 +210,7 @@ impl App {
             plugins,
             keybindings,
             cfg.update_check,
+            collapsed_sections,
         );
 
         let (update_checker, last_update_request) = if cfg.update_check == UpdateCheckMode::Enabled

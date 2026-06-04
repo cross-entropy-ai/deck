@@ -144,6 +144,11 @@ pub struct Config {
     pub keybindings: BTreeMap<String, KeyBindingValue>,
     pub update_check: UpdateCheckMode,
     pub remotes: Vec<RemoteConfig>,
+    /// Sidebar groups the user has collapsed (Expanded view only). `null`
+    /// is the `@local` group; a string is a remote `@host` group. Round-
+    /// trips as a JSON array like `[null, "host1"]`. Empty by default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub collapsed_sections: Vec<Option<String>>,
 }
 
 impl Default for Config {
@@ -161,6 +166,7 @@ impl Default for Config {
             keybindings: BTreeMap::new(),
             update_check: UpdateCheckMode::Enabled,
             remotes: Vec::new(),
+            collapsed_sections: Vec::new(),
         }
     }
 }

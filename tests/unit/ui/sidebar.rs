@@ -22,7 +22,7 @@ fn reconnect_glyph_color_follows_status() {
         (HostStatus::Unreachable, theme.pink),
     ] {
         let mut lines = Vec::new();
-        super::render_group_header(&mut lines, "@h", accent, status, 40, theme, None);
+        super::render_group_header(&mut lines, "@h", accent, status, 40, theme, None, false);
         let glyph = lines[0]
             .spans
             .iter()
@@ -39,7 +39,7 @@ fn pf_badge_does_not_shift_right_aligned_buttons() {
 
     let mut without = Vec::new();
     let hits_no =
-        super::render_group_header(&mut without, "@h", theme.teal, HostStatus::Connected, 60, theme, None);
+        super::render_group_header(&mut without, "@h", theme.teal, HostStatus::Connected, 60, theme, None, false);
 
     let mut with = Vec::new();
     let hits_yes = super::render_group_header(
@@ -50,6 +50,7 @@ fn pf_badge_does_not_shift_right_aligned_buttons() {
         60,
         theme,
         Some(PfBadge { count: 2, color: PfBadgeColor::Healthy }),
+        false,
     );
 
     // The badge eats into the dash run, so the buttons stay put.
@@ -80,6 +81,7 @@ fn pf_badge_suppressed_at_narrow_width_keeps_buttons_on_screen() {
         width,
         theme,
         Some(PfBadge { count: 12, color: PfBadgeColor::Degraded }),
+        false,
     );
     // Both button ranges must stay within the line width.
     assert!(hits.more.end <= width, "more button end {} exceeds width {}", hits.more.end, width);

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use ratatui::layout::Rect;
@@ -1004,6 +1004,13 @@ pub struct AppState {
     /// value lists the located agents (count + session/window/pane).
     /// See `crate::agent`.
     pub agents: HashMap<Option<String>, Vec<crate::agent::DetectedAgent>>,
+
+    /// Sidebar groups the user has collapsed (Expanded view only). `None`
+    /// is the `@local` group; `Some(host)` is a remote `@host` group. A
+    /// collapsed group renders as just its divider — its session rows are
+    /// hidden by the layout and its agent footer is omitted. Persisted to
+    /// config (`collapsed_sections`) and restored at startup.
+    pub collapsed_sections: HashSet<Option<String>>,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -1042,6 +1049,7 @@ impl AppState {
         plugins: Vec<PluginConfig>,
         keybindings: Keybindings,
         update_check_mode: UpdateCheckMode,
+        collapsed_sections: HashSet<Option<String>>,
     ) -> Self {
         Self {
             sessions: Vec::new(),
@@ -1088,6 +1096,7 @@ impl AppState {
             agents: HashMap::new(),
             agent_hits: Vec::new(),
             active_agent: None,
+            collapsed_sections,
         }
     }
 
@@ -1248,6 +1257,30 @@ impl AppState {
         hit
     }
 
+    /// Map a screen row on a group divider to that group's section key
+    /// (`None` = `@local`, `Some(host)` = a remote `@host`). Returns
+    /// `None` when the row isn't on a group divider, or lands on an
+    /// agent-count footer (which isn't a collapse target). Used by the
+    /// mouse layer to toggle a group when its divider is clicked.
+    pub fn divider_section_key_at(&self, row: u16) -> Option<Option<String>> {
+        let (layout, viewport_y, scroll, _) = self.session_row_hit(row)?;
+        // header_at_y returns the 0-based header section index; resolve it
+        // back to its item to read the SidebarItemData. AgentCount footers
+        // are headers too, so we explicitly reject them.
+        let section_idx = layout.header_at_y(viewport_y, scroll)?;
+        let item = layout
+            .items()
+            .iter()
+            .filter(|it| it.kind == ItemKind::Header)
+            .nth(section_idx)?;
+        match &item.data {
+            SidebarItemData::LocalHeader => Some(None),
+            SidebarItemData::Header { host, .. } => Some(Some(host.clone())),
+            // AgentCount (or anything else) isn't a collapse target.
+            _ => None,
+        }
+    }
+
     /// Map a screen column to a tab index in vertical/tabs mode.
     pub fn session_at_col(&self, col: u16, row: u16) -> Option<usize> {
         let b = if self.show_borders { 1u16 } else { 0 };
@@ -1359,10 +1392,23 @@ impl AppState {
         // adornment; Compact rows already carry an origin prefix.
         let show_headers = matches!(view_mode, ViewMode::Expanded);
 
+        // Collapse is an Expanded-view feature. `section_idx` counts every
+        // pushed header (group dividers *and* agent footers) in push order,
+        // matching the crate's section numbering. We track only the GROUP
+        // headers' (section_idx, key) so we can flip their collapsed flag
+        // after the list is built. A collapsed group's footer is skipped
+        // below so the divider sits alone; its rows are hidden by the widget.
+        layout.set_collapsible(true);
+        let mut header_count: usize = 0;
+        let mut group_headers: Vec<(usize, Option<String>)> = Vec::new();
+        let is_collapsed = |key: &Option<String>| self.collapsed_sections.contains(key);
+
         // Local group: an `@local` divider over the local rows, matching
         // the remote `@host` dividers. Flat index for a local row equals
         // its filtered_pos regardless of the header (headers aren't rows).
         if show_headers && !self.filtered.is_empty() {
+            group_headers.push((header_count, None));
+            header_count += 1;
             layout.push_header(SidebarItemData::LocalHeader, 1);
         }
         for pos in 0..self.filtered.len() {
@@ -1370,9 +1416,11 @@ impl AppState {
         }
         // Footer line under the local section: detected agent counts.
         // Non-focusable (a header), so it can't be selected. Skipped
-        // entirely when the user turned agents off.
-        if show_headers && self.show_agents && !self.filtered.is_empty() {
+        // entirely when the user turned agents off, or when the group is
+        // collapsed (a collapsed group shows just its divider).
+        if show_headers && self.show_agents && !self.filtered.is_empty() && !is_collapsed(&None) {
             push_agent_footer(&mut layout, None, self.section_agents(None));
+            header_count += 1;
         }
 
         // Remote groups: detect host transitions in render order
@@ -1388,13 +1436,15 @@ impl AppState {
             let new_host = Some(r.host.as_str()) != prev_host;
             if new_host {
                 if let Some(ph) = prev_host {
-                    // Close the previous host's section with its footer.
-                    if show_headers && self.show_agents {
+                    // Close the previous host's section with its footer,
+                    // unless that group is collapsed (divider stands alone).
+                    if show_headers && self.show_agents && !is_collapsed(&Some(ph.to_string())) {
                         push_agent_footer(
                             &mut layout,
                             Some(ph.to_string()),
                             self.section_agents(Some(ph)),
                         );
+                        header_count += 1;
                     }
                     host_idx += 1;
                 }
@@ -1402,6 +1452,8 @@ impl AppState {
                     // A host's rows are contiguous and share a status; this
                     // row is the first of the group, so it represents it.
                     let status = host_status_of(r);
+                    group_headers.push((header_count, Some(r.host.clone())));
+                    header_count += 1;
                     layout.push_header(
                         SidebarItemData::Header {
                             host: r.host.clone(),
@@ -1424,15 +1476,23 @@ impl AppState {
                 card_h,
             );
         }
-        // Footer for the last remote host group.
+        // Footer for the last remote host group (skipped if collapsed).
         if show_headers && self.show_agents {
             if let Some(ph) = prev_host {
-                push_agent_footer(
-                    &mut layout,
-                    Some(ph.to_string()),
-                    self.section_agents(Some(ph)),
-                );
+                if !is_collapsed(&Some(ph.to_string())) {
+                    push_agent_footer(
+                        &mut layout,
+                        Some(ph.to_string()),
+                        self.section_agents(Some(ph)),
+                    );
+                }
             }
+        }
+
+        // Flip each group header's collapsed flag so the widget hides its
+        // rows and the geometry/scroll/hit-test all honor the collapse.
+        for (section_idx, key) in group_headers {
+            layout.set_collapsed(section_idx, self.collapsed_sections.contains(&key));
         }
 
         layout
@@ -1531,6 +1591,30 @@ impl AppState {
                 .get(idx - local_count)
                 .map(SessionTargetRef::Remote)
         }
+    }
+
+    /// Section key of the group the flat focus index `idx` lives in:
+    /// `None` for a local row (`idx < filtered.len()`), `Some(host)` for a
+    /// remote one. Used by the section-toggle keybinding and focus-skip
+    /// logic. For an out-of-range index this falls back to `None`.
+    pub fn section_key_of_focus(&self, idx: usize) -> Option<String> {
+        let local_count = self.filtered.len();
+        if idx < local_count {
+            None
+        } else {
+            self.remote_sessions
+                .get(idx - local_count)
+                .map(|r| r.host.clone())
+        }
+    }
+
+    /// Whether the row at flat focus index `idx` sits in a collapsed group
+    /// (so keyboard focus should skip over it).
+    pub fn is_focus_collapsed(&self, idx: usize) -> bool {
+        idx < self.focusable_count()
+            && self
+                .collapsed_sections
+                .contains(&self.section_key_of_focus(idx))
     }
 
     /// Decode the current `focused` index into a structured target.

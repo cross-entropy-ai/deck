@@ -158,6 +158,16 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             }
         }
 
+        // A click on a group divider that wasn't on one of its buttons
+        // (handled above) collapses/expands that group. Dividers exist
+        // only in the Horizontal (Expanded) layout. Agent-count footers
+        // are not toggle targets — `divider_section_key_at` rejects them.
+        if state.layout_mode == LayoutMode::Horizontal {
+            if let Some(key) = state.divider_section_key_at(mouse.row) {
+                return Action::ToggleSection(key);
+            }
+        }
+
         let flat = match state.layout_mode {
             LayoutMode::Horizontal => state.focus_at_row(mouse.row).map(|t| t.0),
             // Both return a unified flat index (local rows then

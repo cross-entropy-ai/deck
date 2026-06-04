@@ -33,6 +33,10 @@ pub enum Action {
     /// Flip the "Show Agents" checkbox in the sidebar header (clicked).
     ToggleShowAgents,
     ToggleViewMode,
+    /// Collapse/expand a sidebar group (Expanded view only). `None` is the
+    /// `@local` group; `Some(host)` is a remote `@host` group. Fired by a
+    /// divider click or the section-toggle keybinding.
+    ToggleSection(Option<String>),
     OpenSettings,
     CloseSettings,
     SettingsNext,

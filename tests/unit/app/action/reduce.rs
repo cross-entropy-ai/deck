@@ -27,6 +27,7 @@ fn make_test_state(n: usize) -> AppState {
         vec![],
         crate::keybindings::Keybindings::default(),
         crate::update::UpdateCheckMode::Enabled,
+        std::collections::HashSet::new(),
     );
     state.sessions = (0..n)
         .map(|i| make_session(&format!("sess-{}", i), 0))
@@ -1021,4 +1022,50 @@ fn pf_add_field_next_changes_focus() {
     crate::action::apply_action(&mut state, Action::PfAddFieldNext);
     let f = state.overlay.port_forward.as_ref().unwrap().add_form.as_ref().unwrap();
     assert_eq!(f.focus, crate::state::PfField::TargetHost);
+}
+
+#[test]
+fn focus_next_skips_collapsed_remote_group() {
+    // 2 local rows (flat 0,1), then 2 rows on host "h" (flat 2,3), then 1 on
+    // "h2" (flat 4). Collapse "h"; from local row 1, FocusNext must jump
+    // straight to the h2 row (flat 4), skipping the hidden h rows.
+    let mut state = make_test_state(2);
+    state.remote_sessions = vec![
+        remote_row("h", "a"),
+        remote_row("h", "b"),
+        remote_row("h2", "c"),
+    ];
+    state.collapsed_sections.insert(Some("h".to_string()));
+    state.focused = 1;
+    apply_action(&mut state, Action::FocusNext);
+    assert_eq!(state.focused, 4, "focus skips the collapsed h group");
+}
+
+#[test]
+fn toggle_section_collapse_leaves_focus_put() {
+    // Focus a row inside host "h" (flat 2), then collapse "h". Collapse must
+    // NOT move the selection — `focused` stays on the (now hidden) row so the
+    // highlight doesn't switch to a session the main pane isn't showing. The
+    // highlight is simply not drawn while hidden and returns on expand; j/k
+    // step out to a visible row from there.
+    let mut state = make_test_state(2);
+    state.remote_sessions = vec![
+        remote_row("h", "a"),
+        remote_row("h", "b"),
+        remote_row("h2", "c"),
+    ];
+    state.focused = 2;
+    let fx = apply_action(&mut state, Action::ToggleSection(Some("h".to_string())));
+    assert!(state.collapsed_sections.contains(&Some("h".to_string())));
+    assert_eq!(state.focused, 2, "collapse leaves the selection put");
+    assert!(fx.save_config, "collapse persists to config");
+}
+
+#[test]
+fn toggle_section_expands_back() {
+    let mut state = make_test_state(2);
+    state.collapsed_sections.insert(None);
+    let fx = apply_action(&mut state, Action::ToggleSection(None));
+    assert!(!state.collapsed_sections.contains(&None));
+    assert!(fx.save_config);
 }

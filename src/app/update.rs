@@ -25,6 +25,7 @@ impl App {
             // `forwards` (UI-managed) lives on `state.config_remotes`. CLI-side
             // changes to remotes themselves still flow in via hot-reload.
             remotes: self.state.config_remotes.clone(),
+            collapsed_sections: self.state.collapsed_sections.iter().cloned().collect(),
         }
         .save();
     }

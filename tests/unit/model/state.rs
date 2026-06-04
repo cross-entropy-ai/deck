@@ -29,6 +29,7 @@ fn make_state(
         vec![],
         Keybindings::default(),
         UpdateCheckMode::Enabled,
+        std::collections::HashSet::new(),
     );
     state.sessions = vec![make_session("alpha"), make_session("beta")];
     state.session_order = state.sessions.iter().map(|s| s.name.clone()).collect();
@@ -519,4 +520,60 @@ fn confirm_kill_name_none_when_not_pending() {
     state.focused = 2;
     // No pending kill -> no name regardless of what's focused.
     assert_eq!(state.confirm_kill_name(), None);
+}
+
+#[test]
+fn collapsed_local_group_hides_rows_and_omits_footer() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    // show_agents is true in make_state, so an expanded local group has a
+    // footer. Collapse it and the footer must disappear; its rows are hidden
+    // (zero effective height) by the widget.
+    state.collapsed_sections.insert(None);
+    let layout = state.sidebar_layout(ViewMode::Expanded);
+
+    assert!(layout.is_collapsible());
+    // No AgentCount footer for the collapsed local group.
+    let local_footer = layout.items().iter().any(|i| {
+        matches!(&i.data, SidebarItemData::AgentCount { host: None, .. })
+    });
+    assert!(!local_footer, "collapsed local group must omit its footer");
+
+    // The local header is collapsed; its rows (idx 0,1) are hidden.
+    assert!(layout.is_row_hidden(0));
+    assert!(layout.is_row_hidden(1));
+}
+
+#[test]
+fn expanded_local_group_keeps_footer_and_shows_rows() {
+    let state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    let layout = state.sidebar_layout(ViewMode::Expanded);
+    let local_footer = layout.items().iter().any(|i| {
+        matches!(&i.data, SidebarItemData::AgentCount { host: None, .. })
+    });
+    assert!(local_footer, "expanded local group must keep its footer");
+    assert!(!layout.is_row_hidden(0));
+}
+
+#[test]
+fn focus_skips_collapsed_remote_group() {
+    // Layout: 2 local rows (idx 0,1), then host h1 (idx 2). Collapse local.
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.remote_sessions = vec![remote_row("h1", false, false)];
+    state.recompute_filter();
+    state.collapsed_sections.insert(None);
+
+    // Local rows are hidden, the remote row is not.
+    assert!(state.is_focus_collapsed(0));
+    assert!(state.is_focus_collapsed(1));
+    assert!(!state.is_focus_collapsed(2));
+}
+
+#[test]
+fn section_key_of_focus_maps_local_and_remote() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.remote_sessions = vec![remote_row("h1", false, false)];
+    state.recompute_filter();
+    assert_eq!(state.section_key_of_focus(0), None); // local
+    assert_eq!(state.section_key_of_focus(1), None); // local
+    assert_eq!(state.section_key_of_focus(2), Some("h1".to_string())); // remote
 }

@@ -53,6 +53,7 @@ pub enum Command {
     ToggleBorders,
     ToggleLayout,
     ToggleViewMode,
+    ToggleSection,
     ToggleHelp,
     FocusMain,
     Quit,
@@ -74,6 +75,7 @@ impl Command {
         Command::ToggleBorders,
         Command::ToggleLayout,
         Command::ToggleViewMode,
+        Command::ToggleSection,
         Command::ToggleHelp,
         Command::FocusMain,
         Command::Quit,
@@ -95,6 +97,7 @@ impl Command {
             Command::ToggleBorders => "toggle_borders",
             Command::ToggleLayout => "toggle_layout",
             Command::ToggleViewMode => "toggle_view_mode",
+            Command::ToggleSection => "toggle_section",
             Command::ToggleHelp => "toggle_help",
             Command::FocusMain => "focus_main",
             Command::Quit => "quit",
@@ -117,6 +120,7 @@ impl Command {
             Command::ToggleBorders => "toggle borders",
             Command::ToggleLayout => "toggle layout",
             Command::ToggleViewMode => "toggle compact/expanded",
+            Command::ToggleSection => "collapse/expand group",
             Command::ToggleHelp => "help",
             Command::FocusMain => "back to main",
             Command::Quit => "quit",
@@ -158,6 +162,9 @@ impl Command {
             Command::ToggleLayout => vec![KeyBinding::new(KeyCode::Char('l'), KeyModifiers::NONE)],
             Command::ToggleViewMode => {
                 vec![KeyBinding::new(KeyCode::Char('c'), KeyModifiers::NONE)]
+            }
+            Command::ToggleSection => {
+                vec![KeyBinding::new(KeyCode::Char('z'), KeyModifiers::NONE)]
             }
             Command::ToggleHelp => vec![
                 KeyBinding::new(KeyCode::Char('h'), KeyModifiers::NONE),

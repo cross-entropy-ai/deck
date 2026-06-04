@@ -14,7 +14,7 @@ use crate::state::{
     AgentHit, AgentTarget, DividerButton, DividerHit, FocusTarget, HostStatus, KillConfirmHits,
     PfBadge, PfBadgeColor, SidebarItemData, SidebarLayout, ViewMode, AGENT_FOOTER_GAP_ROWS,
 };
-use ratatui_sectioned_list::Item;
+use ratatui_sectioned_list::{Item, ItemKind};
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
 use ratatui_textarea::TextArea;
@@ -350,7 +350,22 @@ fn draw_sessions(
     // clickable rows, resolved to screen rects after the scroll offset.
     let mut pending_agent_hits: Vec<(usize, AgentTarget)> = Vec::new();
 
+    // Tracks whether the group currently being walked is collapsed, so its
+    // session rows render zero lines (mirroring the layout's hidden-row
+    // geometry). Updated each time a header is seen. Collapse only applies
+    // when the list is collapsible (Expanded view).
+    let collapsible = props.layout.is_collapsible();
+    let mut section_collapsed = false;
     for item in props.layout.items().iter() {
+        if item.kind == ItemKind::Header {
+            section_collapsed = collapsible && item.collapsed;
+        }
+        // Hide session rows inside a collapsed group — the divider stands
+        // alone. The layout already zeroes their height, so the scroll math
+        // and hit-test stay in sync with what's drawn.
+        if section_collapsed && matches!(item.data, SidebarItemData::Session { .. }) {
+            continue;
+        }
         let is_focused = is_item_focused(item, props.focus_target);
         let row_bg = if is_focused {
             ctx.theme.surface
@@ -366,7 +381,9 @@ fn draw_sessions(
         match &item.data {
             SidebarItemData::LocalHeader => {
                 let line_idx = lines.len();
-                let more_range = render_local_header(&mut lines, ctx.theme.accent, width, ctx.theme);
+                let collapsed = collapsible && item.collapsed;
+                let more_range =
+                    render_local_header(&mut lines, ctx.theme.accent, width, ctx.theme, collapsed);
                 // Local divider carries no host; the menu it opens is fixed.
                 pending_hits.push((line_idx, more_range, String::new(), DividerButton::LocalMore));
             }
@@ -440,12 +457,13 @@ fn draw_sessions(
                 let accent = host_accent(ctx.theme, *host_idx);
                 let line_idx = lines.len();
                 let label = format!("@{host}");
+                let collapsed = collapsible && item.collapsed;
                 let GroupHeaderHits {
                     reconnect: reconnect_range,
                     more: more_range,
                     badge: badge_range,
                 } = render_group_header(
-                    &mut lines, &label, accent, *status, width, ctx.theme, *pf,
+                    &mut lines, &label, accent, *status, width, ctx.theme, *pf, collapsed,
                 );
                 if let Some(badge_range) = badge_range {
                     pending_hits.push((line_idx, badge_range, host.clone(), DividerButton::PfBadge));
@@ -578,24 +596,36 @@ fn render_local_header(
     accent: Color,
     width: usize,
     theme: &Theme,
+    collapsed: bool,
 ) -> std::ops::Range<usize> {
     let leading = " ";
     let leading_w = leading.width();
     let spacer_w = 1;
     let button_w = 3; // "[…]"
     let gap = 1; // space before the button
+    // Collapse chevron sits before the label: `▸` collapsed, `▾` expanded,
+    // then a space. Costs 2 cells, taken out of the label budget.
+    let chevron = collapse_chevron(collapsed);
+    let chevron_w = chevron.width() + 1;
 
     // Reserve the button column first so it stays on screen, then give the
     // label what's left and let the rule fill any remaining gap.
     let avail = width.saturating_sub(leading_w).saturating_sub(gap + button_w);
-    let label_budget = avail.saturating_sub(spacer_w);
+    let label_budget = avail.saturating_sub(spacer_w).saturating_sub(chevron_w);
     let label_text = truncate("@local", label_budget);
     let label_w = label_text.as_str().width();
-    let rule_w = avail.saturating_sub(label_w).saturating_sub(spacer_w);
+    let rule_w = avail
+        .saturating_sub(chevron_w)
+        .saturating_sub(label_w)
+        .saturating_sub(spacer_w);
     let rule = "\u{2500}".repeat(rule_w);
 
     let spans = vec![
         Span::styled(leading, Style::default().bg(theme.bg)),
+        Span::styled(
+            format!("{chevron} "),
+            Style::default().fg(accent).bg(theme.bg),
+        ),
         Span::styled(
             label_text,
             Style::default()
@@ -610,10 +640,20 @@ fn render_local_header(
     ];
     lines.push(pad_line(spans, theme.bg, width));
 
-    let more_x = leading_w + label_w + spacer_w + rule_w + gap;
+    let more_x = leading_w + chevron_w + label_w + spacer_w + rule_w + gap;
     more_x..(more_x + button_w)
 }
 
+/// Collapse/expand indicator glyph for a group divider.
+fn collapse_chevron(collapsed: bool) -> &'static str {
+    if collapsed {
+        "\u{25b8}" // ▸
+    } else {
+        "\u{25be}" // ▾
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn render_group_header(
     lines: &mut Vec<Line<'_>>,
     label: &str,
@@ -622,12 +662,16 @@ fn render_group_header(
     width: usize,
     theme: &Theme,
     pf: Option<PfBadge>,
+    collapsed: bool,
 ) -> GroupHeaderHits {
     let leading = " ";
     let leading_w = leading.width();
     let spacer_w = 1;
     let button_w = 3; // "[⟳]" / "[…]"
     let gap = 1; // space before each button
+    // Collapse chevron + a space, before the label (costs 2 cells).
+    let chevron = collapse_chevron(collapsed);
+    let chevron_w = chevron.width() + 1;
     // Right side of the divider: gap [⟳] gap […]. Always reserved first so the
     // buttons stay on screen no matter how long the host name is.
     let buttons_w = gap + button_w + gap + button_w;
@@ -642,8 +686,12 @@ fn render_group_header(
     });
     let want_badge_w = badge_text.as_ref().map(|s| gap + s.as_str().width()).unwrap_or(0);
 
-    // Budget for everything between the leading space and the buttons.
-    let avail = width.saturating_sub(leading_w).saturating_sub(buttons_w);
+    // Budget for everything between the leading space and the buttons,
+    // less the collapse chevron that sits just before the label.
+    let avail = width
+        .saturating_sub(leading_w)
+        .saturating_sub(chevron_w)
+        .saturating_sub(buttons_w);
     // Show the badge only if it fits alongside the spacer and at least one
     // label cell; otherwise it would crowd out the label entirely.
     let show_badge = want_badge_w > 0 && avail > want_badge_w + spacer_w;
@@ -672,6 +720,10 @@ fn render_group_header(
     let mut spans = vec![
         Span::styled(leading, Style::default().bg(theme.bg)),
         Span::styled(
+            format!("{chevron} "),
+            Style::default().fg(accent).bg(theme.bg),
+        ),
+        Span::styled(
             label_text,
             Style::default()
                 .fg(accent)
@@ -695,12 +747,12 @@ fn render_group_header(
     lines.push(pad_line(spans, theme.bg, width));
 
     // Cell ranges of the two buttons within this rendered line.
-    let reconnect_x = leading_w + label_w + spacer_w + rule_w + badge_w + gap;
+    let reconnect_x = leading_w + chevron_w + label_w + spacer_w + rule_w + badge_w + gap;
     let more_x = reconnect_x + button_w + gap;
     // The badge text sits after the rule + its leading gap; its hit region
     // covers just the `⇄N` glyph (badge_w less that leading gap).
     let badge = show_badge.then(|| {
-        let badge_x = leading_w + label_w + spacer_w + rule_w + gap;
+        let badge_x = leading_w + chevron_w + label_w + spacer_w + rule_w + gap;
         badge_x..(badge_x + badge_w - gap)
     });
     GroupHeaderHits {

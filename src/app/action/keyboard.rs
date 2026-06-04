@@ -44,7 +44,7 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 
     if let Some(cmd) = state.keybindings.lookup(key) {
         if cmd.is_global() {
-            return command_to_action(cmd);
+            return command_to_action(cmd, state);
         }
     }
 
@@ -77,8 +77,13 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     }
 }
 
-fn command_to_action(cmd: Command) -> Action {
+fn command_to_action(cmd: Command, state: &AppState) -> Action {
     match cmd {
+        Command::ToggleSection => {
+            // Toggle the group the focused row lives in. Only meaningful in
+            // Expanded view (the reducer/layout no-op the collapse elsewhere).
+            Action::ToggleSection(state.section_key_of_focus(state.focused))
+        }
         Command::FocusNext => Action::FocusNext,
         Command::FocusPrev => Action::FocusPrev,
         Command::SwitchProject => Action::SwitchProject,
@@ -126,7 +131,7 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     }
 
     if let Some(cmd) = state.keybindings.lookup(key) {
-        return command_to_action(cmd);
+        return command_to_action(cmd, state);
     }
 
     if let KeyCode::Char(ch) = key.code {

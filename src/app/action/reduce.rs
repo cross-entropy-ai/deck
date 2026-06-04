@@ -52,25 +52,43 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) {
     }
 }
 
-/// Advance focus to the next row (clamped to the last), filling the
-/// switch effect if the selection actually moved.
+/// Advance focus to the next visible row, skipping rows hidden inside a
+/// collapsed group. Clamps at the last visible row (no move if there's
+/// nothing visible below). Fills the switch effect when the selection
+/// actually moved.
 fn focus_next(state: &mut AppState, fx: &mut SideEffect) {
     let total = state.focusable_count();
-    if total > 0 {
-        let old = state.focused;
-        state.focused = (state.focused + 1).min(total - 1);
-        if state.focused != old {
-            fill_switch_effect(state, fx);
+    if total == 0 {
+        return;
+    }
+    let old = state.focused;
+    let mut next = state.focused;
+    while next + 1 < total {
+        next += 1;
+        if !state.is_focus_collapsed(next) {
+            state.focused = next;
+            if state.focused != old {
+                fill_switch_effect(state, fx);
+            }
+            return;
         }
     }
+    // No visible row below — stay put.
 }
 
-/// Move focus to the previous row, filling the switch effect if it moved.
+/// Move focus to the previous visible row, skipping rows hidden inside a
+/// collapsed group. Fills the switch effect when the selection moved.
 fn focus_prev(state: &mut AppState, fx: &mut SideEffect) {
-    if state.focused > 0 {
-        state.focused -= 1;
-        fill_switch_effect(state, fx);
+    let mut prev = state.focused;
+    while prev > 0 {
+        prev -= 1;
+        if !state.is_focus_collapsed(prev) {
+            state.focused = prev;
+            fill_switch_effect(state, fx);
+            return;
+        }
     }
+    // No visible row above — stay put.
 }
 
 pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
@@ -317,6 +335,24 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 ViewMode::Expanded => ViewMode::Compact,
                 ViewMode::Compact => ViewMode::Expanded,
             };
+            fx.save_config = true;
+        }
+        Action::ToggleSection(key) => {
+            // Flip the group's collapsed membership. Collapse is only
+            // meaningful in Expanded view, but the set is stored uniformly
+            // (the layout ignores it in Compact/Vertical where there are no
+            // dividers), so no view-mode gate is needed here.
+            if state.collapsed_sections.contains(&key) {
+                state.collapsed_sections.remove(&key);
+            } else {
+                state.collapsed_sections.insert(key);
+                // Don't move focus when collapsing the focused row's group:
+                // collapse must not switch the selection (the main pane
+                // didn't switch either). `focused` stays put — its highlight
+                // is simply not drawn while hidden and returns on expand.
+                // `j`/`k` step out to a visible row from there (focus_next/
+                // focus_prev skip hidden rows).
+            }
             fx.save_config = true;
         }
         Action::OpenSettings => {
