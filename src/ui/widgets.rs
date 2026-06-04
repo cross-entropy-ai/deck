@@ -68,3 +68,12 @@ pub fn style_textarea(ta: &mut TextArea<'static>, focused: bool, c: TextAreaColo
         ta.set_cursor_style(base);
     }
 }
+
+/// Compute the first visible index so that `selected` stays in view.
+pub fn scroll_window(selected: usize, total: usize, window: usize) -> usize {
+    if total <= window || selected < window {
+        return 0;
+    }
+    let max_start = total - window;
+    (selected + 1).saturating_sub(window).min(max_start)
+}

@@ -7,7 +7,7 @@ use ratatui::Frame;
 use crate::add_remote::AddRemoteState;
 use crate::theme::Theme;
 use crate::ui::form::field_row;
-use crate::ui::widgets::{centered_rect, popup_frame, PopupStyle, TextAreaColors};
+use crate::ui::widgets::{centered_rect, popup_frame, scroll_window, PopupStyle, TextAreaColors};
 
 const POPUP_WIDTH: u16 = 56;
 const MAX_VISIBLE: usize = 8;
@@ -50,7 +50,6 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
     let rows = Layout::vertical(constraints).split(inner);
     let mut i = 0;
 
-    // --- host input ---
     field_row(
         frame.buffer_mut(),
         rows[i],
@@ -68,7 +67,6 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
     i += 1;
     i += 1; // blank
 
-    // --- candidate list ---
     if state.filtered.is_empty() {
         let msg = if state.hosts.is_empty() {
             "    (no ~/.ssh/config hosts \u{2014} type a hostname)"
@@ -107,7 +105,6 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
     }
     i += 1; // blank
 
-    // --- error ---
     if let Some(err) = &state.error {
         Paragraph::new(Span::styled(
             format!("  \u{26a0} {err}"),
@@ -117,19 +114,9 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
         i += 1;
     }
 
-    // --- footer ---
     Paragraph::new(Span::styled(
         "  \u{23ce} add   \u{2191}\u{2193} select   \u{238b} cancel",
         Style::default().fg(theme.dim).add_modifier(Modifier::DIM),
     ))
     .render(rows[i], frame.buffer_mut());
-}
-
-/// First visible index so `selected` stays in view.
-fn scroll_window(selected: usize, total: usize, window: usize) -> usize {
-    if total <= window || selected < window {
-        return 0;
-    }
-    let max_start = total - window;
-    (selected + 1).saturating_sub(window).min(max_start)
 }

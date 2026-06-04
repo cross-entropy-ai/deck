@@ -35,10 +35,7 @@ pub enum Op {
 pub enum OpKind {
     Master(String),
     Forward(String, ForwardSpec),
-    // ForwardSpec is structurally mirrored for symmetry with Forward; not
-    // destructured in the current reducer arm but kept for future use.
-    #[allow(dead_code)]
-    Cancel(String, ForwardSpec),
+    Cancel(String),
     Exit(String),
     Probe(crate::state::ForwardKey, crate::state::ForwardHealth),
 }
@@ -48,7 +45,8 @@ impl OpKind {
     pub fn host(&self) -> &str {
         match self {
             OpKind::Master(h) | OpKind::Exit(h) => h,
-            OpKind::Forward(h, _) | OpKind::Cancel(h, _) => h,
+            OpKind::Forward(h, _) => h,
+            OpKind::Cancel(h) => h,
             OpKind::Probe(key, _) => &key.host,
         }
     }
@@ -156,7 +154,7 @@ impl<R: Runner> Worker<R> {
             }
             Op::CancelForward { host, spec } => {
                 let r = self.runner.run_cancel(&host, &spec);
-                vec![result_from(OpKind::Cancel(host, spec), r)]
+                vec![result_from(OpKind::Cancel(host), r)]
             }
             Op::StopHost { host } => {
                 let r = self.runner.run_exit(&host);

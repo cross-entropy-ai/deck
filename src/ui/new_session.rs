@@ -7,7 +7,7 @@ use ratatui_textarea::TextArea;
 
 use crate::theme::Theme;
 use crate::ui::form::field_row;
-use crate::ui::widgets::{centered_rect, popup_frame, PopupStyle, TextAreaColors};
+use crate::ui::widgets::{centered_rect, popup_frame, scroll_window, PopupStyle, TextAreaColors};
 
 use super::NewSessionView;
 
@@ -180,16 +180,4 @@ fn render_input_row(
             cursor_bg: theme.accent,
         },
     );
-}
-
-/// Compute the first visible index so that `selected` stays in view.
-fn scroll_window(selected: usize, total: usize, window: usize) -> usize {
-    if total <= window {
-        return 0;
-    }
-    if selected < window {
-        return 0;
-    }
-    let max_start = total - window;
-    (selected + 1).saturating_sub(window).min(max_start)
 }

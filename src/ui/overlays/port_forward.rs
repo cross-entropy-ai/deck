@@ -137,7 +137,6 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
     ])
     .split(area);
 
-    // --- Mode picker -----------------------------------------------------
     let mode_text = |m: ForwardMode, label: &str| -> Span {
         let marker = if form.mode == m { "(\u{2022})" } else { "( )" };
         Span::styled(
@@ -157,7 +156,6 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
     ]))
     .render(rows[1], buf);
 
-    // --- Field rows ------------------------------------------------------
     let target_active = !matches!(form.mode, ForwardMode::Dynamic);
     render_field_row(buf, rows[3], form, theme, FieldRow {
         field: PfField::BindAddr,
@@ -184,7 +182,6 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
         enabled: target_active,
     });
 
-    // --- Flow sketch + status + hint ------------------------------------
     Paragraph::new(flow_line(form, theme)).render(rows[8], buf);
     // Surface the add result here (e.g. validation error, "already
     // forwarding port N", or "applying...") — the form stays open on
@@ -272,24 +269,25 @@ fn flow_line<'a>(form: &PfAddForm, theme: &Theme) -> Line<'a> {
     let listen = read(PfField::ListenPort);
     let thost = read(PfField::TargetHost);
     let tport = read(PfField::TargetPort);
-    let text = match form.mode {
-        // -L: local listener forwards through ssh to the server's view of target.
-        ForwardMode::Local => format!(
-            "  you {}:{} -- ssh --> server --> {}:{}",
-            bind, listen, thost, tport
-        ),
-        // -R: remote listener tunnels back to client, which delivers to target.
-        ForwardMode::Remote => format!(
-            "  server {}:{} -- ssh --> you --> {}:{}",
-            bind, listen, thost, tport
-        ),
-        // -D: local SOCKS proxy; client picks destination per connection.
-        ForwardMode::Dynamic => format!(
-            "  you {}:{} (SOCKS) -- ssh --> *",
-            bind, listen
-        ),
-    };
-    Line::styled(text, Style::default().fg(theme.muted))
+    Line::styled(
+        match form.mode {
+            // -L: local listener forwards through ssh to the server's view of target.
+            ForwardMode::Local => format!(
+                "  you {}:{} -- ssh --> server --> {}:{}",
+                bind, listen, thost, tport
+            ),
+            // -R: remote listener tunnels back to client, which delivers to target.
+            ForwardMode::Remote => format!(
+                "  server {}:{} -- ssh --> you --> {}:{}",
+                bind, listen, thost, tport
+            ),
+            // -D: local SOCKS proxy; client picks destination per connection.
+            ForwardMode::Dynamic => {
+                format!("  you {}:{} (SOCKS) -- ssh --> *", bind, listen)
+            }
+        },
+        Style::default().fg(theme.muted),
+    )
 }
 
 fn format_forward(f: &ForwardSpec) -> String {

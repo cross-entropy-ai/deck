@@ -69,8 +69,12 @@ pub(super) fn pack_hint_lines(
 }
 
 pub(super) fn format_keys_for(keybindings: &Keybindings, cmd: Command) -> String {
-    let keys = keybindings.keys_for(cmd);
-    keys.iter().map(format_key).collect::<Vec<_>>().join("/")
+    keybindings
+        .keys_for(cmd)
+        .iter()
+        .map(format_key)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 pub(super) fn primary_key_string(keybindings: &Keybindings, cmd: Command) -> String {

@@ -1195,7 +1195,7 @@ fn apply_pf_task_result(
                 overlay.status = Some(humanize_forward_error(message));
             }
         }
-        OpKind::Cancel(_, _) => {
+        OpKind::Cancel(_) => {
             overlay.status = Some(if ok {
                 "forward cancelled".into()
             } else {

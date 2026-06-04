@@ -60,7 +60,7 @@ pub fn textarea_line<'a>(ta: &'a TextArea<'a>) -> &'a str {
 ///   `$HOME` for predictability.
 /// - `..` and redundant `/` are normalized via `Path::components`.
 pub fn expand_path(s: &str, home: &std::path::Path) -> PathBuf {
-    let mut buf = if let Some(rest) = s.strip_prefix("~/") {
+    let buf = if let Some(rest) = s.strip_prefix("~/") {
         home.join(rest)
     } else if s == "~" {
         home.to_path_buf()
@@ -80,8 +80,7 @@ pub fn expand_path(s: &str, home: &std::path::Path) -> PathBuf {
             other => normalized.push(other),
         }
     }
-    buf = normalized;
-    buf
+    normalized
 }
 
 #[derive(Debug, Clone)]

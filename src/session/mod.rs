@@ -71,19 +71,6 @@ pub enum Reachability<T> {
 
 #[allow(dead_code)] // bridge helpers for the not-yet-wired list_sessions path
 impl<T> Reachability<Vec<T>> {
-    /// Collapse a `Reachability<Vec<T>>` back to the `Option<Vec<T>>` shape
-    /// `remote_tmux::list_sessions` uses today (`None` = unreachable,
-    /// `Some(empty)` = no server, `Some(non-empty)` = reachable), so call
-    /// sites that still consume the old shape can bridge during the
-    /// migration without losing the tri-state.
-    pub fn into_remote_opt(self) -> Option<Vec<T>> {
-        match self {
-            Reachability::Reachable(v) => Some(v),
-            Reachability::NoServer => Some(Vec::new()),
-            Reachability::Unreachable => None,
-        }
-    }
-
     /// Build the tri-state from the `Option<Vec<T>>` shape
     /// `remote_tmux::list_sessions` returns: `None` -> `Unreachable`,
     /// `Some(empty)` -> `NoServer`, `Some(non-empty)` -> `Reachable`.
