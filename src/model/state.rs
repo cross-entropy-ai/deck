@@ -555,6 +555,9 @@ pub struct SideEffect {
     /// changes the effective parent.
     pub reread_new_session_entries: bool,
     pub resize_pty: bool,
+    /// Dispatch should clear the host terminal before the next draw after a
+    /// resize. Sidebar-only resizes deliberately leave this false.
+    pub full_redraw_after_resize: bool,
     pub save_config: bool,
     /// Dispatch should persist the current local `session_order` onto the
     /// tmux sessions (`@deck_order`) so the manual arrangement survives a
@@ -603,6 +606,7 @@ impl SideEffect {
         }
         self.reread_new_session_entries |= other.reread_new_session_entries;
         self.resize_pty |= other.resize_pty;
+        self.full_redraw_after_resize |= other.full_redraw_after_resize;
         self.save_config |= other.save_config;
         self.save_session_order |= other.save_session_order;
         if other.save_remote_session_order.is_some() {

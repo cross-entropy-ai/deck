@@ -133,6 +133,7 @@ fn toggle_layout_flips_and_signals_resize() {
     let fx = apply_action(&mut state, Action::ToggleLayout);
     assert_eq!(state.layout_mode, LayoutMode::Vertical);
     assert!(fx.resize_pty);
+    assert!(fx.full_redraw_after_resize);
     assert!(fx.save_config);
 }
 
@@ -143,6 +144,7 @@ fn toggle_borders_signals_resize_and_save() {
     let fx = apply_action(&mut state, Action::ToggleBorders);
     assert_ne!(state.show_borders, was);
     assert!(fx.resize_pty);
+    assert!(fx.full_redraw_after_resize);
     assert!(fx.save_config);
 }
 
@@ -336,6 +338,26 @@ fn resize_signals_pty_resize() {
     assert_eq!(state.term_width, 200);
     assert_eq!(state.term_height, 50);
     assert!(fx.resize_pty);
+    assert!(fx.full_redraw_after_resize);
+}
+
+#[test]
+fn sidebar_resize_does_not_force_full_redraw() {
+    let mut state = make_test_state(1);
+    let fx = apply_action(&mut state, Action::ResizeSidebar(30));
+    assert_eq!(state.sidebar_width, 30);
+    assert!(fx.resize_pty);
+    assert!(!fx.full_redraw_after_resize);
+}
+
+#[test]
+fn sidebar_height_resize_does_not_force_full_redraw() {
+    let mut state = make_test_state(1);
+    state.layout_mode = LayoutMode::Vertical;
+    let fx = apply_action(&mut state, Action::ResizeSidebarHeight(5));
+    assert_eq!(state.sidebar_height, 5);
+    assert!(fx.resize_pty);
+    assert!(!fx.full_redraw_after_resize);
 }
 
 #[test]

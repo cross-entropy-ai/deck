@@ -314,11 +314,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 LayoutMode::Vertical => LayoutMode::Horizontal,
             };
             fx.resize_pty = true;
+            fx.full_redraw_after_resize = true;
             fx.save_config = true;
         }
         Action::ToggleBorders => {
             state.show_borders = !state.show_borders;
             fx.resize_pty = true;
+            fx.full_redraw_after_resize = true;
             fx.save_config = true;
         }
         Action::ToggleShowAgents => {
@@ -826,6 +828,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.term_width = w;
             state.term_height = h;
             fx.resize_pty = true;
+            fx.full_redraw_after_resize = true;
         }
 
         Action::ActivatePlugin(idx) => {

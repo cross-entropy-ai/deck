@@ -765,11 +765,12 @@ impl App {
 
         if fx.resize_pty {
             self.resize_pty();
-            // Force a full repaint after any PTY resize (sidebar drag,
-            // toggle borders/layout). ratatui's frame-to-frame diff
-            // can leak stale cells from the old layout — same class
-            // of bug fixed for session switch via terminal.clear().
-            self.needs_full_redraw = true;
+            if fx.full_redraw_after_resize {
+                // Full terminal resizes and layout/border mode changes can
+                // invalidate the whole screen. Sidebar drags repaint through
+                // ratatui's normal diffing path to avoid flashing.
+                self.needs_full_redraw = true;
+            }
         }
 
         if fx.save_config {
