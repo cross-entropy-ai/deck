@@ -704,10 +704,10 @@ impl App {
                     self.switch_to_remote(&req.host, &req.name);
                 }
                 Effect::ShowRemotePlaceholder(host) => {
-                    if !self
+                    if self
                         .state
                         .focused_remote_placeholder()
-                        .is_some_and(|row| row.host == host.as_str())
+                        .is_none_or(|row| row.host != host.as_str())
                     {
                         continue;
                     }
