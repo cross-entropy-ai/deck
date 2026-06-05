@@ -4,7 +4,9 @@ use crate::keybindings::{self, Keybindings};
 use crate::session::local::LocalControl;
 use crate::session::remote::RemoteControl;
 use crate::session::SessionControl;
-use crate::state::{FocusMode, MainView, ReloadStatus, SideEffect, SIDEBAR_MAX, SIDEBAR_MIN};
+use crate::state::{
+    Effect, FocusMode, MainView, ReloadStatus, SideEffect, SIDEBAR_MAX, SIDEBAR_MIN,
+};
 use crate::theme::THEMES;
 use crate::tmux;
 
@@ -23,16 +25,23 @@ fn session_name_format_error(name: &str) -> Option<&'static str> {
     }
 }
 
-fn validate_session_name(
+fn validate_unique_session_name<'a>(
     name: &str,
-    sessions: &[crate::state::SessionRow],
+    existing: impl IntoIterator<Item = &'a str>,
 ) -> Option<&'static str> {
     session_name_format_error(name).or_else(|| {
-        sessions
-            .iter()
-            .any(|s| s.name == name)
+        existing
+            .into_iter()
+            .any(|s| s == name)
             .then_some("name already in use")
     })
+}
+
+struct NewSessionTarget {
+    host: Option<String>,
+    start_dir: String,
+    existing_count: usize,
+    existing_names: Vec<String>,
 }
 
 /// The `(host, list_path)` the new-session picker should list for its
@@ -105,7 +114,7 @@ impl App {
                 } else {
                     self.state.focus_mode = FocusMode::Main;
                 }
-                fx.quit
+                fx.has_quit()
             }
             Action::MenuClickItem(idx) => {
                 let mut fx = SideEffect::default();
@@ -118,7 +127,7 @@ impl App {
                 if self.warning_state.is_some() {
                     self.state.focus_mode = FocusMode::Sidebar;
                 }
-                fx.quit
+                fx.has_quit()
             }
             Action::ActivatePlugin(idx) => {
                 if let Some(Some(ref inst)) = self.plugin_instances.get(idx) {
@@ -134,7 +143,7 @@ impl App {
                 }
                 let fx = action::apply_action(&mut self.state, action);
                 self.execute_side_effects(&fx);
-                fx.quit
+                fx.has_quit()
             }
             Action::TriggerUpgrade => {
                 use crate::self_update::{
@@ -226,11 +235,9 @@ impl App {
             }
             Action::NewSessionConfirm => {
                 if let Some(req) = self.confirm_new_session() {
-                    let fx = crate::state::SideEffect {
-                        create_session: Some(req),
-                        refresh_sessions: true,
-                        ..crate::state::SideEffect::default()
-                    };
+                    let mut fx = crate::state::SideEffect::default();
+                    fx.create_session(req);
+                    fx.refresh_sessions();
                     self.execute_side_effects(&fx);
                 }
                 false
@@ -238,7 +245,7 @@ impl App {
             _ => {
                 let fx = action::apply_action(&mut self.state, action);
                 self.execute_side_effects(&fx);
-                fx.quit
+                fx.has_quit()
             }
         }
     }
@@ -688,162 +695,149 @@ impl App {
     }
 
     fn execute_side_effects(&mut self, fx: &crate::state::SideEffect) {
-        if let Some(ref name) = fx.switch_session {
-            self.switch_to_session_if_safe(name);
-        }
-
-        if let Some(ref req) = fx.switch_remote {
-            self.switch_to_remote(&req.host, &req.name);
-        }
-
-        if let Some(ref rename) = fx.rename_session {
-            // The rename runs on the executor (off the UI thread). The local
-            // `session_order` in-place patch stays in App and runs now: it
-            // mutates App state, not tmux, and doesn't depend on the rename's
-            // result — patching immediately keeps the manual order from
-            // flickering while the async rename is in flight.
-            if rename.host.is_none() {
-                if let Some(pos) = self
-                    .state
-                    .session_order
-                    .iter()
-                    .position(|n| n == &rename.old_name)
-                {
-                    self.state.session_order[pos] = rename.new_name.clone();
+        for effect in fx.effects() {
+            match effect {
+                Effect::SwitchSession(name) => {
+                    self.switch_to_session_if_safe(name);
                 }
-            }
-            self.submit_session(
-                rename.host.clone(),
-                crate::session::executor::SessionOp::Rename {
-                    old: rename.old_name.clone(),
-                    new: rename.new_name.clone(),
-                },
-            );
-        }
-
-        if let Some(ref kill) = fx.kill_session {
-            // App-level orchestration around the kill stays in App; only the
-            // leaf kill call routes through the backend. The trait's
-            // `switch_to` arg is the doomed-session pre-switch contract, but
-            // both backends ignore it today (local pre-switches via
-            // `switch_to_session_if_safe`, remote via the `active_remote`
-            // reset), so it stays `None` here — behaviour is unchanged.
-            match &kill.host {
-                None => {
-                    if let Some(ref alt_name) = kill.switch_to {
-                        self.switch_to_session_if_safe(alt_name);
+                Effect::SwitchRemote(req) => {
+                    self.switch_to_remote(&req.host, &req.name);
+                }
+                Effect::RenameSession(rename) => {
+                    // The rename runs on the executor (off the UI thread). The local
+                    // `session_order` in-place patch stays in App and runs now: it
+                    // mutates App state, not tmux, and doesn't depend on the rename's
+                    // result — patching immediately keeps the manual order from
+                    // flickering while the async rename is in flight.
+                    if rename.host.is_none() {
+                        if let Some(pos) = self
+                            .state
+                            .session_order
+                            .iter()
+                            .position(|n| n == &rename.old_name)
+                        {
+                            self.state.session_order[pos] = rename.new_name.clone();
+                        }
                     }
+                    self.submit_session(
+                        rename.host.clone(),
+                        crate::session::executor::SessionOp::Rename {
+                            old: rename.old_name.clone(),
+                            new: rename.new_name.clone(),
+                        },
+                    );
                 }
-                Some(host) => {
-                    // If the user was attached to this remote session,
-                    // snap them back to local first so the dying PTY
-                    // doesn't leave a frozen screen visible. The
-                    // persistent ssh PTY for this host stays open;
-                    // the remote tmux server will pick another
-                    // session for it on the next attach if any
-                    // remain.
-                    if self.active_remote.as_deref() == Some(host.as_str()) {
-                        self.active_remote = None;
+                Effect::KillSession(kill) => {
+                    // App-level orchestration around the kill stays in App; only the
+                    // leaf kill call routes through the backend. The trait's
+                    // `switch_to` arg is the doomed-session pre-switch contract, but
+                    // both backends ignore it today (local pre-switches via
+                    // `switch_to_session_if_safe`, remote via the `active_remote`
+                    // reset), so it stays `None` here — behaviour is unchanged.
+                    match &kill.host {
+                        None => {
+                            if let Some(ref alt_name) = kill.switch_to {
+                                self.switch_to_session_if_safe(alt_name);
+                            }
+                        }
+                        Some(host) => {
+                            // If the user was attached to this remote session,
+                            // snap them back to local first so the dying PTY
+                            // doesn't leave a frozen screen visible. The
+                            // persistent ssh PTY for this host stays open;
+                            // the remote tmux server will pick another
+                            // session for it on the next attach if any
+                            // remain.
+                            if self.active_remote.as_deref() == Some(host.as_str()) {
+                                self.active_remote = None;
+                                self.needs_full_redraw = true;
+                            }
+                        }
+                    }
+                    self.submit_session(
+                        kill.host.clone(),
+                        crate::session::executor::SessionOp::Kill {
+                            name: kill.name.clone(),
+                        },
+                    );
+                }
+                Effect::CreateSession(req) => match &req.host {
+                    None => self.create_new_session(&req.name, &req.dir),
+                    Some(host) => self.create_remote_session(host, &req.name, &req.dir),
+                },
+                Effect::ResizePty { full_redraw } => {
+                    self.resize_pty();
+                    if *full_redraw {
+                        // Full terminal resizes and layout/border mode changes can
+                        // invalidate the whole screen. Sidebar drags repaint through
+                        // ratatui's normal diffing path to avoid flashing.
                         self.needs_full_redraw = true;
                     }
                 }
+                Effect::SaveConfig => {
+                    self.save_config();
+                }
+                Effect::SaveSessionOrder => {
+                    self.submit_session(
+                        None,
+                        crate::session::executor::SessionOp::PersistOrder {
+                            order: self.state.session_order.clone(),
+                        },
+                    );
+                }
+                Effect::SaveRemoteSessionOrder(host) => {
+                    // Persist this host's group order to its remote tmux server, on
+                    // the executor's per-host FIFO (ordered behind any rename/kill
+                    // for the host, and off the UI thread).
+                    let names: Vec<String> = self
+                        .state
+                        .remote_sessions
+                        .iter()
+                        .filter(|r| &r.host == host && r.is_attachable_session())
+                        .map(|r| r.name.clone())
+                        .collect();
+                    self.submit_session(
+                        Some(host.clone()),
+                        crate::session::executor::SessionOp::PersistOrder { order: names },
+                    );
+                }
+                Effect::RemoveRemoteHost(host) => {
+                    // Tear down the ControlMaster (and any forwards riding on
+                    // it) so the host stops occupying SSH state once detached.
+                    let _ = self
+                        .port_forward_tx
+                        .send(crate::app::port_forward_task::Op::StopHost { host: host.clone() });
+                    // Drop the per-host runtime state (PTY, conn status, active
+                    // pointer) so a later re-add of the same host gets a fresh
+                    // connection instead of inheriting stale `Failed` status.
+                    self.offboard_remote_host(host);
+                }
+                Effect::ApplyTmuxTheme => {
+                    tmux::apply_theme(&THEMES[self.state.theme_index]);
+                }
+                Effect::RefreshSessions => {
+                    self.request_refresh();
+                }
+                Effect::RereadNewSessionEntries => {
+                    // Re-list the picker's current parent dir on the executor; the
+                    // `DirListed` outcome populates the overlay (and drops itself if
+                    // the user has since typed a different parent).
+                    self.request_new_session_listing();
+                }
+                Effect::OpenNewSessionPicker => {
+                    self.open_new_session_picker();
+                }
+                Effect::OpenRemoteNewSessionPicker(host) => {
+                    self.open_remote_new_session_picker(host);
+                }
+                Effect::OpenAddRemotePicker => {
+                    self.open_add_remote_picker();
+                }
+                Effect::AddRemoteHost(host) => {
+                    self.onboard_remote_host(host);
+                }
+                Effect::Quit => {}
             }
-            self.submit_session(
-                kill.host.clone(),
-                crate::session::executor::SessionOp::Kill {
-                    name: kill.name.clone(),
-                },
-            );
-        }
-
-        if let Some(ref req) = fx.create_session {
-            match &req.host {
-                None => self.create_new_session(&req.name, &req.dir),
-                Some(host) => self.create_remote_session(host, &req.name, &req.dir),
-            }
-        }
-
-        if fx.resize_pty {
-            self.resize_pty();
-            if fx.full_redraw_after_resize {
-                // Full terminal resizes and layout/border mode changes can
-                // invalidate the whole screen. Sidebar drags repaint through
-                // ratatui's normal diffing path to avoid flashing.
-                self.needs_full_redraw = true;
-            }
-        }
-
-        if fx.save_config {
-            self.save_config();
-        }
-
-        if fx.save_session_order {
-            self.submit_session(
-                None,
-                crate::session::executor::SessionOp::PersistOrder {
-                    order: self.state.session_order.clone(),
-                },
-            );
-        }
-
-        if let Some(ref host) = fx.save_remote_session_order {
-            // Persist this host's group order to its remote tmux server, on
-            // the executor's per-host FIFO (ordered behind any rename/kill
-            // for the host, and off the UI thread).
-            let names: Vec<String> = self
-                .state
-                .remote_sessions
-                .iter()
-                .filter(|r| &r.host == host && r.is_attachable_session())
-                .map(|r| r.name.clone())
-                .collect();
-            self.submit_session(
-                Some(host.clone()),
-                crate::session::executor::SessionOp::PersistOrder { order: names },
-            );
-        }
-
-        if let Some(ref host) = fx.remove_remote_host {
-            // Tear down the ControlMaster (and any forwards riding on
-            // it) so the host stops occupying SSH state once detached.
-            let _ = self
-                .port_forward_tx
-                .send(crate::app::port_forward_task::Op::StopHost { host: host.clone() });
-            // Drop the per-host runtime state (PTY, conn status, active
-            // pointer) so a later re-add of the same host gets a fresh
-            // connection instead of inheriting stale `Failed` status.
-            self.offboard_remote_host(host);
-        }
-
-        if fx.apply_tmux_theme {
-            tmux::apply_theme(&THEMES[self.state.theme_index]);
-        }
-
-        if fx.refresh_sessions {
-            self.request_refresh();
-        }
-
-        if fx.reread_new_session_entries {
-            // Re-list the picker's current parent dir on the executor; the
-            // `DirListed` outcome populates the overlay (and drops itself if
-            // the user has since typed a different parent).
-            self.request_new_session_listing();
-        }
-
-        if fx.open_new_session_picker {
-            self.open_new_session_picker();
-        }
-
-        if let Some(ref host) = fx.open_remote_new_session_picker {
-            self.open_remote_new_session_picker(host);
-        }
-
-        if fx.open_add_remote_picker {
-            self.open_add_remote_picker();
-        }
-
-        if let Some(ref host) = fx.add_remote_host {
-            self.onboard_remote_host(host);
         }
     }
 
@@ -993,35 +987,60 @@ impl App {
         self.state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(hosts));
     }
 
-    fn open_new_session_picker(&mut self) {
+    fn new_session_target(&self, host: Option<&str>) -> NewSessionTarget {
+        match host {
+            None => {
+                // Starting dir: focused session's dir if any, else $HOME.
+                let start_dir = self
+                    .state
+                    .filtered
+                    .get(self.state.focused)
+                    .and_then(|&i| self.state.sessions.get(i))
+                    .map(|s| s.dir.clone())
+                    .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+                let existing_names: Vec<String> =
+                    self.state.sessions.iter().map(|s| s.name.clone()).collect();
+                NewSessionTarget {
+                    host: None,
+                    start_dir,
+                    existing_count: self.state.sessions.len(),
+                    existing_names,
+                }
+            }
+            Some(host) => {
+                let existing_names: Vec<String> = self
+                    .state
+                    .remote_sessions
+                    .iter()
+                    .filter(|r| r.host == host && r.is_attachable_session())
+                    .map(|r| r.name.clone())
+                    .collect();
+                NewSessionTarget {
+                    host: Some(host.to_string()),
+                    start_dir: "~/".to_string(),
+                    existing_count: existing_names.len(),
+                    existing_names,
+                }
+            }
+        }
+    }
+
+    fn open_new_session_picker_for(&mut self, target: NewSessionTarget) {
         use crate::new_session::{auto_session_name, make_textarea, NewSessionState, PickerFocus};
 
-        // Starting dir: focused session's dir if any, else $HOME.
-        let start_dir = self
-            .state
-            .filtered
-            .get(self.state.focused)
-            .and_then(|&i| self.state.sessions.get(i))
-            .map(|s| s.dir.clone())
-            .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
-        let mut input_str = start_dir;
+        let mut input_str = target.start_dir;
         if !input_str.ends_with('/') {
             input_str.push('/');
         }
 
-        let existing: Vec<&str> = self
-            .state
-            .sessions
-            .iter()
-            .map(|s| s.name.as_str())
-            .collect();
-        let name_str = auto_session_name(&existing, self.state.sessions.len());
+        let existing: Vec<&str> = target.existing_names.iter().map(String::as_str).collect();
+        let name_str = auto_session_name(&existing, target.existing_count);
 
         // Open with an empty listing and fill it asynchronously: the
         // `list_dir` runs on the executor and the `DirListed` outcome
-        // populates `entries`. (Local listing is fast, but routing it
-        // through the executor keeps the picker uniform with the remote one
-        // and off the UI thread.)
+        // populates `entries`. Local listing is fast, but routing it through
+        // the executor keeps the picker uniform with the remote one and off
+        // the UI thread.
         let mut ns = NewSessionState {
             name: make_textarea(&name_str),
             focus: PickerFocus::Name,
@@ -1030,47 +1049,22 @@ impl App {
             filtered: vec![],
             selected: 0,
             error: None,
-            remote_host: None,
+            remote_host: target.host,
         };
         ns.refilter();
         self.state.overlay.new_session = Some(ns);
         self.request_new_session_listing();
     }
 
+    fn open_new_session_picker(&mut self) {
+        self.open_new_session_picker_for(self.new_session_target(None));
+    }
+
     /// Open the new-session picker targeting a remote `host`: the dir
     /// browser lists remote directories over ssh and confirming creates
     /// the session on that host. Starts at the remote home (`~`).
     fn open_remote_new_session_picker(&mut self, host: &str) {
-        use crate::new_session::{auto_session_name, make_textarea, NewSessionState, PickerFocus};
-
-        let input_str = "~/".to_string();
-
-        // Name must be unique among this host's live sessions.
-        let existing: Vec<&str> = self
-            .state
-            .remote_sessions
-            .iter()
-            .filter(|r| r.host == host && r.is_attachable_session())
-            .map(|r| r.name.as_str())
-            .collect();
-        let name_str = auto_session_name(&existing, existing.len());
-
-        // Open with an empty listing; the remote `list_dir` (blocking ssh)
-        // runs on the executor and the `DirListed` outcome fills `entries`,
-        // so opening the picker no longer stalls the UI on the network.
-        let mut ns = NewSessionState {
-            name: make_textarea(&name_str),
-            focus: PickerFocus::Name,
-            input: make_textarea(&input_str),
-            entries: vec![],
-            filtered: vec![],
-            selected: 0,
-            error: None,
-            remote_host: Some(host.to_string()),
-        };
-        ns.refilter();
-        self.state.overlay.new_session = Some(ns);
-        self.request_new_session_listing();
+        self.open_new_session_picker_for(self.new_session_target(Some(host)));
     }
 
     fn confirm_new_session(&mut self) -> Option<crate::state::CreateSessionRequest> {
@@ -1086,13 +1080,13 @@ impl App {
         // the browsed path (it can't be stat'd locally — tmux fails
         // loudly if it's bad), and let the remote shell expand `~`.
         if let Some(host) = remote_host {
-            let dup = self
+            let existing = self
                 .state
                 .remote_sessions
                 .iter()
-                .any(|r| r.host == host && r.name == name);
-            let err =
-                session_name_format_error(&name).or_else(|| dup.then_some("name already in use"));
+                .filter(|r| r.host == host && r.is_attachable_session())
+                .map(|r| r.name.as_str());
+            let err = validate_unique_session_name(&name, existing);
             if let Some(err) = err {
                 if let Some(ns) = self.state.overlay.new_session.as_mut() {
                     ns.error = Some(err.to_string());
@@ -1112,7 +1106,8 @@ impl App {
         }
 
         // Validate name (local).
-        if let Some(err) = validate_session_name(&name, &self.state.sessions) {
+        let existing = self.state.sessions.iter().map(|s| s.name.as_str());
+        if let Some(err) = validate_unique_session_name(&name, existing) {
             if let Some(ns) = self.state.overlay.new_session.as_mut() {
                 ns.error = Some(err.to_string());
             }

@@ -517,104 +517,216 @@ pub struct KillConfirmHits {
 
 // --- Side effects ---
 
-#[derive(Debug, Default)]
-pub struct SideEffect {
-    pub switch_session: Option<String>,
+#[derive(Debug)]
+pub enum Effect {
+    SwitchSession(String),
     /// Switch the main view to a remote session. Carries (host, name)
     /// — App's dispatch layer routes the `tmux switch-client` over ssh.
-    pub switch_remote: Option<RemoteSwitchRequest>,
-    pub kill_session: Option<KillRequest>,
-    pub rename_session: Option<RenameRequest>,
-    /// `Some(req)` means: create a new tmux session with `req.name` at
-    /// `req.dir`. The picker fills both fields; the auto-naming loop that
-    /// used to live in `App::create_new_session` now lives in
-    /// `App::open_new_session_picker` and is editable via the name input.
-    pub create_session: Option<CreateSessionRequest>,
-    /// Detach a remote host from deck (equivalent to `deck remote
-    /// remove <host>`). Dispatch sends `Op::StopHost` to the
-    /// port-forward worker; the state mutation + config save happen
-    /// in the reducer.
-    pub remove_remote_host: Option<String>,
-    /// Dispatch should open the new-session picker overlay. Fired by
-    /// the `@local` divider's "New session" item; uses the focused
-    /// session's dir as the picker's starting point.
-    pub open_new_session_picker: bool,
-    /// Dispatch should open the new-session picker targeting this remote
-    /// host: the dir browser lists remote directories over ssh and the
-    /// session is created on that host. Fired by the host divider menu's
-    /// "New session" item.
-    pub open_remote_new_session_picker: Option<String>,
-    /// Dispatch should open the Add Remote Host picker (build candidates from
-    /// ~/.ssh/config minus already-added hosts).
-    pub open_add_remote_picker: bool,
-    /// A host was just added; dispatch should onboard it (spawn connection),
-    /// the same way `reload_config` does for a newly-configured host.
-    pub add_remote_host: Option<String>,
-    /// Dispatch should re-run `read_dir` for the picker's current
-    /// parent and refresh `entries`. Fired by any reducer arm that
-    /// changes the effective parent.
-    pub reread_new_session_entries: bool,
-    pub resize_pty: bool,
-    /// Dispatch should clear the host terminal before the next draw after a
-    /// resize. Sidebar-only resizes deliberately leave this false.
-    pub full_redraw_after_resize: bool,
-    pub save_config: bool,
-    /// Dispatch should persist the current local `session_order` onto the
-    /// tmux sessions (`@deck_order`) so the manual arrangement survives a
-    /// deck restart. Fired by `ReorderSession`.
-    pub save_session_order: bool,
-    /// Dispatch should persist this host's remote session order onto its
-    /// tmux server (`@deck_order` over ssh). Fired by `ReorderSession`
-    /// when the moved row is remote; carries the host whose group changed.
-    pub save_remote_session_order: Option<String>,
-    pub apply_tmux_theme: bool,
-    pub refresh_sessions: bool,
-    pub quit: bool,
+    SwitchRemote(RemoteSwitchRequest),
+    KillSession(KillRequest),
+    RenameSession(RenameRequest),
+    /// Create a new tmux session with `req.name` at `req.dir`.
+    CreateSession(CreateSessionRequest),
+    /// Detach a remote host from deck (equivalent to `deck remote remove <host>`).
+    RemoveRemoteHost(String),
+    OpenNewSessionPicker,
+    OpenRemoteNewSessionPicker(String),
+    OpenAddRemotePicker,
+    AddRemoteHost(String),
+    RereadNewSessionEntries,
+    ResizePty {
+        /// Clear the host terminal before the next draw after resize.
+        full_redraw: bool,
+    },
+    SaveConfig,
+    SaveSessionOrder,
+    SaveRemoteSessionOrder(String),
+    ApplyTmuxTheme,
+    RefreshSessions,
+    Quit,
+}
+
+#[derive(Debug, Default)]
+pub struct SideEffect {
+    effects: Vec<Effect>,
 }
 
 impl SideEffect {
-    /// Fold another SideEffect into this one. Option fields from `other`
-    /// overwrite Some values; bool fields are OR'd. Use this whenever a
-    /// compound action delegates to a sub-action — it keeps new fx
-    /// fields from silently being dropped.
+    pub fn effects(&self) -> &[Effect] {
+        &self.effects
+    }
+
     pub fn merge(&mut self, other: SideEffect) {
-        if other.switch_session.is_some() {
-            self.switch_session = other.switch_session;
-        }
-        if other.switch_remote.is_some() {
-            self.switch_remote = other.switch_remote;
-        }
-        if other.kill_session.is_some() {
-            self.kill_session = other.kill_session;
-        }
-        if other.rename_session.is_some() {
-            self.rename_session = other.rename_session;
-        }
-        if other.create_session.is_some() {
-            self.create_session = other.create_session;
-        }
-        if other.remove_remote_host.is_some() {
-            self.remove_remote_host = other.remove_remote_host;
-        }
-        self.open_new_session_picker |= other.open_new_session_picker;
-        if other.open_remote_new_session_picker.is_some() {
-            self.open_remote_new_session_picker = other.open_remote_new_session_picker;
-        }
-        self.open_add_remote_picker |= other.open_add_remote_picker;
-        if other.add_remote_host.is_some() {
-            self.add_remote_host = other.add_remote_host;
-        }
-        self.reread_new_session_entries |= other.reread_new_session_entries;
-        self.resize_pty |= other.resize_pty;
-        self.full_redraw_after_resize |= other.full_redraw_after_resize;
-        self.save_config |= other.save_config;
-        self.save_session_order |= other.save_session_order;
-        if other.save_remote_session_order.is_some() {
-            self.save_remote_session_order = other.save_remote_session_order;
-        }
-        self.apply_tmux_theme |= other.apply_tmux_theme;
-        self.refresh_sessions |= other.refresh_sessions;
-        self.quit |= other.quit;
+        self.effects.extend(other.effects);
+    }
+
+    pub fn push(&mut self, effect: Effect) {
+        self.effects.push(effect);
+    }
+
+    pub fn switch_session(&mut self, name: String) {
+        self.push(Effect::SwitchSession(name));
+    }
+
+    pub fn switch_remote(&mut self, req: RemoteSwitchRequest) {
+        self.push(Effect::SwitchRemote(req));
+    }
+
+    pub fn kill_session(&mut self, req: KillRequest) {
+        self.push(Effect::KillSession(req));
+    }
+
+    pub fn rename_session(&mut self, req: RenameRequest) {
+        self.push(Effect::RenameSession(req));
+    }
+
+    pub fn create_session(&mut self, req: CreateSessionRequest) {
+        self.push(Effect::CreateSession(req));
+    }
+
+    pub fn remove_remote_host(&mut self, host: String) {
+        self.push(Effect::RemoveRemoteHost(host));
+    }
+
+    pub fn open_new_session_picker(&mut self) {
+        self.push(Effect::OpenNewSessionPicker);
+    }
+
+    pub fn open_remote_new_session_picker(&mut self, host: String) {
+        self.push(Effect::OpenRemoteNewSessionPicker(host));
+    }
+
+    pub fn open_add_remote_picker(&mut self) {
+        self.push(Effect::OpenAddRemotePicker);
+    }
+
+    pub fn add_remote_host(&mut self, host: String) {
+        self.push(Effect::AddRemoteHost(host));
+    }
+
+    pub fn reread_new_session_entries(&mut self) {
+        self.push(Effect::RereadNewSessionEntries);
+    }
+
+    pub fn resize_pty(&mut self, full_redraw: bool) {
+        self.push(Effect::ResizePty { full_redraw });
+    }
+
+    pub fn save_config(&mut self) {
+        self.push(Effect::SaveConfig);
+    }
+
+    pub fn save_session_order(&mut self) {
+        self.push(Effect::SaveSessionOrder);
+    }
+
+    pub fn save_remote_session_order(&mut self, host: String) {
+        self.push(Effect::SaveRemoteSessionOrder(host));
+    }
+
+    pub fn apply_tmux_theme(&mut self) {
+        self.push(Effect::ApplyTmuxTheme);
+    }
+
+    pub fn refresh_sessions(&mut self) {
+        self.push(Effect::RefreshSessions);
+    }
+
+    pub fn quit(&mut self) {
+        self.push(Effect::Quit);
+    }
+
+    pub fn has_quit(&self) -> bool {
+        self.effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Quit))
+    }
+}
+
+#[cfg(test)]
+impl SideEffect {
+    pub fn first_switch_session(&self) -> Option<&str> {
+        self.effects.iter().find_map(|effect| match effect {
+            Effect::SwitchSession(name) => Some(name.as_str()),
+            _ => None,
+        })
+    }
+
+    pub fn first_kill_session(&self) -> Option<&KillRequest> {
+        self.effects.iter().find_map(|effect| match effect {
+            Effect::KillSession(req) => Some(req),
+            _ => None,
+        })
+    }
+
+    pub fn first_rename_session(&self) -> Option<&RenameRequest> {
+        self.effects.iter().find_map(|effect| match effect {
+            Effect::RenameSession(req) => Some(req),
+            _ => None,
+        })
+    }
+
+    pub fn first_remove_remote_host(&self) -> Option<&str> {
+        self.effects.iter().find_map(|effect| match effect {
+            Effect::RemoveRemoteHost(host) => Some(host.as_str()),
+            _ => None,
+        })
+    }
+
+    pub fn first_save_remote_session_order(&self) -> Option<&str> {
+        self.effects.iter().find_map(|effect| match effect {
+            Effect::SaveRemoteSessionOrder(host) => Some(host.as_str()),
+            _ => None,
+        })
+    }
+
+    pub fn has_open_new_session_picker(&self) -> bool {
+        self.effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::OpenNewSessionPicker))
+    }
+
+    pub fn first_open_remote_new_session_picker(&self) -> Option<&str> {
+        self.effects.iter().find_map(|effect| match effect {
+            Effect::OpenRemoteNewSessionPicker(host) => Some(host.as_str()),
+            _ => None,
+        })
+    }
+
+    pub fn has_resize_pty(&self) -> bool {
+        self.effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::ResizePty { .. }))
+    }
+
+    pub fn has_full_redraw_after_resize(&self) -> bool {
+        self.effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::ResizePty { full_redraw: true }))
+    }
+
+    pub fn has_save_config(&self) -> bool {
+        self.effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::SaveConfig))
+    }
+
+    pub fn has_save_session_order(&self) -> bool {
+        self.effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::SaveSessionOrder))
+    }
+
+    pub fn has_refresh_sessions(&self) -> bool {
+        self.effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::RefreshSessions))
+    }
+
+    pub fn has_reread_new_session_entries(&self) -> bool {
+        self.effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::RereadNewSessionEntries))
     }
 }
 

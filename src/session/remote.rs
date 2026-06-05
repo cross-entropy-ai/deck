@@ -1,15 +1,11 @@
 //! Remote (ssh) backend for the session control plane.
 //!
 //! Drives a remote tmux server by shelling out to `ssh <host> tmux ...`,
-//! exactly as `infra::remote_tmux` does today. The next phase fills the
-//! [`SessionControl`] method bodies by re-homing the existing
-//! `infra::remote_tmux` call sites; this skeleton only fixes the struct
-//! shape and the trait wiring.
+//! exactly as `infra::remote_tmux` does today.
 
 use crate::infra::remote_tmux;
-use crate::infra::tmux::SessionInfo;
 
-use super::{Reachability, SessionControl, Transport};
+use super::SessionControl;
 
 /// Remote control-plane backend for a single host.
 ///
@@ -37,25 +33,6 @@ impl RemoteControl {
 }
 
 impl SessionControl for RemoteControl {
-    fn transport(&self) -> Transport {
-        Transport::Ssh
-    }
-
-    fn list_sessions(&self) -> Reachability<Vec<SessionInfo>> {
-        // Today's `remote_tmux::list_sessions` returns the tri-state
-        // `Option<Vec<SessionInfo>>` (None = unreachable, Some(empty) = no
-        // server, Some(non-empty) = reachable). Bridge it to `Reachability`
-        // via the helper, preserving every distinction exactly.
-        Reachability::from_remote_opt(remote_tmux::list_sessions(&self.host))
-    }
-
-    fn current_session(&self) -> Option<String> {
-        // Remote tracks no current session today (`apply_remote` has no
-        // current/ack field) — return None. Capturing the remote client tty
-        // to answer this is a later-phase behaviour change, not done here.
-        None
-    }
-
     fn switch_to_session(&self, name: &str) {
         // The control-plane leaf of today's `remote_tmux::switch_client`.
         // The Connected/marker_ready gate, the `pending_remote_switch`

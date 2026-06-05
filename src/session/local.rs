@@ -1,13 +1,11 @@
 //! Local (in-process) backend for the session control plane.
 //!
 //! Drives the local tmux server by running `tmux` in this process, exactly
-//! as `infra::tmux` does today. The next phase fills the [`SessionControl`]
-//! method bodies by re-homing the existing `infra::tmux` call sites; this
-//! skeleton only fixes the struct shape and the trait wiring.
+//! as `infra::tmux` does today.
 
-use crate::infra::tmux::{self, SessionInfo};
+use crate::infra::tmux;
 
-use super::{Reachability, SessionControl, Transport};
+use super::SessionControl;
 
 /// Local control-plane backend.
 ///
@@ -35,30 +33,6 @@ impl LocalControl {
 }
 
 impl SessionControl for LocalControl {
-    fn transport(&self) -> Transport {
-        Transport::InProcess
-    }
-
-    fn list_sessions(&self) -> Reachability<Vec<SessionInfo>> {
-        // Local is effectively always reachable today: `tmux::list_sessions`
-        // is infallible (it swallows errors into an empty Vec), and the
-        // local refresh path consumes it directly with no tri-state. Wrap
-        // it as `Reachable` to preserve that behaviour exactly — the
-        // tri-state distinction is a remote-only concern at this phase.
-        Reachability::Reachable(tmux::list_sessions())
-    }
-
-    fn current_session(&self) -> Option<String> {
-        // Mirror `collect_local` (src/infra/refresh.rs): target deck's own
-        // client by tty when we know it, else fall back to the bare
-        // first-attached-client query.
-        if self.client_tty.is_empty() {
-            tmux::current_session()
-        } else {
-            tmux::current_session_for_tty(&self.client_tty)
-        }
-    }
-
     fn switch_to_session(&self, name: &str) {
         // Replicate `App::switch_client` (src/app/dispatch.rs): re-point
         // deck's own embedded tmux client. Target it by tty when known so we

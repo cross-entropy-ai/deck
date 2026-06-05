@@ -37,13 +37,13 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) {
     };
     match state.session_target(target) {
         Some(SessionTargetRef::Local(row)) => {
-            fx.switch_session = Some(row.name.clone());
+            fx.switch_session(row.name.clone());
         }
         // Synthetic placeholder rows (loading, unreachable, or the
         // "no sessions" marker) have no real session to switch to. Skip
         // silently so a click doesn't fire a doomed remote switch.
         Some(SessionTargetRef::Remote(row)) if row.is_attachable_session() => {
-            fx.switch_remote = Some(RemoteSwitchRequest {
+            fx.switch_remote(RemoteSwitchRequest {
                 host: row.host.clone(),
                 name: row.name.clone(),
             });
@@ -117,7 +117,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
 
         Action::SwitchProject => {
             fill_switch_effect(state, &mut fx);
-            fx.refresh_sessions = true;
+            fx.refresh_sessions();
         }
         Action::KillSession => {
             let Some(target) = state.focus_target() else {
@@ -174,24 +174,24 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     state.session_order.retain(|n| n != &name);
                     state.focused = next_focused.min(state.filtered.len().saturating_sub(1));
 
-                    fx.kill_session = Some(KillRequest {
+                    fx.kill_session(KillRequest {
                         name,
                         host: None,
                         switch_to,
                     });
-                    fx.refresh_sessions = true;
+                    fx.refresh_sessions();
                 }
                 Some(SessionTargetRef::Remote(row)) => {
                     let name = row.name.clone();
                     let host = row.host.clone();
-                    fx.kill_session = Some(KillRequest {
+                    fx.kill_session(KillRequest {
                         name,
                         host: Some(host),
                         // No local switch_to: dispatch returns the
                         // user to local view after a remote kill.
                         switch_to: None,
                     });
-                    fx.refresh_sessions = true;
+                    fx.refresh_sessions();
                 }
                 None => {}
             }
@@ -210,9 +210,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if total > 0 && state.focused >= total {
                 state.focused = total - 1;
             }
-            fx.save_config = true;
-            fx.refresh_sessions = true;
-            fx.remove_remote_host = Some(host);
+            fx.save_config();
+            fx.refresh_sessions();
+            fx.remove_remote_host(host);
         }
         Action::ReorderSession(direction) => {
             let local_count = state.filtered.len();
@@ -241,7 +241,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 }
                 state.remote_sessions.swap(idx, neighbor);
                 state.focused = local_count + neighbor;
-                fx.save_remote_session_order = Some(host);
+                fx.save_remote_session_order(host);
                 return fx;
             }
 
@@ -266,7 +266,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     }
                     // Persist the new arrangement onto the tmux sessions so
                     // it survives a deck restart (see `persist_session_order`).
-                    fx.save_session_order = true;
+                    fx.save_session_order();
                 }
             }
         }
@@ -295,12 +295,12 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     && new_name != r.original_name
                     && !crate::state::is_reserved_session_name(&new_name)
                 {
-                    fx.rename_session = Some(RenameRequest {
+                    fx.rename_session(RenameRequest {
                         old_name: r.original_name,
                         new_name,
                         host: r.host,
                     });
-                    fx.refresh_sessions = true;
+                    fx.refresh_sessions();
                 }
             }
         }
@@ -313,29 +313,27 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 LayoutMode::Horizontal => LayoutMode::Vertical,
                 LayoutMode::Vertical => LayoutMode::Horizontal,
             };
-            fx.resize_pty = true;
-            fx.full_redraw_after_resize = true;
-            fx.save_config = true;
+            fx.resize_pty(true);
+            fx.save_config();
         }
         Action::ToggleBorders => {
             state.show_borders = !state.show_borders;
-            fx.resize_pty = true;
-            fx.full_redraw_after_resize = true;
-            fx.save_config = true;
+            fx.resize_pty(true);
+            fx.save_config();
         }
         Action::ToggleShowAgents => {
             // Show/hide the agent footers. No `resize_pty`: it only adds/
             // removes sidebar footer rows, the pane geometry is unchanged.
             // The next refresh picks up the flag and starts/stops detection.
             state.show_agents = !state.show_agents;
-            fx.save_config = true;
+            fx.save_config();
         }
         Action::ToggleViewMode => {
             state.view_mode = match state.view_mode {
                 ViewMode::Expanded => ViewMode::Compact,
                 ViewMode::Compact => ViewMode::Expanded,
             };
-            fx.save_config = true;
+            fx.save_config();
         }
         Action::ToggleSection(key) => {
             // Flip the group's collapsed membership. Collapse is only
@@ -353,7 +351,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 // `j`/`k` step out to a visible row from there (focus_next/
                 // focus_prev skip hidden rows).
             }
-            fx.save_config = true;
+            fx.save_config();
         }
         Action::OpenSettings => {
             state.main_view = MainView::Settings;
@@ -404,15 +402,15 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.settings.theme_picker_selected =
                 (state.settings.theme_picker_selected + 1).min(THEMES.len() - 1);
             state.theme_index = state.settings.theme_picker_selected;
-            fx.save_config = true;
-            fx.apply_tmux_theme = true;
+            fx.save_config();
+            fx.apply_tmux_theme();
         }
         Action::ThemePickerPrev => {
             if state.settings.theme_picker_selected > 0 {
                 state.settings.theme_picker_selected -= 1;
                 state.theme_index = state.settings.theme_picker_selected;
-                fx.save_config = true;
-                fx.apply_tmux_theme = true;
+                fx.save_config();
+                fx.apply_tmux_theme();
             }
         }
         Action::ConfirmThemePicker => {
@@ -443,7 +441,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if state.update_check_mode == crate::update::UpdateCheckMode::Disabled {
                 state.update_available = None;
             }
-            fx.save_config = true;
+            fx.save_config();
         }
         Action::TriggerUpgrade | Action::AbortUpgrade => {}
 
@@ -488,8 +486,8 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     if editor.selected > 0 && editor.selected >= state.exclude_patterns.len() {
                         editor.selected = state.exclude_patterns.len().saturating_sub(1);
                     }
-                    fx.save_config = true;
-                    fx.refresh_sessions = true;
+                    fx.save_config();
+                    fx.refresh_sessions();
                 }
             }
         }
@@ -517,8 +515,8 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                                 editor.reset_input();
                                 editor.error = None;
                                 editor.selected = state.exclude_patterns.len().saturating_sub(1);
-                                fx.save_config = true;
-                                fx.refresh_sessions = true;
+                                fx.save_config();
+                                fx.refresh_sessions();
                             }
                             Err(e) => {
                                 editor.error = Some(format!("Invalid regex: {}", e));
@@ -530,8 +528,8 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                         editor.reset_input();
                         editor.error = None;
                         editor.selected = state.exclude_patterns.len().saturating_sub(1);
-                        fx.save_config = true;
-                        fx.refresh_sessions = true;
+                        fx.save_config();
+                        fx.refresh_sessions();
                     }
                 }
             }
@@ -557,7 +555,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                             .0
                             .to_string();
                         if parent_before != parent_after {
-                            fx.reread_new_session_entries = true;
+                            fx.reread_new_session_entries();
                         }
                     }
                 }
@@ -590,7 +588,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     .0
                     .to_string();
                 if parent_before != parent_after {
-                    fx.reread_new_session_entries = true;
+                    fx.reread_new_session_entries();
                 }
                 ns.error = None;
             }
@@ -603,7 +601,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     let new_path = format!("{}{}/", parent, entry);
                     ns.input = crate::new_session::make_textarea(&new_path);
                     ns.refilter();
-                    fx.reread_new_session_entries = true;
+                    fx.reread_new_session_entries();
                     ns.error = None;
                 }
             }
@@ -629,7 +627,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if let Some(ns) = state.overlay.new_session.as_mut() {
                 ns.input = crate::new_session::make_textarea("");
                 ns.refilter();
-                fx.reread_new_session_entries = true;
+                fx.reread_new_session_entries();
                 ns.error = None;
             }
         }
@@ -651,7 +649,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 ns.refilter();
                 // Always reread: the user explicitly cleared the segment they
                 // were typing and expects a fresh listing of the parent dir.
-                fx.reread_new_session_entries = true;
+                fx.reread_new_session_entries();
                 ns.error = None;
             }
         }
@@ -749,27 +747,30 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 }
                 MenuKind::Global => {
                     let inner = match selected_label {
-                        Some("Add Remote Host") => SideEffect {
-                            open_add_remote_picker: true,
-                            ..SideEffect::default()
-                        },
+                        Some("Add Remote Host") => {
+                            let mut inner = SideEffect::default();
+                            inner.open_add_remote_picker();
+                            inner
+                        }
                         Some("Toggle layout") => apply_action(state, Action::ToggleLayout),
                         Some("Toggle borders") => apply_action(state, Action::ToggleBorders),
                         Some("Settings") => apply_action(state, Action::OpenSettings),
-                        Some("Quit") => SideEffect {
-                            quit: true,
-                            ..SideEffect::default()
-                        },
+                        Some("Quit") => {
+                            let mut inner = SideEffect::default();
+                            inner.quit();
+                            inner
+                        }
                         _ => SideEffect::default(),
                     };
                     fx.merge(inner);
                 }
                 MenuKind::HostDivider { host, .. } => {
                     let inner = match selected_label {
-                        Some("New session") => SideEffect {
-                            open_remote_new_session_picker: Some(host.clone()),
-                            ..SideEffect::default()
-                        },
+                        Some("New session") => {
+                            let mut inner = SideEffect::default();
+                            inner.open_remote_new_session_picker(host.clone());
+                            inner
+                        }
                         Some("Port Forward") => {
                             apply_action(state, Action::OpenPortForward(host.clone()))
                         }
@@ -784,10 +785,11 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     // Port Forward / Remove from list are greyed out and
                     // unreachable here; only "New session" (local) fires.
                     let inner = match selected_label {
-                        Some("New session") => SideEffect {
-                            open_new_session_picker: true,
-                            ..SideEffect::default()
-                        },
+                        Some("New session") => {
+                            let mut inner = SideEffect::default();
+                            inner.open_new_session_picker();
+                            inner
+                        }
                         _ => SideEffect::default(),
                     };
                     fx.merge(inner);
@@ -808,12 +810,12 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
 
         Action::ResizeSidebar(width) => {
             if state.resize_sidebar(width) {
-                fx.resize_pty = true;
+                fx.resize_pty(false);
             }
         }
         Action::ResizeSidebarHeight(height) => {
             if state.resize_sidebar_height(height) {
-                fx.resize_pty = true;
+                fx.resize_pty(false);
             }
         }
         Action::StartDrag => {
@@ -821,14 +823,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::StopDrag => {
             state.dragging_separator = false;
-            fx.save_config = true;
+            fx.save_config();
         }
 
         Action::Resize(w, h) => {
             state.term_width = w;
             state.term_height = h;
-            fx.resize_pty = true;
-            fx.full_redraw_after_resize = true;
+            fx.resize_pty(true);
         }
 
         Action::ActivatePlugin(idx) => {
@@ -849,7 +850,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         | Action::SwitchToAgentPane(_) => {}
 
         Action::Quit => {
-            fx.quit = true;
+            fx.quit();
         }
 
         // Handled entirely in dispatch (needs App-level access to raw
@@ -1011,9 +1012,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 forwards: vec![],
             });
             state.overlay.add_remote = None;
-            fx.save_config = true;
-            fx.refresh_sessions = true;
-            fx.add_remote_host = Some(host);
+            fx.save_config();
+            fx.refresh_sessions();
+            fx.add_remote_host(host);
         }
 
         Action::PfProbeResult { key, health } => {
@@ -1183,7 +1184,7 @@ fn apply_pf_task_result(
                     r.forwards.push(spec.clone());
                 }
             }
-            fx.save_config = true;
+            fx.save_config();
         }
         OpKind::Master(_) if !ok => {
             for row in state.remote_sessions.iter_mut() {

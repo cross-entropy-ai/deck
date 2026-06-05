@@ -44,7 +44,7 @@ fn focus_next_advances_and_switches() {
     state.focused = 0;
     let fx = apply_action(&mut state, Action::FocusNext);
     assert_eq!(state.focused, 1);
-    assert_eq!(fx.switch_session.as_deref(), Some("sess-1"));
+    assert_eq!(fx.first_switch_session(), Some("sess-1"));
 }
 
 #[test]
@@ -53,7 +53,7 @@ fn focus_next_stops_at_end() {
     state.focused = 4;
     let fx = apply_action(&mut state, Action::FocusNext);
     assert_eq!(state.focused, 4);
-    assert!(fx.switch_session.is_none());
+    assert!(fx.first_switch_session().is_none());
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn focus_prev_decrements_and_switches() {
     state.focused = 3;
     let fx = apply_action(&mut state, Action::FocusPrev);
     assert_eq!(state.focused, 2);
-    assert_eq!(fx.switch_session.as_deref(), Some("sess-2"));
+    assert_eq!(fx.first_switch_session(), Some("sess-2"));
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn focus_prev_stops_at_zero() {
     state.focused = 0;
     let fx = apply_action(&mut state, Action::FocusPrev);
     assert_eq!(state.focused, 0);
-    assert!(fx.switch_session.is_none());
+    assert!(fx.first_switch_session().is_none());
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn kill_session_requires_confirmation() {
     state.focused = 1;
     let fx = apply_action(&mut state, Action::KillSession);
     assert!(state.overlay.confirm_kill);
-    assert!(fx.kill_session.is_none());
+    assert!(fx.first_kill_session().is_none());
 }
 
 #[test]
@@ -112,8 +112,8 @@ fn confirm_kill_returns_side_effect_with_switch_target() {
     state.overlay.confirm_kill = true;
     let fx = apply_action(&mut state, Action::ConfirmKill);
     assert!(!state.overlay.confirm_kill);
-    assert!(fx.kill_session.is_some());
-    let kill = fx.kill_session.unwrap();
+    assert!(fx.first_kill_session().is_some());
+    let kill = fx.first_kill_session().unwrap();
     assert_eq!(kill.name, "sess-1");
     assert!(kill.switch_to.is_some());
 }
@@ -132,9 +132,9 @@ fn toggle_layout_flips_and_signals_resize() {
     assert_eq!(state.layout_mode, LayoutMode::Horizontal);
     let fx = apply_action(&mut state, Action::ToggleLayout);
     assert_eq!(state.layout_mode, LayoutMode::Vertical);
-    assert!(fx.resize_pty);
-    assert!(fx.full_redraw_after_resize);
-    assert!(fx.save_config);
+    assert!(fx.has_resize_pty());
+    assert!(fx.has_full_redraw_after_resize());
+    assert!(fx.has_save_config());
 }
 
 #[test]
@@ -143,9 +143,9 @@ fn toggle_borders_signals_resize_and_save() {
     let was = state.show_borders;
     let fx = apply_action(&mut state, Action::ToggleBorders);
     assert_ne!(state.show_borders, was);
-    assert!(fx.resize_pty);
-    assert!(fx.full_redraw_after_resize);
-    assert!(fx.save_config);
+    assert!(fx.has_resize_pty());
+    assert!(fx.has_full_redraw_after_resize());
+    assert!(fx.has_save_config());
 }
 
 #[test]
@@ -165,7 +165,7 @@ fn settings_adjust_theme_opens_picker() {
     let fx = apply_action(&mut state, Action::SettingsAdjust);
     assert!(state.settings.theme_picker_open);
     assert_eq!(state.settings.theme_picker_selected, 0);
-    assert!(!fx.save_config);
+    assert!(!fx.has_save_config());
 }
 
 #[test]
@@ -189,7 +189,7 @@ fn confirm_theme_picker_selects_theme_and_saves() {
     state.settings.theme_picker_selected = 3;
     let fx = apply_action(&mut state, Action::ConfirmThemePicker);
     assert!(!state.settings.theme_picker_open);
-    assert!(!fx.save_config);
+    assert!(!fx.has_save_config());
 }
 
 #[test]
@@ -201,7 +201,7 @@ fn theme_picker_next_previews_theme_immediately() {
     let fx = apply_action(&mut state, Action::ThemePickerNext);
     assert_eq!(state.settings.theme_picker_selected, 1);
     assert_eq!(state.theme_index, 1);
-    assert!(fx.save_config);
+    assert!(fx.has_save_config());
 }
 
 #[test]
@@ -210,8 +210,8 @@ fn settings_adjust_layout_resizes_and_saves() {
     state.settings.selected = 1;
     let fx = apply_action(&mut state, Action::SettingsAdjust);
     assert_eq!(state.layout_mode, LayoutMode::Vertical);
-    assert!(fx.resize_pty);
-    assert!(fx.save_config);
+    assert!(fx.has_resize_pty());
+    assert!(fx.has_save_config());
 }
 
 #[test]
@@ -221,8 +221,8 @@ fn settings_adjust_borders_resizes_and_saves() {
     state.settings.selected = 2;
     let fx = apply_action(&mut state, Action::SettingsAdjust);
     assert_ne!(state.show_borders, initial);
-    assert!(fx.resize_pty);
-    assert!(fx.save_config);
+    assert!(fx.has_resize_pty());
+    assert!(fx.has_save_config());
 }
 
 #[test]
@@ -264,15 +264,15 @@ fn switch_project_returns_session_name() {
     let mut state = make_test_state(3);
     state.focused = 2;
     let fx = apply_action(&mut state, Action::SwitchProject);
-    assert_eq!(fx.switch_session.as_deref(), Some("sess-2"));
-    assert!(fx.refresh_sessions);
+    assert_eq!(fx.first_switch_session(), Some("sess-2"));
+    assert!(fx.has_refresh_sessions());
 }
 
 #[test]
 fn quit_signals_quit() {
     let mut state = make_test_state(1);
     let fx = apply_action(&mut state, Action::Quit);
-    assert!(fx.quit);
+    assert!(fx.has_quit());
 }
 
 #[test]
@@ -301,8 +301,8 @@ fn local_divider_new_session_opens_local_picker() {
     apply_action(&mut state, Action::OpenLocalDividerMenu { x: 0, y: 0 });
     let fx = apply_action(&mut state, Action::MenuConfirm);
     // "New session" on @local routes to the local picker, not a remote one.
-    assert!(fx.open_new_session_picker);
-    assert!(fx.open_remote_new_session_picker.is_none());
+    assert!(fx.has_open_new_session_picker());
+    assert!(fx.first_open_remote_new_session_picker().is_none());
     // Confirming closes the menu.
     assert!(state.overlay.context_menu.is_none());
 }
@@ -337,8 +337,8 @@ fn resize_signals_pty_resize() {
     let fx = apply_action(&mut state, Action::Resize(200, 50));
     assert_eq!(state.term_width, 200);
     assert_eq!(state.term_height, 50);
-    assert!(fx.resize_pty);
-    assert!(fx.full_redraw_after_resize);
+    assert!(fx.has_resize_pty());
+    assert!(fx.has_full_redraw_after_resize());
 }
 
 #[test]
@@ -346,8 +346,8 @@ fn sidebar_resize_does_not_force_full_redraw() {
     let mut state = make_test_state(1);
     let fx = apply_action(&mut state, Action::ResizeSidebar(30));
     assert_eq!(state.sidebar_width, 30);
-    assert!(fx.resize_pty);
-    assert!(!fx.full_redraw_after_resize);
+    assert!(fx.has_resize_pty());
+    assert!(!fx.has_full_redraw_after_resize());
 }
 
 #[test]
@@ -356,8 +356,8 @@ fn sidebar_height_resize_does_not_force_full_redraw() {
     state.layout_mode = LayoutMode::Vertical;
     let fx = apply_action(&mut state, Action::ResizeSidebarHeight(5));
     assert_eq!(state.sidebar_height, 5);
-    assert!(fx.resize_pty);
-    assert!(!fx.full_redraw_after_resize);
+    assert!(fx.has_resize_pty());
+    assert!(!fx.has_full_redraw_after_resize());
 }
 
 #[test]
@@ -370,7 +370,7 @@ fn reorder_session_moves_up() {
     assert_eq!(state.focused, 0);
     // The new arrangement is persisted to tmux (@deck_order) so it
     // survives a restart.
-    assert!(fx.save_session_order);
+    assert!(fx.has_save_session_order());
 }
 
 #[test]
@@ -380,7 +380,7 @@ fn reorder_session_at_boundary_is_noop() {
     // Already at the top — moving up changes nothing and persists nothing.
     let fx = apply_action(&mut state, Action::ReorderSession(-1));
     assert_eq!(state.sessions[0].name, "sess-0");
-    assert!(!fx.save_session_order);
+    assert!(!fx.has_save_session_order());
 }
 
 fn remote_row(host: &str, name: &str) -> crate::state::RemoteSessionRow {
@@ -407,9 +407,9 @@ fn reorder_remote_session_swaps_within_host_group() {
     assert_eq!(state.remote_sessions[0].name, "b");
     assert_eq!(state.remote_sessions[1].name, "a");
     assert_eq!(state.focused, 3, "focus follows the moved row");
-    assert_eq!(fx.save_remote_session_order.as_deref(), Some("h"));
+    assert_eq!(fx.first_save_remote_session_order(), Some("h"));
     // Local order is untouched.
-    assert!(!fx.save_session_order);
+    assert!(!fx.has_save_session_order());
 }
 
 #[test]
@@ -426,7 +426,7 @@ fn reorder_remote_session_stops_at_host_boundary() {
     let fx = apply_action(&mut state, Action::ReorderSession(1));
     assert_eq!(state.remote_sessions[1].name, "b");
     assert_eq!(state.remote_sessions[2].name, "c");
-    assert!(fx.save_remote_session_order.is_none());
+    assert!(fx.first_save_remote_session_order().is_none());
 }
 
 #[test]
@@ -458,8 +458,8 @@ fn exclude_editor_add_pattern() {
     );
     let fx = apply_action(&mut state, Action::ExcludeEditorConfirm);
     assert_eq!(state.exclude_patterns, vec!["_*", "t*"]);
-    assert!(fx.save_config);
-    assert!(fx.refresh_sessions);
+    assert!(fx.has_save_config());
+    assert!(fx.has_refresh_sessions());
     assert!(!state.overlay.exclude_editor.as_ref().unwrap().adding);
 }
 
@@ -471,8 +471,8 @@ fn exclude_editor_delete_pattern() {
     state.overlay.exclude_editor.as_mut().unwrap().selected = 0;
     let fx = apply_action(&mut state, Action::ExcludeEditorDelete);
     assert_eq!(state.exclude_patterns, vec!["scratch*"]);
-    assert!(fx.save_config);
-    assert!(fx.refresh_sessions);
+    assert!(fx.has_save_config());
+    assert!(fx.has_refresh_sessions());
 }
 
 #[test]
@@ -501,10 +501,10 @@ fn toggle_view_mode_flips_and_saves() {
     assert_eq!(state.view_mode, ViewMode::Expanded);
     let fx = apply_action(&mut state, Action::ToggleViewMode);
     assert_eq!(state.view_mode, ViewMode::Compact);
-    assert!(fx.save_config);
+    assert!(fx.has_save_config());
     let fx = apply_action(&mut state, Action::ToggleViewMode);
     assert_eq!(state.view_mode, ViewMode::Expanded);
-    assert!(fx.save_config);
+    assert!(fx.has_save_config());
 }
 
 #[test]
@@ -513,7 +513,7 @@ fn settings_adjust_view_mode_toggles() {
     state.settings.selected = 3;
     let fx = apply_action(&mut state, Action::SettingsAdjust);
     assert_eq!(state.view_mode, ViewMode::Compact);
-    assert!(fx.save_config);
+    assert!(fx.has_save_config());
 }
 
 fn rename_state(initial: &str) -> RenameState {
@@ -560,7 +560,7 @@ fn rename_confirm_produces_side_effect() {
     state.overlay.renaming = Some(rs);
     let fx = apply_action(&mut state, Action::RenameConfirm);
     assert!(state.overlay.renaming.is_none());
-    let req = fx.rename_session.expect("rename_session effect");
+    let req = fx.first_rename_session().expect("rename_session effect");
     assert_eq!(req.old_name, "old");
     assert_eq!(req.new_name, "new-name");
 }
@@ -571,7 +571,7 @@ fn rename_confirm_noop_when_unchanged() {
     state.overlay.renaming = Some(rename_state("same"));
     let fx = apply_action(&mut state, Action::RenameConfirm);
     assert!(state.overlay.renaming.is_none());
-    assert!(fx.rename_session.is_none());
+    assert!(fx.first_rename_session().is_none());
 }
 
 #[test]
@@ -629,7 +629,7 @@ fn new_session_input_inserts_at_cursor() {
     let ns = state.overlay.new_session.as_ref().unwrap();
     assert_eq!(ns.input_str(), "~/foo/b");
     assert_eq!(ns.filtered, vec![0, 1]); // both still match "b"
-    assert!(!fx.reread_new_session_entries); // parent didn't change
+    assert!(!fx.has_reread_new_session_entries()); // parent didn't change
 }
 
 #[test]
@@ -641,7 +641,7 @@ fn new_session_input_crossing_slash_sets_reread() {
         Action::NewSessionInputKey(key(KeyCode::Char('/'))),
     );
     assert_eq!(ns_input_str(&state), "~/foo/");
-    assert!(fx.reread_new_session_entries);
+    assert!(fx.has_reread_new_session_entries());
 }
 
 // `new_session_backspace_at_trailing_slash_goes_up` was deleted with
@@ -668,7 +668,7 @@ fn new_session_delete_segment_goes_back_to_slash() {
     let mut state = picker_state_with("~/foo/bar", vec![]);
     let fx = apply_action(&mut state, Action::NewSessionDeleteSegment);
     assert_eq!(ns_input_str(&state), "~/foo/");
-    assert!(fx.reread_new_session_entries);
+    assert!(fx.has_reread_new_session_entries());
 }
 
 #[test]
@@ -709,7 +709,7 @@ fn new_session_dir_up_drops_segment() {
     let mut state = picker_state_with("~/foo/bar/", vec![]);
     let fx = apply_action(&mut state, Action::NewSessionDirUp);
     assert_eq!(ns_input_str(&state), "~/foo/");
-    assert!(fx.reread_new_session_entries);
+    assert!(fx.has_reread_new_session_entries());
 }
 
 #[test]
@@ -717,7 +717,7 @@ fn new_session_dir_enter_descends_into_selected() {
     let mut state = picker_state_with("~/foo/", vec!["bar".into(), "baz".into()]);
     let fx = apply_action(&mut state, Action::NewSessionDirEnter);
     assert_eq!(ns_input_str(&state), "~/foo/bar/");
-    assert!(fx.reread_new_session_entries);
+    assert!(fx.has_reread_new_session_entries());
 }
 
 #[test]
@@ -1016,9 +1016,9 @@ fn remove_remote_from_list_drops_host_and_signals_stop() {
     assert_eq!(state.config_remotes[0].host, "h2");
     assert_eq!(state.remote_sessions.len(), 1);
     assert_eq!(state.remote_sessions[0].host, "h2");
-    assert!(fx.save_config);
-    assert!(fx.refresh_sessions);
-    assert_eq!(fx.remove_remote_host.as_deref(), Some("h1"));
+    assert!(fx.has_save_config());
+    assert!(fx.has_refresh_sessions());
+    assert_eq!(fx.first_remove_remote_host(), Some("h1"));
 }
 
 #[test]
@@ -1178,7 +1178,7 @@ fn toggle_section_collapse_leaves_focus_put() {
     let fx = apply_action(&mut state, Action::ToggleSection(Some("h".to_string())));
     assert!(state.collapsed_sections.contains(&Some("h".to_string())));
     assert_eq!(state.focused, 2, "collapse leaves the selection put");
-    assert!(fx.save_config, "collapse persists to config");
+    assert!(fx.has_save_config(), "collapse persists to config");
 }
 
 #[test]
@@ -1187,5 +1187,5 @@ fn toggle_section_expands_back() {
     state.collapsed_sections.insert(None);
     let fx = apply_action(&mut state, Action::ToggleSection(None));
     assert!(!state.collapsed_sections.contains(&None));
-    assert!(fx.save_config);
+    assert!(fx.has_save_config());
 }
