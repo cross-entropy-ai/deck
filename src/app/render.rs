@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::DefaultTerminal;
 
 use crate::bridge;
-use crate::state::{FocusMode, LayoutMode, MainView};
+use crate::state::{FocusMode, LayoutMode, MainView, REMOTE_NO_SESSIONS_LABEL};
 use crate::theme::THEMES;
 use crate::ui::{self, PluginStatus, PluginView, SettingsView};
 use crate::update::UpdateCheckMode;
@@ -45,6 +45,25 @@ impl App {
         let sidebar_height = s.effective_sidebar_height();
         let main_view = s.main_view;
         let warning_state = self.warning_state.clone();
+        let remote_placeholder = s.focused_remote_placeholder().map(|row| {
+            let title = if row.loading {
+                format!("Connecting to @{}", row.host)
+            } else if row.unreachable {
+                format!("Cannot reach @{}", row.host)
+            } else if row.name == REMOTE_NO_SESSIONS_LABEL {
+                format!("No sessions for @{}", row.host)
+            } else {
+                format!("No attachable session for @{}", row.host)
+            };
+            let detail = if row.loading {
+                "Waiting for the remote terminal to connect".to_string()
+            } else if row.unreachable {
+                "Reconnect this host from the sidebar".to_string()
+            } else {
+                "Create one from the host menu to attach here".to_string()
+            };
+            (title, detail)
+        });
 
         let confirm_name = s.confirm_kill_name();
 
@@ -214,6 +233,7 @@ impl App {
             };
             let background_screen = match (warning_state.as_ref(), main_view) {
                 (Some(crate::state::WarningState::Proactive { .. }), _) => None,
+                (None, MainView::Terminal) if remote_placeholder.is_some() => None,
                 // Dead local pane (no sessions to attach to) renders the
                 // empty-state placeholder below instead of a stale screen.
                 (None, MainView::Terminal) if local_active_dead => None,
@@ -289,6 +309,26 @@ impl App {
                 frame.render_widget(placeholder, main_inner);
             }
 
+            if warning_state.is_none() && main_view == MainView::Terminal {
+                if let Some((title, detail)) = remote_placeholder.as_ref() {
+                    let lines = vec![
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            title.as_str(),
+                            Style::default().fg(theme.text),
+                        )),
+                        Line::from(Span::styled(
+                            detail.as_str(),
+                            Style::default().fg(theme.dim),
+                        )),
+                    ];
+                    let placeholder = Paragraph::new(lines)
+                        .alignment(Alignment::Center)
+                        .wrap(Wrap { trim: true });
+                    frame.render_widget(placeholder, main_inner);
+                }
+            }
+
             // Built only when the Settings page is actually showing —
             // it allocates the update-check help string, which would
             // otherwise be thrown away every other frame.
@@ -299,6 +339,7 @@ impl App {
                     layout_mode: s.layout_mode,
                     show_borders: s.show_borders,
                     view_mode: s.view_mode,
+                    frame_rate_limit: s.frame_rate_limit,
                     exclude_count: s.exclude_patterns.len(),
                     exclude_editor: s.overlay.exclude_editor.as_ref().map(|e| {
                         ui::ExcludeEditorView {

@@ -152,6 +152,7 @@ pub struct SettingsView<'a> {
     pub layout_mode: LayoutMode,
     pub show_borders: bool,
     pub view_mode: ViewMode,
+    pub frame_rate_limit: u16,
     pub exclude_count: usize,
     pub exclude_editor: Option<ExcludeEditorView<'a>>,
     pub keybindings: &'a Keybindings,

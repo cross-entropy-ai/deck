@@ -33,6 +33,11 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 3600);
 
+fn render_min_interval(frame_rate_limit: u16) -> Duration {
+    let fps = crate::state::normalize_frame_rate_limit(frame_rate_limit).max(1);
+    Duration::from_micros(1_000_000 / u64::from(fps))
+}
+
 struct PluginInstance {
     pty: Pty,
     parser: vt100::Parser,
@@ -145,6 +150,11 @@ pub struct App {
     /// its outcome is committed only if no newer action has bumped this
     /// since — so a slow ssh focus can't clobber a later user action.
     focus_seq: u64,
+    /// Set when selecting a synthetic remote placeholder. The next periodic
+    /// refresh tick is skipped so landing on "(no sessions)" doesn't
+    /// immediately force a global session refresh; explicit refresh-causing
+    /// actions still run, and the following periodic tick resumes normally.
+    pub(super) suppress_next_periodic_refresh: bool,
 }
 
 /// Result of a remote agent-pane focus attempt, sent back from the
@@ -183,6 +193,7 @@ impl App {
         let show_borders = cfg.show_borders;
         let show_agents = cfg.show_agents;
         let view_mode = cfg.view_mode;
+        let frame_rate_limit = crate::state::normalize_frame_rate_limit(cfg.frame_rate_limit);
         let sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
         let sidebar_height = cfg.sidebar_height;
         let collapsed_sections: std::collections::HashSet<Option<String>> =
@@ -205,6 +216,7 @@ impl App {
             show_agents,
             sidebar_width,
             sidebar_height,
+            frame_rate_limit,
             term_width,
             term_height,
             exclude_patterns,
@@ -298,6 +310,7 @@ impl App {
             focus_tx,
             focus_rx,
             focus_seq: 0,
+            suppress_next_periodic_refresh: false,
         };
 
         tmux::apply_theme(&THEMES[theme_index]);
@@ -382,6 +395,10 @@ impl App {
 
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         let mut last_refresh = Instant::now();
+        let mut needs_render = true;
+        let mut force_render = true;
+        let mut last_render = Instant::now() - render_min_interval(self.state.frame_rate_limit);
+        let mut last_blink_render = Instant::now();
         // Watcher for ~/.config/deck/config.json: poll its mtime every
         // ~2s so an out-of-band `deck remote add/remove` (or a manual
         // edit) takes effect without the user pressing reload.
@@ -400,8 +417,14 @@ impl App {
                             Self::forward_osc52(&data);
                         }
                         self.local_terminal.parser.process(&data);
+                        if local_is_active && self.state.main_view == MainView::Terminal {
+                            needs_render = true;
+                        }
                     }
-                    PtyEvent::Exited => self.local_terminal.alive = false,
+                    PtyEvent::Exited => {
+                        self.local_terminal.alive = false;
+                        needs_render = true;
+                    }
                 }
             }
             // Pull any newly-spawned remote PTYs into the map. Drop
@@ -417,6 +440,8 @@ impl App {
                 if !still_configured {
                     continue;
                 }
+                needs_render = true;
+                force_render = true;
                 match ev {
                     remote_spawn::RemoteSpawnEvent::Spawned {
                         host,
@@ -501,8 +526,14 @@ impl App {
                                 Self::forward_osc52(&data);
                             }
                             pane.parser.process(&data);
+                            if host_is_active && self.state.main_view == MainView::Terminal {
+                                needs_render = true;
+                            }
                         }
-                        PtyEvent::Exited => pane.alive = false,
+                        PtyEvent::Exited => {
+                            pane.alive = false;
+                            needs_render = true;
+                        }
                     }
                 }
                 if !pane.alive {
@@ -510,6 +541,8 @@ impl App {
                 }
             }
             for host in died_hosts {
+                needs_render = true;
+                force_render = true;
                 // Drop the dead pane so its child process is reaped;
                 // surface the loss as a Failed status so the user sees
                 // why selecting that remote no longer works. Refresh
@@ -541,19 +574,38 @@ impl App {
                     self.needs_full_redraw = true;
                 }
             }
-            for inst in self.plugin_instances.iter_mut().flatten() {
+            for (idx, inst) in self.plugin_instances.iter_mut().enumerate() {
+                let Some(inst) = inst.as_mut() else {
+                    continue;
+                };
                 for event in inst.pty.drain() {
                     match event {
-                        PtyEvent::Output(data) => inst.parser.process(&data),
-                        PtyEvent::Exited => inst.alive = false,
+                        PtyEvent::Output(data) => {
+                            inst.parser.process(&data);
+                            if self.state.main_view == MainView::Plugin(idx) {
+                                needs_render = true;
+                            }
+                        }
+                        PtyEvent::Exited => {
+                            inst.alive = false;
+                            needs_render = true;
+                        }
                     }
                 }
             }
             if let Some(ref mut inst) = self.upgrade_instance {
                 for event in inst.pty.drain() {
                     match event {
-                        PtyEvent::Output(data) => inst.parser.process(&data),
-                        PtyEvent::Exited => inst.alive = false,
+                        PtyEvent::Output(data) => {
+                            inst.parser.process(&data);
+                            if self.state.main_view == MainView::Upgrade {
+                                needs_render = true;
+                            }
+                        }
+                        PtyEvent::Exited => {
+                            inst.alive = false;
+                            needs_render = true;
+                        }
                     }
                 }
             }
@@ -568,6 +620,8 @@ impl App {
                     self.plugin_instances[idx] = None;
                     self.state.main_view = MainView::Terminal;
                     self.state.focus_mode = FocusMode::Main;
+                    needs_render = true;
+                    force_render = true;
                 }
             }
 
@@ -581,9 +635,14 @@ impl App {
                 self.state.main_view = MainView::Terminal;
                 self.state.focus_mode = FocusMode::Main;
                 self.state.update_available = None;
+                needs_render = true;
+                force_render = true;
             }
 
-            self.state.tick_reload_status(Instant::now());
+            if self.state.tick_reload_status(Instant::now()) {
+                needs_render = true;
+                force_render = true;
+            }
 
             // Another deck (typically `deck --force`) asked us to quit
             // via SIGTERM. Translate it into the same Action::Quit the
@@ -592,7 +651,27 @@ impl App {
                 break;
             }
 
-            self.render(terminal)?;
+            let background_plugin_alive =
+                self.plugin_instances.iter().enumerate().any(|(i, inst)| {
+                    inst.as_ref().is_some_and(|inst| {
+                        inst.alive && self.state.main_view != MainView::Plugin(i)
+                    })
+                });
+            if background_plugin_alive && last_blink_render.elapsed() >= Duration::from_millis(500)
+            {
+                needs_render = true;
+                last_blink_render = Instant::now();
+            }
+
+            if needs_render
+                && (force_render
+                    || last_render.elapsed() >= render_min_interval(self.state.frame_rate_limit))
+            {
+                self.render(terminal)?;
+                needs_render = false;
+                force_render = false;
+                last_render = Instant::now();
+            }
 
             if event::poll(Duration::from_millis(POLL_MS))? {
                 match event::read()? {
@@ -600,11 +679,15 @@ impl App {
                         let action = action::key_to_action(&key, &self.state);
                         if self.warning_state.is_some() && Self::warning_blocks_action(&action) {
                             self.state.focus_mode = FocusMode::Sidebar;
+                            needs_render = true;
+                            force_render = true;
                             continue;
                         }
                         if self.dispatch(action) {
                             break;
                         }
+                        needs_render = true;
+                        force_render = true;
                     }
                     Event::Mouse(mouse) => {
                         let action = action::mouse_to_action(&mouse, &self.state);
@@ -614,6 +697,8 @@ impl App {
                         if self.dispatch(action) {
                             break;
                         }
+                        needs_render = true;
+                        force_render = true;
                     }
                     Event::Paste(text) if self.state.focus_mode == FocusMode::Main => {
                         let mut bytes = b"\x1b[200~".to_vec();
@@ -623,6 +708,8 @@ impl App {
                     }
                     Event::Resize(w, h) => {
                         self.dispatch(Action::Resize(w, h));
+                        needs_render = true;
+                        force_render = true;
                     }
                     _ => {}
                 }
@@ -630,15 +717,23 @@ impl App {
 
             while let Some(update) = self.refresh_worker.try_recv() {
                 self.apply_update(update);
+                needs_render = true;
+                force_render = true;
             }
 
             while let Some(outcome) = self.session_exec.try_recv() {
                 self.apply_session_outcome(outcome);
+                needs_render = true;
+                force_render = true;
             }
 
             if last_refresh.elapsed() >= REFRESH_INTERVAL {
-                self.request_refresh();
-                self.request_pf_probe();
+                if self.suppress_next_periodic_refresh {
+                    self.suppress_next_periodic_refresh = false;
+                } else {
+                    self.request_refresh();
+                    self.request_pf_probe();
+                }
                 last_refresh = Instant::now();
             }
 
@@ -652,6 +747,8 @@ impl App {
                 if current.is_some() && current != config_mtime_seen {
                     config_mtime_seen = current;
                     self.dispatch(Action::ReloadConfig);
+                    needs_render = true;
+                    force_render = true;
                 }
                 last_config_poll = Instant::now();
             }
@@ -661,6 +758,8 @@ impl App {
                 match r.kind {
                     crate::app::port_forward_task::OpKind::Probe(key, health) => {
                         self.dispatch(Action::PfProbeResult { key, health });
+                        needs_render = true;
+                        force_render = true;
                     }
                     kind => {
                         let host = kind.host().to_string();
@@ -670,6 +769,8 @@ impl App {
                             ok: r.ok,
                             message: r.message,
                         });
+                        needs_render = true;
+                        force_render = true;
                     }
                 }
             }
@@ -678,9 +779,14 @@ impl App {
             // view only for focuses that actually landed.
             while let Ok(outcome) = self.focus_rx.try_recv() {
                 self.apply_focus_outcome(outcome);
+                needs_render = true;
+                force_render = true;
             }
 
-            self.tick_update_check();
+            if self.tick_update_check() {
+                needs_render = true;
+                force_render = true;
+            }
 
             // Re-attaching a dead local PTY is driven by the refresh cycle
             // (see `apply_local`): it re-attaches when a local session

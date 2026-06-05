@@ -59,6 +59,15 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
             "Left/right toggles compact mode",
         ),
         (
+            "Frame rate",
+            crate::state::frame_rate_limit_label(settings.frame_rate_limit).to_string(),
+            if settings.frame_rate_limit == 30 {
+                "Smooth increases terminal rendering pressure"
+            } else {
+                "Left/right cycles the render limit"
+            },
+        ),
+        (
             "Exclude",
             format!("{} patterns", settings.exclude_count),
             "Enter opens the pattern editor",
@@ -113,10 +122,12 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
             Span::styled(" ", Style::default().bg(row_bg)),
             Span::styled(format!(" {} ", value), value_style),
         ]));
-        lines.push(Line::from(vec![
-            Span::styled("      ", Style::default().bg(row_bg)),
-            Span::styled(help.to_string(), help_style),
-        ]));
+        for help_line in help.lines() {
+            lines.push(Line::from(vec![
+                Span::styled("      ", Style::default().bg(row_bg)),
+                Span::styled(help_line.to_string(), help_style),
+            ]));
+        }
         lines.push(Line::raw(""));
     }
 

@@ -31,13 +31,14 @@ fn close_settings_page(state: &mut AppState) {
 /// `AppState::session_target`; every action that needs to route by
 /// origin goes through it instead of taking apart the flat focus
 /// index itself.
-fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) {
+fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) -> bool {
     let Some(target) = state.focus_target() else {
-        return;
+        return false;
     };
     match state.session_target(target) {
         Some(SessionTargetRef::Local(row)) => {
             fx.switch_session(row.name.clone());
+            true
         }
         // Synthetic placeholder rows (loading, unreachable, or the
         // "no sessions" marker) have no real session to switch to. Skip
@@ -47,8 +48,13 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) {
                 host: row.host.clone(),
                 name: row.name.clone(),
             });
+            true
         }
-        Some(SessionTargetRef::Remote(_)) | None => {}
+        Some(SessionTargetRef::Remote(row)) => {
+            fx.show_remote_placeholder(row.host.clone());
+            false
+        }
+        None => false,
     }
 }
 
@@ -116,8 +122,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
 
         Action::SwitchProject => {
-            fill_switch_effect(state, &mut fx);
-            fx.refresh_sessions();
+            if fill_switch_effect(state, &mut fx) {
+                fx.refresh_sessions();
+            }
         }
         Action::KillSession => {
             let Some(target) = state.focus_target() else {
@@ -335,6 +342,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             };
             fx.save_config();
         }
+        Action::CycleFrameRateLimit(direction) => {
+            state.cycle_frame_rate_limit(direction);
+            fx.save_config();
+        }
         Action::ToggleSection(key) => {
             // Flip the group's collapsed membership. Collapse is only
             // meaningful in Expanded view, but the set is stored uniformly
@@ -372,15 +383,21 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 state.settings.selected -= 1;
             }
         }
-        Action::SettingsAdjust => {
+        Action::SettingsAdjust | Action::SettingsAdjustPrev => {
+            let direction = if matches!(action, Action::SettingsAdjustPrev) {
+                -1
+            } else {
+                1
+            };
             let inner = match state.settings.selected {
                 0 => apply_action(state, Action::OpenThemePicker),
                 1 => apply_action(state, Action::ToggleLayout),
                 2 => apply_action(state, Action::ToggleBorders),
                 3 => apply_action(state, Action::ToggleViewMode),
-                4 => apply_action(state, Action::OpenExcludeEditor),
-                5 => apply_action(state, Action::OpenKeybindingsView),
-                6 => apply_action(state, Action::ToggleUpdateCheck),
+                4 => apply_action(state, Action::CycleFrameRateLimit(direction)),
+                5 => apply_action(state, Action::OpenExcludeEditor),
+                6 => apply_action(state, Action::OpenKeybindingsView),
+                7 => apply_action(state, Action::ToggleUpdateCheck),
                 _ => SideEffect::default(),
             };
             fx.merge(inner);

@@ -100,6 +100,31 @@ fn parse_json_without_view_mode_uses_default() {
 }
 
 #[test]
+fn parse_json_without_frame_rate_limit_uses_default() {
+    let json = r#"{
+  "theme": "Catppuccin Mocha",
+  "layout": "horizontal",
+  "show_borders": true,
+  "sidebar_width": 28
+}"#;
+    let config = parse(json);
+    assert_eq!(config.frame_rate_limit, 5);
+}
+
+#[test]
+fn parse_json_with_frame_rate_limit() {
+    let json = r#"{ "frame_rate_limit": 30 }"#;
+    let config = parse(json);
+    assert_eq!(config.frame_rate_limit, 30);
+}
+
+#[test]
+fn unsupported_frame_rate_limit_normalizes_to_default() {
+    assert_eq!(crate::state::normalize_frame_rate_limit(15), 5);
+    assert_eq!(crate::state::frame_rate_limit_label(15), "Balanced 5 FPS");
+}
+
+#[test]
 fn config_roundtrip_preserves_view_mode() {
     let path = std::env::temp_dir().join("deck-roundtrip-viewmode.yaml");
     let config = Config {

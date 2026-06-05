@@ -92,7 +92,26 @@ pub enum ViewMode {
     Compact,
 }
 
-pub const SETTINGS_ITEM_COUNT: usize = 7;
+pub const SETTINGS_ITEM_COUNT: usize = 8;
+pub const FRAME_RATE_LIMIT_OPTIONS: [u16; 4] = [2, 5, 10, 30];
+
+pub fn normalize_frame_rate_limit(fps: u16) -> u16 {
+    if FRAME_RATE_LIMIT_OPTIONS.contains(&fps) {
+        fps
+    } else {
+        5
+    }
+}
+
+pub fn frame_rate_limit_label(fps: u16) -> &'static str {
+    match normalize_frame_rate_limit(fps) {
+        2 => "Power Saver 2 FPS",
+        5 => "Balanced 5 FPS",
+        10 => "Responsive 10 FPS",
+        30 => "Smooth 30 FPS",
+        _ => "Balanced 5 FPS",
+    }
+}
 
 /// Blank rows appended under each section's agent-count footer, as a gap
 /// before the next section. The footer item is `1 + this` rows tall;
@@ -527,6 +546,10 @@ pub enum Effect {
     /// Switch the main view to a remote session. Carries (host, name)
     /// — App's dispatch layer routes the `tmux switch-client` over ssh.
     SwitchRemote(RemoteSwitchRequest),
+    /// Show a remote host placeholder in the main pane. Used for
+    /// synthetic rows like "(no sessions)" that are focusable but don't
+    /// have a tmux session to attach to.
+    ShowRemotePlaceholder(String),
     KillSession(KillRequest),
     RenameSession(RenameRequest),
     /// Create a new tmux session with `req.name` at `req.dir`.
@@ -574,6 +597,10 @@ impl SideEffect {
 
     pub fn switch_remote(&mut self, req: RemoteSwitchRequest) {
         self.push(Effect::SwitchRemote(req));
+    }
+
+    pub fn show_remote_placeholder(&mut self, host: String) {
+        self.push(Effect::ShowRemotePlaceholder(host));
     }
 
     pub fn kill_session(&mut self, req: KillRequest) {
@@ -659,6 +686,13 @@ impl SideEffect {
     pub fn first_kill_session(&self) -> Option<&KillRequest> {
         self.effects.iter().find_map(|effect| match effect {
             Effect::KillSession(req) => Some(req),
+            _ => None,
+        })
+    }
+
+    pub fn first_remote_placeholder(&self) -> Option<&str> {
+        self.effects.iter().find_map(|effect| match effect {
+            Effect::ShowRemotePlaceholder(host) => Some(host.as_str()),
             _ => None,
         })
     }
@@ -1043,6 +1077,7 @@ pub struct AppState {
     pub view_mode: ViewMode,
     pub sidebar_width: u16,
     pub sidebar_height: u16,
+    pub frame_rate_limit: u16,
     pub show_borders: bool,
     /// Whether the per-section agent footers render and agent detection
     /// runs. Toggled by the "Show Agents" checkbox in the sidebar header;
@@ -1162,6 +1197,7 @@ impl AppState {
         show_agents: bool,
         sidebar_width: u16,
         sidebar_height: u16,
+        frame_rate_limit: u16,
         term_width: u16,
         term_height: u16,
         exclude_patterns: Vec<String>,
@@ -1191,6 +1227,7 @@ impl AppState {
             view_mode,
             sidebar_width,
             sidebar_height,
+            frame_rate_limit: normalize_frame_rate_limit(frame_rate_limit),
             show_borders,
             show_agents,
             dragging_separator: false,
@@ -1221,13 +1258,29 @@ impl AppState {
 
     /// Drop the reload banner once its per-variant TTL has elapsed.
     /// Called from the main loop so rendering stays side-effect-free.
-    pub fn tick_reload_status(&mut self, now: Instant) {
+    pub fn tick_reload_status(&mut self, now: Instant) -> bool {
         if let (Some(status), Some(shown_at)) = (&self.reload_status, self.reload_status_at) {
             if now.saturating_duration_since(shown_at) >= status.ttl() {
                 self.reload_status = None;
                 self.reload_status_at = None;
+                return true;
             }
         }
+        false
+    }
+
+    pub fn cycle_frame_rate_limit(&mut self, direction: i32) {
+        let current = normalize_frame_rate_limit(self.frame_rate_limit);
+        let Some(pos) = FRAME_RATE_LIMIT_OPTIONS
+            .iter()
+            .position(|&fps| fps == current)
+        else {
+            self.frame_rate_limit = normalize_frame_rate_limit(current);
+            return;
+        };
+        let len = FRAME_RATE_LIMIT_OPTIONS.len() as i32;
+        let next = (pos as i32 + direction).rem_euclid(len) as usize;
+        self.frame_rate_limit = FRAME_RATE_LIMIT_OPTIONS[next];
     }
 
     pub fn banner_upgrade_at(&self, col: u16, row: u16) -> bool {
@@ -1718,6 +1771,17 @@ impl AppState {
             self.remote_sessions
                 .get(idx - local_count)
                 .map(SessionTargetRef::Remote)
+        }
+    }
+
+    /// Focused remote placeholder row, if any. These rows occupy normal
+    /// focus slots so users can land on a host with no attachable session,
+    /// but the main pane must render an explicit status instead of a stale
+    /// terminal screen.
+    pub fn focused_remote_placeholder(&self) -> Option<&RemoteSessionRow> {
+        match self.session_target(self.focus_target()?)? {
+            SessionTargetRef::Remote(row) if !row.is_attachable_session() => Some(row),
+            SessionTargetRef::Local(_) | SessionTargetRef::Remote(_) => None,
         }
     }
 

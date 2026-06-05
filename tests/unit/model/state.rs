@@ -23,6 +23,7 @@ fn make_state(
         true,
         28,
         SIDEBAR_HEIGHT,
+        5,
         term_width,
         term_height,
         vec![],

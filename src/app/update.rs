@@ -18,6 +18,7 @@ impl App {
             sidebar_width: self.state.sidebar_width,
             sidebar_height: self.state.sidebar_height,
             view_mode: self.state.view_mode,
+            frame_rate_limit: self.state.frame_rate_limit,
             exclude_patterns: self.state.exclude_patterns.clone(),
             plugins: self.state.plugins.clone(),
             keybindings: self.raw_keybindings.clone(),
@@ -30,14 +31,16 @@ impl App {
         .save();
     }
 
-    pub(super) fn tick_update_check(&mut self) {
+    pub(super) fn tick_update_check(&mut self) -> bool {
+        let mut changed = false;
         match self.state.update_check_mode {
             crate::update::UpdateCheckMode::Disabled => {
                 if self.update_checker.is_some() {
                     self.update_checker = None;
                     self.last_update_request = None;
+                    changed = true;
                 }
-                return;
+                return changed;
             }
             crate::update::UpdateCheckMode::Enabled => {
                 if self.update_checker.is_none() {
@@ -57,12 +60,16 @@ impl App {
                         newer_than_current,
                     } => {
                         UpdateCache::save(&status);
+                        let old_last_checked = self.state.update_last_checked_secs;
+                        let old_available = self.state.update_available.clone();
                         self.state.update_last_checked_secs = Some(status.checked_at);
                         self.state.update_available = if newer_than_current {
                             Some(status)
                         } else {
                             None
                         };
+                        changed |= old_last_checked != self.state.update_last_checked_secs
+                            || old_available != self.state.update_available;
                     }
                     UpdateResult::Err(msg) => {
                         eprintln!("deck: update check failed: {}", msg);
@@ -79,13 +86,15 @@ impl App {
                 }
             }
         }
+        changed
     }
 }
 
 pub(super) fn format_update_check_help(last_checked_secs: Option<u64>) -> String {
-    let base = "Left/right toggles auto update check";
+    let version = format!("Current version {}", env!("CARGO_PKG_VERSION"));
+    let controls = "Left/right toggles auto update check";
     let Some(ts) = last_checked_secs else {
-        return base.to_string();
+        return format!("{}\n{}", version, controls);
     };
     let now = update::now_secs();
     let elapsed = now.saturating_sub(ts);
@@ -98,7 +107,7 @@ pub(super) fn format_update_check_help(last_checked_secs: Option<u64>) -> String
     } else {
         format!("{}d ago", elapsed / 86_400)
     };
-    format!("{} · last checked {}", base, suffix)
+    format!("{}\n{} · last checked {}", version, controls, suffix)
 }
 
 pub(super) fn bootstrap_update_check(

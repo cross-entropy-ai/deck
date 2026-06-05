@@ -703,6 +703,19 @@ impl App {
                 Effect::SwitchRemote(req) => {
                     self.switch_to_remote(&req.host, &req.name);
                 }
+                Effect::ShowRemotePlaceholder(host) => {
+                    if !self
+                        .state
+                        .focused_remote_placeholder()
+                        .is_some_and(|row| row.host == host.as_str())
+                    {
+                        continue;
+                    }
+                    self.active_remote = None;
+                    self.state.main_view = MainView::Terminal;
+                    self.supersede_agent_focus();
+                    self.suppress_next_periodic_refresh = true;
+                }
                 Effect::RenameSession(rename) => {
                     // The rename runs on the executor (off the UI thread). The local
                     // `session_order` in-place patch stays in App and runs now: it
@@ -881,6 +894,8 @@ impl App {
         self.state.show_borders = cfg.show_borders;
         self.state.show_agents = cfg.show_agents;
         self.state.view_mode = cfg.view_mode;
+        self.state.frame_rate_limit =
+            crate::state::normalize_frame_rate_limit(cfg.frame_rate_limit);
         self.state.sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
         self.state.sidebar_height = cfg.sidebar_height;
         self.state.exclude_patterns = cfg.exclude_patterns;

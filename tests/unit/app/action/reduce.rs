@@ -1,5 +1,8 @@
 use super::{apply_action, Action};
-use crate::state::{AppState, FocusMode, LayoutMode, MainView, RenameState, SessionRow, ViewMode};
+use crate::state::{
+    AppState, FocusMode, LayoutMode, MainView, RemoteSessionRow, RenameState, SessionRow, ViewMode,
+    REMOTE_NO_SESSIONS_LABEL,
+};
 
 fn make_session(name: &str, idle: u64) -> SessionRow {
     SessionRow {
@@ -19,6 +22,7 @@ fn make_test_state(n: usize) -> AppState {
         true,
         28,
         crate::state::SIDEBAR_HEIGHT,
+        5,
         120,
         40,
         vec![],
@@ -72,6 +76,47 @@ fn focus_prev_stops_at_zero() {
     let fx = apply_action(&mut state, Action::FocusPrev);
     assert_eq!(state.focused, 0);
     assert!(fx.first_switch_session().is_none());
+}
+
+#[test]
+fn switch_project_on_remote_no_sessions_shows_placeholder() {
+    let mut state = make_test_state(1);
+    state.remote_sessions.push(RemoteSessionRow {
+        host: "remote-a".into(),
+        name: REMOTE_NO_SESSIONS_LABEL.into(),
+        dir: String::new(),
+        unreachable: false,
+        loading: false,
+    });
+    state.focused = state.filtered.len();
+
+    let fx = apply_action(&mut state, Action::SwitchProject);
+
+    assert_eq!(fx.first_remote_placeholder(), Some("remote-a"));
+    assert!(fx.first_switch_session().is_none());
+    assert!(!fx.has_refresh_sessions());
+}
+
+#[test]
+fn sidebar_click_remote_no_sessions_does_not_refresh() {
+    let mut state = make_test_state(1);
+    state.remote_sessions.push(RemoteSessionRow {
+        host: "remote-a".into(),
+        name: REMOTE_NO_SESSIONS_LABEL.into(),
+        dir: String::new(),
+        unreachable: false,
+        loading: false,
+    });
+    let target = state.filtered.len();
+
+    let mut fx = crate::state::SideEffect::default();
+    fx.merge(apply_action(&mut state, Action::SetFocusSidebar));
+    fx.merge(apply_action(&mut state, Action::FocusIndex(target)));
+    fx.merge(apply_action(&mut state, Action::SwitchProject));
+
+    assert_eq!(fx.first_remote_placeholder(), Some("remote-a"));
+    assert!(fx.first_switch_session().is_none());
+    assert!(!fx.has_refresh_sessions());
 }
 
 #[test]
@@ -514,6 +559,56 @@ fn settings_adjust_view_mode_toggles() {
     let fx = apply_action(&mut state, Action::SettingsAdjust);
     assert_eq!(state.view_mode, ViewMode::Compact);
     assert!(fx.has_save_config());
+}
+
+#[test]
+fn settings_adjust_frame_rate_cycles_and_saves() {
+    let mut state = make_test_state(1);
+    state.frame_rate_limit = 5;
+    state.settings.selected = 4;
+    let fx = apply_action(&mut state, Action::SettingsAdjust);
+    assert_eq!(state.frame_rate_limit, 10);
+    assert!(fx.has_save_config());
+}
+
+#[test]
+fn settings_adjust_prev_frame_rate_cycles_backwards() {
+    let mut state = make_test_state(1);
+    state.frame_rate_limit = 5;
+    state.settings.selected = 4;
+    let fx = apply_action(&mut state, Action::SettingsAdjustPrev);
+    assert_eq!(state.frame_rate_limit, 2);
+    assert!(fx.has_save_config());
+}
+
+#[test]
+fn frame_rate_cycle_wraps_in_both_directions() {
+    let mut state = make_test_state(1);
+    state.frame_rate_limit = 2;
+    state.settings.selected = 4;
+    apply_action(&mut state, Action::SettingsAdjustPrev);
+    assert_eq!(state.frame_rate_limit, 30);
+
+    apply_action(&mut state, Action::SettingsAdjust);
+    assert_eq!(state.frame_rate_limit, 2);
+}
+
+#[test]
+fn settings_adjust_exclude_opens_editor_after_frame_rate_row() {
+    let mut state = make_test_state(1);
+    state.settings.selected = 5;
+    let fx = apply_action(&mut state, Action::SettingsAdjust);
+    assert!(state.overlay.exclude_editor.is_some());
+    assert!(!fx.has_save_config());
+}
+
+#[test]
+fn settings_adjust_keybindings_opens_view_after_exclude_row() {
+    let mut state = make_test_state(1);
+    state.settings.selected = 6;
+    let fx = apply_action(&mut state, Action::SettingsAdjust);
+    assert!(state.settings.keybindings_view_open);
+    assert!(!fx.has_save_config());
 }
 
 fn rename_state(initial: &str) -> RenameState {
