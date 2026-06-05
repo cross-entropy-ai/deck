@@ -167,6 +167,19 @@ pub(super) fn draw_sessions(
                     lines.push(pad_line(Vec::new(), ctx.theme.bg, width));
                 }
             }
+            SidebarItemData::LocalEmpty => {
+                lines.push(pad_line(
+                    vec![Span::styled(
+                        format!("  {}", crate::state::REMOTE_NO_SESSIONS_LABEL),
+                        Style::default().fg(ctx.theme.muted).bg(ctx.theme.bg),
+                    )],
+                    ctx.theme.bg,
+                    width,
+                ));
+                while lines.len() < item.height as usize {
+                    lines.push(pad_line(Vec::new(), ctx.theme.bg, width));
+                }
+            }
             SidebarItemData::Header {
                 host,
                 host_idx,

@@ -439,6 +439,10 @@ pub enum SidebarItemData {
         host: Option<String>,
         agents: Option<Vec<crate::agent::DetectedAgent>>,
     },
+    /// Non-selectable placeholder under `@local` when the local tmux server
+    /// has no sessions. Kept out of `FocusTarget` numbering so remote flat
+    /// indices still start at `filtered.len()`.
+    LocalEmpty,
 }
 
 /// Sidebar layout — built on top of `ratatui_sectioned_list::SectionedList`
@@ -1524,13 +1528,19 @@ impl AppState {
         // Local group: an `@local` divider over the local rows, matching
         // the remote `@host` dividers. Flat index for a local row equals
         // its filtered_pos regardless of the header (headers aren't rows).
-        if show_headers && !self.filtered.is_empty() {
+        // Keep the divider even when local has no sessions so the user can
+        // still open the local section menu and see the empty-state row.
+        if show_headers {
             group_headers.push((header_count, None));
             header_count += 1;
             layout.push_header(SidebarItemData::LocalHeader, 1);
         }
         for pos in 0..self.filtered.len() {
             layout.push_row(SidebarItemData::Session { session_idx: pos }, card_h);
+        }
+        if show_headers && self.filtered.is_empty() && !is_collapsed(&None) {
+            layout.push_header(SidebarItemData::LocalEmpty, card_h);
+            header_count += 1;
         }
         // Footer line under the local section: detected agent counts.
         // Non-focusable (a header), so it can't be selected. Skipped

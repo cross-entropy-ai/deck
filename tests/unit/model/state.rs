@@ -189,7 +189,7 @@ fn sidebar_layout_adds_local_header_in_expanded() {
 }
 
 #[test]
-fn sidebar_layout_omits_local_header_in_compact_and_when_empty() {
+fn sidebar_layout_omits_local_header_in_compact() {
     let state = make_state(LayoutMode::Horizontal, false, 80, 24);
     let compact = state.sidebar_layout(ViewMode::Compact);
     assert!(
@@ -199,17 +199,27 @@ fn sidebar_layout_omits_local_header_in_compact_and_when_empty() {
             .any(|i| matches!(i.data, SidebarItemData::LocalHeader)),
         "compact view carries no group dividers",
     );
+}
 
+#[test]
+fn sidebar_layout_keeps_local_header_and_placeholder_when_empty() {
     let mut empty = make_state(LayoutMode::Horizontal, false, 80, 24);
     empty.sessions.clear();
     empty.recompute_filter();
     let layout = empty.sidebar_layout(ViewMode::Expanded);
     assert!(
-        !layout
+        layout
             .items()
             .iter()
             .any(|i| matches!(i.data, SidebarItemData::LocalHeader)),
-        "no @local divider when there are no local sessions",
+        "@local divider remains when there are no local sessions",
+    );
+    assert!(
+        layout
+            .items()
+            .iter()
+            .any(|i| matches!(i.data, SidebarItemData::LocalEmpty)),
+        "empty local group shows a no-sessions placeholder",
     );
 }
 
