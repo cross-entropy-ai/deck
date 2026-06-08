@@ -3,7 +3,10 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::infra::command::{CommandError, CommandRunner, RealRunner};
-use crate::infra::tmux_parse::{parse_sessions, parse_window_activity};
+use crate::infra::tmux_parse::{
+    parse_sessions, parse_window_activity, DECK_ORDER_OPTION, SESSION_LIST_FORMAT,
+    WINDOW_ACTIVITY_FORMAT,
+};
 
 /// How long any single tmux invocation may take before we give up and
 /// treat it as a failure. tmux is local IPC; healthy calls finish in a
@@ -54,8 +57,7 @@ pub fn list_sessions() -> Vec<SessionInfo> {
 fn list_sessions_with(runner: &dyn CommandRunner) -> Vec<SessionInfo> {
     // The trailing `#{@deck_order}` carries the persisted display rank
     // (empty when unset). See `persist_session_order`.
-    let format = "#{session_name}\t#{session_path}\t#{@deck_order}";
-    let Ok(raw) = tmux_with(runner, &["list-sessions", "-F", format]) else {
+    let Ok(raw) = tmux_with(runner, &["list-sessions", "-F", SESSION_LIST_FORMAT]) else {
         return Vec::new();
     };
     let window_activity = latest_window_activity_with(runner);
@@ -86,7 +88,7 @@ fn persist_session_order_with(runner: &dyn CommandRunner, order: &[String]) {
         args.push("set-option".to_string());
         args.push("-t".to_string());
         args.push(name.clone());
-        args.push("@deck_order".to_string());
+        args.push(DECK_ORDER_OPTION.to_string());
         args.push(rank.to_string());
     }
     let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -104,8 +106,7 @@ pub fn agent_panes() -> Vec<crate::agent::PaneInfo> {
 
 /// Get the max window_activity timestamp per session.
 fn latest_window_activity_with(runner: &dyn CommandRunner) -> HashMap<String, u64> {
-    let format = "#{session_name}\t#{window_activity}";
-    let Ok(raw) = tmux_with(runner, &["list-windows", "-a", "-F", format]) else {
+    let Ok(raw) = tmux_with(runner, &["list-windows", "-a", "-F", WINDOW_ACTIVITY_FORMAT]) else {
         return HashMap::new();
     };
     parse_window_activity(&raw)

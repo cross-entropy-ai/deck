@@ -15,7 +15,10 @@ use std::time::Duration;
 use crate::agent::DetectedAgent;
 use crate::infra::command::{CommandError, CommandRunner, RealRunner};
 use crate::infra::tmux::{PaneFocus, SessionInfo};
-use crate::infra::tmux_parse::{parse_sessions, parse_window_activity};
+use crate::infra::tmux_parse::{
+    parse_sessions, parse_window_activity, DECK_ORDER_OPTION, SESSION_LIST_FORMAT_SSH,
+    WINDOW_ACTIVITY_FORMAT_SSH,
+};
 
 /// Marker separating the pane-pid list from the `ps` snapshot in the
 /// single combined ssh `agent_probe` runs. Must not start with `=` (zsh
@@ -97,8 +100,11 @@ fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Sess
     // escape, but that's an acceptable tradeoff today.
     // Trailing `#{@deck_order}` carries deck's persisted display rank
     // (empty when unset). See `persist_session_order`.
-    let format = "$'#{session_name}\\t#{session_path}\\t#{@deck_order}'";
-    match run_ssh(runner, host, &["tmux", "list-sessions", "-F", format]) {
+    match run_ssh(
+        runner,
+        host,
+        &["tmux", "list-sessions", "-F", SESSION_LIST_FORMAT_SSH],
+    ) {
         Ok(raw) => {
             let window_activity = latest_window_activity_with(runner, host);
             Some(parse_sessions(&raw, &window_activity))
@@ -177,8 +183,11 @@ fn is_no_server_error(err: &CommandError) -> bool {
 }
 
 fn latest_window_activity_with(runner: &dyn CommandRunner, host: &str) -> HashMap<String, u64> {
-    let format = "$'#{session_name}\\t#{window_activity}'";
-    let Ok(raw) = run_ssh(runner, host, &["tmux", "list-windows", "-a", "-F", format]) else {
+    let Ok(raw) = run_ssh(
+        runner,
+        host,
+        &["tmux", "list-windows", "-a", "-F", WINDOW_ACTIVITY_FORMAT_SSH],
+    ) else {
         return HashMap::new();
     };
     parse_window_activity(&raw)
@@ -460,7 +469,7 @@ fn persist_session_order_with(runner: &dyn CommandRunner, host: &str, order: &[S
         argv.push("set-option".to_string());
         argv.push("-t".to_string());
         argv.push(shell_single_quote(name));
-        argv.push("@deck_order".to_string());
+        argv.push(DECK_ORDER_OPTION.to_string());
         argv.push(rank.to_string());
     }
     let argv_ref: Vec<&str> = argv.iter().map(String::as_str).collect();

@@ -578,6 +578,25 @@ pub struct SideEffect {
     effects: Vec<Effect>,
 }
 
+/// Generate the `SideEffect` push-helpers. Each row is
+/// `method(args) => Effect::Variant(...)`; the body is always
+/// `self.push(<that effect>)`. Collapses ~19 identical one-liners into a
+/// declarative table so the method↔variant mapping is the only thing to
+/// read (and to keep in sync when an `Effect` variant is added).
+macro_rules! effect_pushers {
+    ($(
+        $(#[$meta:meta])*
+        $name:ident ( $($arg:ident : $ty:ty),* $(,)? ) => $build:expr ;
+    )*) => {
+        $(
+            $(#[$meta])*
+            pub fn $name(&mut self, $($arg: $ty),*) {
+                self.push($build);
+            }
+        )*
+    };
+}
+
 impl SideEffect {
     pub fn effects(&self) -> &[Effect] {
         &self.effects
@@ -591,80 +610,26 @@ impl SideEffect {
         self.effects.push(effect);
     }
 
-    pub fn switch_session(&mut self, name: String) {
-        self.push(Effect::SwitchSession(name));
-    }
-
-    pub fn switch_remote(&mut self, req: RemoteSwitchRequest) {
-        self.push(Effect::SwitchRemote(req));
-    }
-
-    pub fn show_remote_placeholder(&mut self, host: String) {
-        self.push(Effect::ShowRemotePlaceholder(host));
-    }
-
-    pub fn kill_session(&mut self, req: KillRequest) {
-        self.push(Effect::KillSession(req));
-    }
-
-    pub fn rename_session(&mut self, req: RenameRequest) {
-        self.push(Effect::RenameSession(req));
-    }
-
-    pub fn create_session(&mut self, req: CreateSessionRequest) {
-        self.push(Effect::CreateSession(req));
-    }
-
-    pub fn remove_remote_host(&mut self, host: String) {
-        self.push(Effect::RemoveRemoteHost(host));
-    }
-
-    pub fn open_new_session_picker(&mut self) {
-        self.push(Effect::OpenNewSessionPicker);
-    }
-
-    pub fn open_remote_new_session_picker(&mut self, host: String) {
-        self.push(Effect::OpenRemoteNewSessionPicker(host));
-    }
-
-    pub fn open_add_remote_picker(&mut self) {
-        self.push(Effect::OpenAddRemotePicker);
-    }
-
-    pub fn add_remote_host(&mut self, host: String) {
-        self.push(Effect::AddRemoteHost(host));
-    }
-
-    pub fn reread_new_session_entries(&mut self) {
-        self.push(Effect::RereadNewSessionEntries);
-    }
-
-    pub fn resize_pty(&mut self, full_redraw: bool) {
-        self.push(Effect::ResizePty { full_redraw });
-    }
-
-    pub fn save_config(&mut self) {
-        self.push(Effect::SaveConfig);
-    }
-
-    pub fn save_session_order(&mut self) {
-        self.push(Effect::SaveSessionOrder);
-    }
-
-    pub fn save_remote_session_order(&mut self, host: String) {
-        self.push(Effect::SaveRemoteSessionOrder(host));
-    }
-
-    pub fn apply_tmux_theme(&mut self) {
-        self.push(Effect::ApplyTmuxTheme);
-    }
-
-    pub fn refresh_sessions(&mut self) {
-        self.push(Effect::RefreshSessions);
-    }
-
-    pub fn quit(&mut self) {
-        self.push(Effect::Quit);
+    effect_pushers! {
+        switch_session(name: String) => Effect::SwitchSession(name);
+        switch_remote(req: RemoteSwitchRequest) => Effect::SwitchRemote(req);
+        show_remote_placeholder(host: String) => Effect::ShowRemotePlaceholder(host);
+        kill_session(req: KillRequest) => Effect::KillSession(req);
+        rename_session(req: RenameRequest) => Effect::RenameSession(req);
+        create_session(req: CreateSessionRequest) => Effect::CreateSession(req);
+        remove_remote_host(host: String) => Effect::RemoveRemoteHost(host);
+        open_new_session_picker() => Effect::OpenNewSessionPicker;
+        open_remote_new_session_picker(host: String) => Effect::OpenRemoteNewSessionPicker(host);
+        open_add_remote_picker() => Effect::OpenAddRemotePicker;
+        add_remote_host(host: String) => Effect::AddRemoteHost(host);
+        reread_new_session_entries() => Effect::RereadNewSessionEntries;
+        resize_pty(full_redraw: bool) => Effect::ResizePty { full_redraw };
+        save_config() => Effect::SaveConfig;
+        save_session_order() => Effect::SaveSessionOrder;
+        save_remote_session_order(host: String) => Effect::SaveRemoteSessionOrder(host);
+        apply_tmux_theme() => Effect::ApplyTmuxTheme;
+        refresh_sessions() => Effect::RefreshSessions;
+        quit() => Effect::Quit;
     }
 
     pub fn has_quit(&self) -> bool {
@@ -674,97 +639,70 @@ impl SideEffect {
     }
 }
 
+/// Generate test-only accessors that scan `effects` for the first match
+/// of a variant. `=> &str` pulls a `String` payload out as `&str`;
+/// `=> &Ty` returns the whole payload by reference. Mirror of
+/// [`effect_pushers`] on the read side.
+#[cfg(test)]
+macro_rules! effect_finders {
+    ($( $name:ident : $variant:ident => &str );* $(;)?) => {
+        $(
+            pub fn $name(&self) -> Option<&str> {
+                self.effects.iter().find_map(|effect| match effect {
+                    Effect::$variant(v) => Some(v.as_str()),
+                    _ => None,
+                })
+            }
+        )*
+    };
+    ($( $name:ident : $variant:ident => &$ty:ty );* $(;)?) => {
+        $(
+            pub fn $name(&self) -> Option<&$ty> {
+                self.effects.iter().find_map(|effect| match effect {
+                    Effect::$variant(v) => Some(v),
+                    _ => None,
+                })
+            }
+        )*
+    };
+}
+
+/// Generate test-only `bool` predicates: each row maps a method name to
+/// an `Effect` pattern checked with `matches!`.
+#[cfg(test)]
+macro_rules! effect_predicates {
+    ($( $name:ident => $pat:pat ),* $(,)?) => {
+        $(
+            pub fn $name(&self) -> bool {
+                self.effects.iter().any(|effect| matches!(effect, $pat))
+            }
+        )*
+    };
+}
+
 #[cfg(test)]
 impl SideEffect {
-    pub fn first_switch_session(&self) -> Option<&str> {
-        self.effects.iter().find_map(|effect| match effect {
-            Effect::SwitchSession(name) => Some(name.as_str()),
-            _ => None,
-        })
+    effect_finders! {
+        first_switch_session: SwitchSession => &str;
+        first_remote_placeholder: ShowRemotePlaceholder => &str;
+        first_remove_remote_host: RemoveRemoteHost => &str;
+        first_save_remote_session_order: SaveRemoteSessionOrder => &str;
+        first_open_remote_new_session_picker: OpenRemoteNewSessionPicker => &str;
     }
 
-    pub fn first_kill_session(&self) -> Option<&KillRequest> {
-        self.effects.iter().find_map(|effect| match effect {
-            Effect::KillSession(req) => Some(req),
-            _ => None,
-        })
+    effect_finders! {
+        first_kill_session: KillSession => &KillRequest;
+        first_rename_session: RenameSession => &RenameRequest;
     }
 
-    pub fn first_remote_placeholder(&self) -> Option<&str> {
-        self.effects.iter().find_map(|effect| match effect {
-            Effect::ShowRemotePlaceholder(host) => Some(host.as_str()),
-            _ => None,
-        })
-    }
-
-    pub fn first_rename_session(&self) -> Option<&RenameRequest> {
-        self.effects.iter().find_map(|effect| match effect {
-            Effect::RenameSession(req) => Some(req),
-            _ => None,
-        })
-    }
-
-    pub fn first_remove_remote_host(&self) -> Option<&str> {
-        self.effects.iter().find_map(|effect| match effect {
-            Effect::RemoveRemoteHost(host) => Some(host.as_str()),
-            _ => None,
-        })
-    }
-
-    pub fn first_save_remote_session_order(&self) -> Option<&str> {
-        self.effects.iter().find_map(|effect| match effect {
-            Effect::SaveRemoteSessionOrder(host) => Some(host.as_str()),
-            _ => None,
-        })
-    }
-
-    pub fn has_open_new_session_picker(&self) -> bool {
-        self.effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::OpenNewSessionPicker))
-    }
-
-    pub fn first_open_remote_new_session_picker(&self) -> Option<&str> {
-        self.effects.iter().find_map(|effect| match effect {
-            Effect::OpenRemoteNewSessionPicker(host) => Some(host.as_str()),
-            _ => None,
-        })
-    }
-
-    pub fn has_resize_pty(&self) -> bool {
-        self.effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::ResizePty { .. }))
-    }
-
-    pub fn has_full_redraw_after_resize(&self) -> bool {
-        self.effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::ResizePty { full_redraw: true }))
-    }
-
-    pub fn has_save_config(&self) -> bool {
-        self.effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::SaveConfig))
-    }
-
-    pub fn has_save_session_order(&self) -> bool {
-        self.effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::SaveSessionOrder))
-    }
-
-    pub fn has_refresh_sessions(&self) -> bool {
-        self.effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::RefreshSessions))
-    }
-
-    pub fn has_reread_new_session_entries(&self) -> bool {
-        self.effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::RereadNewSessionEntries))
+    effect_predicates! {
+        has_open_new_session_picker => Effect::OpenNewSessionPicker,
+        has_resize_pty => Effect::ResizePty { .. },
+        has_full_redraw_after_resize => Effect::ResizePty { full_redraw: true },
+        has_save_config => Effect::SaveConfig,
+        has_save_session_order => Effect::SaveSessionOrder,
+        has_refresh_sessions => Effect::RefreshSessions,
+        has_reread_new_session_entries => Effect::RereadNewSessionEntries,
     }
 }
 

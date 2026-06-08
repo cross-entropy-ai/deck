@@ -10,6 +10,30 @@ use std::collections::HashMap;
 
 use crate::infra::tmux::SessionInfo;
 
+/// tmux user-option that stores deck's persisted 0-based display rank.
+/// Written by each backend's `persist_session_order` (the local
+/// `infra::tmux` and remote `infra::remote_tmux`) and read back as the
+/// trailing field of [`SESSION_LIST_FORMAT`] / [`SESSION_LIST_FORMAT_SSH`].
+/// Single source so the read format and the set-option write can't drift.
+pub(crate) const DECK_ORDER_OPTION: &str = "@deck_order";
+
+/// `list-sessions -F` format for the local caller (tmux invoked
+/// directly). Trailing `#{@deck_order}` carries the persisted rank
+/// (empty when unset).
+pub(crate) const SESSION_LIST_FORMAT: &str = "#{session_name}\t#{session_path}\t#{@deck_order}";
+
+/// The same fields for the remote caller, wrapped in bash/zsh ANSI-C
+/// `$'...'` quoting so the login shell treats `#` literally (no comment)
+/// and turns `\t` into a real tab to split on. Kept beside its local
+/// twin so the only intended difference — the shell quoting — is visible.
+pub(crate) const SESSION_LIST_FORMAT_SSH: &str =
+    "$'#{session_name}\\t#{session_path}\\t#{@deck_order}'";
+
+/// `list-windows -a -F` format for per-session activity timestamps,
+/// local and ssh-quoted variants (same quoting rationale as above).
+pub(crate) const WINDOW_ACTIVITY_FORMAT: &str = "#{session_name}\t#{window_activity}";
+pub(crate) const WINDOW_ACTIVITY_FORMAT_SSH: &str = "$'#{session_name}\\t#{window_activity}'";
+
 /// Parse `tmux list-sessions` output. The local caller's format is
 /// `#{session_name}\t#{session_path}\t#{@deck_order}`; the remote caller
 /// omits the trailing rank (`#{session_name}\t#{session_path}`), so the
