@@ -1,13 +1,15 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Span;
 use ratatui::widgets::{Paragraph, Widget};
 use ratatui::Frame;
 use ratatui_textarea::TextArea;
 
 use crate::theme::Theme;
 use crate::ui::form::field_row;
-use crate::ui::widgets::{centered_rect, popup_frame, scroll_window, PopupStyle, TextAreaColors};
+use crate::ui::widgets::{
+    centered_rect, list_item_line, popup_frame, scroll_window, PopupStyle, TextAreaColors,
+};
 
 use super::NewSessionView;
 
@@ -102,20 +104,13 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
             let display_pos = start + visible_pos;
             let name = &view.entries[*idx];
             let selected = display_pos == view.selected;
-            let row_bg = if selected { theme.surface } else { theme.bg };
             let marker = if selected { "▸" } else { " " };
-            Paragraph::new(Line::from(vec![
-                Span::styled(
-                    format!("  {marker} "),
-                    Style::default()
-                        .fg(if selected { theme.accent } else { theme.bg })
-                        .bg(row_bg),
-                ),
-                Span::styled(
-                    format!("{name}/"),
-                    Style::default().fg(theme.text).bg(row_bg),
-                ),
-            ]))
+            Paragraph::new(list_item_line(
+                theme,
+                selected,
+                format!("  {marker} "),
+                format!("{name}/"),
+            ))
             .render(rows[row_idx], frame.buffer_mut());
             row_idx += 1;
         }

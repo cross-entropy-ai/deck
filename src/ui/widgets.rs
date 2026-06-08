@@ -2,11 +2,16 @@
 //! centering and popup framing. Centralizing these removes several
 //! hand-rolled copies and keeps popup corners consistently rounded.
 
+use std::borrow::Cow;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Widget};
 use ratatui_textarea::TextArea;
+
+use crate::theme::Theme;
 
 /// Center a `width` x `height` rect inside `area`, clamping each
 /// dimension to `area` so the popup never overflows its bounds.
@@ -67,6 +72,31 @@ pub fn style_textarea(ta: &mut TextArea<'static>, focused: bool, c: TextAreaColo
     } else {
         ta.set_cursor_style(base);
     }
+}
+
+/// Render one selectable list row as a two-span `Line`: a marker cell
+/// (drawn in `accent` on the selected row, invisible otherwise) followed
+/// by the content, both sharing the row background (`surface` when
+/// selected, `bg` otherwise). `marker` and `content` are passed verbatim
+/// so each caller keeps control of its own glyph, leading/trailing
+/// padding, and any suffix (e.g. a trailing `/`). Shared by the
+/// new-session, add-remote, and exclude-pattern list UIs.
+pub fn list_item_line<'a>(
+    theme: &Theme,
+    selected: bool,
+    marker: impl Into<Cow<'a, str>>,
+    content: impl Into<Cow<'a, str>>,
+) -> Line<'a> {
+    let row_bg = if selected { theme.surface } else { theme.bg };
+    Line::from(vec![
+        Span::styled(
+            marker,
+            Style::default()
+                .fg(if selected { theme.accent } else { theme.bg })
+                .bg(row_bg),
+        ),
+        Span::styled(content, Style::default().fg(theme.text).bg(row_bg)),
+    ])
 }
 
 /// Compute the first visible index so that `selected` stays in view.

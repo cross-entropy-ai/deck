@@ -1,13 +1,15 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Span;
 use ratatui::widgets::{Paragraph, Widget};
 use ratatui::Frame;
 
 use crate::add_remote::AddRemoteState;
 use crate::theme::Theme;
 use crate::ui::form::field_row;
-use crate::ui::widgets::{centered_rect, popup_frame, scroll_window, PopupStyle, TextAreaColors};
+use crate::ui::widgets::{
+    centered_rect, list_item_line, popup_frame, scroll_window, PopupStyle, TextAreaColors,
+};
 
 const POPUP_WIDTH: u16 = 56;
 const MAX_VISIBLE: usize = 8;
@@ -82,20 +84,13 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
         for (pos, idx) in state.filtered[start..end].iter().enumerate() {
             let display = start + pos;
             let sel = display == state.selected;
-            let bg = if sel { theme.surface } else { theme.bg };
             let marker = if sel { "\u{25b8}" } else { " " };
-            Paragraph::new(Line::from(vec![
-                Span::styled(
-                    format!("  {marker} "),
-                    Style::default()
-                        .fg(if sel { theme.accent } else { theme.bg })
-                        .bg(bg),
-                ),
-                Span::styled(
-                    state.hosts[*idx].as_str(),
-                    Style::default().fg(theme.text).bg(bg),
-                ),
-            ]))
+            Paragraph::new(list_item_line(
+                theme,
+                sel,
+                format!("  {marker} "),
+                state.hosts[*idx].as_str(),
+            ))
             .render(rows[i], frame.buffer_mut());
             i += 1;
         }

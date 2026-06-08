@@ -7,7 +7,9 @@ use ratatui::Frame;
 use crate::keybindings::{Command, Keybindings};
 use crate::state::{LayoutMode, ViewMode};
 use crate::theme::Theme;
-use crate::ui::widgets::{centered_rect, popup_frame, style_textarea, PopupStyle, TextAreaColors};
+use crate::ui::widgets::{
+    centered_rect, list_item_line, popup_frame, style_textarea, PopupStyle, TextAreaColors,
+};
 
 use super::text::format_keys_for;
 use super::{ExcludeEditorView, SettingsView};
@@ -396,20 +398,13 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
 
     for (i, pattern) in editor.patterns.iter().enumerate() {
         let selected = !editor.adding && i == editor.selected;
-        let row_bg = if selected { theme.surface } else { theme.bg };
         let marker = if selected { "▌" } else { " " };
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                marker,
-                Style::default()
-                    .fg(if selected { theme.accent } else { theme.bg })
-                    .bg(row_bg),
-            ),
-            Span::styled(
-                format!(" {} ", pattern),
-                Style::default().fg(theme.text).bg(row_bg),
-            ),
-        ]))
+        Paragraph::new(list_item_line(
+            theme,
+            selected,
+            marker,
+            format!(" {} ", pattern),
+        ))
         .render(rows[row_idx], frame.buffer_mut());
         row_idx += 1;
     }
