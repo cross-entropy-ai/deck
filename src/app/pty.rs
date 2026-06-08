@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use portable_pty::PtySize;
 
-use crate::pty::Pty;
+use crate::pty::{Pty, PtyEvent};
 
 use super::{App, PluginInstance};
 
@@ -78,6 +78,43 @@ impl App {
             }
             i += 1;
         }
+    }
+
+    /// Drain one PTY's pending events into `parser`, returning whether
+    /// the frame needs a redraw. The local, remote, plugin, and upgrade
+    /// panes all do the same thing — process output, mark death on exit —
+    /// and differ only in two flags. `osc52_active` forwards clipboard
+    /// escapes, set only for the on-screen pane so a background pane can't
+    /// hijack the clipboard. `view_active` is whether this pane is the one
+    /// currently shown: background output is still processed (so the PTY's
+    /// pipe buffer never fills and blocks the child) but doesn't force a
+    /// render.
+    pub(super) fn drain_pane(
+        pty: &mut Pty,
+        parser: &mut vt100::Parser,
+        alive: &mut bool,
+        osc52_active: bool,
+        view_active: bool,
+    ) -> bool {
+        let mut needs_render = false;
+        for event in pty.drain() {
+            match event {
+                PtyEvent::Output(data) => {
+                    if osc52_active {
+                        Self::forward_osc52(&data);
+                    }
+                    parser.process(&data);
+                    if view_active {
+                        needs_render = true;
+                    }
+                }
+                PtyEvent::Exited => {
+                    *alive = false;
+                    needs_render = true;
+                }
+            }
+        }
+        needs_render
     }
 
     pub(super) fn respawn_pty(&mut self) -> io::Result<()> {

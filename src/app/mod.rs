@@ -19,7 +19,7 @@ use ratatui::DefaultTerminal;
 use crate::action::Action;
 use crate::config::{Config, KeyBindingValue};
 use crate::keybindings::Keybindings;
-use crate::pty::{Pty, PtyEvent};
+use crate::pty::Pty;
 use crate::refresh::RefreshWorker;
 use crate::state::{AppState, FocusMode, MainView, WarningState, SIDEBAR_MAX, SIDEBAR_MIN};
 use crate::theme::THEMES;
@@ -410,22 +410,16 @@ impl App {
             // only from the actively-viewed pane, so a background remote
             // can't silently overwrite the user's clipboard.
             let local_is_active = self.active_remote.is_none();
-            for event in self.local_terminal.pty.drain() {
-                match event {
-                    PtyEvent::Output(data) => {
-                        if local_is_active {
-                            Self::forward_osc52(&data);
-                        }
-                        self.local_terminal.parser.process(&data);
-                        if local_is_active && self.state.main_view == MainView::Terminal {
-                            needs_render = true;
-                        }
-                    }
-                    PtyEvent::Exited => {
-                        self.local_terminal.alive = false;
-                        needs_render = true;
-                    }
-                }
+            let local_view_active =
+                local_is_active && self.state.main_view == MainView::Terminal;
+            if Self::drain_pane(
+                &mut self.local_terminal.pty,
+                &mut self.local_terminal.parser,
+                &mut self.local_terminal.alive,
+                local_is_active,
+                local_view_active,
+            ) {
+                needs_render = true;
             }
             // Pull any newly-spawned remote PTYs into the map. Drop
             // events for hosts that were removed while the spawn was
@@ -513,28 +507,21 @@ impl App {
             // ticks, idle redraws); if we stopped reading, the kernel
             // pipe buffer would fill and block the child.
             let active_host = self.active_remote.clone();
+            let main_view_terminal = self.state.main_view == MainView::Terminal;
             let mut died_hosts: Vec<String> = Vec::new();
             for (host, conn) in self.remote_conns.iter_mut() {
                 let Some(pane) = conn.pane.as_mut() else {
                     continue;
                 };
                 let host_is_active = active_host.as_deref() == Some(host.as_str());
-                for event in pane.pty.drain() {
-                    match event {
-                        PtyEvent::Output(data) => {
-                            if host_is_active {
-                                Self::forward_osc52(&data);
-                            }
-                            pane.parser.process(&data);
-                            if host_is_active && self.state.main_view == MainView::Terminal {
-                                needs_render = true;
-                            }
-                        }
-                        PtyEvent::Exited => {
-                            pane.alive = false;
-                            needs_render = true;
-                        }
-                    }
+                if Self::drain_pane(
+                    &mut pane.pty,
+                    &mut pane.parser,
+                    &mut pane.alive,
+                    host_is_active,
+                    host_is_active && main_view_terminal,
+                ) {
+                    needs_render = true;
                 }
                 if !pane.alive {
                     died_hosts.push(host.clone());
@@ -578,35 +565,27 @@ impl App {
                 let Some(inst) = inst.as_mut() else {
                     continue;
                 };
-                for event in inst.pty.drain() {
-                    match event {
-                        PtyEvent::Output(data) => {
-                            inst.parser.process(&data);
-                            if self.state.main_view == MainView::Plugin(idx) {
-                                needs_render = true;
-                            }
-                        }
-                        PtyEvent::Exited => {
-                            inst.alive = false;
-                            needs_render = true;
-                        }
-                    }
+                let view_active = self.state.main_view == MainView::Plugin(idx);
+                if Self::drain_pane(
+                    &mut inst.pty,
+                    &mut inst.parser,
+                    &mut inst.alive,
+                    false,
+                    view_active,
+                ) {
+                    needs_render = true;
                 }
             }
+            let upgrade_view_active = self.state.main_view == MainView::Upgrade;
             if let Some(ref mut inst) = self.upgrade_instance {
-                for event in inst.pty.drain() {
-                    match event {
-                        PtyEvent::Output(data) => {
-                            inst.parser.process(&data);
-                            if self.state.main_view == MainView::Upgrade {
-                                needs_render = true;
-                            }
-                        }
-                        PtyEvent::Exited => {
-                            inst.alive = false;
-                            needs_render = true;
-                        }
-                    }
+                if Self::drain_pane(
+                    &mut inst.pty,
+                    &mut inst.parser,
+                    &mut inst.alive,
+                    false,
+                    upgrade_view_active,
+                ) {
+                    needs_render = true;
                 }
             }
 
