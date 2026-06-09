@@ -578,11 +578,8 @@ pub struct SideEffect {
     effects: Vec<Effect>,
 }
 
-/// Generate the `SideEffect` push-helpers. Each row is
-/// `method(args) => Effect::Variant(...)`; the body is always
-/// `self.push(<that effect>)`. Collapses ~19 identical one-liners into a
-/// declarative table so the method↔variant mapping is the only thing to
-/// read (and to keep in sync when an `Effect` variant is added).
+/// Generate `SideEffect` push-helpers from a `method(args) => Effect`
+/// table; each body is `self.push(<effect>)`.
 macro_rules! effect_pushers {
     ($(
         $(#[$meta:meta])*
@@ -639,10 +636,8 @@ impl SideEffect {
     }
 }
 
-/// Generate test-only accessors that scan `effects` for the first match
-/// of a variant. `=> &str` pulls a `String` payload out as `&str`;
-/// `=> &Ty` returns the whole payload by reference. Mirror of
-/// [`effect_pushers`] on the read side.
+/// Test-only accessors returning the first matching variant's payload:
+/// `=> &str` as `&str`, `=> &Ty` by reference.
 #[cfg(test)]
 macro_rules! effect_finders {
     ($( $name:ident : $variant:ident => &str );* $(;)?) => {
@@ -667,8 +662,8 @@ macro_rules! effect_finders {
     };
 }
 
-/// Generate test-only `bool` predicates: each row maps a method name to
-/// an `Effect` pattern checked with `matches!`.
+/// Test-only `bool` predicates: each row maps a method to an `Effect`
+/// pattern checked with `matches!`.
 #[cfg(test)]
 macro_rules! effect_predicates {
     ($( $name:ident => $pat:pat ),* $(,)?) => {

@@ -80,15 +80,12 @@ impl App {
         }
     }
 
-    /// Drain one PTY's pending events into `parser`, returning whether
-    /// the frame needs a redraw. The local, remote, plugin, and upgrade
-    /// panes all do the same thing — process output, mark death on exit —
-    /// and differ only in two flags. `osc52_active` forwards clipboard
-    /// escapes, set only for the on-screen pane so a background pane can't
-    /// hijack the clipboard. `view_active` is whether this pane is the one
-    /// currently shown: background output is still processed (so the PTY's
-    /// pipe buffer never fills and blocks the child) but doesn't force a
-    /// render.
+    /// Drain one PTY's events into `parser`; returns whether a redraw is
+    /// needed. `osc52_active` forwards clipboard escapes (only for the
+    /// on-screen pane, so a background pane can't hijack the clipboard);
+    /// `view_active` is whether this pane is shown — background output is
+    /// still processed (so its pipe can't fill and block the child) but
+    /// doesn't force a render.
     pub(super) fn drain_pane(
         pty: &mut Pty,
         parser: &mut vt100::Parser,

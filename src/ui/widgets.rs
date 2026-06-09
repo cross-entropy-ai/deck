@@ -74,13 +74,10 @@ pub fn style_textarea(ta: &mut TextArea<'static>, focused: bool, c: TextAreaColo
     }
 }
 
-/// Render one selectable list row as a two-span `Line`: a marker cell
-/// (drawn in `accent` on the selected row, invisible otherwise) followed
-/// by the content, both sharing the row background (`surface` when
-/// selected, `bg` otherwise). `marker` and `content` are passed verbatim
-/// so each caller keeps control of its own glyph, leading/trailing
-/// padding, and any suffix (e.g. a trailing `/`). Shared by the
-/// new-session, add-remote, and exclude-pattern list UIs.
+/// One selectable list row as a two-span `Line`: a marker cell (`accent`
+/// when selected, else invisible) plus content, sharing the row
+/// background (`surface` when selected). `marker` and `content` are
+/// passed verbatim so callers keep their own glyph and padding.
 pub fn list_item_line<'a>(
     theme: &Theme,
     selected: bool,
