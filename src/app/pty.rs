@@ -55,6 +55,13 @@ impl App {
             inst.parser.screen_mut().set_size(pty_rows, pty_cols);
             let _ = inst.pty.resize(size);
         }
+        // The upgrade pane runs in the foreground during a self-update; keep
+        // it reflowing on resize too, or it stays at its spawn size until the
+        // upgrade exits.
+        if let Some(inst) = self.upgrade_instance.as_mut() {
+            inst.parser.screen_mut().set_size(pty_rows, pty_cols);
+            let _ = inst.pty.resize(size);
+        }
     }
 
     pub(super) fn forward_osc52(data: &[u8]) {

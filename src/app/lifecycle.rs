@@ -21,8 +21,10 @@ impl App {
             return Some(name);
         }
 
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let dir = format!("{}/claude", home);
+        // Start the bootstrap session in $HOME (tmux tolerates a missing
+        // `-c` dir by falling back silently, so a hardcoded author-specific
+        // path like ~/claude would just land the session somewhere arbitrary).
+        let dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
         let mut idx = sessions.len();
         let name = loop {
             let candidate = format!("session-{}", idx);
