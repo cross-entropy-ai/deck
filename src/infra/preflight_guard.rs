@@ -9,18 +9,19 @@ use crate::tmux;
 pub struct PreflightGuard;
 
 impl PreflightGuard {
-    pub fn run(attach_override: Option<&str>) -> Result<(), String> {
-        run_preflight_checks_with_runner(&RealRunner, attach_override)
+    pub fn run(attach_override: Option<&str>, create_new: bool) -> Result<(), String> {
+        run_preflight_checks_with_runner(&RealRunner, attach_override, create_new)
     }
 }
 
 fn run_preflight_checks_with_runner(
     runner: &dyn CommandRunner,
     attach_override: Option<&str>,
+    create_new: bool,
 ) -> Result<(), String> {
     ensure_tmux_available(runner)?;
     ensure_config_valid()?;
-    ensure_requested_session(attach_override)?;
+    ensure_requested_session(attach_override, create_new)?;
     ensure_at_least_one_session(runner)
 }
 
@@ -46,16 +47,23 @@ fn ensure_config_valid() -> Result<(), String> {
         .map_err(|err| format!("invalid config: {err}"))
 }
 
-/// `deck new <name>` creates the requested session before the app starts.
-/// Duplicate names are hard errors so we don't silently coalesce with an
-/// existing session that happens to share the name.
-fn ensure_requested_session(name: Option<&str>) -> Result<(), String> {
+/// Resolve the session requested on the command line before the app starts.
+///
+/// - `deck new <name>` (`create_new`): the session must not already exist —
+///   a duplicate name is a hard error so we don't silently coalesce with an
+///   unrelated session that happens to share the name.
+/// - `deck <name>`: attach to the existing session, or create it if absent.
+fn ensure_requested_session(name: Option<&str>, create_new: bool) -> Result<(), String> {
     let Some(name) = name else {
         return Ok(());
     };
 
     if tmux::list_sessions().iter().any(|s| s.name == name) {
-        return Err(format!("session '{name}' already exists"));
+        if create_new {
+            return Err(format!("session '{name}' already exists"));
+        }
+        // Plain `deck <name>`: the session already exists, attach to it.
+        return Ok(());
     }
 
     let cwd =

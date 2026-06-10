@@ -23,6 +23,10 @@ use terminal_guard::TerminalGuard;
 struct ParsedArgs {
     force: bool,
     attach_override: Option<String>,
+    /// True only for `new <name>`, where the session must not already
+    /// exist. A bare `deck <name>` attaches to an existing session
+    /// (creating it only if absent), so it leaves this false.
+    create_new: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -89,7 +93,7 @@ fn main() -> io::Result<()> {
         Err(AcquireError::Io(err)) => return Err(err),
     };
 
-    if let Err(err) = PreflightGuard::run(args.attach_override.as_deref()) {
+    if let Err(err) = PreflightGuard::run(args.attach_override.as_deref(), args.create_new) {
         eprintln!("deck: {err}");
         std::process::exit(1);
     }
@@ -132,8 +136,11 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<ParsedCo
         }
     }
 
-    let mut force = false;
+    // Run commands take over an existing instance by default; `--no-force`
+    // restores the old "refuse if already running" behaviour.
+    let mut force = true;
     let mut attach_override: Option<String> = None;
+    let mut create_new = false;
 
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -148,9 +155,12 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<ParsedCo
             "--force" | "-f" => {
                 force = true;
             }
+            "--no-force" => {
+                force = false;
+            }
             "new" => {
                 if attach_override.is_some() {
-                    eprintln!("deck: 'new' may only be specified once");
+                    eprintln!("deck: a session name may only be specified once");
                     return Err(2);
                 }
                 let Some(name) = iter.next() else {
@@ -169,6 +179,22 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<ParsedCo
                     }
                 }
                 attach_override = Some(name);
+                create_new = true;
+            }
+            // A bare positional is a session name to attach to (creating it
+            // if it doesn't exist yet), e.g. `deck work`.
+            name if !name.starts_with('-') => {
+                if attach_override.is_some() {
+                    eprintln!("deck: a session name may only be specified once");
+                    return Err(2);
+                }
+                if let Some(extra) = iter.peek() {
+                    if !extra.starts_with('-') {
+                        eprintln!("deck: unexpected argument '{extra}' after '{name}'");
+                        return Err(2);
+                    }
+                }
+                attach_override = Some(arg);
             }
             _ => {
                 eprintln!("deck: unknown argument '{arg}'");
@@ -181,6 +207,7 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<ParsedCo
     Ok(Some(ParsedCommand::Run(ParsedArgs {
         force,
         attach_override,
+        create_new,
     })))
 }
 
@@ -337,9 +364,14 @@ fn print_help() {
 
 Usage:
   {name}                       Launch the sidebar UI
+  {name} <session>             Attach to <session>, creating it in the current
+                               directory if it doesn't exist yet
   {name} new <session>         Create a session named <session> in the current
-                               directory and attach to it
+                               directory and attach to it (errors if it exists)
+  {name} --no-force            Refuse to start if another deck instance is
+                               running (the default is to take over)
   {name} --force               Terminate an existing deck instance and take over
+                               (this is the default)
   {name} --version             Print version
   {name} --help                Show this help
 
@@ -386,8 +418,9 @@ mod tests {
         assert_eq!(
             result,
             ParsedCommand::Run(ParsedArgs {
-                force: false,
+                force: true,
                 attach_override: Some("foo".to_string()),
+                create_new: true,
             })
         );
     }
@@ -405,21 +438,47 @@ mod tests {
     }
 
     #[test]
-    fn force_before_new_combines() {
-        let result = parse_args(args(&["--force", "new", "foo"]))
-            .unwrap()
-            .unwrap();
+    fn bare_name_attaches_without_create_new() {
+        let result = parse_args(args(&["foo"])).unwrap().unwrap();
         assert_eq!(
             result,
             ParsedCommand::Run(ParsedArgs {
                 force: true,
                 attach_override: Some("foo".to_string()),
+                create_new: false,
             })
         );
     }
 
     #[test]
-    fn force_after_new_combines() {
+    fn bare_name_with_extra_positional_is_usage_error() {
+        let result = parse_args(args(&["foo", "bar"]));
+        assert_eq!(result, Err(2));
+    }
+
+    #[test]
+    fn two_session_names_is_usage_error() {
+        let result = parse_args(args(&["foo", "new", "bar"]));
+        assert_eq!(result, Err(2));
+    }
+
+    #[test]
+    fn no_force_disables_default_takeover() {
+        let result = parse_args(args(&["foo", "--no-force"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            result,
+            ParsedCommand::Run(ParsedArgs {
+                force: false,
+                attach_override: Some("foo".to_string()),
+                create_new: false,
+            })
+        );
+    }
+
+    #[test]
+    fn force_after_new_keeps_force() {
         let result = parse_args(args(&["new", "foo", "--force"]))
             .unwrap()
             .unwrap();
@@ -428,18 +487,20 @@ mod tests {
             ParsedCommand::Run(ParsedArgs {
                 force: true,
                 attach_override: Some("foo".to_string()),
+                create_new: true,
             })
         );
     }
 
     #[test]
-    fn plain_deck_has_no_override() {
+    fn plain_deck_forces_by_default() {
         let result = parse_args(args(&[])).unwrap().unwrap();
         assert_eq!(
             result,
             ParsedCommand::Run(ParsedArgs {
-                force: false,
+                force: true,
                 attach_override: None,
+                create_new: false,
             })
         );
     }
