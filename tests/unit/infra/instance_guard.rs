@@ -1,20 +1,26 @@
 use super::{real_kill, AcquireError, InstanceGuard, KillError, GRACEFUL_KILL_TIMEOUT};
 use std::fs;
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-/// Spawn a long-running child whose argv[0] matches our "looks like deck"
-/// heuristic (anything containing "deck"). Using `CommandExt::arg0`
-/// sets argv[0] atomically at exec time, so there's no shell-version or
-/// race-with-exec flakiness the way `sh -c 'exec -a ... sleep'` had.
-fn spawn_deck_named(name: &str) -> std::process::Child {
-    std::process::Command::new("sleep")
-        .arg0(name)
+/// Spawn a long-running child that genuinely IS a binary named `deck`, so
+/// `pid_looks_like_deck` recognizes it. That check matches the executable's
+/// basename (`ps comm=`), not the argv, so a `sleep` with a `deck` argv[0]
+/// no longer counts (which is the whole point of the fix). Copy `sleep` to a
+/// temp path whose file name is exactly our package name and run that; the
+/// returned dir holds the copied binary and should be removed once the
+/// child is reaped.
+fn spawn_deck_named(tag: &str) -> (std::process::Child, PathBuf) {
+    let dir = std::env::temp_dir().join(format!("deck-test-bin-{tag}-{}", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    let bin = dir.join(env!("CARGO_PKG_NAME"));
+    fs::copy("/bin/sleep", &bin).expect("copy sleep to a deck-named binary");
+    let child = std::process::Command::new(&bin)
         .arg("30")
         .spawn()
-        .expect("spawn sleep")
+        .expect("spawn deck-named binary");
+    (child, dir)
 }
 
 fn test_lock_path(name: &str) -> PathBuf {
@@ -113,7 +119,7 @@ fn force_rejects_when_lock_holds_own_pid() {
 #[test]
 fn force_kills_and_acquires_when_lock_holds_deck_pid() {
     let path = test_lock_path("force-kill-deck");
-    let mut child = spawn_deck_named("deck-test-victim");
+    let (mut child, bindir) = spawn_deck_named("victim");
     let victim_pid = child.id();
 
     fs::write(&path, format!("{victim_pid}\n")).unwrap();
@@ -129,6 +135,7 @@ fn force_kills_and_acquires_when_lock_holds_deck_pid() {
         libc::kill(victim_pid as libc::pid_t, libc::SIGKILL);
     }
     let _ = child.wait();
+    let _ = fs::remove_dir_all(&bindir);
 }
 
 #[test]
@@ -192,7 +199,7 @@ fn real_kill_falls_back_to_sigkill_for_stubborn_child() {
 #[test]
 fn force_surfaces_permission_denied() {
     let path = test_lock_path("force-eperm");
-    let mut child = spawn_deck_named("deck-test-eperm");
+    let (mut child, bindir) = spawn_deck_named("eperm");
     let victim_pid = child.id();
 
     fs::write(&path, format!("{victim_pid}\n")).unwrap();
@@ -208,5 +215,6 @@ fn force_surfaces_permission_denied() {
         libc::kill(victim_pid as libc::pid_t, libc::SIGKILL);
     }
     let _ = child.wait();
+    let _ = fs::remove_dir_all(&bindir);
     let _ = fs::remove_file(path);
 }
