@@ -16,8 +16,8 @@ use crate::agent::DetectedAgent;
 use crate::infra::command::{CommandError, CommandRunner, RealRunner};
 use crate::infra::tmux::{PaneFocus, SessionInfo};
 use crate::infra::tmux_parse::{
-    parse_sessions, parse_window_activity, DECK_ORDER_OPTION, SESSION_LIST_FORMAT_SSH,
-    WINDOW_ACTIVITY_FORMAT_SSH,
+    exact_target, parse_sessions, parse_window_activity, DECK_ORDER_OPTION,
+    SESSION_LIST_FORMAT_SSH, WINDOW_ACTIVITY_FORMAT_SSH,
 };
 
 /// Marker separating the pane-pid list from the `ps` snapshot in the
@@ -431,7 +431,7 @@ pub fn switch_client(host: &str, marker_id: u64, session: &str) {
 }
 
 fn switch_client_with(runner: &dyn CommandRunner, host: &str, marker_id: u64, session: &str) {
-    let target = shell_single_quote(session);
+    let target = shell_single_quote(&exact_target(session));
     // No-op unless we can target Deck's OWN client: switch only when the
     // recorded tty is known. An untargeted `switch-client` could re-point
     // another attached client, so when the marker is missing we do nothing
@@ -467,7 +467,9 @@ fn focus_pane_with(
     pane_id: &str,
 ) -> PaneFocus {
     let pane = shell_single_quote(pane_id);
-    let sess = shell_single_quote(session);
+    // `sess` is the switch-client/list-clients session target (exact match);
+    // `pane` is a `%N` pane id for select-window/select-pane, left as-is.
+    let sess = shell_single_quote(&exact_target(session));
     // Act only when we can target Deck's own client (`-c "$C"`). A missing
     // marker (`C` empty — the reconnect race before the attach wrapper
     // writes it, or an unwritable `~/.cache`) bails immediately: no tmux
@@ -507,7 +509,7 @@ fn focus_pane_with(
 /// session's continued existence (or absence) regardless.
 pub fn kill_session(host: &str, name: &str) {
     let runner = default_runner();
-    let target = shell_single_quote(name);
+    let target = shell_single_quote(&exact_target(name));
     let _ = run_ssh(
         runner,
         host,
@@ -519,7 +521,8 @@ pub fn kill_session(host: &str, name: &str) {
 /// `(host, old_name)` uniquely identifies the target.
 pub fn rename_session(host: &str, old_name: &str, new_name: &str) {
     let runner = default_runner();
-    let target = shell_single_quote(old_name);
+    // `-t` is the lookup target (exact match); `new_name` is the new label.
+    let target = shell_single_quote(&exact_target(old_name));
     let new_name = shell_single_quote(new_name);
     let _ = run_ssh(
         runner,
@@ -560,7 +563,7 @@ fn persist_session_order_with(runner: &dyn CommandRunner, host: &str, order: &[S
         }
         argv.push("set-option".to_string());
         argv.push("-t".to_string());
-        argv.push(shell_single_quote(name));
+        argv.push(shell_single_quote(&exact_target(name)));
         argv.push(DECK_ORDER_OPTION.to_string());
         argv.push(rank.to_string());
     }
@@ -778,8 +781,9 @@ mod tests {
         // Names and the `;` separator are single-quoted so the remote shell
         // passes them literally to tmux (tmux interprets the `;`).
         assert!(
-            calls[0]
-                .contains("set-option -t 'a' @deck_order 0 ';' set-option -t 'b' @deck_order 1"),
+            calls[0].contains(
+                "set-option -t '=a' @deck_order 0 ';' set-option -t '=b' @deck_order 1"
+            ),
             "got: {}",
             calls[0]
         );
@@ -811,9 +815,9 @@ mod tests {
         // `switch-client` is always `-c "$C"` scoped to Deck's own client.
         assert!(
             calls[0].contains(
-                "select-window -t '%240' ';' select-pane -t '%240' ';' switch-client -c \"$C\" -t 'work'"
+                "select-window -t '%240' ';' select-pane -t '%240' ';' switch-client -c \"$C\" -t '=work'"
             ),
-            "got: {}",
+            "pane ids stay bare (already exact); the session target is =-exact: {}",
             calls[0]
         );
         // Reads the per-connection recorded client tty.
@@ -833,7 +837,7 @@ mod tests {
         // attached to the session, so a click cannot move a co-attached
         // client's window/pane.
         assert!(
-            calls[0].contains("tmux list-clients -t 'work' -F '#{client_tty}'")
+            calls[0].contains("tmux list-clients -t '=work' -F '#{client_tty}'")
                 && calls[0].contains("grep -qvxF \"$C\""),
             "guards session-global selects behind a sole-client check: {}",
             calls[0]
@@ -858,7 +862,7 @@ mod tests {
         // scoped. Writing `-c "$C"` directly (two words) avoids the zsh
         // `${C:+…}` single-word-collapse trap.
         assert!(
-            calls[0].contains("[ -n \"$C\" ] && tmux switch-client -c \"$C\" -t 'work'"),
+            calls[0].contains("[ -n \"$C\" ] && tmux switch-client -c \"$C\" -t '=work'"),
             "no-op unless the client tty is known: {}",
             calls[0]
         );

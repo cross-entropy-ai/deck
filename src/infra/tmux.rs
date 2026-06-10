@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::infra::command::{CommandError, CommandRunner, RealRunner};
 use crate::infra::tmux_parse::{
-    parse_sessions, parse_window_activity, DECK_ORDER_OPTION, SESSION_LIST_FORMAT,
+    exact_target, parse_sessions, parse_window_activity, DECK_ORDER_OPTION, SESSION_LIST_FORMAT,
     WINDOW_ACTIVITY_FORMAT,
 };
 
@@ -87,7 +87,7 @@ fn persist_session_order_with(runner: &dyn CommandRunner, order: &[String]) {
         }
         args.push("set-option".to_string());
         args.push("-t".to_string());
-        args.push(name.clone());
+        args.push(exact_target(name));
         args.push(DECK_ORDER_OPTION.to_string());
         args.push(rank.to_string());
     }
@@ -158,17 +158,18 @@ fn parse_client_session_for_tty(raw: &str, client_tty: &str) -> Option<String> {
 
 /// Switch the current client to a different session.
 pub fn switch_session(name: &str) {
-    let _ = tmux(&["switch-client", "-t", name]);
+    let _ = tmux(&["switch-client", "-t", &exact_target(name)]);
 }
 
 /// Kill a tmux session by name.
 pub fn kill_session(name: &str) {
-    let _ = tmux(&["kill-session", "-t", name]);
+    let _ = tmux(&["kill-session", "-t", &exact_target(name)]);
 }
 
 /// Rename a tmux session.
 pub fn rename_session(old_name: &str, new_name: &str) {
-    let _ = tmux(&["rename-session", "-t", old_name, new_name]);
+    // `-t` is the lookup target (exact match); `new_name` is the new label.
+    let _ = tmux(&["rename-session", "-t", &exact_target(old_name), new_name]);
 }
 
 /// Create a new detached session with the given name and starting directory.
@@ -180,7 +181,7 @@ pub fn new_session(name: &str, dir: &str) -> Option<String> {
 
 /// Switch a specific tmux client (by TTY) to a different session.
 pub fn switch_client_for_tty(client_tty: &str, session: &str) {
-    let _ = tmux(&["switch-client", "-c", client_tty, "-t", session]);
+    let _ = tmux(&["switch-client", "-c", client_tty, "-t", &exact_target(session)]);
 }
 
 /// Outcome of an agent-pane focus (local or remote). Distinguishes a true
@@ -234,7 +235,9 @@ pub fn focus_local_pane(client_tty: &str, session: &str, pane_id: &str) -> PaneF
         args.push(client_tty.into());
     }
     args.push("-t".into());
-    args.push(session.into());
+    // The switch-client session target is a bare name (exact match); the
+    // select-window/select-pane targets above are `%N` pane ids, left bare.
+    args.push(exact_target(session));
     let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
     if tmux(&args_ref).is_none() {
         PaneFocus::Failed
@@ -255,7 +258,8 @@ fn other_client_on_session(client_tty: &str, session: &str) -> bool {
     if client_tty.is_empty() {
         return false;
     }
-    let Some(raw) = tmux(&["list-clients", "-t", session, "-F", "#{client_tty}"]) else {
+    let Some(raw) = tmux(&["list-clients", "-t", &exact_target(session), "-F", "#{client_tty}"])
+    else {
         return false;
     };
     raw.lines()

@@ -15,6 +15,21 @@ use crate::infra::tmux::SessionInfo;
 /// so the two can't drift.
 pub(crate) const DECK_ORDER_OPTION: &str = "@deck_order";
 
+/// The tmux `-t` target for a bare *session name*, forced to exact match
+/// with a leading `=`. Without it tmux resolves `-t name` by exact → prefix
+/// → fnmatch, so `kill-session -t work` can hit `workbench` when `work`
+/// doesn't exist, or pick the wrong one when a name is a prefix of another.
+///
+/// Shared by both backends so the `=` decision lives in one place (local
+/// passes the result straight to tmux; remote must additionally
+/// single-quote it — `shell_single_quote` — which also shields the leading
+/// `=` from zsh equals-expansion). Use ONLY for bare session names: pane
+/// ids (`%N`) are already exact, and `-s` (new-session) names are literals,
+/// not lookup targets — neither should be wrapped.
+pub(crate) fn exact_target(name: &str) -> String {
+    format!("={name}")
+}
+
 /// `list-sessions -F` format. The `_SSH` variant wraps the same fields
 /// in bash/zsh ANSI-C `$'...'` quoting so the remote login shell treats
 /// `#` literally and turns `\t` into a tab; quoting is the only intended

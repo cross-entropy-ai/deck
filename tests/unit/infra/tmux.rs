@@ -122,8 +122,15 @@ fn persist_session_order_batches_set_option_calls() {
     assert_eq!(calls.len(), 1, "one batched tmux invocation");
     assert_eq!(
         calls[0],
-        "set-option -t alpha @deck_order 0 ; set-option -t beta @deck_order 1"
+        "set-option -t =alpha @deck_order 0 ; set-option -t =beta @deck_order 1"
     );
+}
+
+#[test]
+fn exact_target_forces_exact_match() {
+    // Leading `=` makes tmux match the session name exactly instead of by
+    // prefix/fnmatch, so a target can't resolve to a different session.
+    assert_eq!(crate::infra::tmux_parse::exact_target("work"), "=work");
 }
 
 #[test]
