@@ -158,7 +158,21 @@ fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Detect
     .ok()?;
     let (panes_part, ps_part) = raw.split_once(AGENT_PROBE_MARKER)?;
     let panes = crate::agent::parse_panes(panes_part);
-    Some(crate::agent::detect_agents(&panes, ps_part))
+    let mut agents = crate::agent::detect_agents(&panes, ps_part);
+
+    // Classify each agent's status from its pane buffer. One batched hop
+    // captures every agent pane at once (the panes are already known from
+    // the probe), then the shared classifier runs — same as the local path.
+    if !agents.is_empty() {
+        let pane_ids: Vec<String> = agents.iter().map(|a| a.pane_id.clone()).collect();
+        let buffers = capture_panes_with(runner, host, &pane_ids);
+        for a in &mut agents {
+            if let Some(buf) = buffers.get(&a.pane_id) {
+                a.status = crate::agent::classify_status(a.kind, buf);
+            }
+        }
+    }
+    Some(agents)
 }
 
 /// Capture the visible buffer of a remote pane (`%N`) as plain text, for
@@ -172,6 +186,71 @@ pub fn capture_pane(host: &str, pane_id: &str) -> Option<String> {
         &["tmux", "capture-pane", "-p", "-J", "-t", pane_id],
     )
     .ok()
+}
+
+/// Marker line emitted before each pane's buffer in a batched capture. The
+/// leading `_` keeps it clear of the remote-shell `=`/`-` traps.
+const CAPTURE_MARKER: &str = "__deck_cap__";
+
+/// Capture several remote panes in a SINGLE ssh hop, returning `pane_id ->
+/// buffer`. Used to classify remote agents' status without one hop per
+/// pane. Pane ids are deck-known `%N` handles. Empty map on failure / no
+/// panes.
+fn capture_panes_with(
+    runner: &dyn CommandRunner,
+    host: &str,
+    pane_ids: &[String],
+) -> HashMap<String, String> {
+    if pane_ids.is_empty() {
+        return HashMap::new();
+    }
+    // One remote shell command: export PATH (so a brew-installed tmux
+    // resolves, mirroring `run_ssh`'s prefix — a `for` loop can't take a
+    // leading `PATH=…` assignment, so it goes inside as `export`), then
+    // loop the panes printing a marker line and each buffer.
+    let ids = pane_ids
+        .iter()
+        .map(|p| shell_single_quote(p))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let script = format!(
+        "export {prefix}; for p in {ids}; do echo {marker} \"$p\"; \
+         tmux capture-pane -p -J -t \"$p\" 2>/dev/null; done",
+        prefix = REMOTE_PATH_PREFIX,
+        marker = CAPTURE_MARKER,
+    );
+    let mut args = base_ssh_args();
+    args.push(host);
+    args.push(&script);
+    let Ok(out) = runner.run("ssh", &args, REMOTE_TIMEOUT) else {
+        return HashMap::new();
+    };
+    parse_captures(&out.stdout_trimmed())
+}
+
+/// Split batched-capture stdout into `pane_id -> buffer` on the
+/// `__deck_cap__ <id>` marker lines preceding each pane's content.
+fn parse_captures(raw: &str) -> HashMap<String, String> {
+    let prefix = format!("{CAPTURE_MARKER} ");
+    let mut map = HashMap::new();
+    let mut cur: Option<(String, String)> = None;
+    for line in raw.lines() {
+        if let Some(id) = line.strip_prefix(&prefix) {
+            if let Some((k, v)) = cur.take() {
+                map.insert(k, v);
+            }
+            cur = Some((id.trim().to_string(), String::new()));
+        } else if let Some((_, buf)) = cur.as_mut() {
+            if !buf.is_empty() {
+                buf.push('\n');
+            }
+            buf.push_str(line);
+        }
+    }
+    if let Some((k, v)) = cur.take() {
+        map.insert(k, v);
+    }
+    map
 }
 
 /// Whether a failed remote `tmux` call means "reachable host, no tmux
@@ -946,6 +1025,22 @@ mod tests {
         }));
         let (_dirs, err) = list_dir_with(&runner, "box", "~/");
         assert_eq!(err.as_deref(), Some("host unreachable"));
+    }
+
+    #[test]
+    fn parse_captures_splits_on_markers() {
+        let raw = "__deck_cap__ %1\nline a1\nline a2\n__deck_cap__ %5\nline b1";
+        let map = parse_captures(raw);
+        assert_eq!(map.get("%1").map(String::as_str), Some("line a1\nline a2"));
+        assert_eq!(map.get("%5").map(String::as_str), Some("line b1"));
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn parse_captures_handles_empty_buffer() {
+        // A pane with no content still gets an (empty) entry.
+        let map = parse_captures("__deck_cap__ %2");
+        assert_eq!(map.get("%2").map(String::as_str), Some(""));
     }
 
     #[test]

@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// carrying an older version is refreshed to the new default (see
 /// `Config::load`), so template improvements ship to existing users — at
 /// the cost of resetting a hand-edited prompt when the default moves.
-pub const DEFAULT_SUMMARY_PROMPT_VERSION: u32 = 2;
+pub const DEFAULT_SUMMARY_PROMPT_VERSION: u32 = 3;
 
 /// Marker the template replaces with the rendered `<session>` blocks. A
 /// template missing it still works — the blocks are appended instead.
@@ -40,20 +40,23 @@ fn is_nested_deck(buffer: &str) -> bool {
 pub const DEFAULT_SUMMARY_PROMPT: &str = "\
 You are deck, a tmux session manager. Several coding agents (Claude Code or \
 Codex) are running in tmux panes. Below is the recent terminal buffer of each \
-agent's pane — one <session> block per pane, where the id is its tmux \
+agent's pane, one <session> block per pane, where the id is its tmux \
 session:window.pane location (and host=\"…\" marks a remote host).
 
 {{SESSIONS}}
 
 Summarize the current state across all sessions: what each agent is working \
 on, which are actively running versus idle or waiting for input, and any \
-errors or blockers. Then suggest the most useful next action. Be concise and \
-concrete, and refer to sessions by their id.
+errors or blockers. Then suggest the most useful next action. Refer to \
+sessions by their id. Be concise: if one sentence says it clearly, use one \
+sentence.
 
 Formatting: plain prose with short paragraphs. You may use `## headings`, \
 **bold** for emphasis, and `inline code` for commands, paths, and ids. Do NOT \
-use tables, code fences (```), bullet lists, blockquotes, or links — only \
-those three inline markers are rendered.";
+use tables, code fences (```), bullet lists, blockquotes, or links; only \
+those three inline markers are rendered. Do NOT use dash punctuation: no em \
+dashes, en dashes, or hyphens to join or separate clauses; use a comma or a \
+separate sentence instead.";
 
 /// One agent pane to capture, as snapshotted from the Agents tab.
 #[derive(Debug, Clone)]
