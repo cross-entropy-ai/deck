@@ -99,7 +99,15 @@ impl App {
                             || old_available != self.state.update_available;
                     }
                     UpdateResult::Err(msg) => {
-                        eprintln!("deck: update check failed: {}", msg);
+                        // Background check failed. An eprintln! here would be
+                        // invisible (and could corrupt the alt screen), so put
+                        // it in the reload strip; it clears after the TTL. Set
+                        // the fields directly — `self.update_checker` is
+                        // borrowed here, so we can't call `show_warning`.
+                        self.state.reload_status = Some(crate::state::ReloadStatus::Err(format!(
+                            "update check failed: {msg}"
+                        )));
+                        self.state.reload_status_at = Some(Instant::now());
                     }
                 }
             }

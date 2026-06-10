@@ -211,7 +211,7 @@ impl App {
                 };
                 let args_ref: Vec<&str> = args_owned.iter().map(String::as_str).collect();
                 if let Err(e) = self.spawn_upgrade_pty(&program, &args_ref) {
-                    eprintln!("deck: failed to spawn upgrade: {}", e);
+                    self.show_warning(format!("upgrade failed to start: {e}"));
                     return false;
                 }
                 self.state.main_view = MainView::Upgrade;
@@ -924,9 +924,18 @@ impl App {
         }
     }
 
-    /// Reload `~/.config/deck/config.json` and apply it in place. On
+    /// Surface a transient warning in the sidebar's reload strip. The TUI
+    /// owns the whole alternate screen, so a bare `eprintln!` from inside
+    /// the event loop is wiped invisibly; route operational warnings here
+    /// instead. Reuses the reload toast's auto-expiry (`RELOAD_STATUS_ERR_TTL`).
+    pub(super) fn show_warning(&mut self, msg: impl Into<String>) {
+        self.state.reload_status = Some(crate::state::ReloadStatus::Err(msg.into()));
+        self.state.reload_status_at = Some(std::time::Instant::now());
+    }
+
+    /// Reload `~/.config/deck/config.yaml` and apply it in place. On
     /// failure the previous in-memory state is left untouched and the
-    /// error string is stored in `state.reload_error` for the sidebar
+    /// error string is stored in `state.reload_status` for the sidebar
     /// to display. On success, any plugin instances are killed (PTYs
     /// dropped) and must be re-launched by the user.
     fn reload_config(&mut self) {
@@ -943,9 +952,6 @@ impl App {
         keybindings::ensure_complete(&mut cfg.keybindings);
 
         let (compiled, kb_warnings) = Keybindings::from_config(&cfg.keybindings, &cfg.plugins);
-        for warning in &kb_warnings {
-            eprintln!("deck: {}", warning);
-        }
 
         // Kill any running plugin PTYs. Dropping the PluginInstance drops
         // its Pty, which lets portable-pty reap the child process.
@@ -984,8 +990,15 @@ impl App {
         self.state.overlay.exclude_editor = None;
 
         self.raw_keybindings = cfg.keybindings;
-        self.state.reload_status = Some(ReloadStatus::Ok);
-        self.state.reload_status_at = Some(std::time::Instant::now());
+        // Surface any keybinding warnings in the strip rather than masking
+        // them with "Ok" (an eprintln! here would be invisible on the alt
+        // screen); otherwise report success.
+        if kb_warnings.is_empty() {
+            self.state.reload_status = Some(ReloadStatus::Ok);
+            self.state.reload_status_at = Some(std::time::Instant::now());
+        } else {
+            self.show_warning(kb_warnings.join("; "));
+        }
 
         // Diff old vs new remote forwards and send ops to the worker.
         let old_remotes = std::mem::take(&mut self.state.config_remotes);

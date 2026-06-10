@@ -219,9 +219,6 @@ impl App {
         let plugin_count = plugins.len();
 
         let (keybindings, kb_warnings) = Keybindings::from_config(&cfg.keybindings, &plugins);
-        for warning in &kb_warnings {
-            eprintln!("deck: {}", warning);
-        }
 
         let mut state = AppState::new(
             theme_index,
@@ -240,6 +237,15 @@ impl App {
             cfg.update_check,
             collapsed_sections,
         );
+
+        // The TUI owns the alternate screen, so a startup eprintln! would be
+        // wiped invisibly. Surface keybinding warnings in the reload strip
+        // instead; its TTL clears them after a few seconds.
+        if !kb_warnings.is_empty() {
+            state.reload_status =
+                Some(crate::state::ReloadStatus::Err(kb_warnings.join("; ")));
+            state.reload_status_at = Some(std::time::Instant::now());
+        }
 
         let (update_checker, last_update_request) = if cfg.update_check == UpdateCheckMode::Enabled
         {
