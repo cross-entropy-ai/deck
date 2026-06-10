@@ -102,6 +102,53 @@ fn agent_rows_ordered_local_then_hosts() {
 }
 
 #[test]
+fn agent_cursor_tracks_its_agent_when_the_list_changes() {
+    // Regression: the Agents-tab cursor is a positional index. A refresh that
+    // drops the agent *above* the cursor must keep the cursor on the SAME
+    // agent, or the left highlight slides onto a different agent than the
+    // pane shown on the right (active_agent).
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.sidebar_tab = SidebarTab::Agents;
+    state.agents.insert(
+        None,
+        vec![
+            detected("a", "%1"),
+            detected("b", "%2"),
+            detected("c", "%3"),
+        ],
+    );
+    state.agent_focused = 1; // cursor on agent "b" (%2)
+
+    // Refresh drops "a"; "b" shifts from index 1 to 0.
+    let key = state.focused_agent_key();
+    state
+        .agents
+        .insert(None, vec![detected("b", "%2"), detected("c", "%3")]);
+    state.reanchor_agent_focus(key);
+
+    assert_eq!(state.agent_focused, 0, "cursor follows b to its new index");
+    assert_eq!(state.focused_agent().unwrap().pane_id, "%2");
+}
+
+#[test]
+fn agent_cursor_clamps_when_focused_agent_disappears() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.sidebar_tab = SidebarTab::Agents;
+    state.agents.insert(
+        None,
+        vec![detected("a", "%1"), detected("b", "%2"), detected("c", "%3")],
+    );
+    state.agent_focused = 2; // cursor on "c"
+
+    let key = state.focused_agent_key();
+    // "c" is gone; only "a" remains.
+    state.agents.insert(None, vec![detected("a", "%1")]);
+    state.reanchor_agent_focus(key);
+
+    assert_eq!(state.agent_focused, 0, "clamps into range when the agent is gone");
+}
+
+#[test]
 fn agents_layout_groups_agents_under_host_dividers() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.sidebar_tab = SidebarTab::Agents;

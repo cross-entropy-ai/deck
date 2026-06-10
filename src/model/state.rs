@@ -2226,6 +2226,46 @@ impl AppState {
         }
     }
 
+    /// Identity (host, `%N` pane id) of the agent under the Agents-tab
+    /// cursor. Captured *before* a refresh rebuilds the agent list so the
+    /// cursor can be re-anchored to the same agent afterwards — see
+    /// [`reanchor_agent_focus`](Self::reanchor_agent_focus).
+    pub fn focused_agent_key(&self) -> Option<(Option<String>, String)> {
+        self.agent_rows()
+            .into_iter()
+            .nth(self.agent_focused)
+            .map(|row| (row.host, row.agent.pane_id))
+    }
+
+    /// Re-point the Agents-tab cursor at the agent identified by `key` (its
+    /// position before the list was rebuilt), so the highlighted row keeps
+    /// tracking the same agent — and thus the pane shown on the right
+    /// (`active_agent`) — instead of whatever now sits at the old index.
+    /// `agent_focused` is a positional index, but the detected-agent list
+    /// reorders and gains/loses entries between refresh rounds, so a bare
+    /// `clamp_agent_focus` lets the cursor slide onto a different agent than
+    /// the one the pane is showing. Falls back to clamping when the agent is
+    /// gone (finished, went idle, or its host dropped). Use this instead of
+    /// `clamp_agent_focus` after the agent list changes.
+    pub fn reanchor_agent_focus(&mut self, key: Option<(Option<String>, String)>) {
+        let rows = self.agent_rows();
+        if let Some((host, pane_id)) = key {
+            if let Some(idx) = rows
+                .iter()
+                .position(|row| row.host == host && row.agent.pane_id == pane_id)
+            {
+                self.agent_focused = idx;
+                return;
+            }
+        }
+        let total = rows.len();
+        self.agent_focused = if total == 0 {
+            0
+        } else {
+            self.agent_focused.min(total - 1)
+        };
+    }
+
     pub fn sync_order(&mut self) {
         let names: Vec<String> = self.sessions.iter().map(|s| s.name.clone()).collect();
         self.session_order.retain(|n| names.contains(n));

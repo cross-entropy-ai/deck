@@ -172,8 +172,11 @@ impl App {
         // Apply this round's agent detection: store probed hosts, drop
         // stale agents on covered-but-failed hosts, prune to configured.
         // (Logic lives on AppState so it's unit-testable; see its tests.)
+        // Re-anchor the cursor to the agent it was on so the highlight keeps
+        // tracking the active pane across the list change (not the raw index).
+        let agent_key = self.state.focused_agent_key();
         self.state.apply_remote_agents(covered_hosts, agents);
-        self.state.clamp_agent_focus();
+        self.state.reanchor_agent_focus(agent_key);
     }
 
     fn apply_local(
@@ -182,9 +185,12 @@ impl App {
         rows: Vec<SnapshotRow>,
         agents: Vec<crate::agent::DetectedAgent>,
     ) {
-        // Local section is the `None`-host key.
+        // Local section is the `None`-host key. Re-anchor the Agents-tab
+        // cursor to the same agent across the list change so the highlight
+        // keeps matching the active pane (the index alone would drift).
+        let agent_key = self.state.focused_agent_key();
         self.state.agents.insert(None, agents);
-        self.state.clamp_agent_focus();
+        self.state.reanchor_agent_focus(agent_key);
 
         // On first load, restore the manual order persisted on each
         // session's `@deck_order` rank (written by ReorderSession).
