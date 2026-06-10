@@ -195,6 +195,7 @@ fn detected(session: &str, pane_id: &str) -> crate::agent::DetectedAgent {
         window: "1".to_string(),
         pane: "0".to_string(),
         pane_id: pane_id.to_string(),
+        status: crate::agent::AgentStatus::Unknown,
     }
 }
 

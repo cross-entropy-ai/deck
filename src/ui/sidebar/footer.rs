@@ -207,6 +207,10 @@ pub(super) fn draw_footer(
             menu_label,
             Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
         ),
+        Span::styled(
+            format!("   [$ deck v{}]", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(theme.dim),
+        ),
     ]));
 
     frame.render_widget(

@@ -216,6 +216,14 @@ fn collect_local(
         let mut agents =
             crate::agent::detect_agents(&tmux::agent_panes(), &crate::agent::ps_snapshot());
         agents.retain(|a| !config::session_excluded(&a.session, &compiled));
+        // Classify each agent's traffic-light status from its pane buffer.
+        // Local capture is cheap; remote agents stay `Unknown` (gray) until
+        // their probe captures buffers too.
+        for a in &mut agents {
+            if let Some(buf) = tmux::capture_pane(&a.pane_id) {
+                a.status = crate::agent::classify_status(a.kind, &buf);
+            }
+        }
         agents
     } else {
         Vec::new()

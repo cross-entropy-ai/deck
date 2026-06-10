@@ -158,3 +158,29 @@ fn parse_panes_reads_tab_fields() {
     assert_eq!(got[1].pane, "1");
     assert_eq!(got[1].pane_id, "%243");
 }
+
+#[test]
+fn claude_classifier_reads_traffic_light_from_buffer() {
+    // Working spinner: the "<verb>ing… (" status line.
+    let working = "✶ Cogitating… (12s · ↑ 3.2k tokens · esc to interrupt)";
+    assert_eq!(classify_status(AgentKind::Claude, working), AgentStatus::Working);
+
+    // Idle at the prompt, nothing pending.
+    let idle = "╭───────────╮\n│ > │\n╰───────────╯\n? for shortcuts";
+    assert_eq!(classify_status(AgentKind::Claude, idle), AgentStatus::Idle);
+
+    // A permission dialog → waiting on the user.
+    let prompt = "Do you want to proceed?\n❯ 1. Yes\n  2. No";
+    assert_eq!(classify_status(AgentKind::Claude, prompt), AgentStatus::Waiting);
+
+    // Empty capture → unknown.
+    assert_eq!(classify_status(AgentKind::Claude, "   "), AgentStatus::Unknown);
+}
+
+#[test]
+fn codex_is_unknown_until_a_classifier_exists() {
+    assert_eq!(
+        classify_status(AgentKind::Codex, "esc to interrupt"),
+        AgentStatus::Unknown
+    );
+}

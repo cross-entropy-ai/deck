@@ -42,8 +42,10 @@ pub(super) fn draw_header(
         }
     };
 
-    let projects_label = format!("Projects ({project_count})");
-    let agents_label = format!("Agents ({agent_count})");
+    // Each tab keeps its glyph (Projects had one before the tab selector
+    // replaced the single header; Agents gets a matching one).
+    let projects_label = format!("\u{e795} Projects ({project_count})");
+    let agents_label = format!("\u{f085} Agents ({agent_count})");
     let gap = "   ";
 
     // Lay out `  <projects>   <agents>` left to right, recording each

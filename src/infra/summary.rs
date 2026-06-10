@@ -23,6 +23,11 @@ pub const DEFAULT_SUMMARY_PROMPT_VERSION: u32 = 2;
 /// template missing it still works — the blocks are appended instead.
 pub const PROMPT_PLACEHOLDER: &str = "{{SESSIONS}}";
 
+/// deck's own sidebar glyph (the Projects-tab icon). A captured pane that
+/// contains it is showing a nested deck UI rather than agent output, so its
+/// buffer is omitted from the summary.
+const DECK_UI_MARKER: char = '\u{e795}';
+
 /// The default, user-overridable summary prompt. `{{SESSIONS}}` is filled
 /// with one `<session id="…">…</session>` block per agent pane.
 pub const DEFAULT_SUMMARY_PROMPT: &str = "\
@@ -93,11 +98,19 @@ pub fn generate(
     let captures: Vec<PaneCapture> = agents
         .iter()
         .map(|a| {
-            let content = match &a.host {
+            let raw = match &a.host {
                 None => crate::tmux::capture_pane(&a.pane_id),
                 Some(host) => crate::remote_tmux::capture_pane(host, &a.pane_id),
             }
             .unwrap_or_default();
+            // A pane showing deck's own sidebar glyph is a nested deck UI,
+            // not an agent's work — don't feed deck's chrome back into the
+            // summary; note it instead.
+            let content = if raw.contains(DECK_UI_MARKER) {
+                format!("[content omitted — detected deck's own UI marker '{DECK_UI_MARKER}']")
+            } else {
+                raw
+            };
             PaneCapture {
                 host: a.host.clone(),
                 id: a.id.clone(),

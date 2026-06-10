@@ -153,11 +153,13 @@ pub(super) fn draw_sessions(
                 } else {
                     row_bg
                 };
-                // Status dot before the name: green/yellow/red health.
-                let status_color = match a.status() {
-                    crate::agent::AgentStatus::Green => ctx.theme.green,
-                    crate::agent::AgentStatus::Yellow => ctx.theme.yellow,
-                    crate::agent::AgentStatus::Red => ctx.theme.pink,
+                // Status dot before the name: red = working, green = idle,
+                // yellow = waiting for input, gray = unknown.
+                let status_color = match a.status {
+                    crate::agent::AgentStatus::Working => ctx.theme.pink,
+                    crate::agent::AgentStatus::Idle => ctx.theme.green,
+                    crate::agent::AgentStatus::Waiting => ctx.theme.yellow,
+                    crate::agent::AgentStatus::Unknown => ctx.theme.dim,
                 };
                 let label = a.location();
                 lines.push(pad_line(

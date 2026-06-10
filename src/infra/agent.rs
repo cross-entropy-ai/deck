@@ -40,20 +40,25 @@ pub struct DetectedAgent {
     pub pane: String,
     /// Stable `%N` pane id — the switch/focus target.
     pub pane_id: String,
+    /// Traffic-light health, classified from the pane buffer (see
+    /// [`StatusClassifier`]). `Unknown` until a buffer is captured and
+    /// classified — `detect_agents` itself has no buffer, so it leaves this
+    /// `Unknown` for the gathering layer to fill in.
+    pub status: AgentStatus,
 }
 
-/// Health indicator shown as a colored dot before each agent row in the
-/// sidebar: green = working/ok, yellow = idle or waiting for input, red =
-/// errored/blocked. Detection isn't wired up yet, so `DetectedAgent::status`
-/// reports `Green` for everyone; the other states are the extension point.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// Yellow/Red aren't constructed until status detection lands; keep them as
-// the rendering already maps every variant to a color.
-#[allow(dead_code)]
+/// Traffic-light health shown as a colored dot before each agent row:
+/// red = actively working, green = idle, yellow = waiting for user input,
+/// gray = unknown (not captured, or an agent kind whose classifier isn't
+/// implemented yet). Color mapping lives in the renderer; these stay
+/// semantic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AgentStatus {
-    Green,
-    Yellow,
-    Red,
+    Working,
+    Idle,
+    Waiting,
+    #[default]
+    Unknown,
 }
 
 impl DetectedAgent {
@@ -61,10 +66,83 @@ impl DetectedAgent {
     pub fn location(&self) -> String {
         format!("{}:{}.{}", self.session, self.window, self.pane)
     }
+}
 
-    /// The agent's health dot. Always `Green` for now (see `AgentStatus`).
-    pub fn status(&self) -> AgentStatus {
-        AgentStatus::Green
+/// A snapshot of an agent's pane, fed to a [`StatusClassifier`]. A struct
+/// (not a bare `&str`) so future signals — idle time, exit code, scrollback
+/// — can be added without changing every classifier's signature.
+pub struct PaneSnapshot<'a> {
+    /// The visible pane buffer as plain text (`tmux capture-pane -p`).
+    pub buffer: &'a str,
+}
+
+/// Decides an agent's [`AgentStatus`] from its pane. One implementor per
+/// agent kind — deck ships Claude Code today; Codex / pi / opencode each
+/// get their own as their TUIs are characterized. Implementations are pure
+/// (no IO) so they run cheaply every refresh and are trivial to unit-test.
+pub trait StatusClassifier {
+    fn classify(&self, pane: &PaneSnapshot) -> AgentStatus;
+}
+
+/// The classifier for an agent kind. Kinds without a real classifier fall
+/// back to [`UnknownClassifier`] (gray) until one is written.
+pub fn classifier_for(kind: AgentKind) -> &'static dyn StatusClassifier {
+    static CLAUDE: ClaudeClassifier = ClaudeClassifier;
+    static UNKNOWN: UnknownClassifier = UnknownClassifier;
+    match kind {
+        AgentKind::Claude => &CLAUDE,
+        // TODO: a CodexClassifier once its TUI states are characterized.
+        AgentKind::Codex => &UNKNOWN,
+    }
+}
+
+/// Convenience: classify a `kind`'s status from a raw buffer string.
+pub fn classify_status(kind: AgentKind, buffer: &str) -> AgentStatus {
+    classifier_for(kind).classify(&PaneSnapshot { buffer })
+}
+
+/// Fallback classifier for agent kinds not yet characterized: always
+/// `Unknown` (gray dot).
+pub struct UnknownClassifier;
+
+impl StatusClassifier for UnknownClassifier {
+    fn classify(&self, _pane: &PaneSnapshot) -> AgentStatus {
+        AgentStatus::Unknown
+    }
+}
+
+/// Claude Code's pane states are read off its status line:
+/// - while a turn runs, the footer shows a working spinner like
+///   "Cogitating… (12s · esc to interrupt)" — the tell is `ing… (` →
+///   `Working` (red);
+/// - a permission/confirmation dialog is up ("Do you want to proceed?") →
+///   `Waiting` (yellow), the user's input is needed;
+/// - otherwise it's sitting idle at the prompt → `Idle` (green);
+/// - an empty capture → `Unknown` (gray).
+pub struct ClaudeClassifier;
+
+/// Substring that marks an in-flight turn: Claude Code's "<verb>ing… ("
+/// status line (e.g. "Cogitating… (3s · …").
+const CLAUDE_WORKING_MARKER: &str = "ing\u{2026} (";
+
+/// Markers of a permission/confirmation dialog awaiting the user's choice.
+const CLAUDE_WAITING_MARKERS: &[&str] = &["do you want", "\u{276f} 1."];
+
+impl StatusClassifier for ClaudeClassifier {
+    fn classify(&self, pane: &PaneSnapshot) -> AgentStatus {
+        let buf = pane.buffer.trim();
+        if buf.is_empty() {
+            return AgentStatus::Unknown;
+        }
+        let lower = buf.to_ascii_lowercase();
+        if lower.contains(CLAUDE_WORKING_MARKER) {
+            return AgentStatus::Working;
+        }
+        if CLAUDE_WAITING_MARKERS.iter().any(|m| lower.contains(m)) {
+            return AgentStatus::Waiting;
+        }
+        // Sitting at the prompt with nothing pending.
+        AgentStatus::Idle
     }
 }
 
@@ -156,6 +234,9 @@ pub fn detect_agents(panes: &[PaneInfo], ps_output: &str) -> Vec<DetectedAgent> 
                     window: p.window.clone(),
                     pane: p.pane.clone(),
                     pane_id: p.pane_id.clone(),
+                    // No buffer here; the gathering layer captures the pane
+                    // and fills this in via `classify_status`.
+                    status: AgentStatus::Unknown,
                 });
                 break; // one agent per pane
             }
