@@ -152,7 +152,7 @@ fn pid_looks_like_deck_with_runner_uses_ps_output() {
     let runner = FakeRunner::new();
     let pid_str = "1234";
     runner.set(
-        &["-p", pid_str, "-o", "command="],
+        &["-p", pid_str, "-o", "comm="],
         FakeResponse::Ok(format!("/usr/local/bin/{}", env!("CARGO_PKG_NAME"))),
     );
     assert!(pid_looks_like_deck_with(&runner, 1234));
@@ -163,8 +163,33 @@ fn pid_looks_like_deck_with_runner_false_on_other_proc() {
     let runner = FakeRunner::new();
     let pid_str = "1234";
     runner.set(
-        &["-p", pid_str, "-o", "command="],
+        &["-p", pid_str, "-o", "comm="],
         FakeResponse::Ok("/usr/bin/vim".to_string()),
+    );
+    assert!(!pid_looks_like_deck_with(&runner, 1234));
+}
+
+#[test]
+fn pid_looks_like_deck_false_on_substring_only() {
+    // A recycled pid running `vim deck.md`: the argv mentions "deck", but
+    // the executable basename is `vim`. Must not be mistaken for ours.
+    let runner = FakeRunner::new();
+    let pid_str = "1234";
+    runner.set(
+        &["-p", pid_str, "-o", "comm="],
+        FakeResponse::Ok("/usr/bin/vim".to_string()),
+    );
+    assert!(!pid_looks_like_deck_with(&runner, 1234));
+}
+
+#[test]
+fn pid_looks_like_deck_false_on_prefixed_binary() {
+    // Exact match, not a prefix: a `deckard` binary is not us.
+    let runner = FakeRunner::new();
+    let pid_str = "1234";
+    runner.set(
+        &["-p", pid_str, "-o", "comm="],
+        FakeResponse::Ok(format!("/usr/local/bin/{}ard", env!("CARGO_PKG_NAME"))),
     );
     assert!(!pid_looks_like_deck_with(&runner, 1234));
 }
@@ -173,6 +198,6 @@ fn pid_looks_like_deck_with_runner_false_on_other_proc() {
 fn pid_looks_like_deck_with_runner_false_on_timeout() {
     let runner = FakeRunner::new();
     let pid_str = "1234";
-    runner.set(&["-p", pid_str, "-o", "command="], FakeResponse::Timeout);
+    runner.set(&["-p", pid_str, "-o", "comm="], FakeResponse::Timeout);
     assert!(!pid_looks_like_deck_with(&runner, 1234));
 }

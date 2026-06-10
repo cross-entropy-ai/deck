@@ -331,11 +331,19 @@ pub fn pid_looks_like_deck(pid: u32) -> bool {
 
 fn pid_looks_like_deck_with(runner: &dyn CommandRunner, pid: u32) -> bool {
     let pid_str = pid.to_string();
-    let Ok(out) = runner.run("ps", &["-p", &pid_str, "-o", "command="], TMUX_TIMEOUT) else {
+    // `comm=` is the executable image name (macOS: the exe path; Linux: the
+    // basename), NOT the full argv. We then compare the basename for
+    // *equality* against our own binary. A substring match on the `command=`
+    // argv would also fire on unrelated processes that merely mention
+    // "deck" (`vim deck.md`, a shell sitting in ~/deck) — and since the pid
+    // comes from a possibly-stale /tmp/deck.lock, a recycled pid could then
+    // be force-killed. Exact basename keeps us to our own kind.
+    let Ok(out) = runner.run("ps", &["-p", &pid_str, "-o", "comm="], TMUX_TIMEOUT) else {
         return false;
     };
-    let command = String::from_utf8_lossy(&out.stdout);
-    command.contains(env!("CARGO_PKG_NAME"))
+    let comm = String::from_utf8_lossy(&out.stdout);
+    let basename = comm.trim().rsplit('/').next().unwrap_or("");
+    basename == env!("CARGO_PKG_NAME")
 }
 
 #[cfg(test)]
