@@ -131,6 +131,11 @@ pub struct App {
     update_checker: Option<crate::update::UpdateChecker>,
     upgrade_instance: Option<PluginInstance>,
     last_update_request: Option<Instant>,
+    /// Last config-file mtime deck itself wrote or the watcher accepted.
+    /// `save_config` refreshes this after writing so the ~2s config watcher
+    /// in `run` doesn't treat deck's own save as an external edit and fire a
+    /// self-reload. `None` = file absent / mtime unreadable.
+    config_mtime_seen: Option<std::time::SystemTime>,
     /// Set to true after a session switch so the next render call
     /// wipes the host terminal before drawing — clears any residue the
     /// terminal emulator leaves from the previous session.
@@ -321,6 +326,7 @@ impl App {
             update_checker,
             upgrade_instance: None,
             last_update_request,
+            config_mtime_seen: crate::config::config_mtime(),
             needs_full_redraw: false,
             port_forward_tx,
             port_forward_rx: pf_result_rx,
@@ -420,11 +426,12 @@ impl App {
         let mut last_render = Instant::now() - render_min_interval(self.state.frame_rate_limit);
         let mut last_blink_render = Instant::now();
         let mut last_summary_render = Instant::now();
-        // Watcher for ~/.config/deck/config.json: poll its mtime every
+        // Watcher for ~/.config/deck/config.yaml: poll its mtime every
         // ~2s so an out-of-band `deck remote add/remove` (or a manual
-        // edit) takes effect without the user pressing reload.
+        // edit) takes effect without the user pressing reload. deck's own
+        // saves refresh `self.config_mtime_seen` (see `save_config`) so
+        // they don't read back as external edits.
         let mut last_config_poll = Instant::now();
-        let mut config_mtime_seen = crate::config::config_mtime();
 
         loop {
             // Drain the local terminal. OSC52 (clipboard) is forwarded
@@ -763,8 +770,8 @@ impl App {
                 // both count; transient Some→None (file briefly gone
                 // during an atomic replace) is ignored so we don't
                 // double-fire.
-                if current.is_some() && current != config_mtime_seen {
-                    config_mtime_seen = current;
+                if current.is_some() && current != self.config_mtime_seen {
+                    self.config_mtime_seen = current;
                     self.dispatch(Action::ReloadConfig);
                     needs_render = true;
                     force_render = true;

@@ -9,7 +9,7 @@ use crate::update::{
 use super::{App, UPDATE_CHECK_INTERVAL};
 
 impl App {
-    pub(super) fn save_config(&self) {
+    pub(super) fn save_config(&mut self) {
         Config {
             theme: THEMES[self.state.theme_index].name.to_string(),
             layout: self.state.layout_mode,
@@ -35,6 +35,11 @@ impl App {
             agents_probe_interval: self.state.agents_probe_interval_secs,
         }
         .save();
+        // We just wrote the file; adopt its new mtime so the config watcher
+        // in `run` doesn't see our own save as an external edit and trigger a
+        // self-reload (which would kill plugin PTYs, close the exclude editor
+        // mid-edit, and flash the reload toast on every drag/toggle/save).
+        self.config_mtime_seen = crate::config::config_mtime();
     }
 
     pub(super) fn tick_update_check(&mut self) -> bool {
@@ -50,10 +55,26 @@ impl App {
             }
             crate::update::UpdateCheckMode::Enabled => {
                 if self.update_checker.is_none() {
-                    let checker = UpdateChecker::spawn();
-                    checker.request(UpdateRequest::Check);
-                    self.update_checker = Some(checker);
-                    self.last_update_request = Some(Instant::now());
+                    // Spawn the worker (idle, parked on recv) so it's ready,
+                    // but DON'T request here. A fresh cache already back-dated
+                    // `last_update_request` to skip the network until the
+                    // cache ages out; the interval gate below decides when a
+                    // real check fires. Without this, every startup spawned
+                    // AND requested, hitting GitHub each launch and rendering
+                    // the cache dead. Spawning without requesting also avoids
+                    // arming the Drop-join stall (an in-flight request blocks
+                    // teardown until the HTTP returns).
+                    self.update_checker = Some(UpdateChecker::spawn());
+                    // No prior timestamp means update-check was off at startup
+                    // and was just toggled on — check once now. The fresh-cache
+                    // path already set `last_update_request`, so this fires only
+                    // on a genuine enable.
+                    if self.last_update_request.is_none() {
+                        if let Some(ref checker) = self.update_checker {
+                            checker.request(UpdateRequest::Check);
+                        }
+                        self.last_update_request = Some(Instant::now());
+                    }
                 }
             }
         }
