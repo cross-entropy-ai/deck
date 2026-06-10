@@ -274,7 +274,14 @@ fn prompt_yes_no(question: &str) -> bool {
 }
 
 fn run_remote_add(host: &str) -> i32 {
-    let mut config = Config::load();
+    let mut config = match Config::try_load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("deck: cannot read config ({e}); refusing to modify it.");
+            eprintln!("deck: fix ~/.config/deck/config.yaml by hand, then retry.");
+            return 1;
+        }
+    };
     if config.remotes.iter().any(|r| r.host == host) {
         eprintln!("deck: remote '{host}' is already configured");
         return 1;
@@ -333,7 +340,14 @@ fn run_remote_add(host: &str) -> i32 {
 }
 
 fn run_remote_list() {
-    let config = Config::load();
+    // try_load, not load: listing must never rewrite a malformed config.
+    let config = match Config::try_load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("deck: cannot read config: {e}");
+            return;
+        }
+    };
     if config.remotes.is_empty() {
         println!("(no remotes configured)");
         return;
@@ -344,7 +358,14 @@ fn run_remote_list() {
 }
 
 fn run_remote_remove(host: &str) -> i32 {
-    let mut config = Config::load();
+    let mut config = match Config::try_load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("deck: cannot read config ({e}); refusing to modify it.");
+            eprintln!("deck: fix ~/.config/deck/config.yaml by hand, then retry.");
+            return 1;
+        }
+    };
     let before = config.remotes.len();
     config.remotes.retain(|r| r.host != host);
     if config.remotes.len() == before {

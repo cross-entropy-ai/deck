@@ -282,6 +282,65 @@ fn try_load_from_valid_yaml_round_trips() {
 }
 
 #[test]
+fn load_never_overwrites_a_present_but_malformed_file() {
+    // Regression for the P0 config-wipe: load() used `unwrap_or_default()`,
+    // so a single bad value turned into defaults, the migration reported
+    // "changed", and save() then replaced the user's real config.
+    let path = std::env::temp_dir().join("deck-load-malformed.yaml");
+    // A config the user cares about, but with one malformed value
+    // (frame_rate_limit isn't a number) so the whole parse fails.
+    let original = "\
+theme: Nord
+frame_rate_limit: not-a-number
+remotes:
+  - host: prod-box
+";
+    fs::write(&path, original).unwrap();
+    // Sanity: this genuinely doesn't parse.
+    assert!(Config::try_load_from(&path).is_err());
+
+    let cfg = Config::load_from(&path);
+    // Falls back to in-memory defaults...
+    assert_eq!(cfg.theme, Config::default().theme);
+    // ...but the on-disk file is left byte-for-byte intact.
+    let after = fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        after, original,
+        "a malformed config must never be rewritten by load()"
+    );
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn load_self_heals_a_valid_file_without_dropping_user_data() {
+    let path = std::env::temp_dir().join("deck-load-valid.yaml");
+    let mut original = Config {
+        theme: "Nord".to_string(),
+        ..Config::default()
+    };
+    original.remotes.push(RemoteConfig {
+        host: "prod-box".to_string(),
+        forwards: vec![],
+    });
+    // Force the summary-prompt migration to fire so load takes the
+    // self-heal-and-save branch.
+    original.summary_prompt_version = 0;
+    original.save_to(&path).unwrap();
+
+    let cfg = Config::load_from(&path);
+    assert_eq!(cfg.theme, "Nord");
+    assert_eq!(cfg.remotes.len(), 1, "self-heal must not drop remotes");
+    assert_eq!(
+        cfg.summary_prompt_version,
+        crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION
+    );
+    // The rewrite on disk kept the remote too.
+    let reloaded = Config::try_load_from(&path).unwrap();
+    assert_eq!(reloaded.remotes.len(), 1);
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
 fn empty_keybindings_still_serialize() {
     // Default config has an empty keybindings map. We always emit it so
     // the config file stays self-documenting after backfill runs.

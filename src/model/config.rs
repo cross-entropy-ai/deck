@@ -261,16 +261,33 @@ fn load_legacy_json() -> Option<Config> {
 
 impl Config {
     pub fn load() -> Self {
-        let path = config_path();
+        Self::load_from(&config_path())
+    }
+
+    /// Load the config at `path`, self-healing migrations back to disk when
+    /// the file parses (or is absent). A present-but-UNPARSEABLE file is
+    /// **never** overwritten: a single typo or one malformed entry would
+    /// otherwise replace the user's remotes, keybindings, and plugins with
+    /// defaults. In that case we keep defaults in memory only and leave the
+    /// file untouched — the preflight guard (`try_load`) surfaces the parse
+    /// error to the user separately.
+    fn load_from(path: &std::path::Path) -> Self {
         if path.exists() {
-            let mut config: Config = confy::load_path(&path).unwrap_or_default();
+            // NOT `unwrap_or_default()`: that turned a parse error into
+            // defaults, which the migration below then "self-healed" onto
+            // disk — wiping the real config. On a parse failure, keep
+            // defaults in memory only and never write.
+            let mut config = match confy::load_path::<Config>(path) {
+                Ok(c) => c,
+                Err(_) => return Config::default(),
+            };
             // Migrate keybindings (command renames, legacy key syntax,
             // unknown sweep) and seed/refresh the summary prompt, then
             // rewrite once so the file self-heals.
             let mut changed = migrate_keybindings(&mut config.keybindings);
             changed |= config.migrate_summary_prompt();
             if changed {
-                config.save();
+                let _ = config.save_to(path);
             }
             return config;
         }
@@ -279,7 +296,7 @@ impl Config {
         if let Some(mut config) = load_legacy_json() {
             migrate_keybindings(&mut config.keybindings);
             config.migrate_summary_prompt();
-            config.save();
+            let _ = config.save_to(path);
             return config;
         }
 
@@ -287,7 +304,7 @@ impl Config {
         // Seed the prompt and persist, so a fresh install gets an editable
         // summary template on disk from the first launch.
         config.migrate_summary_prompt();
-        config.save();
+        let _ = config.save_to(path);
         config
     }
 
