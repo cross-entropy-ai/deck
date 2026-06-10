@@ -106,6 +106,10 @@ impl App {
                 self.switch_to_agent_pane(target);
                 false
             }
+            Action::GenerateSummary => {
+                self.start_summary_generation();
+                false
+            }
             Action::SwitchProject => {
                 let fx = action::apply_action(&mut self.state, action);
                 self.execute_side_effects(&fx);
@@ -540,6 +544,35 @@ impl App {
     /// re-point the client at the session and select the exact
     /// window/pane. Remote: switch to that host's session (pane focus on
     /// remote is a follow-up).
+    /// Kick the Agents-tab summary generation. Dummy for now: flip to the
+    /// animated `Generating` state and spawn a worker that sleeps 5s, then
+    /// sends placeholder text back over `summary_tx`; the run loop drains
+    /// it into `SummaryState::Ready`. No-op while already generating.
+    fn start_summary_generation(&mut self) {
+        if self.state.summary == crate::state::SummaryState::Generating {
+            return;
+        }
+        self.state.summary = crate::state::SummaryState::Generating;
+        self.state.summary_scroll = 0;
+        let tx = self.summary_tx.clone();
+        std::thread::Builder::new()
+            .name("deck-summary".to_string())
+            .spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                let text = "3 agents active across 2 hosts. On local, Claude is \
+                    editing src/app and just finished wiring the Agents tab; it \
+                    is waiting on a review. On h1, Codex is idle after running \
+                    the test suite (all green). On h2, a second Claude is \
+                    drafting release notes. No blockers detected; last activity \
+                    about 2 minutes ago. Suggested next step: review the open \
+                    diff on local, then kick the h2 agent to finish the notes. \
+                    (placeholder summary — generation is not wired up yet)"
+                    .to_string();
+                let _ = tx.send(text);
+            })
+            .ok();
+    }
+
     fn switch_to_agent_pane(&mut self, target: crate::state::AgentTarget) {
         // Stamp this click as the newest focus intent; any in-flight remote
         // focus from a prior click is now stale and won't commit.

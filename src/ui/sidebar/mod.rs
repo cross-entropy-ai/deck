@@ -52,6 +52,12 @@ pub struct SidebarProps<'a> {
     pub sidebar_tab: SidebarTab,
     /// Flattened agent list for the Agents tab (see `AppState::agent_rows`).
     pub agent_rows: &'a [AgentRow],
+    /// State of the Agents-tab Summary card.
+    pub summary: &'a crate::state::SummaryState,
+    /// Current braille spinner frame index for the card's generating state.
+    pub spinner_idx: usize,
+    /// Scroll offset into the Ready summary text.
+    pub summary_scroll: usize,
     pub tabs_mode: bool,
     pub view_mode: ViewMode,
     pub plugins: &'a [PluginView<'a>],
@@ -60,6 +66,17 @@ pub struct SidebarProps<'a> {
     pub update_available: Option<&'a UpdateStatus>,
     /// The agent deck switched to, highlighted in its footer line.
     pub active_agent: Option<&'a AgentTarget>,
+}
+
+/// Click/scroll regions the Agents-tab Summary card publishes each frame.
+#[derive(Default)]
+pub struct SummaryHits {
+    /// The "Generate Summary" button, for click hit-testing.
+    pub button: Option<Rect>,
+    /// The card's full rect, for routing wheel events to text scrolling.
+    pub card: Option<Rect>,
+    /// Max scroll offset for the Ready text at this width (0 = no overflow).
+    pub max_scroll: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -84,6 +101,7 @@ pub fn draw_sidebar(
     Option<KillConfirmHits>,
     Vec<AgentHit>,
     Option<(Rect, Rect)>,
+    SummaryHits,
 ) {
     let ctx = SidebarRenderCtx {
         theme: props.theme,
@@ -124,7 +142,14 @@ pub fn draw_sidebar(
             draw_confirm_kill(frame, content, props.theme, name)
         });
         // Vertical/tabs layout has no sidebar header, hence no tab labels.
-        return (banner_bounds, Vec::new(), kill_hits, Vec::new(), None);
+        return (
+            banner_bounds,
+            Vec::new(),
+            kill_hits,
+            Vec::new(),
+            None,
+            SummaryHits::default(),
+        );
     }
     let content = draw_sidebar_container(
         frame,
@@ -157,15 +182,15 @@ pub fn draw_sidebar(
         props.theme,
     );
     let mut kill_hits: Option<KillConfirmHits> = None;
-    let (divider_hits, agent_hits) = if props.show_help {
+    let (divider_hits, agent_hits, summary_hits) = if props.show_help {
         draw_help(frame, sessions_area, props.theme, props.keybindings);
-        (Vec::new(), Vec::new())
+        (Vec::new(), Vec::new(), SummaryHits::default())
     } else if let Some(name) = props.confirm_kill {
         kill_hits = draw_confirm_kill(frame, sessions_area, props.theme, name);
-        (Vec::new(), Vec::new())
+        (Vec::new(), Vec::new(), SummaryHits::default())
     } else if let Some(textarea) = props.rename_input {
         draw_rename_input(frame, sessions_area, props.theme, textarea);
-        (Vec::new(), Vec::new())
+        (Vec::new(), Vec::new(), SummaryHits::default())
     } else {
         draw_sessions(
             frame,
@@ -178,6 +203,9 @@ pub fn draw_sidebar(
                 view_mode: props.view_mode,
                 active_agent: props.active_agent,
                 agent_rows: props.agent_rows,
+                summary: props.summary,
+                spinner_idx: props.spinner_idx,
+                summary_scroll: props.summary_scroll,
             },
         )
     };
@@ -202,6 +230,7 @@ pub fn draw_sidebar(
         kill_hits,
         agent_hits,
         Some((projects_tab, agents_tab)),
+        summary_hits,
     )
 }
 

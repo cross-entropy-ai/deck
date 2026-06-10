@@ -76,6 +76,7 @@ impl App {
         let mut captured_kill_hits: Option<crate::state::KillConfirmHits> = None;
         let mut captured_agent_hits: Vec<crate::state::AgentHit> = Vec::new();
         let mut captured_tab_rects: Option<(Rect, Rect)> = None;
+        let mut captured_summary: ui::SummaryHits = ui::SummaryHits::default();
         terminal.draw(|frame| {
             // Unified slice the sidebar consumes: local rows first
             // (flat index == filtered_pos), then remotes (flat index
@@ -163,11 +164,17 @@ impl App {
                 .duration_since(UNIX_EPOCH)
                 .map(|d| (d.as_millis() / 500) % 2 == 0)
                 .unwrap_or(true);
+            // ~12.5 fps braille spinner for the Summary card; sessions.rs
+            // takes this mod the frame count.
+            let spinner_idx = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| (d.as_millis() / 80) as usize)
+                .unwrap_or(0);
 
             let layout = self.state.current_layout(view_mode);
             let agent_rows = self.state.agent_rows();
             let focus_target = self.state.focus_target();
-            let (banner_bounds, divider_hits, kill_hits, agent_hits, tab_rects) =
+            let (banner_bounds, divider_hits, kill_hits, agent_hits, tab_rects, summary_hits) =
                 ui::draw_sidebar(
                     frame,
                     sidebar_area,
@@ -184,6 +191,9 @@ impl App {
                         show_borders,
                         sidebar_tab,
                         agent_rows: &agent_rows,
+                        summary: &self.state.summary,
+                        spinner_idx,
+                        summary_scroll: self.state.summary_scroll,
                         tabs_mode: layout_mode == LayoutMode::Vertical,
                         view_mode,
                         plugins: &plugin_views,
@@ -193,6 +203,7 @@ impl App {
                         active_agent: self.state.active_agent.as_ref(),
                     },
                 );
+            captured_summary = summary_hits;
             captured_banner_bounds = banner_bounds;
             captured_divider_hits = divider_hits;
             captured_kill_hits = kill_hits;
@@ -476,6 +487,9 @@ impl App {
         };
         self.state.projects_tab_rect = projects_rect;
         self.state.agents_tab_rect = agents_rect;
+        self.state.summary_button_rect = captured_summary.button;
+        self.state.summary_card_rect = captured_summary.card;
+        self.state.summary_max_scroll = captured_summary.max_scroll;
 
         Ok(())
     }

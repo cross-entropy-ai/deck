@@ -128,6 +128,46 @@ fn agents_layout_groups_agents_under_host_dividers() {
 }
 
 #[test]
+fn agents_layout_pins_summary_card_at_top() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.sidebar_tab = SidebarTab::Agents;
+    let layout = state.agents_layout();
+    // First item is the Summary card; it sits above the @local divider.
+    let first = &layout.items()[0].data;
+    assert!(matches!(first, SidebarItemData::SummaryCard));
+    let local_pos = layout
+        .items()
+        .iter()
+        .position(|i| matches!(i.data, SidebarItemData::LocalHeader))
+        .unwrap();
+    assert!(local_pos > 0);
+}
+
+#[test]
+fn summary_card_height_is_fixed_across_states() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    let idle = state.summary_card_height();
+    state.summary = SummaryState::Generating;
+    assert_eq!(state.summary_card_height(), idle);
+    state.summary = SummaryState::Ready("a much longer body".repeat(20));
+    assert_eq!(
+        state.summary_card_height(),
+        idle,
+        "the card is a fixed-size window; long text scrolls, not grows"
+    );
+}
+
+#[test]
+fn scroll_summary_clamps_to_max() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.summary_max_scroll = 3;
+    state.scroll_summary(-5);
+    assert_eq!(state.summary_scroll, 0, "can't scroll above the top");
+    state.scroll_summary(10);
+    assert_eq!(state.summary_scroll, 3, "clamped to max offset");
+}
+
+#[test]
 fn agents_layout_shows_placeholder_for_empty_section() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.sidebar_tab = SidebarTab::Agents;

@@ -165,6 +165,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.last_scroll = std::time::Instant::now();
             focus_next(state, &mut fx);
         }
+        Action::ScrollSummary(delta) => {
+            state.last_scroll = std::time::Instant::now();
+            state.scroll_summary(delta);
+        }
         Action::FocusIndex(idx) => {
             // Mouse clicks pass a unified flat index (local rows then
             // remotes); number-key shortcuts use the same action but
@@ -939,7 +943,8 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::SidebarClickSession(_)
         | Action::NumberKeyJump(_)
         | Action::MenuClickItem(_)
-        | Action::SwitchToAgentPane(_) => {}
+        | Action::SwitchToAgentPane(_)
+        | Action::GenerateSummary => {}
 
         Action::Quit => {
             fx.quit();

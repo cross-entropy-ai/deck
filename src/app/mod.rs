@@ -145,6 +145,10 @@ pub struct App {
     /// `switch_to_agent_pane` / `apply_focus_outcome`.
     focus_tx: std::sync::mpsc::Sender<FocusOutcome>,
     focus_rx: std::sync::mpsc::Receiver<FocusOutcome>,
+    /// Carries the (dummy) generated Agents-tab summary text from its
+    /// worker thread back to the UI loop once the simulated job finishes.
+    summary_tx: std::sync::mpsc::Sender<String>,
+    summary_rx: std::sync::mpsc::Receiver<String>,
     /// Monotonic id stamped on each focus-affecting action (agent click,
     /// session switch). A remote focus worker captures the id at spawn;
     /// its outcome is committed only if no newer action has bumped this
@@ -287,6 +291,7 @@ impl App {
         let (pf_result_tx, pf_result_rx) = std::sync::mpsc::channel();
         let port_forward_tx = crate::app::port_forward_task::spawn(pf_result_tx);
         let (focus_tx, focus_rx) = std::sync::mpsc::channel();
+        let (summary_tx, summary_rx) = std::sync::mpsc::channel();
 
         let mut app = App {
             state,
@@ -309,6 +314,8 @@ impl App {
             port_forward_rx: pf_result_rx,
             focus_tx,
             focus_rx,
+            summary_tx,
+            summary_rx,
             focus_seq: 0,
             suppress_next_periodic_refresh: false,
         };
@@ -399,6 +406,7 @@ impl App {
         let mut force_render = true;
         let mut last_render = Instant::now() - render_min_interval(self.state.frame_rate_limit);
         let mut last_blink_render = Instant::now();
+        let mut last_summary_render = Instant::now();
         // Watcher for ~/.config/deck/config.json: poll its mtime every
         // ~2s so an out-of-band `deck remote add/remove` (or a manual
         // edit) takes effect without the user pressing reload.
@@ -642,6 +650,17 @@ impl App {
                 last_blink_render = Instant::now();
             }
 
+            // Animate the Agents-tab Summary spinner while generating, even
+            // with no input events. Force past the frame-rate floor so the
+            // braille frames step smoothly (~12.5 fps).
+            if self.state.summary == crate::state::SummaryState::Generating
+                && last_summary_render.elapsed() >= Duration::from_millis(80)
+            {
+                needs_render = true;
+                force_render = true;
+                last_summary_render = Instant::now();
+            }
+
             if needs_render
                 && (force_render
                     || last_render.elapsed() >= render_min_interval(self.state.frame_rate_limit))
@@ -758,6 +777,14 @@ impl App {
             // view only for focuses that actually landed.
             while let Ok(outcome) = self.focus_rx.try_recv() {
                 self.apply_focus_outcome(outcome);
+                needs_render = true;
+                force_render = true;
+            }
+
+            // The (dummy) summary job finished — show its text.
+            while let Ok(text) = self.summary_rx.try_recv() {
+                self.state.summary = crate::state::SummaryState::Ready(text);
+                self.state.summary_scroll = 0;
                 needs_render = true;
                 force_render = true;
             }

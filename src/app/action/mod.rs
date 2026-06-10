@@ -34,6 +34,10 @@ pub enum Action {
     SelectTab(crate::state::SidebarTab),
     /// Toggle between the Projects and Agents sidebar tabs (keybinding).
     ToggleSidebarTab,
+    /// Kick the (dummy) Agents-tab summary generation (button click).
+    GenerateSummary,
+    /// Scroll the Agents-tab summary text by a row delta (wheel over card).
+    ScrollSummary(i32),
     ToggleViewMode,
     CycleFrameRateLimit(i32),
     /// Collapse/expand a sidebar group (Expanded view only). `None` is the

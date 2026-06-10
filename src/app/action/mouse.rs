@@ -38,6 +38,9 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         if let Some(tab) = state.tab_at(mouse.column, mouse.row) {
             return Action::SelectTab(tab);
         }
+        if state.summary_button_at(mouse.column, mouse.row) {
+            return Action::GenerateSummary;
+        }
     }
 
     if let Some(menu) = state.overlay.context_menu.as_ref() {
@@ -113,6 +116,16 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 if state.last_scroll.elapsed().as_millis() < 80 {
                     return Action::None;
+                }
+                // Wheel over the Summary card scrolls its text (when it
+                // overflows), not the sidebar list.
+                if state.summary_max_scroll > 0
+                    && state.summary_card_at(mouse.column, mouse.row)
+                {
+                    return match mouse.kind {
+                        MouseEventKind::ScrollUp => Action::ScrollSummary(-1),
+                        _ => Action::ScrollSummary(1),
+                    };
                 }
                 return match mouse.kind {
                     MouseEventKind::ScrollUp => Action::ScrollUp,

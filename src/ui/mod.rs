@@ -20,7 +20,7 @@ pub use menu::draw_context_menu;
 pub use new_session::draw_new_session;
 pub use reload::{draw_reload_bar, reload_row_count};
 pub use settings::{draw_settings_page, draw_theme_picker};
-pub use sidebar::{draw_sidebar, SidebarProps};
+pub use sidebar::{draw_sidebar, SidebarProps, SummaryHits};
 
 /// Runtime state of a configured plugin, used by the sidebar footer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

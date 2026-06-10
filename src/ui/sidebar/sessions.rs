@@ -8,9 +8,15 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::state::{
     AgentHit, AgentRow, AgentTarget, DividerButton, DividerHit, FocusTarget, HostStatus, PfBadge,
-    PfBadgeColor, SidebarItemData, SidebarLayout, ViewMode,
+    PfBadgeColor, SidebarItemData, SidebarLayout, SummaryState, ViewMode, SUMMARY_TEXT_ROWS,
 };
 use crate::theme::Theme;
+
+/// Braille spinner frames for the Summary card's "Generating…" state.
+pub(super) const SUMMARY_SPINNER: [&str; 10] =
+    ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+use super::SummaryHits;
 
 use super::super::text::{format_idle_badge, idle_color, pad_line, shorten_dir, truncate};
 use super::super::{SessionOrigin, SidebarSession};
@@ -25,6 +31,12 @@ pub(super) struct SessionsProps<'a> {
     /// Flattened agent list for the Agents tab; `Agent { row_idx }` items
     /// index into this. Empty on the Projects tab.
     pub agent_rows: &'a [AgentRow],
+    /// State of the Agents-tab Summary card.
+    pub summary: &'a SummaryState,
+    /// Current braille spinner frame index for the "Generating…" state.
+    pub spinner_idx: usize,
+    /// Scroll offset (wrapped rows) into the Ready summary text.
+    pub summary_scroll: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -47,14 +59,14 @@ pub(super) fn draw_sessions(
     area: Rect,
     ctx: &SidebarRenderCtx<'_>,
     props: SessionsProps<'_>,
-) -> (Vec<DividerHit>, Vec<AgentHit>) {
+) -> (Vec<DividerHit>, Vec<AgentHit>, SummaryHits) {
     if props.sessions.is_empty() {
         frame.render_widget(
             Paragraph::new("  No projects")
                 .style(Style::default().fg(ctx.theme.muted).bg(ctx.theme.bg)),
             area,
         );
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), SummaryHits::default());
     }
 
     let width = area.width as usize;
@@ -66,6 +78,7 @@ pub(super) fn draw_sessions(
     let collapsible = props.layout.is_collapsible();
     let focus_idx = props.focus_target.map(|f| f.0);
     let scroll = props.layout.scroll_offset(focus_idx, area.height);
+    let mut summary = SummaryHits::default();
     let mut hits = Vec::new();
     let mut agent_hits = Vec::new();
 
@@ -166,6 +179,101 @@ pub(super) fn draw_sessions(
             }
             SidebarItemData::Spacer => {
                 lines.push(pad_line(Vec::new(), ctx.theme.bg, width));
+            }
+            SidebarItemData::SummaryCard => {
+                // Title row.
+                lines.push(pad_line(
+                    vec![
+                        Span::styled(" ", Style::default().bg(ctx.theme.bg)),
+                        Span::styled(
+                            "\u{f0eb} Summary",
+                            Style::default()
+                                .fg(ctx.theme.accent)
+                                .bg(ctx.theme.bg)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ],
+                    ctx.theme.bg,
+                    width,
+                ));
+                lines.push(pad_line(Vec::new(), ctx.theme.bg, width));
+
+                match props.summary {
+                    SummaryState::Idle => {
+                        let label = "[ Generate Summary ]";
+                        let btn_line = lines.len() as u16;
+                        lines.push(pad_line(
+                            vec![
+                                Span::styled("  ", Style::default().bg(ctx.theme.bg)),
+                                Span::styled(
+                                    label,
+                                    Style::default()
+                                        .fg(ctx.theme.bg)
+                                        .bg(ctx.theme.accent)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                            ],
+                            ctx.theme.bg,
+                            width,
+                        ));
+                        if let Some(y) = visible.viewport_y_for_item_line(btn_line) {
+                            summary.button = Some(Rect {
+                                x: area.x + 2,
+                                y: area.y + y,
+                                width: (label.width() as u16).min(area.width.saturating_sub(2)),
+                                height: 1,
+                            });
+                        }
+                    }
+                    SummaryState::Generating => {
+                        let spinner = SUMMARY_SPINNER[props.spinner_idx % SUMMARY_SPINNER.len()];
+                        lines.push(pad_line(
+                            vec![Span::styled(
+                                format!("  {spinner} Generating …"),
+                                Style::default().fg(ctx.theme.yellow).bg(ctx.theme.bg),
+                            )],
+                            ctx.theme.bg,
+                            width,
+                        ));
+                    }
+                    SummaryState::Ready(text) => {
+                        // Fixed text window with a scrollbar gutter on the
+                        // right; text wraps to leave room for the bar.
+                        let rows = SUMMARY_TEXT_ROWS as usize;
+                        let content_w = width.saturating_sub(3); // 2 indent + 1 bar
+                        let wrapped = word_wrap(text, content_w.max(1));
+                        let total = wrapped.len();
+                        summary.max_scroll = total.saturating_sub(rows);
+                        let scroll = props.summary_scroll.min(summary.max_scroll);
+                        let bar = scrollbar_cells(rows, total, scroll);
+                        for i in 0..rows {
+                            let chunk = wrapped.get(scroll + i).cloned().unwrap_or_default();
+                            let mut spans = vec![
+                                Span::styled("  ", Style::default().bg(ctx.theme.bg)),
+                                Span::styled(
+                                    format!("{:<width$}", truncate(&chunk, content_w), width = content_w),
+                                    Style::default().fg(ctx.theme.text).bg(ctx.theme.bg),
+                                ),
+                            ];
+                            if let Some(glyph) = bar.get(i).copied().flatten() {
+                                spans.push(Span::styled(
+                                    glyph,
+                                    Style::default().fg(ctx.theme.dim).bg(ctx.theme.bg),
+                                ));
+                            }
+                            lines.push(pad_line(spans, ctx.theme.bg, width));
+                        }
+                    }
+                }
+                while lines.len() < item.height as usize {
+                    lines.push(pad_line(Vec::new(), ctx.theme.bg, width));
+                }
+                summary.card = Some(Rect {
+                    x: area.x,
+                    y: area.y + visible.viewport_y,
+                    width: area.width,
+                    height: visible.visible_height,
+                });
             }
             SidebarItemData::AgentsPlaceholder { detecting } => {
                 let text = if *detecting {
@@ -277,7 +385,65 @@ pub(super) fn draw_sessions(
         );
     }
 
-    (hits, agent_hits)
+    (hits, agent_hits, summary)
+}
+
+/// Per-row scrollbar glyphs for a `rows`-tall track showing `total` items
+/// scrolled to `scroll`. `None` = no bar on that row (content fits);
+/// `Some("█")` = thumb, `Some("░")` = track.
+fn scrollbar_cells(rows: usize, total: usize, scroll: usize) -> Vec<Option<&'static str>> {
+    if total <= rows || rows == 0 {
+        return vec![None; rows];
+    }
+    let max_scroll = total - rows;
+    let thumb = ((rows * rows) / total).clamp(1, rows);
+    let thumb_start = (scroll * (rows - thumb) + max_scroll / 2)
+        .checked_div(max_scroll)
+        .unwrap_or(0);
+    (0..rows)
+        .map(|i| {
+            if i >= thumb_start && i < thumb_start + thumb {
+                Some("█")
+            } else {
+                Some("░")
+            }
+        })
+        .collect()
+}
+
+/// Greedy word wrap to `width` columns, falling back to a hard char break
+/// for any single word longer than the line. Used by the Summary card.
+fn word_wrap(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for word in text.split_whitespace() {
+        let sep = usize::from(!cur.is_empty());
+        if cur.width() + sep + word.width() > width && !cur.is_empty() {
+            out.push(std::mem::take(&mut cur));
+        }
+        if word.width() > width {
+            // Hard-break an over-long token across rows.
+            for ch in word.chars() {
+                let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                if cur.width() + cw > width && !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                cur.push(ch);
+            }
+            continue;
+        }
+        if !cur.is_empty() {
+            cur.push(' ');
+        }
+        cur.push_str(word);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
 }
 
 fn divider_hit_at(

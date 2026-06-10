@@ -105,6 +105,23 @@ pub enum SidebarTab {
     Agents,
 }
 
+/// State of the "Summary" card at the top of the Agents tab. `Idle` shows
+/// a "Generate Summary" button; clicking it kicks an async job and flips
+/// to `Generating` (an animated placeholder); when the job finishes the
+/// generated text lands and it becomes `Ready`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SummaryState {
+    #[default]
+    Idle,
+    Generating,
+    Ready(String),
+}
+
+/// Wrapped text rows the Agents-tab Summary card reserves once `Ready`.
+/// The renderer wraps the generated text to the sidebar width and clips
+/// to this many lines.
+pub const SUMMARY_TEXT_ROWS: u16 = 6;
+
 pub const SETTINGS_ITEM_COUNT: usize = 8;
 pub const FRAME_RATE_LIMIT_OPTIONS: [u16; 4] = [2, 5, 10, 30];
 
@@ -469,6 +486,10 @@ pub enum SidebarItemData {
     /// Non-selectable blank row. Used in the Agents tab to set off each
     /// remote `@host` section with a leading gap.
     Spacer,
+    /// The "Summary" card pinned at the top of the Agents tab: a title,
+    /// then a "Generate Summary" button / animated placeholder / the
+    /// generated text depending on `AppState::summary`.
+    SummaryCard,
     /// Non-selectable placeholder under `@local` when the local tmux server
     /// has no sessions. Kept out of `FocusTarget` numbering so remote flat
     /// indices still start at `filtered.len()`.
@@ -1031,6 +1052,21 @@ pub struct AppState {
     /// Projects cursor) so switching tabs preserves each one's position.
     /// Indexes into `agent_rows()`.
     pub agent_focused: usize,
+    /// State of the Agents-tab "Summary" card (idle / generating / ready).
+    pub summary: SummaryState,
+    /// Click-region of the card's "Generate Summary" button, captured each
+    /// frame for mouse hit-testing. `None` when the button isn't shown
+    /// (not on the Agents tab, or while generating).
+    pub summary_button_rect: Option<Rect>,
+    /// Scroll offset (in wrapped text rows) of the Ready summary's content,
+    /// when it overflows the card's fixed text area.
+    pub summary_scroll: usize,
+    /// Max scroll offset for the current Ready text at the current width,
+    /// captured by the renderer each frame so scroll input can clamp.
+    pub summary_max_scroll: usize,
+    /// The card's full rect, captured each frame so the mouse layer can
+    /// route wheel events over it to scrolling the summary.
+    pub summary_card_rect: Option<Rect>,
     pub dragging_separator: bool,
 
     /// Transient sidebar overlays — help, kill-confirm, rename, context
@@ -1179,6 +1215,11 @@ impl AppState {
             show_borders,
             sidebar_tab,
             agent_focused: 0,
+            summary: SummaryState::Idle,
+            summary_button_rect: None,
+            summary_scroll: 0,
+            summary_max_scroll: 0,
+            summary_card_rect: None,
             dragging_separator: false,
             overlay: OverlayState::default(),
             term_width,
@@ -1692,6 +1733,35 @@ impl AppState {
             .position(|row| row.host == target.host && row.agent.pane_id == target.pane_id)
     }
 
+    /// Row height the Summary card reserves — a fixed-size window for every
+    /// state (title + blank + a `SUMMARY_TEXT_ROWS` body area + blank), so
+    /// overflowing Ready text scrolls inside it rather than growing it.
+    pub fn summary_card_height(&self) -> u16 {
+        3 + SUMMARY_TEXT_ROWS
+    }
+
+    /// Whether `(col, row)` falls on the Summary card's "Generate" button.
+    pub fn summary_button_at(&self, col: u16, row: u16) -> bool {
+        self.summary_button_rect.is_some_and(|r| {
+            col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+        })
+    }
+
+    /// Whether `(col, row)` falls anywhere on the Summary card — used to
+    /// route wheel events to scrolling its text.
+    pub fn summary_card_at(&self, col: u16, row: u16) -> bool {
+        self.summary_card_rect.is_some_and(|r| {
+            col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+        })
+    }
+
+    /// Apply a wheel/keyboard scroll delta to the Summary text, clamped to
+    /// the captured max offset.
+    pub fn scroll_summary(&mut self, delta: i32) {
+        let max = self.summary_max_scroll as i32;
+        self.summary_scroll = (self.summary_scroll as i32 + delta).clamp(0, max) as usize;
+    }
+
     /// Build the Agents-tab layout: an `@local` / `@host` divider per
     /// section (in `agent_rows` order) with that section's agents as
     /// focusable rows beneath it, or a non-focusable placeholder when a
@@ -1723,6 +1793,9 @@ impl AppState {
                 }
             }
         };
+
+        // The Summary card is pinned at the very top, above `@local`.
+        layout.push_header(SidebarItemData::SummaryCard, self.summary_card_height());
 
         layout.push_header(SidebarItemData::LocalHeader, 1);
         push_section(&mut layout, None);
