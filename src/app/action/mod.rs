@@ -91,7 +91,6 @@ pub enum Action {
     DismissHelp,
 
     SetFocusMain,
-    SetFocusSidebar,
     ToggleFocus,
 
     OpenSessionMenu {

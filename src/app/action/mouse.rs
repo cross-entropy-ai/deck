@@ -189,7 +189,11 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         if let Some(idx) = flat {
             return Action::SidebarClickSession(idx);
         }
-        return Action::SetFocusSidebar;
+        // A click on empty sidebar space (below the last row) is inert: the
+        // mouse never moves keyboard focus into the sidebar, so a stray click
+        // can't leave the user typing into the left pane. `ToggleFocus`
+        // (keyboard) is the way to focus the sidebar.
+        return Action::None;
     }
 
     if mouse.kind == MouseEventKind::Down(MouseButton::Right) && in_sidebar {

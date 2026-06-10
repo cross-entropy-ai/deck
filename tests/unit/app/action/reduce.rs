@@ -110,7 +110,6 @@ fn sidebar_click_remote_no_sessions_does_not_refresh() {
     let target = state.filtered.len();
 
     let mut fx = crate::state::SideEffect::default();
-    fx.merge(apply_action(&mut state, Action::SetFocusSidebar));
     fx.merge(apply_action(&mut state, Action::FocusIndex(target)));
     fx.merge(apply_action(&mut state, Action::SwitchProject));
 
@@ -293,15 +292,6 @@ fn toggle_focus_to_sidebar_closes_settings() {
     assert_eq!(state.focus_mode, FocusMode::Sidebar);
     assert_eq!(state.main_view, MainView::Terminal);
     assert!(!state.settings.theme_picker_open);
-}
-
-#[test]
-fn set_focus_sidebar_closes_settings() {
-    let mut state = make_test_state(1);
-    apply_action(&mut state, Action::OpenSettings);
-    apply_action(&mut state, Action::SetFocusSidebar);
-    assert_eq!(state.focus_mode, FocusMode::Sidebar);
-    assert_eq!(state.main_view, MainView::Terminal);
 }
 
 #[test]

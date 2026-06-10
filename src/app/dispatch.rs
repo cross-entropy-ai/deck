@@ -79,14 +79,22 @@ impl App {
                 let mut fx = SideEffect::default();
                 fx.merge(action::apply_action(
                     &mut self.state,
-                    Action::SetFocusSidebar,
-                ));
-                fx.merge(action::apply_action(
-                    &mut self.state,
                     Action::FocusIndex(idx),
                 ));
                 fx.merge(action::apply_action(&mut self.state, Action::SwitchProject));
                 self.execute_side_effects(&fx);
+                // A mouse click selects and switches the session but must not
+                // steal keyboard focus into the sidebar: users kept clicking a
+                // session on the left, forgot focus was there, and typed into
+                // the sidebar by mistake. Keyboard `ToggleFocus` is the way to
+                // focus the sidebar. The doomed-switch warning is the one case
+                // that keeps focus left so the prompt stays actionable (same
+                // rule as `NumberKeyJump`/`SwitchProject`).
+                if self.warning_state.is_some() {
+                    self.state.focus_mode = FocusMode::Sidebar;
+                } else {
+                    self.state.focus_mode = FocusMode::Main;
+                }
                 false
             }
             Action::NumberKeyJump(idx) => {

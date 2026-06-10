@@ -755,10 +755,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::SetFocusMain => {
             state.focus_mode = FocusMode::Main;
         }
-        Action::SetFocusSidebar => {
-            state.focus_mode = FocusMode::Sidebar;
-            close_settings_page(state);
-        }
         Action::ToggleFocus => {
             state.focus_mode = match state.focus_mode {
                 FocusMode::Main => FocusMode::Sidebar,
