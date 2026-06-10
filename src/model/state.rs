@@ -1005,6 +1005,8 @@ pub struct OverlayState {
     pub port_forward: Option<PortForwardOverlay>,
     /// The Agents-tab summary "big view" popup is open.
     pub summary_popup: bool,
+    /// Settings input box for the generated-summary language (free text).
+    pub summary_lang_input: Option<TextArea<'static>>,
 }
 
 // --- Settings page state ---

@@ -157,6 +157,10 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
         draw_exclude_editor(frame, area, editor, theme);
     }
 
+    if let Some(input) = settings.summary_lang_input {
+        draw_summary_language_editor(frame, area, input, theme);
+    }
+
     if settings.keybindings_view_open {
         draw_keybindings_view(
             frame,
@@ -337,6 +341,55 @@ pub fn draw_theme_picker(
         .collect();
 
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// A small centered popup with a single free-text field for the generated
+/// summary's language. Empty = the model's default.
+fn draw_summary_language_editor(
+    frame: &mut Frame,
+    area: Rect,
+    input: &ratatui_textarea::TextArea<'static>,
+    theme: &Theme,
+) {
+    let width = 44u16.min(area.width.saturating_sub(4));
+    let popup_area = centered_rect(area, width, 6);
+    let inner = popup_frame(
+        frame.buffer_mut(),
+        popup_area,
+        PopupStyle {
+            title: Some(" Summary Language "),
+            border_fg: theme.accent,
+            bg: theme.bg,
+        },
+    );
+
+    let rows = Layout::vertical([
+        Constraint::Length(1), // field
+        Constraint::Length(1), // pad
+        Constraint::Length(1), // hint
+        Constraint::Min(0),
+    ])
+    .split(inner);
+
+    let cols = Layout::horizontal([Constraint::Length(1), Constraint::Min(0)]).split(rows[0]);
+    let mut ta = input.clone();
+    style_textarea(
+        &mut ta,
+        true,
+        TextAreaColors {
+            fg: theme.accent,
+            bg: theme.bg,
+            cursor_fg: theme.bg,
+            cursor_bg: theme.accent,
+        },
+    );
+    ta.render(cols[1], frame.buffer_mut());
+
+    Paragraph::new(Line::from(Span::styled(
+        " e.g. English, 中文 — blank for default · Enter save / Esc cancel",
+        Style::default().fg(theme.muted),
+    )))
+    .render(rows[2], frame.buffer_mut());
 }
 
 fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView, theme: &Theme) {

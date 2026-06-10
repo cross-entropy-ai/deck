@@ -67,32 +67,14 @@ pub struct PaneCapture {
 /// condensing terminal buffers. Overridable via `config.summary_model`.
 pub const DEFAULT_SUMMARY_MODEL: &str = "haiku";
 
-/// Languages the settings page cycles through for `config.summary_language`.
-/// The empty first entry = "Default" (no language instruction appended).
-pub const SUMMARY_LANGUAGES: &[&str] = &[
-    "", "English", "中文", "日本語", "Español", "Français", "Deutsch", "한국어", "Português",
-    "Русский",
-];
-
-/// Display label for a language value (empty → "Default").
+/// Display label for the configured summary language (empty → "Default").
+/// The user types the language freely in the settings editor.
 pub fn language_label(lang: &str) -> &str {
     if lang.trim().is_empty() {
         "Default"
     } else {
         lang
     }
-}
-
-/// Next language after `current` when cycling by `direction` (±1), wrapping
-/// around `SUMMARY_LANGUAGES`.
-pub fn cycle_language(current: &str, direction: i32) -> String {
-    let n = SUMMARY_LANGUAGES.len() as i32;
-    let idx = SUMMARY_LANGUAGES
-        .iter()
-        .position(|l| *l == current)
-        .unwrap_or(0) as i32;
-    let next = (idx + direction).rem_euclid(n) as usize;
-    SUMMARY_LANGUAGES[next].to_string()
 }
 
 /// Capture every pane, build the prompt from `template`, and run `claude`

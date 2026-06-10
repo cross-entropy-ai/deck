@@ -50,8 +50,14 @@ pub enum Action {
     ResizeSummary(u16),
     /// Finish the summary resize drag and persist the new height.
     StopSummaryDrag,
-    /// Cycle the generated-summary language (settings, left/right).
-    CycleSummaryLanguage(i32),
+    /// Open the generated-summary language editor (settings input box).
+    OpenSummaryLanguageEditor,
+    /// Forward a key to the language editor's input field.
+    SummaryLanguageInputKey(crossterm::event::KeyEvent),
+    /// Confirm the typed language and persist it.
+    SummaryLanguageConfirm,
+    /// Discard the language edit.
+    SummaryLanguageCancel,
     ToggleViewMode,
     CycleFrameRateLimit(i32),
     /// Collapse/expand a sidebar group (Expanded view only). `None` is the

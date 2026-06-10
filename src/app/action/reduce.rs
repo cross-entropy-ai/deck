@@ -494,15 +494,28 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 5 => apply_action(state, Action::OpenExcludeEditor),
                 6 => apply_action(state, Action::OpenKeybindingsView),
                 7 => apply_action(state, Action::ToggleUpdateCheck),
-                8 => apply_action(state, Action::CycleSummaryLanguage(direction)),
+                8 => apply_action(state, Action::OpenSummaryLanguageEditor),
                 _ => SideEffect::default(),
             };
             fx.merge(inner);
         }
-        Action::CycleSummaryLanguage(direction) => {
-            state.summary_language =
-                crate::summary::cycle_language(&state.summary_language, direction);
-            fx.save_config();
+        Action::OpenSummaryLanguageEditor => {
+            state.overlay.summary_lang_input =
+                Some(crate::new_session::make_textarea(&state.summary_language));
+        }
+        Action::SummaryLanguageInputKey(key) => {
+            if let Some(ref mut ta) = state.overlay.summary_lang_input {
+                ta.input(key);
+            }
+        }
+        Action::SummaryLanguageConfirm => {
+            if let Some(ta) = state.overlay.summary_lang_input.take() {
+                state.summary_language = textarea_line(&ta).trim().to_string();
+                fx.save_config();
+            }
+        }
+        Action::SummaryLanguageCancel => {
+            state.overlay.summary_lang_input = None;
         }
         Action::OpenThemePicker => {
             // Opens as a standalone overlay over the current view — from

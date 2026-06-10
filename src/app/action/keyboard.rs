@@ -66,6 +66,13 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         if state.overlay.exclude_editor.is_some() {
             return exclude_editor_key_to_action(key, state);
         }
+        if state.overlay.summary_lang_input.is_some() {
+            return match key.code {
+                KeyCode::Enter => Action::SummaryLanguageConfirm,
+                KeyCode::Esc => Action::SummaryLanguageCancel,
+                _ => Action::SummaryLanguageInputKey(*key),
+            };
+        }
         return settings_key_to_action(key);
     }
 

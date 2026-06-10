@@ -164,4 +164,6 @@ pub struct SettingsView<'a> {
     pub update_check_help: String,
     /// Display label for the generated-summary language ("Default" = unset).
     pub summary_language: &'a str,
+    /// When `Some`, the language input box is open over the settings page.
+    pub summary_lang_input: Option<&'a ratatui_textarea::TextArea<'static>>,
 }

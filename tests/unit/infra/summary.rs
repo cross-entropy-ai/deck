@@ -52,16 +52,6 @@ fn default_prompt_carries_the_placeholder() {
 }
 
 #[test]
-fn cycle_language_wraps_both_ways() {
-    // From default ("") forward → first real language.
-    assert_eq!(cycle_language("", 1), SUMMARY_LANGUAGES[1]);
-    // From default backward → last entry (wrap).
-    assert_eq!(cycle_language("", -1), SUMMARY_LANGUAGES[SUMMARY_LANGUAGES.len() - 1]);
-    // An unknown value is treated as index 0.
-    assert_eq!(cycle_language("Klingon", 1), SUMMARY_LANGUAGES[1]);
-}
-
-#[test]
 fn language_label_shows_default_for_empty() {
     assert_eq!(language_label(""), "Default");
     assert_eq!(language_label("中文"), "中文");
