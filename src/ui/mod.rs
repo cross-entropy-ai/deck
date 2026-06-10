@@ -8,6 +8,7 @@ pub mod overlays;
 mod reload;
 mod settings;
 mod sidebar;
+mod summary_popup;
 mod text;
 pub mod theme;
 pub mod widgets;
@@ -21,6 +22,7 @@ pub use new_session::draw_new_session;
 pub use reload::{draw_reload_bar, reload_row_count};
 pub use settings::{draw_settings_page, draw_theme_picker};
 pub use sidebar::{draw_sidebar, SidebarProps, SummaryHits};
+pub use summary_popup::draw_summary_popup;
 
 /// Runtime state of a configured plugin, used by the sidebar footer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,4 +162,6 @@ pub struct SettingsView<'a> {
     pub keybindings_view_scroll: u16,
     pub update_check_enabled: bool,
     pub update_check_help: String,
+    /// Display label for the generated-summary language ("Default" = unset).
+    pub summary_language: &'a str,
 }

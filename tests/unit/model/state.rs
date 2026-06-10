@@ -149,7 +149,10 @@ fn summary_card_height_is_fixed_across_states() {
     let idle = state.summary_card_height();
     state.summary = SummaryState::Generating;
     assert_eq!(state.summary_card_height(), idle);
-    state.summary = SummaryState::Ready("a much longer body".repeat(20));
+    state.summary = SummaryState::Ready {
+        text: "a much longer body".repeat(20),
+        generated_at: 0,
+    };
     assert_eq!(
         state.summary_card_height(),
         idle,

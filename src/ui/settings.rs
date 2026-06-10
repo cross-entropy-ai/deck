@@ -89,6 +89,11 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
             .to_string(),
             settings.update_check_help.as_str(),
         ),
+        (
+            "Summary lang",
+            settings.summary_language.to_string(),
+            "Left/right cycles the generated summary's language",
+        ),
     ];
 
     for (idx, (label, value, help)) in entries.iter().enumerate() {

@@ -149,6 +149,37 @@ pub struct Config {
     /// trips as a JSON array like `[null, "host1"]`. Empty by default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collapsed_sections: Vec<Option<String>>,
+    /// The Agents-tab summary prompt template. `{{SESSIONS}}` is replaced
+    /// with one `<session>` block per agent pane. Editable; reset to the
+    /// bundled default when `summary_prompt_version` falls behind the
+    /// shipped one — see `migrate_summary_prompt`.
+    pub summary_prompt: String,
+    /// Default-template version `summary_prompt` was seeded from. `0` means
+    /// "never seeded" (a fresh config, or one predating this field), which
+    /// the migration treats as stale and refreshes.
+    pub summary_prompt_version: u32,
+    /// Model passed to `claude --model` when generating the summary. Empty
+    /// follows the user's Claude Code default; defaults to a fast, cheap
+    /// model since summarizing buffers doesn't need a strong one.
+    #[serde(default = "default_summary_model")]
+    pub summary_model: String,
+    /// Height (in text rows) of the inline Agents-tab summary card's body,
+    /// drag-adjustable from the card's bottom edge. Clamped on load.
+    #[serde(default = "default_summary_height")]
+    pub summary_height: u16,
+    /// Language the generated summary is asked to use. Empty = the model's
+    /// default; otherwise a "respond in <language>" instruction is appended
+    /// to the prompt. Set from the settings page.
+    #[serde(default)]
+    pub summary_language: String,
+}
+
+fn default_summary_model() -> String {
+    crate::summary::DEFAULT_SUMMARY_MODEL.to_string()
+}
+
+fn default_summary_height() -> u16 {
+    crate::state::DEFAULT_SUMMARY_HEIGHT
 }
 
 impl Default for Config {
@@ -168,6 +199,13 @@ impl Default for Config {
             update_check: UpdateCheckMode::Enabled,
             remotes: Vec::new(),
             collapsed_sections: Vec::new(),
+            // Seeded with version 0 so `migrate_summary_prompt` always
+            // stamps the real version and persists the prompt to disk.
+            summary_prompt: crate::summary::DEFAULT_SUMMARY_PROMPT.to_string(),
+            summary_prompt_version: 0,
+            summary_model: default_summary_model(),
+            summary_height: default_summary_height(),
+            summary_language: String::new(),
         }
     }
 }
@@ -218,8 +256,11 @@ impl Config {
         if path.exists() {
             let mut config: Config = confy::load_path(&path).unwrap_or_default();
             // Migrate keybindings (command renames, legacy key syntax,
-            // unknown sweep) and rewrite once so the file self-heals.
-            if migrate_keybindings(&mut config.keybindings) {
+            // unknown sweep) and seed/refresh the summary prompt, then
+            // rewrite once so the file self-heals.
+            let mut changed = migrate_keybindings(&mut config.keybindings);
+            changed |= config.migrate_summary_prompt();
+            if changed {
                 config.save();
             }
             return config;
@@ -228,11 +269,17 @@ impl Config {
         // First launch on the YAML format: migrate a legacy JSON config.
         if let Some(mut config) = load_legacy_json() {
             migrate_keybindings(&mut config.keybindings);
+            config.migrate_summary_prompt();
             config.save();
             return config;
         }
 
-        Config::default()
+        let mut config = Config::default();
+        // Seed the prompt and persist, so a fresh install gets an editable
+        // summary template on disk from the first launch.
+        config.migrate_summary_prompt();
+        config.save();
+        config
     }
 
     /// Strict loader used by the manual-reload path. Unlike `load()` this
@@ -254,12 +301,30 @@ impl Config {
             Ok(mut config) => {
                 // Clean obsolete/unknown keybindings in memory so a reload
                 // doesn't resurrect the warning; the file self-heals on the
-                // next launch via `load`.
+                // next launch via `load`. Resolve the summary prompt in
+                // memory too (no save here — reload is non-destructive).
                 migrate_keybindings(&mut config.keybindings);
+                config.migrate_summary_prompt();
                 Ok(config)
             }
             Err(e) => Err(format!("parse: {}", e)),
         }
+    }
+
+    /// Seed or refresh `summary_prompt` from the bundled default when its
+    /// stored version trails the shipped one (or the prompt is blank).
+    /// Returns whether anything changed, so the caller knows to persist.
+    /// A hand-edited prompt survives until the default template's version
+    /// is bumped, at which point it's reset to the new default.
+    fn migrate_summary_prompt(&mut self) -> bool {
+        if self.summary_prompt_version < crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION
+            || self.summary_prompt.trim().is_empty()
+        {
+            self.summary_prompt = crate::summary::DEFAULT_SUMMARY_PROMPT.to_string();
+            self.summary_prompt_version = crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION;
+            return true;
+        }
+        false
     }
 
     pub fn save(&self) {

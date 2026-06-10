@@ -161,6 +161,19 @@ fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Detect
     Some(crate::agent::detect_agents(&panes, ps_part))
 }
 
+/// Capture the visible buffer of a remote pane (`%N`) as plain text, for
+/// the Agents-tab summary. Mirrors `tmux::capture_pane` over ssh. The
+/// `%N` pane id is shell-safe (no leading `=`/`-`), so it needs no
+/// quoting. `None` on any ssh/tmux failure.
+pub fn capture_pane(host: &str, pane_id: &str) -> Option<String> {
+    run_ssh(
+        default_runner(),
+        host,
+        &["tmux", "capture-pane", "-p", "-J", "-t", pane_id],
+    )
+    .ok()
+}
+
 /// Whether a failed remote `tmux` call means "reachable host, no tmux
 /// server up" — as opposed to ssh not reaching the host, or tmux failing
 /// for some other reason we shouldn't paper over as "no sessions".

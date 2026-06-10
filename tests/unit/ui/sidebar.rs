@@ -152,7 +152,7 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
     terminal
         .draw(|frame| {
             let area = frame.area();
-            let (_, _, hits, _, _, _) = super::draw_sidebar(
+            let (_, _, hits, _, _, _, _) = super::draw_sidebar(
                 frame,
                 area,
                 SidebarProps {
@@ -169,6 +169,7 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
                     sidebar_tab: crate::state::SidebarTab::Projects,
                     agent_rows: &[],
                     summary: &crate::state::SummaryState::Idle,
+                    summary_age: None,
                     spinner_idx: 0,
                     summary_scroll: 0,
                     tabs_mode: true,

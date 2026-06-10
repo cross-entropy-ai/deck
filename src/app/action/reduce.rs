@@ -169,6 +169,28 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.last_scroll = std::time::Instant::now();
             state.scroll_summary(delta);
         }
+        Action::OpenSummaryPopup => {
+            if matches!(state.summary, crate::state::SummaryState::Ready { .. }) {
+                state.overlay.summary_popup = true;
+                state.summary_popup_scroll = 0;
+            }
+        }
+        Action::CloseSummaryPopup => {
+            state.overlay.summary_popup = false;
+        }
+        Action::ScrollSummaryPopup(delta) => {
+            state.scroll_summary_popup(delta);
+        }
+        Action::StartSummaryDrag => {
+            state.dragging_summary = true;
+        }
+        Action::ResizeSummary(rows) => {
+            state.set_summary_height(rows);
+        }
+        Action::StopSummaryDrag => {
+            state.dragging_summary = false;
+            fx.save_config();
+        }
         Action::FocusIndex(idx) => {
             // Mouse clicks pass a unified flat index (local rows then
             // remotes); number-key shortcuts use the same action but
@@ -472,9 +494,15 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 5 => apply_action(state, Action::OpenExcludeEditor),
                 6 => apply_action(state, Action::OpenKeybindingsView),
                 7 => apply_action(state, Action::ToggleUpdateCheck),
+                8 => apply_action(state, Action::CycleSummaryLanguage(direction)),
                 _ => SideEffect::default(),
             };
             fx.merge(inner);
+        }
+        Action::CycleSummaryLanguage(direction) => {
+            state.summary_language =
+                crate::summary::cycle_language(&state.summary_language, direction);
+            fx.save_config();
         }
         Action::OpenThemePicker => {
             // Opens as a standalone overlay over the current view — from

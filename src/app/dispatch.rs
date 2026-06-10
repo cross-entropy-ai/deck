@@ -552,31 +552,39 @@ impl App {
     /// re-point the client at the session and select the exact
     /// window/pane. Remote: switch to that host's session (pane focus on
     /// remote is a follow-up).
-    /// Kick the Agents-tab summary generation. Dummy for now: flip to the
-    /// animated `Generating` state and spawn a worker that sleeps 5s, then
-    /// sends placeholder text back over `summary_tx`; the run loop drains
-    /// it into `SummaryState::Ready`. No-op while already generating.
+    /// Kick the Agents-tab summary generation. Flips to the animated
+    /// `Generating` state and spawns a worker that captures every detected
+    /// agent's pane buffer, builds the prompt from the configured template,
+    /// and runs `claude -p`. The result (text or error) comes back over
+    /// `summary_tx`; the run loop drains it into `Ready`/`Error`. No-op
+    /// while a generation is already in flight.
     fn start_summary_generation(&mut self) {
         if self.state.summary == crate::state::SummaryState::Generating {
             return;
         }
+        // Snapshot the agent panes (host + location + `%N`) now, so the
+        // worker doesn't touch shared state off-thread.
+        let agents: Vec<crate::summary::AgentPane> = self
+            .state
+            .agent_rows()
+            .iter()
+            .map(|row| crate::summary::AgentPane {
+                host: row.host.clone(),
+                id: row.agent.location(),
+                pane_id: row.agent.pane_id.clone(),
+            })
+            .collect();
+        let template = self.state.summary_prompt.clone();
+        let model = self.state.summary_model.clone();
+        let language = self.state.summary_language.clone();
+
         self.state.summary = crate::state::SummaryState::Generating;
         self.state.summary_scroll = 0;
         let tx = self.summary_tx.clone();
         std::thread::Builder::new()
             .name("deck-summary".to_string())
             .spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(5));
-                let text = "3 agents active across 2 hosts. On local, Claude is \
-                    editing src/app and just finished wiring the Agents tab; it \
-                    is waiting on a review. On h1, Codex is idle after running \
-                    the test suite (all green). On h2, a second Claude is \
-                    drafting release notes. No blockers detected; last activity \
-                    about 2 minutes ago. Suggested next step: review the open \
-                    diff on local, then kick the h2 agent to finish the notes. \
-                    (placeholder summary — generation is not wired up yet)"
-                    .to_string();
-                let _ = tx.send(text);
+                let _ = tx.send(crate::summary::generate(&agents, &template, &model, &language));
             })
             .ok();
     }
@@ -950,6 +958,10 @@ impl App {
         self.state.plugins = cfg.plugins;
         self.state.keybindings = compiled;
         self.state.update_check_mode = cfg.update_check;
+        self.state.summary_prompt = cfg.summary_prompt;
+        self.state.summary_model = cfg.summary_model;
+        self.state.summary_language = cfg.summary_language;
+        self.state.set_summary_height(cfg.summary_height);
 
         // Reset sub-UIs whose indices may no longer be valid.
         self.state.settings.theme_picker_selected = new_theme_index;

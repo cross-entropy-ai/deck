@@ -34,10 +34,24 @@ pub enum Action {
     SelectTab(crate::state::SidebarTab),
     /// Toggle between the Projects and Agents sidebar tabs (keybinding).
     ToggleSidebarTab,
-    /// Kick the (dummy) Agents-tab summary generation (button click).
+    /// Kick the Agents-tab summary generation (Generate button click).
     GenerateSummary,
     /// Scroll the Agents-tab summary text by a row delta (wheel over card).
     ScrollSummary(i32),
+    /// Open the summary "big view" popup (popup button click).
+    OpenSummaryPopup,
+    /// Close the summary popup (Esc / click outside).
+    CloseSummaryPopup,
+    /// Scroll the summary popup text by a row delta.
+    ScrollSummaryPopup(i32),
+    /// Begin dragging the summary card's bottom edge to resize it.
+    StartSummaryDrag,
+    /// Set the summary card body height (rows) mid-drag.
+    ResizeSummary(u16),
+    /// Finish the summary resize drag and persist the new height.
+    StopSummaryDrag,
+    /// Cycle the generated-summary language (settings, left/right).
+    CycleSummaryLanguage(i32),
     ToggleViewMode,
     CycleFrameRateLimit(i32),
     /// Collapse/expand a sidebar group (Expanded view only). `None` is the

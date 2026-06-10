@@ -162,6 +162,20 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
+/// Render an elapsed duration (in seconds) as a compact "Xm ago" age:
+/// "just now" under a minute, then `m` / `h` / `d` as it grows.
+pub fn relative_age(elapsed_secs: u64) -> String {
+    if elapsed_secs < 60 {
+        "just now".to_string()
+    } else if elapsed_secs < 3600 {
+        format!("{}m ago", elapsed_secs / 60)
+    } else if elapsed_secs < 86_400 {
+        format!("{}h ago", elapsed_secs / 3600)
+    } else {
+        format!("{}d ago", elapsed_secs / 86_400)
+    }
+}
+
 // --- Cache ---
 
 fn cache_path() -> PathBuf {

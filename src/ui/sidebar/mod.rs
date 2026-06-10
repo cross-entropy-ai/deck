@@ -21,7 +21,7 @@ mod sessions;
 mod tabs;
 
 use container::draw_sidebar_container;
-use footer::{draw_footer, FooterProps};
+use footer::{draw_footer, FooterProps, FooterHits};
 use header::{draw_header, TabRects};
 use sessions::{draw_sessions, SessionsProps};
 use tabs::{draw_sidebar_tabs, TabsProps};
@@ -54,6 +54,8 @@ pub struct SidebarProps<'a> {
     pub agent_rows: &'a [AgentRow],
     /// State of the Agents-tab Summary card.
     pub summary: &'a crate::state::SummaryState,
+    /// Precomputed "Xm ago" age of the Ready summary, `None` otherwise.
+    pub summary_age: Option<&'a str>,
     /// Current braille spinner frame index for the card's generating state.
     pub spinner_idx: usize,
     /// Scroll offset into the Ready summary text.
@@ -71,8 +73,10 @@ pub struct SidebarProps<'a> {
 /// Click/scroll regions the Agents-tab Summary card publishes each frame.
 #[derive(Default)]
 pub struct SummaryHits {
-    /// The "Generate Summary" button, for click hit-testing.
+    /// The "Generate" button, for click hit-testing.
     pub button: Option<Rect>,
+    /// The "popup" (big view) button; `None` unless the summary is Ready.
+    pub popup: Option<Rect>,
     /// The card's full rect, for routing wheel events to text scrolling.
     pub card: Option<Rect>,
     /// Max scroll offset for the Ready text at this width (0 = no overflow).
@@ -102,6 +106,8 @@ pub fn draw_sidebar(
     Vec<AgentHit>,
     Option<(Rect, Rect)>,
     SummaryHits,
+    // The footer's "menu" button, for click hit-testing.
+    Option<Rect>,
 ) {
     let ctx = SidebarRenderCtx {
         theme: props.theme,
@@ -149,6 +155,7 @@ pub fn draw_sidebar(
             Vec::new(),
             None,
             SummaryHits::default(),
+            None,
         );
     }
     let content = draw_sidebar_container(
@@ -161,7 +168,7 @@ pub fn draw_sidebar(
 
     let banner_visible = props.update_available.is_some() && content.width >= BANNER_MIN_WIDTH;
     let plugin_rows = plugin_block_rows(props.plugins.len());
-    let footer_height: u16 = 3 + banner_visible as u16 + plugin_rows;
+    let footer_height: u16 = 2 + banner_visible as u16 + plugin_rows;
 
     let [header_area, sessions_area, footer_area] = Layout::vertical([
         Constraint::Length(2),
@@ -204,18 +211,20 @@ pub fn draw_sidebar(
                 active_agent: props.active_agent,
                 agent_rows: props.agent_rows,
                 summary: props.summary,
+                summary_age: props.summary_age,
                 spinner_idx: props.spinner_idx,
                 summary_scroll: props.summary_scroll,
             },
         )
     };
-    let banner_bounds = draw_footer(
+    let FooterHits {
+        upgrade: banner_bounds,
+        menu: menu_bounds,
+    } = draw_footer(
         frame,
         footer_area,
         &ctx,
         FooterProps {
-            sidebar_active: props.sidebar_active,
-            show_help: props.show_help,
             plugins: props.plugins,
             update_available: if banner_visible {
                 props.update_available
@@ -231,6 +240,7 @@ pub fn draw_sidebar(
         agent_hits,
         Some((projects_tab, agents_tab)),
         summary_hits,
+        menu_bounds,
     )
 }
 

@@ -10,6 +10,7 @@ pub mod remote_tmux;
 pub mod self_update;
 pub mod shutdown;
 pub mod ssh;
+pub mod summary;
 pub mod terminal_guard;
 pub mod tmux;
 pub mod tmux_parse;

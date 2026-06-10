@@ -145,10 +145,11 @@ pub struct App {
     /// `switch_to_agent_pane` / `apply_focus_outcome`.
     focus_tx: std::sync::mpsc::Sender<FocusOutcome>,
     focus_rx: std::sync::mpsc::Receiver<FocusOutcome>,
-    /// Carries the (dummy) generated Agents-tab summary text from its
-    /// worker thread back to the UI loop once the simulated job finishes.
-    summary_tx: std::sync::mpsc::Sender<String>,
-    summary_rx: std::sync::mpsc::Receiver<String>,
+    /// Carries the generated Agents-tab summary back from its worker
+    /// thread: `Ok(text)` on success, `Err(reason)` on failure (no agents,
+    /// `claude` missing, non-zero exit).
+    summary_tx: std::sync::mpsc::Sender<Result<String, String>>,
+    summary_rx: std::sync::mpsc::Receiver<Result<String, String>>,
     /// Monotonic id stamped on each focus-affecting action (agent click,
     /// session switch). A remote focus worker captures the id at spawn;
     /// its outcome is committed only if no newer action has bumped this
@@ -249,6 +250,10 @@ impl App {
         // Seed the in-memory mirror of remote configs so port-forward
         // state is available from the very first frame.
         state.config_remotes = cfg.remotes.clone();
+        state.summary_prompt = cfg.summary_prompt.clone();
+        state.summary_model = cfg.summary_model.clone();
+        state.summary_language = cfg.summary_language.clone();
+        state.set_summary_height(cfg.summary_height);
 
         let remotes: Vec<String> = cfg.remotes.iter().map(|r| r.host.clone()).collect();
         let pty_size = portable_pty::PtySize {
@@ -781,9 +786,15 @@ impl App {
                 force_render = true;
             }
 
-            // The (dummy) summary job finished — show its text.
-            while let Ok(text) = self.summary_rx.try_recv() {
-                self.state.summary = crate::state::SummaryState::Ready(text);
+            // The summary job finished — show its text, or the failure.
+            while let Ok(result) = self.summary_rx.try_recv() {
+                self.state.summary = match result {
+                    Ok(text) => crate::state::SummaryState::Ready {
+                        text,
+                        generated_at: crate::update::now_secs(),
+                    },
+                    Err(reason) => crate::state::SummaryState::Error(reason),
+                };
                 self.state.summary_scroll = 0;
                 needs_render = true;
                 force_render = true;

@@ -34,6 +34,16 @@ impl App {
         let show_help = s.overlay.show_help;
         let rename_input = s.overlay.renaming.as_ref().map(|r| &r.input);
         let context_menu = s.overlay.context_menu.clone();
+        // The summary popup shows the Ready text in a big centered view.
+        let summary_popup = if s.overlay.summary_popup {
+            match &s.summary {
+                crate::state::SummaryState::Ready { text, .. } => Some(text.clone()),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let summary_popup_scroll = s.summary_popup_scroll;
         let new_session_overlay = s.overlay.new_session.clone();
         let add_remote_overlay = s.overlay.add_remote.clone();
         let port_forward_overlay = s.overlay.port_forward.clone();
@@ -77,6 +87,8 @@ impl App {
         let mut captured_agent_hits: Vec<crate::state::AgentHit> = Vec::new();
         let mut captured_tab_rects: Option<(Rect, Rect)> = None;
         let mut captured_summary: ui::SummaryHits = ui::SummaryHits::default();
+        let mut captured_summary_popup_max_scroll: usize = 0;
+        let mut captured_menu_bounds: Option<Rect> = None;
         terminal.draw(|frame| {
             // Unified slice the sidebar consumes: local rows first
             // (flat index == filtered_pos), then remotes (flat index
@@ -171,11 +183,29 @@ impl App {
                 .map(|d| (d.as_millis() / 80) as usize)
                 .unwrap_or(0);
 
+            // The Summary card shows how long ago its text landed; compute the
+            // "Xm ago" age here so the renderer stays free of wall-clock reads.
+            let summary_age = match &self.state.summary {
+                crate::state::SummaryState::Ready { generated_at, .. } => Some(
+                    crate::update::relative_age(
+                        crate::update::now_secs().saturating_sub(*generated_at),
+                    ),
+                ),
+                _ => None,
+            };
+
             let layout = self.state.current_layout(view_mode);
             let agent_rows = self.state.agent_rows();
             let focus_target = self.state.focus_target();
-            let (banner_bounds, divider_hits, kill_hits, agent_hits, tab_rects, summary_hits) =
-                ui::draw_sidebar(
+            let (
+                banner_bounds,
+                divider_hits,
+                kill_hits,
+                agent_hits,
+                tab_rects,
+                summary_hits,
+                menu_bounds,
+            ) = ui::draw_sidebar(
                     frame,
                     sidebar_area,
                     ui::SidebarProps {
@@ -192,6 +222,7 @@ impl App {
                         sidebar_tab,
                         agent_rows: &agent_rows,
                         summary: &self.state.summary,
+                        summary_age: summary_age.as_deref(),
                         spinner_idx,
                         summary_scroll: self.state.summary_scroll,
                         tabs_mode: layout_mode == LayoutMode::Vertical,
@@ -204,6 +235,7 @@ impl App {
                     },
                 );
             captured_summary = summary_hits;
+            captured_menu_bounds = menu_bounds;
             captured_banner_bounds = banner_bounds;
             captured_divider_hits = divider_hits;
             captured_kill_hits = kill_hits;
@@ -368,6 +400,7 @@ impl App {
                     keybindings_view_scroll: s.settings.keybindings_view_scroll,
                     update_check_enabled: s.update_check_mode == UpdateCheckMode::Enabled,
                     update_check_help: format_update_check_help(s.update_last_checked_secs),
+                    summary_language: crate::summary::language_label(&s.summary_language),
                 };
                 ui::draw_settings_page(frame, main_inner, &settings_view, theme);
             }
@@ -467,6 +500,16 @@ impl App {
                 );
             }
 
+            if let Some(ref text) = summary_popup {
+                captured_summary_popup_max_scroll = ui::draw_summary_popup(
+                    frame,
+                    frame.area(),
+                    text,
+                    summary_popup_scroll,
+                    theme,
+                );
+            }
+
             // Overlay the reload bar last so it sits on top of the sidebar
             // footer, main pane, warning popup, and context menu. The
             // underlying layouts keep their full area, so PTY sizing and
@@ -478,6 +521,7 @@ impl App {
         })?;
 
         self.state.banner_upgrade_bounds = captured_banner_bounds;
+        self.state.menu_button_bounds = captured_menu_bounds;
         self.state.divider_hits = captured_divider_hits;
         self.state.kill_confirm_hits = captured_kill_hits;
         self.state.agent_hits = captured_agent_hits;
@@ -488,8 +532,10 @@ impl App {
         self.state.projects_tab_rect = projects_rect;
         self.state.agents_tab_rect = agents_rect;
         self.state.summary_button_rect = captured_summary.button;
+        self.state.summary_popup_button_rect = captured_summary.popup;
         self.state.summary_card_rect = captured_summary.card;
         self.state.summary_max_scroll = captured_summary.max_scroll;
+        self.state.summary_popup_max_scroll = captured_summary_popup_max_scroll;
 
         Ok(())
     }

@@ -8,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::state::{
     AgentHit, AgentRow, AgentTarget, DividerButton, DividerHit, FocusTarget, HostStatus, PfBadge,
-    PfBadgeColor, SidebarItemData, SidebarLayout, SummaryState, ViewMode, SUMMARY_TEXT_ROWS,
+    PfBadgeColor, SidebarItemData, SidebarLayout, SummaryState, ViewMode,
 };
 use crate::theme::Theme;
 
@@ -18,7 +18,10 @@ pub(super) const SUMMARY_SPINNER: [&str; 10] =
 
 use super::SummaryHits;
 
-use super::super::text::{format_idle_badge, idle_color, pad_line, shorten_dir, truncate};
+use super::super::text::{
+    format_idle_badge, idle_color, md_line_spans, md_line_width, pad_line, shorten_dir, truncate,
+    wrap_markdown,
+};
 use super::super::{SessionOrigin, SidebarSession};
 use super::SidebarRenderCtx;
 
@@ -33,6 +36,8 @@ pub(super) struct SessionsProps<'a> {
     pub agent_rows: &'a [AgentRow],
     /// State of the Agents-tab Summary card.
     pub summary: &'a SummaryState,
+    /// Precomputed "Xm ago" age of the Ready summary, `None` otherwise.
+    pub summary_age: Option<&'a str>,
     /// Current braille spinner frame index for the "Generating…" state.
     pub spinner_idx: usize,
     /// Scroll offset (wrapped rows) into the Ready summary text.
@@ -148,6 +153,12 @@ pub(super) fn draw_sessions(
                 } else {
                     row_bg
                 };
+                // Status dot before the name: green/yellow/red health.
+                let status_color = match a.status() {
+                    crate::agent::AgentStatus::Green => ctx.theme.green,
+                    crate::agent::AgentStatus::Yellow => ctx.theme.yellow,
+                    crate::agent::AgentStatus::Red => ctx.theme.pink,
+                };
                 let label = a.location();
                 lines.push(pad_line(
                     vec![
@@ -156,7 +167,9 @@ pub(super) fn draw_sessions(
                             Style::default().fg(accent).bg(row_bg),
                         ),
                         Span::styled(" ", Style::default().bg(row_bg)),
-                        Span::styled(truncate(&label, width.saturating_sub(2)), name_style),
+                        Span::styled("\u{2022}", Style::default().fg(status_color).bg(row_bg)),
+                        Span::styled(" ", Style::default().bg(row_bg)),
+                        Span::styled(truncate(&label, width.saturating_sub(4)), name_style),
                     ],
                     row_bg,
                     width,
@@ -181,49 +194,109 @@ pub(super) fn draw_sessions(
                 lines.push(pad_line(Vec::new(), ctx.theme.bg, width));
             }
             SidebarItemData::SummaryCard => {
-                // Title row.
-                lines.push(pad_line(
-                    vec![
-                        Span::styled(" ", Style::default().bg(ctx.theme.bg)),
-                        Span::styled(
-                            "\u{f0eb} Summary",
+                // Title row. Whenever the card isn't mid-generation it carries
+                // a right-aligned Generate button; in the Ready state the button
+                // is preceded by the text's "Xm ago" age. The button reuses
+                // `summary.button` for hit-testing + the GenerateSummary action.
+                let title_line = lines.len() as u16;
+                let left = " \u{f0eb} Summary";
+                let mut title_spans = vec![
+                    Span::styled(" ", Style::default().bg(ctx.theme.bg)),
+                    Span::styled(
+                        "\u{f0eb} Summary",
+                        Style::default()
+                            .fg(ctx.theme.accent)
+                            .bg(ctx.theme.bg)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ];
+                if !matches!(props.summary, SummaryState::Generating) {
+                    let is_ready = matches!(props.summary, SummaryState::Ready { .. });
+                    let gen_label = " \u{21bb} Generate ";
+                    let gen_w = gen_label.width();
+                    // The popup (big view) button only makes sense once
+                    // there's a summary to open.
+                    let popup_label = " \u{f065} ";
+                    let popup_w = if is_ready { popup_label.width() } else { 0 };
+                    // The age only exists once a summary has been generated.
+                    let age = if is_ready {
+                        props.summary_age.unwrap_or("")
+                    } else {
+                        ""
+                    };
+                    let left_w = left.width();
+                    let buttons_w = gen_w + popup_w;
+                    // Right group is "<age> <Generate><popup>"; drop the age
+                    // first when the row is too tight to fit it all.
+                    let show_age =
+                        !age.is_empty() && left_w + 1 + age.width() + 1 + buttons_w <= width;
+                    let right_w = if show_age {
+                        age.width() + 1 + buttons_w
+                    } else {
+                        buttons_w
+                    };
+                    let filler = width.saturating_sub(left_w + right_w).max(1);
+                    title_spans.push(Span::styled(
+                        " ".repeat(filler),
+                        Style::default().bg(ctx.theme.bg),
+                    ));
+                    if show_age {
+                        title_spans.push(Span::styled(
+                            format!("{age} "),
+                            Style::default().fg(ctx.theme.muted).bg(ctx.theme.bg),
+                        ));
+                    }
+                    title_spans.push(Span::styled(
+                        gen_label,
+                        Style::default()
+                            .fg(ctx.theme.bg)
+                            .bg(ctx.theme.accent)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                    if is_ready {
+                        title_spans.push(Span::styled(
+                            popup_label,
                             Style::default()
-                                .fg(ctx.theme.accent)
-                                .bg(ctx.theme.bg)
+                                .fg(ctx.theme.bg)
+                                .bg(ctx.theme.teal)
                                 .add_modifier(Modifier::BOLD),
-                        ),
-                    ],
-                    ctx.theme.bg,
-                    width,
-                ));
+                        ));
+                    }
+                    // Buttons hug the right edge: Generate then popup.
+                    let gen_x = width.saturating_sub(buttons_w) as u16;
+                    let popup_x = width.saturating_sub(popup_w) as u16;
+                    if let Some(y) = visible.viewport_y_for_item_line(title_line) {
+                        summary.button = Some(Rect {
+                            x: area.x + gen_x,
+                            y: area.y + y,
+                            width: (gen_w as u16).min(area.width.saturating_sub(gen_x)),
+                            height: 1,
+                        });
+                        if is_ready {
+                            summary.popup = Some(Rect {
+                                x: area.x + popup_x,
+                                y: area.y + y,
+                                width: (popup_w as u16).min(area.width.saturating_sub(popup_x)),
+                                height: 1,
+                            });
+                        }
+                    }
+                }
+                lines.push(pad_line(title_spans, ctx.theme.bg, width));
                 lines.push(pad_line(Vec::new(), ctx.theme.bg, width));
 
                 match props.summary {
                     SummaryState::Idle => {
-                        let label = "[ Generate Summary ]";
-                        let btn_line = lines.len() as u16;
+                        // No summary yet — a dim hint; the Generate button to
+                        // the right of the title kicks the first run.
                         lines.push(pad_line(
-                            vec![
-                                Span::styled("  ", Style::default().bg(ctx.theme.bg)),
-                                Span::styled(
-                                    label,
-                                    Style::default()
-                                        .fg(ctx.theme.bg)
-                                        .bg(ctx.theme.accent)
-                                        .add_modifier(Modifier::BOLD),
-                                ),
-                            ],
+                            vec![Span::styled(
+                                "  No aggregated agent summary yet",
+                                Style::default().fg(ctx.theme.muted).bg(ctx.theme.bg),
+                            )],
                             ctx.theme.bg,
                             width,
                         ));
-                        if let Some(y) = visible.viewport_y_for_item_line(btn_line) {
-                            summary.button = Some(Rect {
-                                x: area.x + 2,
-                                y: area.y + y,
-                                width: (label.width() as u16).min(area.width.saturating_sub(2)),
-                                height: 1,
-                            });
-                        }
                     }
                     SummaryState::Generating => {
                         let spinner = SUMMARY_SPINNER[props.spinner_idx % SUMMARY_SPINNER.len()];
@@ -236,25 +309,34 @@ pub(super) fn draw_sessions(
                             width,
                         ));
                     }
-                    SummaryState::Ready(text) => {
-                        // Fixed text window with a scrollbar gutter on the
-                        // right; text wraps to leave room for the bar.
-                        let rows = SUMMARY_TEXT_ROWS as usize;
+                    SummaryState::Ready { text, .. } => {
+                        // Scrollable text window with a scrollbar gutter on
+                        // the right; markdown `**bold**` renders bold. Height
+                        // is the drag-set body rows (card height minus chrome).
+                        let rows = (item.height as usize).saturating_sub(3);
                         let content_w = width.saturating_sub(3); // 2 indent + 1 bar
-                        let wrapped = word_wrap(text, content_w.max(1));
+                        let wrapped = wrap_markdown(text, content_w.max(1));
                         let total = wrapped.len();
                         summary.max_scroll = total.saturating_sub(rows);
                         let scroll = props.summary_scroll.min(summary.max_scroll);
                         let bar = scrollbar_cells(rows, total, scroll);
+                        let base = Style::default().fg(ctx.theme.text).bg(ctx.theme.bg);
                         for i in 0..rows {
-                            let chunk = wrapped.get(scroll + i).cloned().unwrap_or_default();
-                            let mut spans = vec![
-                                Span::styled("  ", Style::default().bg(ctx.theme.bg)),
-                                Span::styled(
-                                    format!("{:<width$}", truncate(&chunk, content_w), width = content_w),
-                                    Style::default().fg(ctx.theme.text).bg(ctx.theme.bg),
-                                ),
-                            ];
+                            let mut spans =
+                                vec![Span::styled("  ", Style::default().bg(ctx.theme.bg))];
+                            let line_w = match wrapped.get(scroll + i) {
+                                Some(runs) => {
+                                    spans.extend(md_line_spans(runs, ctx.theme, base));
+                                    md_line_width(runs)
+                                }
+                                None => 0,
+                            };
+                            if line_w < content_w {
+                                spans.push(Span::styled(
+                                    " ".repeat(content_w - line_w),
+                                    Style::default().bg(ctx.theme.bg),
+                                ));
+                            }
                             if let Some(glyph) = bar.get(i).copied().flatten() {
                                 spans.push(Span::styled(
                                     glyph,
@@ -264,10 +346,42 @@ pub(super) fn draw_sessions(
                             lines.push(pad_line(spans, ctx.theme.bg, width));
                         }
                     }
+                    SummaryState::Error(msg) => {
+                        // Wrap the failure reason into the body rows, no
+                        // scrollbar; the Generate button stays up to retry.
+                        // Errors are plain text — render the whole line pink.
+                        let rows = (item.height as usize).saturating_sub(3);
+                        let content_w = width.saturating_sub(2);
+                        let wrapped = wrap_markdown(msg, content_w.max(1));
+                        for i in 0..rows {
+                            let mut spans =
+                                vec![Span::styled("  ", Style::default().bg(ctx.theme.bg))];
+                            if let Some(runs) = wrapped.get(i) {
+                                let text: String = runs.iter().map(|(s, _)| s.as_str()).collect();
+                                spans.push(Span::styled(
+                                    text,
+                                    Style::default().fg(ctx.theme.pink).bg(ctx.theme.bg),
+                                ));
+                            }
+                            lines.push(pad_line(spans, ctx.theme.bg, width));
+                        }
+                    }
                 }
-                while lines.len() < item.height as usize {
+                // Fill to one short of the card height, then a dim drag-handle
+                // grip as the bottom row (the resize hit-region).
+                while lines.len() + 1 < item.height as usize {
                     lines.push(pad_line(Vec::new(), ctx.theme.bg, width));
                 }
+                let grip = "\u{254c}\u{254c}\u{254c}\u{254c}\u{254c}\u{254c}";
+                let grip_pad = width.saturating_sub(grip.width()) / 2;
+                lines.push(pad_line(
+                    vec![
+                        Span::styled(" ".repeat(grip_pad), Style::default().bg(ctx.theme.bg)),
+                        Span::styled(grip, Style::default().fg(ctx.theme.dim).bg(ctx.theme.bg)),
+                    ],
+                    ctx.theme.bg,
+                    width,
+                ));
                 summary.card = Some(Rect {
                     x: area.x,
                     y: area.y + visible.viewport_y,
@@ -409,41 +523,6 @@ fn scrollbar_cells(rows: usize, total: usize, scroll: usize) -> Vec<Option<&'sta
             }
         })
         .collect()
-}
-
-/// Greedy word wrap to `width` columns, falling back to a hard char break
-/// for any single word longer than the line. Used by the Summary card.
-fn word_wrap(text: &str, width: usize) -> Vec<String> {
-    if width == 0 {
-        return Vec::new();
-    }
-    let mut out: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    for word in text.split_whitespace() {
-        let sep = usize::from(!cur.is_empty());
-        if cur.width() + sep + word.width() > width && !cur.is_empty() {
-            out.push(std::mem::take(&mut cur));
-        }
-        if word.width() > width {
-            // Hard-break an over-long token across rows.
-            for ch in word.chars() {
-                let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-                if cur.width() + cw > width && !cur.is_empty() {
-                    out.push(std::mem::take(&mut cur));
-                }
-                cur.push(ch);
-            }
-            continue;
-        }
-        if !cur.is_empty() {
-            cur.push(' ');
-        }
-        cur.push_str(word);
-    }
-    if !cur.is_empty() {
-        out.push(cur);
-    }
-    out
 }
 
 fn divider_hit_at(

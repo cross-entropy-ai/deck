@@ -6,6 +6,17 @@ use crate::state::{AppState, FocusMode, MainView, PfField, PortForwardOverlay, S
 use super::Action;
 
 pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
+    if state.overlay.summary_popup {
+        return match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => Action::CloseSummaryPopup,
+            KeyCode::Char('j') | KeyCode::Down => Action::ScrollSummaryPopup(1),
+            KeyCode::Char('k') | KeyCode::Up => Action::ScrollSummaryPopup(-1),
+            KeyCode::PageDown | KeyCode::Char(' ') => Action::ScrollSummaryPopup(10),
+            KeyCode::PageUp => Action::ScrollSummaryPopup(-10),
+            _ => Action::None,
+        };
+    }
+
     if state.overlay.new_session.is_some() {
         return new_session_key_to_action(key, state);
     }

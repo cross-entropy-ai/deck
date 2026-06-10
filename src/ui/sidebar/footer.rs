@@ -5,20 +5,24 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
-use crate::keybindings::Command;
 use crate::layout::plugin_block_rows;
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
 
-use super::super::text::{pack_hint_lines, primary_key_string};
 use super::super::{PluginStatus, PluginView};
 use super::SidebarRenderCtx;
 
 pub(super) struct FooterProps<'a> {
-    pub sidebar_active: bool,
-    pub show_help: bool,
     pub plugins: &'a [PluginView<'a>],
     pub update_available: Option<&'a UpdateStatus>,
+}
+
+/// Click regions the footer publishes each frame: the update banner's
+/// "upgrade" link and the "menu" button that opens the global context menu.
+#[derive(Default)]
+pub(super) struct FooterHits {
+    pub upgrade: Option<Rect>,
+    pub menu: Option<Rect>,
 }
 
 struct PluginRowsProps<'a> {
@@ -108,63 +112,13 @@ pub(super) fn draw_footer(
     area: Rect,
     ctx: &SidebarRenderCtx<'_>,
     props: FooterProps<'_>,
-) -> Option<Rect> {
+) -> FooterHits {
     let theme = ctx.theme;
-    let keybindings = ctx.keybindings;
     let w = area.width as usize;
     let sep = Line::from(Span::styled("─".repeat(w), Style::default().fg(theme.dim)));
 
-    let hint_lines: Vec<Line> = if props.sidebar_active {
-        let nav_key = {
-            let next = primary_key_string(keybindings, Command::FocusNext);
-            let prev = primary_key_string(keybindings, Command::FocusPrev);
-            match (prev.is_empty(), next.is_empty()) {
-                (false, false) => format!("{}/{}", next, prev),
-                (false, true) => prev,
-                (true, false) => next,
-                (true, true) => String::new(),
-            }
-        };
-        let mut entries: Vec<(String, String)> = vec![
-            (nav_key, "nav".into()),
-            (
-                primary_key_string(keybindings, Command::OpenSettings),
-                "settings".into(),
-            ),
-            (
-                primary_key_string(keybindings, Command::OpenThemePicker),
-                "theme".into(),
-            ),
-            (
-                primary_key_string(keybindings, Command::ReloadConfig),
-                "reload".into(),
-            ),
-            (
-                primary_key_string(keybindings, Command::ToggleHelp),
-                "help".into(),
-            ),
-            (
-                primary_key_string(keybindings, Command::Quit),
-                "quit".into(),
-            ),
-        ];
-        entries.retain(|(k, _)| !k.is_empty());
-        pack_hint_lines(&entries, w, theme)
-    } else {
-        let toggle_key = primary_key_string(keybindings, Command::ToggleFocus);
-        let label = if toggle_key.is_empty() {
-            " sidebar".to_string()
-        } else {
-            format!(" {} sidebar", toggle_key)
-        };
-        vec![Line::from(vec![Span::styled(
-            label,
-            Style::default().fg(theme.subtle),
-        )])]
-    };
-
     let rows_capacity = usize::from(
-        3 + plugin_block_rows(props.plugins.len()) + props.update_available.is_some() as u16,
+        2 + plugin_block_rows(props.plugins.len()) + props.update_available.is_some() as u16,
     );
     let mut rows: Vec<Line> = Vec::with_capacity(rows_capacity);
     rows.push(sep);
@@ -237,36 +191,31 @@ pub(super) fn draw_footer(
         }
     }
 
-    let overflow = hint_lines.len() > 1;
-    let mut iter = hint_lines.into_iter();
-    if let Some(first) = iter.next() {
-        rows.push(first);
-    } else {
-        rows.push(Line::default());
-    }
-
-    if overflow {
-        rows.push(iter.next().unwrap_or_default());
-    } else if props.show_help {
-        rows.push(Line::from(vec![
-            Span::styled(" ", Style::default()),
-            Span::styled(
-                format!(
-                    "About  {} v{}",
-                    env!("CARGO_PKG_NAME"),
-                    env!("CARGO_PKG_VERSION")
-                ),
-                Style::default().fg(theme.dim),
-            ),
-        ]));
-    } else {
-        rows.push(Line::default());
-    }
+    // The "menu" button replaces the old key hints; clicking it opens the
+    // global context menu — the same one a right-click on empty space shows.
+    let menu_label = "\u{2261} menu";
+    let menu_y = area.y + rows.len() as u16;
+    let menu = Some(Rect {
+        x: area.x + 1,
+        y: menu_y,
+        width: menu_label.width() as u16,
+        height: 1,
+    });
+    rows.push(Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            menu_label,
+            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+        ),
+    ]));
 
     frame.render_widget(
         Paragraph::new(rows).style(Style::default().bg(theme.bg)),
         area,
     );
 
-    upgrade_bounds
+    FooterHits {
+        upgrade: upgrade_bounds,
+        menu,
+    }
 }

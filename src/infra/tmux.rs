@@ -104,6 +104,13 @@ pub fn agent_panes() -> Vec<crate::agent::PaneInfo> {
         .unwrap_or_default()
 }
 
+/// Capture the visible buffer of a pane (`%N`) as plain text, for the
+/// Agents-tab summary. `-p` prints to stdout, `-J` joins wrapped lines.
+/// `None` on any tmux failure (the pane vanished, server down).
+pub fn capture_pane(pane_id: &str) -> Option<String> {
+    tmux(&["capture-pane", "-p", "-J", "-t", pane_id])
+}
+
 /// Get the max window_activity timestamp per session.
 fn latest_window_activity_with(runner: &dyn CommandRunner) -> HashMap<String, u64> {
     let Ok(raw) = tmux_with(runner, &["list-windows", "-a", "-F", WINDOW_ACTIVITY_FORMAT]) else {

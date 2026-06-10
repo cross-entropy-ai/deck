@@ -27,6 +27,11 @@ impl App {
             // changes to remotes themselves still flow in via hot-reload.
             remotes: self.state.config_remotes.clone(),
             collapsed_sections: self.state.collapsed_sections.iter().cloned().collect(),
+            summary_prompt: self.state.summary_prompt.clone(),
+            summary_prompt_version: crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION,
+            summary_model: self.state.summary_model.clone(),
+            summary_height: self.state.summary_height,
+            summary_language: self.state.summary_language.clone(),
         }
         .save();
     }
@@ -97,16 +102,7 @@ pub(super) fn format_update_check_help(last_checked_secs: Option<u64>) -> String
         return format!("{}\n{}", version, controls);
     };
     let now = update::now_secs();
-    let elapsed = now.saturating_sub(ts);
-    let suffix = if elapsed < 60 {
-        "just now".to_string()
-    } else if elapsed < 3600 {
-        format!("{}m ago", elapsed / 60)
-    } else if elapsed < 86_400 {
-        format!("{}h ago", elapsed / 3600)
-    } else {
-        format!("{}d ago", elapsed / 86_400)
-    };
+    let suffix = update::relative_age(now.saturating_sub(ts));
     format!("{}\n{} · last checked {}", version, controls, suffix)
 }
 

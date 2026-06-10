@@ -28,6 +28,17 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         return Action::None;
     }
 
+    if state.overlay.summary_popup {
+        // The big-view popup owns input while up: wheel scrolls it, any
+        // click dismisses it, everything else is inert.
+        return match mouse.kind {
+            MouseEventKind::ScrollUp => Action::ScrollSummaryPopup(-1),
+            MouseEventKind::ScrollDown => Action::ScrollSummaryPopup(1),
+            MouseEventKind::Down(_) => Action::CloseSummaryPopup,
+            _ => Action::None,
+        };
+    }
+
     if mouse.kind == MouseEventKind::Down(MouseButton::Left)
         && state.banner_upgrade_at(mouse.column, mouse.row)
     {
@@ -40,6 +51,16 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         }
         if state.summary_button_at(mouse.column, mouse.row) {
             return Action::GenerateSummary;
+        }
+        if state.summary_popup_button_at(mouse.column, mouse.row) {
+            return Action::OpenSummaryPopup;
+        }
+        // The footer "menu" button opens the global context menu, anchored
+        // at the button (the menu renderer clamps it on-screen).
+        if let Some(r) = state.menu_button_bounds {
+            if hit_rect(&r, mouse.column, mouse.row) {
+                return Action::OpenGlobalMenu { x: r.x, y: r.y };
+            }
         }
     }
 
@@ -95,6 +116,20 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     match mouse.kind {
         MouseEventKind::Moved => {
             return Action::None;
+        }
+        // Dragging the summary card's bottom edge resizes it. Checked
+        // before the sidebar separator since the handle lives inside the
+        // sidebar, not at its right gap.
+        MouseEventKind::Down(MouseButton::Left)
+            if state.summary_resize_at(mouse.column, mouse.row) =>
+        {
+            return Action::StartSummaryDrag;
+        }
+        MouseEventKind::Drag(MouseButton::Left) if state.dragging_summary => {
+            return Action::ResizeSummary(state.summary_height_for_drag(mouse.row));
+        }
+        MouseEventKind::Up(MouseButton::Left) if state.dragging_summary => {
+            return Action::StopSummaryDrag;
         }
         MouseEventKind::Down(MouseButton::Left) if on_separator => {
             return Action::StartDrag;

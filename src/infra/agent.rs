@@ -42,10 +42,29 @@ pub struct DetectedAgent {
     pub pane_id: String,
 }
 
+/// Health indicator shown as a colored dot before each agent row in the
+/// sidebar: green = working/ok, yellow = idle or waiting for input, red =
+/// errored/blocked. Detection isn't wired up yet, so `DetectedAgent::status`
+/// reports `Green` for everyone; the other states are the extension point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// Yellow/Red aren't constructed until status detection lands; keep them as
+// the rendering already maps every variant to a color.
+#[allow(dead_code)]
+pub enum AgentStatus {
+    Green,
+    Yellow,
+    Red,
+}
+
 impl DetectedAgent {
     /// Compact `session:window.pane` location for display.
     pub fn location(&self) -> String {
         format!("{}:{}.{}", self.session, self.window, self.pane)
+    }
+
+    /// The agent's health dot. Always `Green` for now (see `AgentStatus`).
+    pub fn status(&self) -> AgentStatus {
+        AgentStatus::Green
     }
 }
 

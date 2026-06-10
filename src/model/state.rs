@@ -114,15 +114,25 @@ pub enum SummaryState {
     #[default]
     Idle,
     Generating,
-    Ready(String),
+    Ready {
+        text: String,
+        /// Unix seconds when the text landed, for the card's "Xm ago" age and
+        /// to drive its "Re-generate" affordance.
+        generated_at: u64,
+    },
+    /// Generation failed (no agents, `claude` missing, non-zero exit); the
+    /// card shows the reason and the Generate button stays available to retry.
+    Error(String),
 }
 
-/// Wrapped text rows the Agents-tab Summary card reserves once `Ready`.
-/// The renderer wraps the generated text to the sidebar width and clips
-/// to this many lines.
-pub const SUMMARY_TEXT_ROWS: u16 = 6;
+/// Default body height (text rows) of the Agents-tab Summary card. The
+/// live value is `AppState::summary_height`, drag-adjustable and persisted.
+pub const DEFAULT_SUMMARY_HEIGHT: u16 = 6;
+/// Drag-resize bounds for the summary card's body height.
+pub const SUMMARY_MIN_HEIGHT: u16 = 2;
+pub const SUMMARY_MAX_HEIGHT: u16 = 40;
 
-pub const SETTINGS_ITEM_COUNT: usize = 8;
+pub const SETTINGS_ITEM_COUNT: usize = 9;
 pub const FRAME_RATE_LIMIT_OPTIONS: [u16; 4] = [2, 5, 10, 30];
 
 pub fn normalize_frame_rate_limit(fps: u16) -> u16 {
@@ -993,6 +1003,8 @@ pub struct OverlayState {
     pub add_remote: Option<crate::add_remote::AddRemoteState>,
     /// Port-forward overlay for a single host. See `PortForwardOverlay`.
     pub port_forward: Option<PortForwardOverlay>,
+    /// The Agents-tab summary "big view" popup is open.
+    pub summary_popup: bool,
 }
 
 // --- Settings page state ---
@@ -1054,16 +1066,36 @@ pub struct AppState {
     pub agent_focused: usize,
     /// State of the Agents-tab "Summary" card (idle / generating / ready).
     pub summary: SummaryState,
+    /// The summary prompt template (from config), `{{SESSIONS}}` filled
+    /// with the agent panes at generation time. Seeded in `App::new` and
+    /// refreshed on config reload.
+    pub summary_prompt: String,
+    /// Model passed to `claude --model` for the summary (from config); empty
+    /// follows the user's Claude Code default.
+    pub summary_model: String,
+    /// Language the summary is asked to use (from config); empty = default.
+    pub summary_language: String,
+    /// Body height (text rows) of the inline summary card, drag-adjustable
+    /// from its bottom edge and persisted to config.
+    pub summary_height: u16,
     /// Click-region of the card's "Generate Summary" button, captured each
     /// frame for mouse hit-testing. `None` when the button isn't shown
     /// (not on the Agents tab, or while generating).
     pub summary_button_rect: Option<Rect>,
+    /// Click-region of the card's "popup" button (open the big view),
+    /// captured each frame. `None` unless the summary is `Ready`.
+    pub summary_popup_button_rect: Option<Rect>,
+    /// True while dragging the card's bottom edge to resize it.
+    pub dragging_summary: bool,
     /// Scroll offset (in wrapped text rows) of the Ready summary's content,
     /// when it overflows the card's fixed text area.
     pub summary_scroll: usize,
     /// Max scroll offset for the current Ready text at the current width,
     /// captured by the renderer each frame so scroll input can clamp.
     pub summary_max_scroll: usize,
+    /// Scroll offset of the summary popup's text, and its captured max.
+    pub summary_popup_scroll: usize,
+    pub summary_popup_max_scroll: usize,
     /// The card's full rect, captured each frame so the mouse layer can
     /// route wheel events over it to scrolling the summary.
     pub summary_card_rect: Option<Rect>,
@@ -1092,6 +1124,9 @@ pub struct AppState {
     /// Column range of the clickable "upgrade" span in the footer banner,
     /// captured during render for mouse hit-testing. (y, x_start, x_end).
     pub banner_upgrade_bounds: Option<Rect>,
+    /// Click-region of the footer's "menu" button, captured during render
+    /// for mouse hit-testing. Opens the global context menu.
+    pub menu_button_bounds: Option<Rect>,
 
     /// Click-regions of the `Projects` / `Agents` tab labels in the
     /// sidebar header, captured during render for mouse hit-testing.
@@ -1216,8 +1251,16 @@ impl AppState {
             sidebar_tab,
             agent_focused: 0,
             summary: SummaryState::Idle,
+            summary_prompt: String::new(),
+            summary_model: String::new(),
+            summary_language: String::new(),
+            summary_height: DEFAULT_SUMMARY_HEIGHT,
             summary_button_rect: None,
+            summary_popup_button_rect: None,
+            dragging_summary: false,
             summary_scroll: 0,
+            summary_popup_scroll: 0,
+            summary_popup_max_scroll: 0,
             summary_max_scroll: 0,
             summary_card_rect: None,
             dragging_separator: false,
@@ -1232,6 +1275,7 @@ impl AppState {
             update_available: None,
             update_last_checked_secs: None,
             banner_upgrade_bounds: None,
+            menu_button_bounds: None,
             projects_tab_rect: None,
             agents_tab_rect: None,
             reload_status: None,
@@ -1733,16 +1777,36 @@ impl AppState {
             .position(|row| row.host == target.host && row.agent.pane_id == target.pane_id)
     }
 
-    /// Row height the Summary card reserves — a fixed-size window for every
-    /// state (title + blank + a `SUMMARY_TEXT_ROWS` body area + blank), so
-    /// overflowing Ready text scrolls inside it rather than growing it.
+    /// Row height the Summary card reserves: title + blank + a
+    /// `summary_height` body area + a drag-handle row. A fixed-size window
+    /// for every state, so overflowing Ready text scrolls inside it rather
+    /// than growing the card; the user resizes it by dragging the handle.
     pub fn summary_card_height(&self) -> u16 {
-        3 + SUMMARY_TEXT_ROWS
+        3 + self.summary_height
+    }
+
+    /// Set the card body height (rows), clamped to the drag-resize bounds.
+    /// Returns whether it changed.
+    pub fn set_summary_height(&mut self, rows: u16) -> bool {
+        let clamped = rows.clamp(SUMMARY_MIN_HEIGHT, SUMMARY_MAX_HEIGHT);
+        if clamped != self.summary_height {
+            self.summary_height = clamped;
+            true
+        } else {
+            false
+        }
     }
 
     /// Whether `(col, row)` falls on the Summary card's "Generate" button.
     pub fn summary_button_at(&self, col: u16, row: u16) -> bool {
         self.summary_button_rect.is_some_and(|r| {
+            col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+        })
+    }
+
+    /// Whether `(col, row)` falls on the Summary card's "popup" button.
+    pub fn summary_popup_button_at(&self, col: u16, row: u16) -> bool {
+        self.summary_popup_button_rect.is_some_and(|r| {
             col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
         })
     }
@@ -1755,11 +1819,35 @@ impl AppState {
         })
     }
 
+    /// Whether `(col, row)` is on the card's bottom drag-handle row.
+    pub fn summary_resize_at(&self, col: u16, row: u16) -> bool {
+        self.summary_card_rect.is_some_and(|r| {
+            let handle_y = r.y + r.height.saturating_sub(1);
+            row == handle_y && col >= r.x && col < r.x + r.width
+        })
+    }
+
+    /// New body height implied by dragging the handle to `row` — the rows
+    /// between the card top and the pointer, minus the title/blank/handle
+    /// chrome. Clamped by `set_summary_height`.
+    pub fn summary_height_for_drag(&self, row: u16) -> u16 {
+        let top = self.summary_card_rect.map_or(0, |r| r.y);
+        // total = row - top + 1; body rows = total - 3 (title, blank, handle).
+        row.saturating_sub(top).saturating_sub(2)
+    }
+
     /// Apply a wheel/keyboard scroll delta to the Summary text, clamped to
     /// the captured max offset.
     pub fn scroll_summary(&mut self, delta: i32) {
         let max = self.summary_max_scroll as i32;
         self.summary_scroll = (self.summary_scroll as i32 + delta).clamp(0, max) as usize;
+    }
+
+    /// Apply a scroll delta to the summary popup, clamped to its max.
+    pub fn scroll_summary_popup(&mut self, delta: i32) {
+        let max = self.summary_popup_max_scroll as i32;
+        self.summary_popup_scroll =
+            (self.summary_popup_scroll as i32 + delta).clamp(0, max) as usize;
     }
 
     /// Build the Agents-tab layout: an `@local` / `@host` divider per
