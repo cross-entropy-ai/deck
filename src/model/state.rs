@@ -2140,6 +2140,42 @@ impl AppState {
         }
     }
 
+    /// Why the focused kill `target` can't be killed, or `None` if it can.
+    /// Single source of truth shared by the `x`-key path (`KillSession` /
+    /// `ConfirmKill`) and the context menu's "Kill" greying so the two
+    /// can't drift (the keyboard path used to skip these checks):
+    ///  - a synthetic placeholder remote row (loading / unreachable /
+    ///    "(no sessions)") has no real session to kill — a kill would send
+    ///    `ssh tmux kill-session` with a placeholder/empty name;
+    ///  - a host's last live session would tear that host's tmux server
+    ///    down;
+    ///  - the last local session would leave deck attached to nothing.
+    pub fn kill_blocked_reason(&self, target: &SessionTargetRef<'_>) -> Option<&'static str> {
+        match target {
+            SessionTargetRef::Remote(row) if !row.is_attachable_session() => {
+                Some("no session to kill")
+            }
+            SessionTargetRef::Remote(row)
+                if self
+                    .remote_sessions
+                    .iter()
+                    .filter(|r| r.host == row.host && r.is_attachable_session())
+                    .count()
+                    <= 1 =>
+            {
+                Some("last session on host")
+            }
+            SessionTargetRef::Local(_) if self.sessions.len() <= 1 => Some("last local session"),
+            SessionTargetRef::Local(_) | SessionTargetRef::Remote(_) => None,
+        }
+    }
+
+    /// Whether the focused kill `target` may be killed. See
+    /// [`AppState::kill_blocked_reason`].
+    pub fn can_kill(&self, target: &SessionTargetRef<'_>) -> bool {
+        self.kill_blocked_reason(target).is_none()
+    }
+
     /// Map a screen position to a context menu item index.
     pub fn menu_item_at(&self, col: u16, row: u16) -> Option<usize> {
         let menu = self.overlay.context_menu.as_ref()?;

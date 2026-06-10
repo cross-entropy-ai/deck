@@ -150,16 +150,77 @@ fn kill_single_session_prevented() {
 }
 
 #[test]
-fn confirm_kill_returns_side_effect_with_switch_target() {
+fn confirm_kill_current_session_sets_switch_target() {
     let mut state = make_test_state(3);
-    state.focused = 1;
+    state.focused = 0; // sess-0 is the current (attached) session
     state.overlay.confirm_kill = true;
     let fx = apply_action(&mut state, Action::ConfirmKill);
     assert!(!state.overlay.confirm_kill);
-    assert!(fx.first_kill_session().is_some());
+    let kill = fx.first_kill_session().unwrap();
+    assert_eq!(kill.name, "sess-0");
+    // Killing the attached session must pre-switch off it first.
+    assert_eq!(kill.switch_to.as_deref(), Some("sess-1"));
+}
+
+#[test]
+fn confirm_kill_noncurrent_session_keeps_view() {
+    let mut state = make_test_state(3);
+    state.focused = 1; // sess-1 is NOT the current session
+    state.overlay.confirm_kill = true;
+    let fx = apply_action(&mut state, Action::ConfirmKill);
     let kill = fx.first_kill_session().unwrap();
     assert_eq!(kill.name, "sess-1");
-    assert!(kill.switch_to.is_some());
+    // Killing a non-current row must not yank the main view to a neighbor.
+    assert!(kill.switch_to.is_none());
+}
+
+#[test]
+fn kill_keyboard_blocked_on_remote_placeholder() {
+    // Pressing `x` on a "(no sessions)" placeholder must not open the
+    // confirm prompt — confirming would ssh `kill-session` a placeholder.
+    let mut state = make_test_state(1);
+    state
+        .remote_sessions
+        .push(remote_row("remote-a", REMOTE_NO_SESSIONS_LABEL));
+    state.focused = state.filtered.len();
+    let fx = apply_action(&mut state, Action::KillSession);
+    assert!(!state.overlay.confirm_kill);
+    assert!(fx.first_kill_session().is_none());
+}
+
+#[test]
+fn kill_keyboard_blocked_on_last_remote_session() {
+    // The host's only live session: killing it would tear down its server.
+    let mut state = make_test_state(1);
+    state.remote_sessions.push(remote_row("remote-a", "solo"));
+    state.focused = state.filtered.len();
+    apply_action(&mut state, Action::KillSession);
+    assert!(!state.overlay.confirm_kill);
+}
+
+#[test]
+fn kill_keyboard_allowed_on_remote_session_with_sibling() {
+    // A host with more than one session can have one killed — make sure the
+    // last-session guard doesn't over-block siblings.
+    let mut state = make_test_state(1);
+    state.remote_sessions.push(remote_row("remote-a", "first"));
+    state.remote_sessions.push(remote_row("remote-a", "second"));
+    state.focused = state.filtered.len();
+    apply_action(&mut state, Action::KillSession);
+    assert!(state.overlay.confirm_kill);
+}
+
+#[test]
+fn confirm_kill_blocked_on_remote_placeholder() {
+    // Even a forced/stale confirm can't fire on a placeholder row.
+    let mut state = make_test_state(1);
+    state
+        .remote_sessions
+        .push(remote_row("remote-a", REMOTE_NO_SESSIONS_LABEL));
+    state.focused = state.filtered.len();
+    state.overlay.confirm_kill = true;
+    let fx = apply_action(&mut state, Action::ConfirmKill);
+    assert!(fx.first_kill_session().is_none());
 }
 
 #[test]

@@ -217,20 +217,16 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             let Some(target) = state.focus_target() else {
                 return fx;
             };
-            match state.session_target(target) {
-                // Refuse to kill the last local session — it'd
-                // leave deck attached to nothing.
-                Some(SessionTargetRef::Local(_)) if state.sessions.len() > 1 => {
-                    state.overlay.confirm_kill = true;
-                }
-                Some(SessionTargetRef::Remote(_)) => {
-                    // No "last session" guard for remote: deck doesn't
-                    // depend on the remote tmux server having any
-                    // sessions, the worst case is the persistent PTY
-                    // showing an empty server next refresh.
-                    state.overlay.confirm_kill = true;
-                }
-                Some(SessionTargetRef::Local(_)) | None => {}
+            // Same policy the context menu uses to grey "Kill": no killing a
+            // placeholder row, a host's last live session, or the last local
+            // session. Compute the verdict, then drop the borrow before
+            // mutating the overlay.
+            let allowed = match state.session_target(target) {
+                Some(tgt) => state.can_kill(&tgt),
+                None => false,
+            };
+            if allowed {
+                state.overlay.confirm_kill = true;
             }
         }
         Action::ConfirmKill => {
@@ -238,15 +234,24 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             let Some(target) = state.focus_target() else {
                 return fx;
             };
+            // Defense in depth: the same policy that gates KillSession and
+            // greys the menu's "Kill" also gates the actual kill, so a stale
+            // or forced confirm can't fire on a placeholder, a host's last
+            // session, or the last local session.
+            let allowed = match state.session_target(target) {
+                Some(tgt) => state.can_kill(&tgt),
+                None => false,
+            };
+            if !allowed {
+                return fx;
+            }
             match state.session_target(target) {
                 Some(SessionTargetRef::Local(_)) => {
-                    if state.sessions.len() <= 1 {
-                        return fx;
-                    }
                     let Some(&session_idx) = state.filtered.get(state.focused) else {
                         return fx;
                     };
                     let name = state.sessions[session_idx].name.clone();
+                    let killing_current = state.sessions[session_idx].is_current;
 
                     let next_focused = if state.focused + 1 < state.filtered.len() {
                         state.focused
@@ -254,15 +259,21 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                         state.focused.saturating_sub(1)
                     };
 
-                    let switch_to = {
+                    // Pre-switch off the doomed session only when it's the
+                    // one deck is attached to. Killing a *non-current* row
+                    // must leave the main view (local or remote) where it is
+                    // — see KillRequest.switch_to.
+                    let switch_to = if killing_current {
                         let alt_idx = if state.focused + 1 < state.filtered.len() {
-                            state.focused + 1
+                            Some(state.focused + 1)
                         } else if state.focused > 0 {
-                            state.focused - 1
+                            Some(state.focused - 1)
                         } else {
-                            return fx;
+                            None
                         };
-                        Some(state.sessions[state.filtered[alt_idx]].name.clone())
+                        alt_idx.map(|i| state.sessions[state.filtered[i]].name.clone())
+                    } else {
+                        None
                     };
 
                     state.session_order.retain(|n| n != &name);
