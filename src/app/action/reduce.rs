@@ -495,9 +495,14 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 6 => apply_action(state, Action::OpenKeybindingsView),
                 7 => apply_action(state, Action::ToggleUpdateCheck),
                 8 => apply_action(state, Action::OpenSummaryLanguageEditor),
+                9 => apply_action(state, Action::CycleAgentsProbeInterval(direction)),
                 _ => SideEffect::default(),
             };
             fx.merge(inner);
+        }
+        Action::CycleAgentsProbeInterval(direction) => {
+            state.cycle_agents_probe_interval(direction);
+            fx.save_config();
         }
         Action::OpenSummaryLanguageEditor => {
             state.overlay.summary_lang_input =

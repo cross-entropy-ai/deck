@@ -975,6 +975,8 @@ impl App {
         self.state.summary_prompt = cfg.summary_prompt;
         self.state.summary_model = cfg.summary_model;
         self.state.summary_language = cfg.summary_language;
+        self.state.agents_probe_interval_secs =
+            crate::state::normalize_agents_probe_interval(cfg.agents_probe_interval);
         self.state.set_summary_height(cfg.summary_height);
 
         // Reset sub-UIs whose indices may no longer be valid.

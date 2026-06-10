@@ -402,6 +402,7 @@ impl App {
                     update_check_help: format_update_check_help(s.update_last_checked_secs),
                     summary_language: crate::summary::language_label(&s.summary_language),
                     summary_lang_input: s.overlay.summary_lang_input.as_ref(),
+                    agents_probe_interval: s.agents_probe_interval_secs,
                 };
                 ui::draw_settings_page(frame, main_inner, &settings_view, theme);
             }

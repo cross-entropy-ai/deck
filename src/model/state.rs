@@ -132,8 +132,31 @@ pub const DEFAULT_SUMMARY_HEIGHT: u16 = 6;
 pub const SUMMARY_MIN_HEIGHT: u16 = 2;
 pub const SUMMARY_MAX_HEIGHT: u16 = 40;
 
-pub const SETTINGS_ITEM_COUNT: usize = 9;
+pub const SETTINGS_ITEM_COUNT: usize = 10;
 pub const FRAME_RATE_LIMIT_OPTIONS: [u16; 4] = [2, 5, 10, 30];
+
+/// How often the Agents tab probes for agents + their status, in seconds.
+/// Cycled in settings; labelled fast / normal / slow / very slow.
+pub const AGENTS_PROBE_INTERVAL_OPTIONS: [u64; 4] = [1, 2, 5, 10];
+pub const DEFAULT_AGENTS_PROBE_INTERVAL: u64 = 2;
+
+pub fn normalize_agents_probe_interval(secs: u64) -> u64 {
+    if AGENTS_PROBE_INTERVAL_OPTIONS.contains(&secs) {
+        secs
+    } else {
+        DEFAULT_AGENTS_PROBE_INTERVAL
+    }
+}
+
+pub fn agents_probe_interval_label(secs: u64) -> &'static str {
+    match normalize_agents_probe_interval(secs) {
+        1 => "1s (fast)",
+        2 => "2s (normal)",
+        5 => "5s (slow)",
+        10 => "10s (very slow)",
+        _ => "2s (normal)",
+    }
+}
 
 pub fn normalize_frame_rate_limit(fps: u16) -> u16 {
     if FRAME_RATE_LIMIT_OPTIONS.contains(&fps) {
@@ -1056,6 +1079,9 @@ pub struct AppState {
     pub sidebar_width: u16,
     pub sidebar_height: u16,
     pub frame_rate_limit: u16,
+    /// How often the Agents tab probes (seconds). Drives the refresh cadence
+    /// while that tab is active; see `App`'s run loop.
+    pub agents_probe_interval_secs: u64,
     pub show_borders: bool,
     /// Active sidebar tab. `Projects` lists tmux sessions; `Agents` lists
     /// detected agents as the primary list. Persisted to config. Agent
@@ -1249,6 +1275,7 @@ impl AppState {
             sidebar_width,
             sidebar_height,
             frame_rate_limit: normalize_frame_rate_limit(frame_rate_limit),
+            agents_probe_interval_secs: DEFAULT_AGENTS_PROBE_INTERVAL,
             show_borders,
             sidebar_tab,
             agent_focused: 0,
@@ -1318,6 +1345,17 @@ impl AppState {
         let len = FRAME_RATE_LIMIT_OPTIONS.len() as i32;
         let next = (pos as i32 + direction).rem_euclid(len) as usize;
         self.frame_rate_limit = FRAME_RATE_LIMIT_OPTIONS[next];
+    }
+
+    pub fn cycle_agents_probe_interval(&mut self, direction: i32) {
+        let current = normalize_agents_probe_interval(self.agents_probe_interval_secs);
+        let pos = AGENTS_PROBE_INTERVAL_OPTIONS
+            .iter()
+            .position(|&s| s == current)
+            .unwrap_or(1);
+        let len = AGENTS_PROBE_INTERVAL_OPTIONS.len() as i32;
+        let next = (pos as i32 + direction).rem_euclid(len) as usize;
+        self.agents_probe_interval_secs = AGENTS_PROBE_INTERVAL_OPTIONS[next];
     }
 
     pub fn banner_upgrade_at(&self, col: u16, row: u16) -> bool {

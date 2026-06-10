@@ -675,3 +675,21 @@ fn section_key_of_focus_maps_local_and_remote() {
     assert_eq!(state.section_key_of_focus(1), None); // local
     assert_eq!(state.section_key_of_focus(2), Some("h1".to_string())); // remote
 }
+
+#[test]
+fn agents_probe_interval_cycles_and_labels() {
+    assert_eq!(normalize_agents_probe_interval(3), DEFAULT_AGENTS_PROBE_INTERVAL);
+    assert_eq!(agents_probe_interval_label(1), "1s (fast)");
+    assert_eq!(agents_probe_interval_label(10), "10s (very slow)");
+
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.agents_probe_interval_secs = 2;
+    state.cycle_agents_probe_interval(1);
+    assert_eq!(state.agents_probe_interval_secs, 5);
+    state.cycle_agents_probe_interval(-1);
+    assert_eq!(state.agents_probe_interval_secs, 2);
+    // Wraps at the ends.
+    state.agents_probe_interval_secs = 1;
+    state.cycle_agents_probe_interval(-1);
+    assert_eq!(state.agents_probe_interval_secs, 10);
+}

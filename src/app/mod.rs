@@ -258,6 +258,8 @@ impl App {
         state.summary_prompt = cfg.summary_prompt.clone();
         state.summary_model = cfg.summary_model.clone();
         state.summary_language = cfg.summary_language.clone();
+        state.agents_probe_interval_secs =
+            crate::state::normalize_agents_probe_interval(cfg.agents_probe_interval);
         state.set_summary_height(cfg.summary_height);
 
         let remotes: Vec<String> = cfg.remotes.iter().map(|r| r.host.clone()).collect();
@@ -736,7 +738,15 @@ impl App {
                 force_render = true;
             }
 
-            if last_refresh.elapsed() >= REFRESH_INTERVAL {
+            // The Agents tab drives the cadence at its configured probe
+            // interval (probing every tick there is expensive, esp. remote);
+            // the Projects tab keeps the snappy 1s session refresh.
+            let refresh_interval = if self.state.agents_tab_active() {
+                Duration::from_secs(self.state.agents_probe_interval_secs.max(1))
+            } else {
+                REFRESH_INTERVAL
+            };
+            if last_refresh.elapsed() >= refresh_interval {
                 if self.suppress_next_periodic_refresh {
                     self.suppress_next_periodic_refresh = false;
                 } else {

@@ -32,6 +32,7 @@ impl App {
             summary_model: self.state.summary_model.clone(),
             summary_height: self.state.summary_height,
             summary_language: self.state.summary_language.clone(),
+            agents_probe_interval: self.state.agents_probe_interval_secs,
         }
         .save();
     }

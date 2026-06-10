@@ -166,4 +166,6 @@ pub struct SettingsView<'a> {
     pub summary_language: &'a str,
     /// When `Some`, the language input box is open over the settings page.
     pub summary_lang_input: Option<&'a ratatui_textarea::TextArea<'static>>,
+    /// Agents-tab probe interval, in seconds.
+    pub agents_probe_interval: u64,
 }

@@ -37,7 +37,7 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
         (
             "Theme",
             settings.theme_name.to_string(),
-            "Enter opens the theme list",
+            "Left/right opens the theme list",
         ),
         (
             "Layout",
@@ -72,12 +72,12 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
         (
             "Exclude",
             format!("{} patterns", settings.exclude_count),
-            "Enter opens the pattern editor",
+            "Left/right opens the pattern editor",
         ),
         (
             "Keybindings",
             "View".to_string(),
-            "Enter shows current key bindings",
+            "Left/right shows current key bindings",
         ),
         (
             "Update check",
@@ -93,6 +93,11 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
             "Summary lang",
             settings.summary_language.to_string(),
             "Left/right cycles the generated summary's language",
+        ),
+        (
+            "Agents probe",
+            crate::state::agents_probe_interval_label(settings.agents_probe_interval).to_string(),
+            "Left/right cycles how often the Agents tab probes",
         ),
     ];
 

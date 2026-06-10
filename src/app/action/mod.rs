@@ -60,6 +60,8 @@ pub enum Action {
     SummaryLanguageCancel,
     ToggleViewMode,
     CycleFrameRateLimit(i32),
+    /// Cycle the Agents-tab probe interval (settings, left/right).
+    CycleAgentsProbeInterval(i32),
     /// Collapse/expand a sidebar group (Expanded view only). `None` is the
     /// `@local` group; `Some(host)` is a remote `@host` group. Fired by a
     /// divider click or the section-toggle keybinding.

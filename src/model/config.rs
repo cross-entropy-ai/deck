@@ -172,6 +172,14 @@ pub struct Config {
     /// to the prompt. Set from the settings page.
     #[serde(default)]
     pub summary_language: String,
+    /// How often the Agents tab probes for agents and their status, in
+    /// seconds (one of 1/2/5/10). Set from the settings page.
+    #[serde(default = "default_agents_probe_interval")]
+    pub agents_probe_interval: u64,
+}
+
+fn default_agents_probe_interval() -> u64 {
+    crate::state::DEFAULT_AGENTS_PROBE_INTERVAL
 }
 
 fn default_summary_model() -> String {
@@ -206,6 +214,7 @@ impl Default for Config {
             summary_model: default_summary_model(),
             summary_height: default_summary_height(),
             summary_language: String::new(),
+            agents_probe_interval: default_agents_probe_interval(),
         }
     }
 }

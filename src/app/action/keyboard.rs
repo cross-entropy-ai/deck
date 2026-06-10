@@ -180,14 +180,14 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 }
 
 fn settings_key_to_action(key: &KeyEvent) -> Action {
+    // Adjust/toggle/open is left/right only — Enter and Space deliberately
+    // do nothing, so a stray Enter never flips a setting or opens an editor.
     match key.code {
         KeyCode::Esc => Action::CloseSettings,
         KeyCode::Char('j') | KeyCode::Down => Action::SettingsNext,
         KeyCode::Char('k') | KeyCode::Up => Action::SettingsPrev,
         KeyCode::Char('h') | KeyCode::Left => Action::SettingsAdjustPrev,
-        KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
-            Action::SettingsAdjust
-        }
+        KeyCode::Char('l') | KeyCode::Right => Action::SettingsAdjust,
         _ => Action::None,
     }
 }
