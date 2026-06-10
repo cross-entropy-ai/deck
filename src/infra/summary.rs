@@ -23,10 +23,17 @@ pub const DEFAULT_SUMMARY_PROMPT_VERSION: u32 = 2;
 /// template missing it still works — the blocks are appended instead.
 pub const PROMPT_PLACEHOLDER: &str = "{{SESSIONS}}";
 
-/// deck's own sidebar glyph (the Projects-tab icon). A captured pane that
-/// contains it is showing a nested deck UI rather than agent output, so its
-/// buffer is omitted from the summary.
-const DECK_UI_MARKER: char = '\u{e795}';
+/// Markers that mean a captured pane is showing deck's own UI (a nested
+/// deck) rather than an agent's work: the sidebar's Projects glyph and the
+/// footer's "[$ deck v…]" version label. The footer label is plain ASCII,
+/// so it survives `capture-pane` reliably even where the glyph doesn't.
+/// Such a pane is marked nested and omitted from the summary.
+const DECK_UI_MARKERS: &[&str] = &["\u{e795}", "[$ deck v"];
+
+/// Whether a captured buffer is a nested deck UI (see `DECK_UI_MARKERS`).
+fn is_nested_deck(buffer: &str) -> bool {
+    DECK_UI_MARKERS.iter().any(|m| buffer.contains(m))
+}
 
 /// The default, user-overridable summary prompt. `{{SESSIONS}}` is filled
 /// with one `<session id="…">…</session>` block per agent pane.
@@ -103,11 +110,11 @@ pub fn generate(
                 Some(host) => crate::remote_tmux::capture_pane(host, &a.pane_id),
             }
             .unwrap_or_default();
-            // A pane showing deck's own sidebar glyph is a nested deck UI,
-            // not an agent's work — don't feed deck's chrome back into the
-            // summary; note it instead.
-            let content = if raw.contains(DECK_UI_MARKER) {
-                format!("[content omitted — detected deck's own UI marker '{DECK_UI_MARKER}']")
+            // A pane showing deck's own UI is a nested deck, not an agent's
+            // work — don't feed deck's chrome back into the summary; mark it
+            // nested and omit the buffer.
+            let content = if is_nested_deck(&raw) {
+                "[content omitted — nested deck UI detected]".to_string()
             } else {
                 raw
             };

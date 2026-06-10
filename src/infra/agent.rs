@@ -111,14 +111,16 @@ impl StatusClassifier for UnknownClassifier {
     }
 }
 
-/// Claude Code's pane states are read off its status line:
-/// - while a turn runs, the footer shows a working spinner like
-///   "Cogitating… (12s · esc to interrupt)" — the tell is `ing… (` →
-///   `Working` (red);
-/// - a permission/confirmation dialog is up ("Do you want to proceed?") →
+/// Claude Code's pane is classified by reading it **bottom-up**: the lowest
+/// status-bearing line reflects the current state (lines above it are stale
+/// transcript). Per line:
+/// - a working spinner like "Cogitating… (12s · esc to interrupt)" — tell
+///   is `ing… (` → `Working` (red);
+/// - a permission/confirmation dialog ("Do you want to proceed?") →
 ///   `Waiting` (yellow), the user's input is needed;
-/// - otherwise it's sitting idle at the prompt → `Idle` (green);
-/// - an empty capture → `Unknown` (gray).
+/// - a finished-turn summary "…ed for <number>…" (e.g. "Cogitated for 5s")
+///   → `Idle` (green), the task is done;
+/// - nothing recognized → idle at the prompt; an empty capture → `Unknown`.
 pub struct ClaudeClassifier;
 
 /// Substring that marks an in-flight turn: Claude Code's "<verb>ing… ("
@@ -128,20 +130,34 @@ const CLAUDE_WORKING_MARKER: &str = "ing\u{2026} (";
 /// Markers of a permission/confirmation dialog awaiting the user's choice.
 const CLAUDE_WAITING_MARKERS: &[&str] = &["do you want", "\u{276f} 1."];
 
+/// A finished-turn summary line: "…ed for <number>…" (the past-tense verb
+/// Claude Code prints when a turn completes, e.g. "Cogitated for 8s").
+fn completed_line(lower: &str) -> bool {
+    lower.match_indices("ed for ").any(|(i, m)| {
+        lower[i + m.len()..]
+            .trim_start()
+            .starts_with(|c: char| c.is_ascii_digit())
+    })
+}
+
 impl StatusClassifier for ClaudeClassifier {
     fn classify(&self, pane: &PaneSnapshot) -> AgentStatus {
-        let buf = pane.buffer.trim();
-        if buf.is_empty() {
+        if pane.buffer.trim().is_empty() {
             return AgentStatus::Unknown;
         }
-        let lower = buf.to_ascii_lowercase();
-        if lower.contains(CLAUDE_WORKING_MARKER) {
-            return AgentStatus::Working;
+        for line in pane.buffer.lines().rev() {
+            let lower = line.to_ascii_lowercase();
+            if lower.contains(CLAUDE_WORKING_MARKER) {
+                return AgentStatus::Working;
+            }
+            if CLAUDE_WAITING_MARKERS.iter().any(|m| lower.contains(m)) {
+                return AgentStatus::Waiting;
+            }
+            if completed_line(&lower) {
+                return AgentStatus::Idle;
+            }
         }
-        if CLAUDE_WAITING_MARKERS.iter().any(|m| lower.contains(m)) {
-            return AgentStatus::Waiting;
-        }
-        // Sitting at the prompt with nothing pending.
+        // No status line recognized → sitting at the prompt.
         AgentStatus::Idle
     }
 }

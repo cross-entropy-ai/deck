@@ -155,6 +155,11 @@ pub struct App {
     /// its outcome is committed only if no newer action has bumped this
     /// since — so a slow ssh focus can't clobber a later user action.
     focus_seq: u64,
+    /// The tmux session deck is running inside (`$TMUX_PANE` → session), or
+    /// `None` when not under tmux. Switching the main pane to it would nest
+    /// tmux→deck→tmux, so that switch is blocked with a warning instead.
+    /// Resolved once at startup.
+    own_session: Option<String>,
     /// Set when selecting a synthetic remote placeholder. The next periodic
     /// refresh tick is skipped so landing on "(no sessions)" doesn't
     /// immediately force a global session refresh; explicit refresh-causing
@@ -322,6 +327,7 @@ impl App {
             summary_tx,
             summary_rx,
             focus_seq: 0,
+            own_session: tmux::own_session(),
             suppress_next_periodic_refresh: false,
         };
 

@@ -742,6 +742,20 @@ impl App {
     }
 
     fn switch_to_session_if_safe(&mut self, session: &str) -> bool {
+        // Opening the session deck itself runs in would nest tmux inside
+        // deck inside tmux. Pop a warning over the main pane instead of
+        // switching; navigating to any other session clears it.
+        if self.own_session.as_deref() == Some(session) {
+            self.warning_state = Some(crate::state::WarningState::Proactive {
+                text: "Can't open deck's own session here",
+                detail: format!(
+                    "'{session}' is the tmux session deck is running in — opening it \
+                     in this pane would nest tmux inside deck inside tmux. Switch to \
+                     it directly from your terminal instead."
+                ),
+            });
+            return false;
+        }
         self.warning_state = None;
         self.switch_client(session);
         true

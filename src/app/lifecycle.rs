@@ -16,7 +16,8 @@ impl App {
 
     pub(super) fn ensure_attach_target(attach_override: Option<&str>) -> Option<String> {
         let sessions = tmux::list_sessions();
-        if let Some(name) = Self::pick_attach_target(attach_override, &sessions) {
+        let own = tmux::own_session();
+        if let Some(name) = Self::pick_attach_target(attach_override, &sessions, own.as_deref()) {
             return Some(name);
         }
 
@@ -38,17 +39,22 @@ impl App {
     pub(super) fn pick_attach_target(
         attach_override: Option<&str>,
         sessions: &[tmux::SessionInfo],
+        own_session: Option<&str>,
     ) -> Option<String> {
+        // An explicit override wins even if it names deck's own session —
+        // that's the user's deliberate choice.
         if let Some(name) = attach_override {
             if sessions.iter().any(|s| s.name == name) {
                 return Some(name.to_string());
             }
         }
-        // Pick the most recently active session that isn't hidden
-        // (names starting with '_' are internal/scratch sessions).
+        // Pick the most recently active session that isn't hidden (names
+        // starting with '_' are internal/scratch) and isn't deck's own
+        // session (attaching to it would nest tmux→deck→tmux).
         sessions
             .iter()
             .filter(|session| !session.name.starts_with('_'))
+            .filter(|session| Some(session.name.as_str()) != own_session)
             .max_by_key(|session| session.activity)
             .map(|session| session.name.clone())
     }

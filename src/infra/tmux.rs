@@ -119,6 +119,21 @@ fn latest_window_activity_with(runner: &dyn CommandRunner) -> HashMap<String, u6
     parse_window_activity(&raw)
 }
 
+/// The tmux session deck itself is running inside, if any — resolved from
+/// `$TMUX_PANE` (the pane id tmux exports to the process it launched).
+/// `None` when deck isn't running under tmux. deck excludes this session
+/// from the sidebar and never attaches to it, so a deck launched inside
+/// tmux can't load the very session it lives in (infinite tmux→deck→tmux
+/// nesting).
+pub fn own_session() -> Option<String> {
+    let pane = std::env::var("TMUX_PANE").ok()?;
+    if pane.trim().is_empty() {
+        return None;
+    }
+    tmux(&["display-message", "-p", "-t", pane.trim(), "#{session_name}"])
+        .filter(|s| !s.is_empty())
+}
+
 /// Get the current session name (from the first attached client).
 pub fn current_session() -> Option<String> {
     tmux(&["display-message", "-p", "#{session_name}"])

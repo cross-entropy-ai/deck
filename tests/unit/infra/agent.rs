@@ -173,6 +173,11 @@ fn claude_classifier_reads_traffic_light_from_buffer() {
     let prompt = "Do you want to proceed?\n❯ 1. Yes\n  2. No";
     assert_eq!(classify_status(AgentKind::Claude, prompt), AgentStatus::Waiting);
 
+    // A finished turn ("…ed for <n>") below a stale spinner reads as idle —
+    // bottom-up wins.
+    let done = "✶ Cogitating… (3s · esc to interrupt)\n● Done\n✶ Cogitated for 8s";
+    assert_eq!(classify_status(AgentKind::Claude, done), AgentStatus::Idle);
+
     // Empty capture → unknown.
     assert_eq!(classify_status(AgentKind::Claude, "   "), AgentStatus::Unknown);
 }
