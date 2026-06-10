@@ -1479,9 +1479,14 @@ impl AppState {
         }
     }
 
-    /// Height of the sidebar footer in rows, mirroring what `draw_sidebar`
-    /// allocates. Kept on AppState so mouse hit-testing doesn't drift
-    /// from the renderer when plugins or the update banner change it.
+    /// Height of the sidebar footer in rows. Must equal the renderer's
+    /// `footer_height` in `draw_sidebar` (`ui::sidebar`): `2` fixed rows —
+    /// the top separator + the menu/version line — plus the update banner
+    /// (when shown) plus the plugin block. Kept on AppState so mouse
+    /// hit-testing doesn't drift from the renderer; the two formulas must
+    /// change together. (Until this was fixed it used `3`, one too many,
+    /// so the bottom visible session row was click-dead — Phase 1 collapses
+    /// the two into a single source.)
     pub fn sidebar_footer_height(&self) -> u16 {
         let b = if self.show_borders { 2u16 } else { 0 };
         let content_width = match self.layout_mode {
@@ -1489,7 +1494,7 @@ impl AppState {
             LayoutMode::Vertical => self.term_width.saturating_sub(b),
         };
         let banner_visible = self.update_available.is_some() && content_width >= BANNER_MIN_WIDTH;
-        3 + banner_visible as u16 + plugin_block_rows(self.plugins.len())
+        2 + banner_visible as u16 + plugin_block_rows(self.plugins.len())
     }
 
     /// Resolve a screen row inside the sidebar's scrollable session area

@@ -322,6 +322,28 @@ fn is_divider_at_row_detects_header_not_session() {
 }
 
 #[test]
+fn sidebar_footer_height_matches_renderer() {
+    // The renderer (ui::sidebar::draw_sidebar) lays the footer out as
+    // `2 + banner + plugins`; the hit-tester must agree or the bottom
+    // visible session row goes click-dead. This locks the two fixed rows
+    // (the separator + the menu/version line) — it used to be 3.
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    assert_eq!(
+        state.sidebar_footer_height(),
+        2,
+        "no plugins, no banner: just the separator + menu rows"
+    );
+    // The update banner adds exactly one row, matching the renderer.
+    state.update_available = Some(UpdateStatus {
+        latest_version: "9.9.9".to_string(),
+        current_version: "0.0.0".to_string(),
+        release_url: String::new(),
+        checked_at: 0,
+    });
+    assert_eq!(state.sidebar_footer_height(), 3);
+}
+
+#[test]
 fn local_divider_menu_greys_remote_only_items() {
     use crate::state::{ContextMenu, MenuKind};
     let menu = ContextMenu {
