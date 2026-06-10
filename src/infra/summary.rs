@@ -144,16 +144,34 @@ pub fn generate(
     result
 }
 
-/// Directory holding one log file per summary generation. Kept under
-/// `/tmp` (present on macOS and Linux) so it's easy to find and self-cleans
-/// on reboot.
+/// Directory holding one debug log per summary generation, when logging is
+/// enabled (see `write_log`). Under `~/.cache/deck/` — not `/tmp` — because
+/// these files embed each captured pane buffer (which can hold tokens or
+/// other on-screen secrets) and must not sit world-readable in a shared
+/// temp dir.
 pub fn log_dir() -> PathBuf {
-    PathBuf::from("/tmp/deck-summary")
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home)
+        .join(".cache")
+        .join("deck")
+        .join("summary")
 }
+
+/// Summary logging is opt-in via the `DECK_SUMMARY_LOG` env var, because the
+/// record embeds captured pane buffers. Any value (even empty) enables it.
+fn summary_logging_enabled() -> bool {
+    std::env::var_os("DECK_SUMMARY_LOG").is_some()
+}
+
+/// Max debug logs to retain; older entries are pruned on each write.
+const MAX_SUMMARY_LOGS: usize = 20;
 
 /// Append a record of one generation: timestamp, deck version, model, the
 /// sessions captured, the full input prompt, and the response (or error).
-/// Best-effort — all IO failures are swallowed.
+///
+/// Logging is **opt-in** (`DECK_SUMMARY_LOG`) because the record embeds each
+/// captured pane buffer; when enabled, entries go under `~/.cache/deck/`
+/// owner-only and are capped. Best-effort — all IO failures are swallowed.
 fn write_log(
     agents: &[AgentPane],
     model: &str,
@@ -161,10 +179,6 @@ fn write_log(
     result: &Result<String, String>,
     started: SystemTime,
 ) {
-    let dir = log_dir();
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
     let now = SystemTime::now();
     let millis = now
         .duration_since(UNIX_EPOCH)
@@ -208,8 +222,75 @@ fn write_log(
         count = agents.len(),
     );
 
+    write_log_entry(&log_dir(), summary_logging_enabled(), millis, &body);
+}
+
+/// Write one log entry under `dir` (owner-only) and prune old entries — but
+/// only when `enabled`. Split out so the gating, perms, and pruning are
+/// testable without touching env vars or `$HOME`.
+fn write_log_entry(dir: &std::path::Path, enabled: bool, millis: u128, body: &str) {
+    if !enabled {
+        return;
+    }
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    // Restrict the directory to the owner (0700). Best-effort.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
     let path = dir.join(format!("summary-{millis}.md"));
-    let _ = std::fs::write(path, body);
+    if write_owner_only(&path, body).is_err() {
+        return;
+    }
+    prune_logs(dir, MAX_SUMMARY_LOGS);
+}
+
+/// Create `path` mode 0600 and write `body`, so the captured buffers are
+/// owner-readable only (closes the world-readable `/tmp` hole).
+#[cfg(unix)]
+fn write_owner_only(path: &std::path::Path, body: &str) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(body.as_bytes())
+}
+
+#[cfg(not(unix))]
+fn write_owner_only(path: &std::path::Path, body: &str) -> std::io::Result<()> {
+    std::fs::write(path, body)
+}
+
+/// Keep only the newest `keep` `summary-*.md` entries in `dir`, deleting the
+/// rest. Filenames embed a monotonic, constant-width millis counter, so
+/// lexicographic order is chronological — no `metadata()` calls needed.
+fn prune_logs(dir: &std::path::Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("summary-") && n.ends_with(".md"))
+        })
+        .collect();
+    if files.len() <= keep {
+        return;
+    }
+    files.sort();
+    let remove = files.len() - keep;
+    for p in files.into_iter().take(remove) {
+        let _ = std::fs::remove_file(p);
+    }
 }
 
 /// Splice the rendered `<session>` blocks into `template` at

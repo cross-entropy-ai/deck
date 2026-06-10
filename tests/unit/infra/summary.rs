@@ -56,3 +56,65 @@ fn language_label_shows_default_for_empty() {
     assert_eq!(language_label(""), "Default");
     assert_eq!(language_label("中文"), "中文");
 }
+
+#[test]
+fn log_dir_is_under_home_cache_not_tmp() {
+    // The dump embeds captured pane buffers; it must not live in a shared,
+    // world-readable /tmp dir.
+    let dir = log_dir();
+    assert!(
+        dir.ends_with(".cache/deck/summary"),
+        "expected ~/.cache/deck/summary, got {dir:?}"
+    );
+    assert!(!dir.starts_with("/tmp"), "must not be under /tmp: {dir:?}");
+}
+
+#[test]
+fn write_log_entry_disabled_writes_nothing() {
+    let dir =
+        std::env::temp_dir().join(format!("deck-summary-test-off-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    write_log_entry(&dir, false, 1, "secret pane contents");
+    assert!(
+        !dir.exists(),
+        "logging disabled must not create the dir or write a file"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn write_log_entry_enabled_is_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir =
+        std::env::temp_dir().join(format!("deck-summary-test-perm-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    write_log_entry(&dir, true, 42, "body");
+    let file = dir.join("summary-42.md");
+    assert!(file.exists(), "enabled logging should write the entry");
+    let fmode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+    assert_eq!(fmode, 0o600, "log file must be owner read/write only");
+    let dmode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+    assert_eq!(dmode, 0o700, "log dir must be owner-only");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn prune_logs_keeps_newest_n() {
+    let dir =
+        std::env::temp_dir().join(format!("deck-summary-test-prune-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for i in 1000..1025 {
+        std::fs::write(dir.join(format!("summary-{i}.md")), "x").unwrap();
+    }
+    prune_logs(&dir, 20);
+    let names: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(names.len(), 20, "should retain exactly 20");
+    assert!(names.contains(&"summary-1024.md".to_string()), "keeps newest");
+    assert!(!names.contains(&"summary-1000.md".to_string()), "drops oldest");
+    let _ = std::fs::remove_dir_all(&dir);
+}
