@@ -81,8 +81,13 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
     match cmd {
         Command::ToggleSection => {
             // Toggle the group the focused row lives in. Only meaningful in
-            // Expanded view (the reducer/layout no-op the collapse elsewhere).
-            Action::ToggleSection(state.section_key_of_focus(state.focused))
+            // Expanded view on the Projects tab (the Agents tab has no
+            // collapsible groups).
+            if state.agents_tab_active() {
+                Action::None
+            } else {
+                Action::ToggleSection(state.section_key_of_focus(state.focused))
+            }
         }
         Command::FocusNext => Action::FocusNext,
         Command::FocusPrev => Action::FocusPrev,
@@ -95,6 +100,7 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
         Command::ToggleBorders => Action::ToggleBorders,
         Command::ToggleLayout => Action::ToggleLayout,
         Command::ToggleViewMode => Action::ToggleViewMode,
+        Command::ToggleSidebarTab => Action::ToggleSidebarTab,
         Command::ToggleHelp => Action::ToggleHelp,
         Command::FocusMain => Action::SetFocusMain,
         Command::Quit => Action::Quit,
@@ -141,9 +147,12 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     }
 
     if key.code == KeyCode::Char('f') {
-        if let Some(target) = state.focus_target() {
-            if let Some(SessionTargetRef::Remote(r)) = state.session_target(target) {
-                return Action::OpenPortForward(r.host.clone());
+        // Port-forward is a per-host/session action — Projects tab only.
+        if !state.agents_tab_active() {
+            if let Some(target) = state.focus_target() {
+                if let Some(SessionTargetRef::Remote(r)) = state.session_target(target) {
+                    return Action::OpenPortForward(r.host.clone());
+                }
             }
         }
         return Action::None;

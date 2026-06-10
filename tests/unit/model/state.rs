@@ -20,7 +20,7 @@ fn make_state(
         layout_mode,
         ViewMode::Expanded,
         show_borders,
-        true,
+        SidebarTab::Projects,
         28,
         SIDEBAR_HEIGHT,
         5,
@@ -87,22 +87,62 @@ fn sidebar_header_status_reflects_host_reachability() {
 }
 
 #[test]
-fn agent_footers_carry_section_host() {
+fn agent_rows_ordered_local_then_hosts() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.remote_sessions = vec![remote_row("h1", false, false)];
     state.recompute_filter();
-    let layout = state.sidebar_layout(ViewMode::Expanded);
+    state.agents.insert(None, vec![detected("local", "%1")]);
+    state
+        .agents
+        .insert(Some("h1".into()), vec![detected("h1s", "%2")]);
 
-    // Footers appear in section order: local (`None`) then each host.
-    let hosts: Vec<Option<String>> = layout
+    // Agent rows appear in section order: local (`None`) then each host.
+    let hosts: Vec<Option<String>> = state.agent_rows().iter().map(|r| r.host.clone()).collect();
+    assert_eq!(hosts, vec![None, Some("h1".to_string())]);
+}
+
+#[test]
+fn agents_layout_groups_agents_under_host_dividers() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.sidebar_tab = SidebarTab::Agents;
+    state.remote_sessions = vec![remote_row("h1", false, false)];
+    state.recompute_filter();
+    state.agents.insert(None, vec![detected("local", "%1")]);
+    state
+        .agents
+        .insert(Some("h1".into()), vec![detected("h1s", "%2")]);
+
+    let layout = state.agents_layout();
+    // Two focusable Agent rows, indexed 0 and 1 in agent_rows order.
+    let agent_idxs: Vec<usize> = layout
         .items()
         .iter()
         .filter_map(|i| match &i.data {
-            SidebarItemData::AgentCount { host, .. } => Some(host.clone()),
+            SidebarItemData::Agent { row_idx } => Some(*row_idx),
             _ => None,
         })
         .collect();
-    assert_eq!(hosts, vec![None, Some("h1".to_string())]);
+    assert_eq!(agent_idxs, vec![0, 1]);
+    // Focusable count on the Agents tab is the agent count, not sessions.
+    assert_eq!(state.focusable_count(), 2);
+}
+
+#[test]
+fn agents_layout_shows_placeholder_for_empty_section() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.sidebar_tab = SidebarTab::Agents;
+    // Local probed but empty -> "no agents"; never probed -> "detecting".
+    state.agents.insert(None, vec![]);
+    let layout = state.agents_layout();
+    let placeholders: Vec<bool> = layout
+        .items()
+        .iter()
+        .filter_map(|i| match &i.data {
+            SidebarItemData::AgentsPlaceholder { detecting } => Some(*detecting),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(placeholders, vec![false]);
 }
 
 fn detected(session: &str, pane_id: &str) -> crate::agent::DetectedAgent {
@@ -550,36 +590,21 @@ fn confirm_kill_name_none_when_not_pending() {
 }
 
 #[test]
-fn collapsed_local_group_hides_rows_and_omits_footer() {
+fn collapsed_local_group_hides_rows() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    // show_agents is true in make_state, so an expanded local group has a
-    // footer. Collapse it and the footer must disappear; its rows are hidden
-    // (zero effective height) by the widget.
     state.collapsed_sections.insert(None);
     let layout = state.sidebar_layout(ViewMode::Expanded);
 
     assert!(layout.is_collapsible());
-    // No AgentCount footer for the collapsed local group.
-    let local_footer = layout
-        .items()
-        .iter()
-        .any(|i| matches!(&i.data, SidebarItemData::AgentCount { host: None, .. }));
-    assert!(!local_footer, "collapsed local group must omit its footer");
-
     // The local header is collapsed; its rows (idx 0,1) are hidden.
     assert!(layout.is_row_hidden(0));
     assert!(layout.is_row_hidden(1));
 }
 
 #[test]
-fn expanded_local_group_keeps_footer_and_shows_rows() {
+fn expanded_local_group_shows_rows() {
     let state = make_state(LayoutMode::Horizontal, false, 80, 24);
     let layout = state.sidebar_layout(ViewMode::Expanded);
-    let local_footer = layout
-        .items()
-        .iter()
-        .any(|i| matches!(&i.data, SidebarItemData::AgentCount { host: None, .. }));
-    assert!(local_footer, "expanded local group must keep its footer");
     assert!(!layout.is_row_hidden(0));
 }
 

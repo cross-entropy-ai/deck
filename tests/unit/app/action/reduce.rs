@@ -19,7 +19,7 @@ fn make_test_state(n: usize) -> AppState {
         LayoutMode::Horizontal,
         ViewMode::Expanded,
         true,
-        true,
+        crate::state::SidebarTab::Projects,
         28,
         crate::state::SIDEBAR_HEIGHT,
         5,
@@ -1283,4 +1283,122 @@ fn toggle_section_expands_back() {
     let fx = apply_action(&mut state, Action::ToggleSection(None));
     assert!(!state.collapsed_sections.contains(&None));
     assert!(fx.has_save_config());
+}
+
+#[cfg(test)]
+mod agents_tab {
+    use super::*;
+    use crate::state::{Effect, SidebarTab};
+
+    fn agent(session: &str, pane_id: &str) -> crate::agent::DetectedAgent {
+        crate::agent::DetectedAgent {
+            kind: crate::agent::AgentKind::Claude,
+            session: session.to_string(),
+            window: "1".to_string(),
+            pane: "0".to_string(),
+            pane_id: pane_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn toggle_switches_tab_and_refreshes_on_agents() {
+        let mut state = make_test_state(3);
+        let fx = apply_action(&mut state, Action::ToggleSidebarTab);
+        assert_eq!(state.sidebar_tab, SidebarTab::Agents);
+        // Arriving on Agents kicks a refresh so detection starts at once.
+        assert!(fx.has_refresh_sessions());
+        assert!(fx.has_save_config());
+
+        let fx = apply_action(&mut state, Action::ToggleSidebarTab);
+        assert_eq!(state.sidebar_tab, SidebarTab::Projects);
+        assert!(!fx.has_refresh_sessions());
+    }
+
+    #[test]
+    fn entering_agents_syncs_right_pane_to_focused_agent() {
+        let mut state = make_test_state(3);
+        state.agents.insert(None, vec![agent("a", "%1"), agent("b", "%2")]);
+        // Opening the tab switches the right pane to the focused agent so
+        // the panel highlight and the active pane agree immediately.
+        let fx = apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
+        let switched = fx
+            .effects()
+            .iter()
+            .any(|e| matches!(e, Effect::SwitchAgentPane(t) if t.pane_id == "%1"));
+        assert!(switched);
+    }
+
+    #[test]
+    fn entering_agents_restores_cursor_onto_active_agent() {
+        let mut state = make_test_state(3);
+        state.agents.insert(None, vec![agent("a", "%1"), agent("b", "%2")]);
+        // An agent was active from a prior switch; returning to the tab
+        // puts the cursor back on it rather than resetting to row 0.
+        state.active_agent = Some(crate::state::AgentTarget {
+            host: None,
+            session: "b".into(),
+            pane_id: "%2".into(),
+        });
+        apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
+        assert_eq!(state.agent_focused, 1);
+    }
+
+    #[test]
+    fn select_same_tab_is_noop() {
+        let mut state = make_test_state(3);
+        let fx = apply_action(&mut state, Action::SelectTab(SidebarTab::Projects));
+        assert_eq!(state.sidebar_tab, SidebarTab::Projects);
+        assert!(!fx.has_save_config());
+    }
+
+    #[test]
+    fn cursor_is_per_tab() {
+        let mut state = make_test_state(3);
+        state.agents.insert(None, vec![agent("a", "%1"), agent("b", "%2")]);
+        state.focused = 2; // Projects cursor
+
+        apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
+        // Agents cursor is independent and starts at 0.
+        assert_eq!(state.cursor(), 0);
+        apply_action(&mut state, Action::FocusNext);
+        assert_eq!(state.agent_focused, 1);
+        assert_eq!(state.focused, 2, "Projects cursor untouched");
+    }
+
+    #[test]
+    fn navigate_on_agents_follows_cursor() {
+        let mut state = make_test_state(3);
+        state.agents.insert(None, vec![agent("a", "%1"), agent("b", "%2")]);
+        apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
+        // Moving the cursor switches the right pane to follow it, the same
+        // way the Projects tab does — so the highlight stays consistent.
+        let fx = apply_action(&mut state, Action::FocusNext);
+        let switched = fx
+            .effects()
+            .iter()
+            .any(|e| matches!(e, Effect::SwitchAgentPane(t) if t.pane_id == "%2"));
+        assert!(switched);
+    }
+
+    #[test]
+    fn enter_on_agents_switches_to_pane() {
+        let mut state = make_test_state(3);
+        state.agents.insert(None, vec![agent("a", "%1"), agent("b", "%2")]);
+        apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
+        apply_action(&mut state, Action::FocusNext); // cursor -> row 1 (%2)
+        let fx = apply_action(&mut state, Action::SwitchProject);
+        let switched = fx.effects().iter().any(|e| {
+            matches!(e, Effect::SwitchAgentPane(t) if t.pane_id == "%2" && t.host.is_none())
+        });
+        assert!(switched, "Enter on Agents tab focuses the agent's pane");
+    }
+
+    #[test]
+    fn kill_is_suppressed_on_agents() {
+        let mut state = make_test_state(3);
+        state.agents.insert(None, vec![agent("a", "%1")]);
+        apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
+        apply_action(&mut state, Action::KillSession);
+        assert!(!state.overlay.confirm_kill, "no kill prompt on the Agents tab");
+    }
 }

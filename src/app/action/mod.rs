@@ -30,8 +30,10 @@ pub enum Action {
 
     ToggleLayout,
     ToggleBorders,
-    /// Flip the "Show Agents" checkbox in the sidebar header (clicked).
-    ToggleShowAgents,
+    /// Switch the sidebar to a specific tab (clicked tab label).
+    SelectTab(crate::state::SidebarTab),
+    /// Toggle between the Projects and Agents sidebar tabs (keybinding).
+    ToggleSidebarTab,
     ToggleViewMode,
     CycleFrameRateLimit(i32),
     /// Collapse/expand a sidebar group (Expanded view only). `None` is the

@@ -17,15 +17,6 @@ pub enum AgentKind {
     Codex,
 }
 
-impl AgentKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            AgentKind::Claude => "claude",
-            AgentKind::Codex => "codex",
-        }
-    }
-}
-
 /// One tmux pane's identity, fed to `detect_agents`. `session`/`window`/
 /// `pane` are display fields (`session_name`, `window_index`,
 /// `pane_index`); `pane_id` is the stable `%N` handle used for switching

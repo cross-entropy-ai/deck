@@ -656,7 +656,7 @@ impl App {
 
     /// Commit a focus result — local or remote, same path: point
     /// `active_remote` at the target's host (`None` = local) and show the
-    /// main pane. `exact` highlights the agent footer line (we focused its
+    /// main pane. `exact` highlights the agent row (we focused its
     /// exact pane); `!exact` is a session-only switch — Deck's client moved
     /// to the agent's session but its window/pane was deliberately not
     /// selected (another client shares the session), so we leave
@@ -681,6 +681,10 @@ impl App {
         {
             self.state.focused = idx;
         }
+        // On the Agents tab, also move that tab's cursor onto the agent.
+        if let Some(idx) = self.state.agent_row_index_for(&target) {
+            self.state.agent_focused = idx;
+        }
         self.active_remote = target.host.clone();
         self.state.active_agent = exact.then_some(target);
         self.state.focus_mode = FocusMode::Main;
@@ -702,6 +706,9 @@ impl App {
                 }
                 Effect::SwitchRemote(req) => {
                     self.switch_to_remote(&req.host, &req.name);
+                }
+                Effect::SwitchAgentPane(target) => {
+                    self.switch_to_agent_pane(target.clone());
                 }
                 Effect::ShowRemotePlaceholder(host) => {
                     if self
@@ -892,7 +899,7 @@ impl App {
         self.state.theme_index = new_theme_index;
         self.state.layout_mode = cfg.layout;
         self.state.show_borders = cfg.show_borders;
-        self.state.show_agents = cfg.show_agents;
+        self.state.sidebar_tab = cfg.sidebar_tab;
         self.state.view_mode = cfg.view_mode;
         self.state.frame_rate_limit =
             crate::state::normalize_frame_rate_limit(cfg.frame_rate_limit);

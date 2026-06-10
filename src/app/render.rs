@@ -38,7 +38,7 @@ impl App {
         let add_remote_overlay = s.overlay.add_remote.clone();
         let port_forward_overlay = s.overlay.port_forward.clone();
         let show_borders = s.show_borders;
-        let show_agents = s.show_agents;
+        let sidebar_tab = s.sidebar_tab;
         let layout_mode = s.layout_mode;
         let view_mode = s.view_mode;
         let sidebar_width = s.sidebar_width;
@@ -75,7 +75,7 @@ impl App {
         let mut captured_divider_hits: Vec<crate::state::DividerHit> = Vec::new();
         let mut captured_kill_hits: Option<crate::state::KillConfirmHits> = None;
         let mut captured_agent_hits: Vec<crate::state::AgentHit> = Vec::new();
-        let mut captured_agents_checkbox: Option<Rect> = None;
+        let mut captured_tab_rects: Option<(Rect, Rect)> = None;
         terminal.draw(|frame| {
             // Unified slice the sidebar consumes: local rows first
             // (flat index == filtered_pos), then remotes (flat index
@@ -164,9 +164,10 @@ impl App {
                 .map(|d| (d.as_millis() / 500) % 2 == 0)
                 .unwrap_or(true);
 
-            let layout = self.state.sidebar_layout(view_mode);
+            let layout = self.state.current_layout(view_mode);
+            let agent_rows = self.state.agent_rows();
             let focus_target = self.state.focus_target();
-            let (banner_bounds, divider_hits, kill_hits, agent_hits, agents_checkbox) =
+            let (banner_bounds, divider_hits, kill_hits, agent_hits, tab_rects) =
                 ui::draw_sidebar(
                     frame,
                     sidebar_area,
@@ -181,7 +182,8 @@ impl App {
                         confirm_kill: confirm_name.as_deref(),
                         rename_input,
                         show_borders,
-                        show_agents,
+                        sidebar_tab,
+                        agent_rows: &agent_rows,
                         tabs_mode: layout_mode == LayoutMode::Vertical,
                         view_mode,
                         plugins: &plugin_views,
@@ -195,7 +197,7 @@ impl App {
             captured_divider_hits = divider_hits;
             captured_kill_hits = kill_hits;
             captured_agent_hits = agent_hits;
-            captured_agents_checkbox = agents_checkbox;
+            captured_tab_rects = tab_rects;
 
             if let Some(gap) = gap_area {
                 let (sep_char, sep_fg) = if dragging_sep {
@@ -468,7 +470,12 @@ impl App {
         self.state.divider_hits = captured_divider_hits;
         self.state.kill_confirm_hits = captured_kill_hits;
         self.state.agent_hits = captured_agent_hits;
-        self.state.show_agents_checkbox = captured_agents_checkbox;
+        let (projects_rect, agents_rect) = match captured_tab_rects {
+            Some((p, a)) => (Some(p), Some(a)),
+            None => (None, None),
+        };
+        self.state.projects_tab_rect = projects_rect;
+        self.state.agents_tab_rect = agents_rect;
 
         Ok(())
     }

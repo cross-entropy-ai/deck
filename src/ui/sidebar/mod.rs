@@ -4,7 +4,8 @@ use ratatui::Frame;
 use crate::keybindings::Keybindings;
 use crate::layout::{plugin_block_rows, BANNER_MIN_WIDTH};
 use crate::state::{
-    AgentHit, AgentTarget, DividerHit, FocusTarget, KillConfirmHits, SidebarLayout, ViewMode,
+    AgentHit, AgentRow, AgentTarget, DividerHit, FocusTarget, KillConfirmHits, SidebarLayout,
+    SidebarTab, ViewMode,
 };
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
@@ -21,7 +22,7 @@ mod tabs;
 
 use container::draw_sidebar_container;
 use footer::{draw_footer, FooterProps};
-use header::draw_header;
+use header::{draw_header, TabRects};
 use sessions::{draw_sessions, SessionsProps};
 use tabs::{draw_sidebar_tabs, TabsProps};
 
@@ -48,7 +49,9 @@ pub struct SidebarProps<'a> {
     pub confirm_kill: Option<&'a str>,
     pub rename_input: Option<&'a TextArea<'static>>,
     pub show_borders: bool,
-    pub show_agents: bool,
+    pub sidebar_tab: SidebarTab,
+    /// Flattened agent list for the Agents tab (see `AppState::agent_rows`).
+    pub agent_rows: &'a [AgentRow],
     pub tabs_mode: bool,
     pub view_mode: ViewMode,
     pub plugins: &'a [PluginView<'a>],
@@ -67,9 +70,9 @@ struct SidebarRenderCtx<'a> {
 }
 
 // Returns the frame's clickable regions for mouse dispatch: banner
-// bounds, divider buttons, kill-prompt buttons, agent footer lines, and
-// the "Show Agents" checkbox. A struct would only add ceremony for a
-// single internal caller.
+// bounds, divider buttons, kill-prompt buttons, agent rows, and the
+// `Projects` / `Agents` tab labels. A struct would only add ceremony for
+// a single internal caller.
 #[allow(clippy::type_complexity)]
 pub fn draw_sidebar(
     frame: &mut Frame,
@@ -80,7 +83,7 @@ pub fn draw_sidebar(
     Vec<DividerHit>,
     Option<KillConfirmHits>,
     Vec<AgentHit>,
-    Option<Rect>,
+    Option<(Rect, Rect)>,
 ) {
     let ctx = SidebarRenderCtx {
         theme: props.theme,
@@ -120,7 +123,7 @@ pub fn draw_sidebar(
             );
             draw_confirm_kill(frame, content, props.theme, name)
         });
-        // Tabs mode has no "Projects" header, hence no checkbox.
+        // Vertical/tabs layout has no sidebar header, hence no tab labels.
         return (banner_bounds, Vec::new(), kill_hits, Vec::new(), None);
     }
     let content = draw_sidebar_container(
@@ -142,11 +145,15 @@ pub fn draw_sidebar(
     ])
     .areas(content);
 
-    let agents_checkbox = draw_header(
+    let TabRects {
+        projects: projects_tab,
+        agents: agents_tab,
+    } = draw_header(
         frame,
         header_area,
         props.local_count,
-        props.show_agents,
+        props.agent_rows.len(),
+        props.sidebar_tab,
         props.theme,
     );
     let mut kill_hits: Option<KillConfirmHits> = None;
@@ -170,6 +177,7 @@ pub fn draw_sidebar(
                 focus_target: props.focus_target,
                 view_mode: props.view_mode,
                 active_agent: props.active_agent,
+                agent_rows: props.agent_rows,
             },
         )
     };
@@ -193,7 +201,7 @@ pub fn draw_sidebar(
         divider_hits,
         kill_hits,
         agent_hits,
-        Some(agents_checkbox),
+        Some((projects_tab, agents_tab)),
     )
 }
 

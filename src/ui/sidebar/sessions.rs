@@ -7,8 +7,8 @@ use ratatui_sectioned_list::{layout_divider, DividerLayoutSpec};
 use unicode_width::UnicodeWidthStr;
 
 use crate::state::{
-    AgentHit, AgentTarget, DividerButton, DividerHit, FocusTarget, HostStatus, PfBadge,
-    PfBadgeColor, SidebarItemData, SidebarLayout, ViewMode, AGENT_FOOTER_GAP_ROWS,
+    AgentHit, AgentRow, AgentTarget, DividerButton, DividerHit, FocusTarget, HostStatus, PfBadge,
+    PfBadgeColor, SidebarItemData, SidebarLayout, ViewMode,
 };
 use crate::theme::Theme;
 
@@ -22,6 +22,9 @@ pub(super) struct SessionsProps<'a> {
     pub focus_target: Option<FocusTarget>,
     pub view_mode: ViewMode,
     pub active_agent: Option<&'a AgentTarget>,
+    /// Flattened agent list for the Agents tab; `Agent { row_idx }` items
+    /// index into this. Empty on the Projects tab.
+    pub agent_rows: &'a [AgentRow],
 }
 
 #[derive(Clone, Copy)]
@@ -107,65 +110,77 @@ pub(super) fn draw_sessions(
                     ));
                 }
             }
-            SidebarItemData::AgentCount { host, agents } => {
-                let count_line = match agents {
-                    Some(list) => {
-                        use crate::agent::AgentKind;
-                        let claude = list.iter().filter(|a| a.kind == AgentKind::Claude).count();
-                        let codex = list.iter().filter(|a| a.kind == AgentKind::Codex).count();
-                        format!("  claude {claude}, codex {codex}")
-                    }
-                    None => "  claude …, codex …".to_string(),
+            SidebarItemData::Agent { row_idx } => {
+                let Some(row) = props.agent_rows.get(*row_idx) else {
+                    continue;
+                };
+                let a = &row.agent;
+                // "you are here" = the pane deck last switched to.
+                let here = props
+                    .active_agent
+                    .is_some_and(|t| t.host == row.host && t.pane_id == a.pane_id);
+                let name_fg = if is_focused {
+                    ctx.theme.text
+                } else if here {
+                    ctx.theme.green
+                } else {
+                    ctx.theme.secondary
+                };
+                let mut name_style = Style::default().fg(name_fg).bg(row_bg);
+                if is_focused || here {
+                    name_style = name_style.add_modifier(Modifier::BOLD);
+                }
+                let accent = if is_focused || here {
+                    ctx.theme.green
+                } else {
+                    row_bg
+                };
+                let label = a.location();
+                lines.push(pad_line(
+                    vec![
+                        Span::styled(
+                            if is_focused || here { "▌" } else { " " },
+                            Style::default().fg(accent).bg(row_bg),
+                        ),
+                        Span::styled(" ", Style::default().bg(row_bg)),
+                        Span::styled(truncate(&label, width.saturating_sub(2)), name_style),
+                    ],
+                    row_bg,
+                    width,
+                ));
+                if let Some(y) = visible.viewport_y_for_item_line(0) {
+                    agent_hits.push(AgentHit {
+                        target: AgentTarget {
+                            host: row.host.clone(),
+                            session: a.session.clone(),
+                            pane_id: a.pane_id.clone(),
+                        },
+                        rect: Rect {
+                            x: area.x,
+                            y: area.y + y,
+                            width: area.width,
+                            height: 1,
+                        },
+                    });
+                }
+            }
+            SidebarItemData::Spacer => {
+                lines.push(pad_line(Vec::new(), ctx.theme.bg, width));
+            }
+            SidebarItemData::AgentsPlaceholder { detecting } => {
+                let text = if *detecting {
+                    "    detecting…"
+                } else {
+                    "    no agents"
                 };
                 lines.push(pad_line(
                     vec![Span::styled(
-                        count_line,
-                        Style::default().fg(ctx.theme.dim).bg(ctx.theme.bg),
+                        text,
+                        Style::default().fg(ctx.theme.muted).bg(ctx.theme.bg),
                     )],
                     ctx.theme.bg,
                     width,
                 ));
-                if let Some(list) = agents {
-                    for a in list {
-                        let here = props
-                            .active_agent
-                            .is_some_and(|t| &t.host == host && t.pane_id == a.pane_id);
-                        let style = if here {
-                            Style::default()
-                                .fg(ctx.theme.green)
-                                .bg(ctx.theme.bg)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(ctx.theme.muted).bg(ctx.theme.bg)
-                        };
-                        let marker = if here { "  ▸ " } else { "    " };
-                        let label = format!("{}{} {}", marker, a.kind.label(), a.location());
-                        let item_line = lines.len() as u16;
-                        lines.push(pad_line(
-                            vec![Span::styled(truncate(&label, width), style)],
-                            ctx.theme.bg,
-                            width,
-                        ));
-                        if let Some(y) = visible.viewport_y_for_item_line(item_line) {
-                            agent_hits.push(AgentHit {
-                                target: AgentTarget {
-                                    host: host.clone(),
-                                    session: a.session.clone(),
-                                    pane_id: a.pane_id.clone(),
-                                },
-                                rect: Rect {
-                                    x: area.x,
-                                    y: area.y + y,
-                                    width: area.width,
-                                    height: 1,
-                                },
-                            });
-                        }
-                    }
-                }
-                for _ in 0..AGENT_FOOTER_GAP_ROWS {
-                    lines.push(pad_line(Vec::new(), ctx.theme.bg, width));
-                }
             }
             SidebarItemData::LocalEmpty => {
                 lines.push(pad_line(

@@ -3,7 +3,8 @@ use crate::new_session::textarea_line;
 use crate::state::{
     session_menu_disabled, session_menu_items, AppState, ContextMenu, FocusMode, KillRequest,
     LayoutMode, MainView, MenuKind, PfAddForm, PfField, PortForwardOverlay, RemoteSwitchRequest,
-    RenameRequest, RenameState, SessionTargetRef, SideEffect, ViewMode, SETTINGS_ITEM_COUNT,
+    RenameRequest, RenameState, SessionTargetRef, SideEffect, SidebarTab, ViewMode,
+    SETTINGS_ITEM_COUNT,
 };
 use crate::theme::THEMES;
 
@@ -67,14 +68,14 @@ fn focus_next(state: &mut AppState, fx: &mut SideEffect) {
     if total == 0 {
         return;
     }
-    let old = state.focused;
-    let mut next = state.focused;
+    let old = state.cursor();
+    let mut next = state.cursor();
     while next + 1 < total {
         next += 1;
         if !state.is_focus_collapsed(next) {
-            state.focused = next;
-            if state.focused != old {
-                fill_switch_effect(state, fx);
+            state.set_cursor(next);
+            if state.cursor() != old {
+                switch_on_navigate(state, fx);
             }
             return;
         }
@@ -85,16 +86,69 @@ fn focus_next(state: &mut AppState, fx: &mut SideEffect) {
 /// Move focus to the previous visible row, skipping rows hidden inside a
 /// collapsed group. Fills the switch effect when the selection moved.
 fn focus_prev(state: &mut AppState, fx: &mut SideEffect) {
-    let mut prev = state.focused;
+    let mut prev = state.cursor();
     while prev > 0 {
         prev -= 1;
         if !state.is_focus_collapsed(prev) {
-            state.focused = prev;
-            fill_switch_effect(state, fx);
+            state.set_cursor(prev);
+            switch_on_navigate(state, fx);
             return;
         }
     }
     // No visible row above — stay put.
+}
+
+/// What a cursor move should switch to. Navigation switches the right
+/// pane to follow the cursor so the highlighted row always matches what's
+/// shown — sessions on the Projects tab, the agent's pane on the Agents
+/// tab (mirroring the Projects tab, which already switches even over ssh
+/// for remote rows).
+fn switch_on_navigate(state: &AppState, fx: &mut SideEffect) {
+    if state.agents_tab_active() {
+        fill_switch_agent_effect(state, fx);
+    } else {
+        fill_switch_effect(state, fx);
+    }
+}
+
+/// Queue a switch to the agent under the Agents-tab cursor, if any.
+/// Routed through `Effect::SwitchAgentPane` so dispatch focuses the pane
+/// exactly like an agent-row click. Returns whether an agent was queued.
+fn fill_switch_agent_effect(state: &AppState, fx: &mut SideEffect) -> bool {
+    match state.focused_agent() {
+        Some(target) => {
+            fx.switch_agent_pane(target);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Activate a sidebar tab. No-op if already active. Persists the choice.
+///
+/// Arriving on the Agents tab also (a) kicks a refresh so detection —
+/// gated on the tab being active — starts at once, and (b) syncs the
+/// right pane to the focused agent so the panel highlight matches what's
+/// shown. If an agent is already active (a prior switch), the cursor
+/// lands on it first so returning to the tab restores the position.
+fn switch_tab(state: &mut AppState, fx: &mut SideEffect, tab: SidebarTab) {
+    if state.sidebar_tab == tab {
+        return;
+    }
+    state.sidebar_tab = tab;
+    if tab == SidebarTab::Agents {
+        if let Some(active) = state.active_agent.clone() {
+            if let Some(idx) = state.agent_row_index_for(&active) {
+                state.agent_focused = idx;
+            }
+        }
+        state.clamp_agent_focus();
+        // Reflect the focused agent on the right so the highlight in the
+        // panel and the active pane agree the instant the tab opens.
+        fill_switch_agent_effect(state, fx);
+        fx.refresh_sessions();
+    }
+    fx.save_config();
 }
 
 pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
@@ -117,16 +171,23 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // their reachable values are always inside the local
             // range. Either way `focusable_count` is the right bound.
             if idx < state.focusable_count() {
-                state.focused = idx;
+                state.set_cursor(idx);
             }
         }
 
         Action::SwitchProject => {
-            if fill_switch_effect(state, &mut fx) {
+            if state.agents_tab_active() {
+                // Agents tab: Enter (and number-jump) focuses the pane.
+                fill_switch_agent_effect(state, &mut fx);
+            } else if fill_switch_effect(state, &mut fx) {
                 fx.refresh_sessions();
             }
         }
         Action::KillSession => {
+            // Sessions only — the Agents tab has no kill action.
+            if state.agents_tab_active() {
+                return fx;
+            }
             let Some(target) = state.focus_target() else {
                 return fx;
             };
@@ -213,15 +274,20 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // updates before the next refresh round lands.
             state.config_remotes.retain(|r| r.host != host);
             state.remote_sessions.retain(|s| s.host != host);
-            let total = state.focusable_count();
+            // Clamp the Projects cursor against the Projects row space.
+            let total = state.filtered.len() + state.remote_sessions.len();
             if total > 0 && state.focused >= total {
                 state.focused = total - 1;
             }
+            state.clamp_agent_focus();
             fx.save_config();
             fx.refresh_sessions();
             fx.remove_remote_host(host);
         }
         Action::ReorderSession(direction) => {
+            if state.agents_tab_active() {
+                return fx;
+            }
             let local_count = state.filtered.len();
             // Remote row: reorder only within the same host's contiguous
             // block (hosts can't interleave). Swap with the adjacent row in
@@ -278,6 +344,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::StartRename => {
+            if state.agents_tab_active() {
+                return fx;
+            }
             let Some(target) = state.focus_target() else {
                 return fx;
             };
@@ -328,12 +397,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.resize_pty(true);
             fx.save_config();
         }
-        Action::ToggleShowAgents => {
-            // Show/hide the agent footers. No `resize_pty`: it only adds/
-            // removes sidebar footer rows, the pane geometry is unchanged.
-            // The next refresh picks up the flag and starts/stops detection.
-            state.show_agents = !state.show_agents;
-            fx.save_config();
+        Action::SelectTab(tab) => switch_tab(state, &mut fx, tab),
+        Action::ToggleSidebarTab => {
+            let next = match state.sidebar_tab {
+                SidebarTab::Projects => SidebarTab::Agents,
+                SidebarTab::Agents => SidebarTab::Projects,
+            };
+            switch_tab(state, &mut fx, next);
         }
         Action::ToggleViewMode => {
             state.view_mode = match state.view_mode {
@@ -696,6 +766,11 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
 
         Action::OpenSessionMenu { target, x, y } => {
+            // The session context menu (rename/kill/reorder) is Projects-
+            // only; the Agents tab has no per-row menu.
+            if state.agents_tab_active() {
+                return fx;
+            }
             // Move focus to whatever row the user right-clicked so
             // subsequent keyboard actions (or menu confirmations)
             // operate on it.

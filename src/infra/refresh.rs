@@ -32,8 +32,8 @@ pub struct RefreshRequest {
     /// case) skips the remote path entirely.
     pub remotes: Vec<String>,
     /// Whether to detect interactive agents this round. When false the
-    /// local/remote agent probes are skipped entirely (the "Show Agents"
-    /// toggle is off), so no `ps`/subtree walk and no extra ssh work runs.
+    /// local/remote agent probes are skipped entirely (the Agents tab
+    /// isn't active), so no `ps`/subtree walk and no extra ssh work runs.
     pub show_agents: bool,
 }
 

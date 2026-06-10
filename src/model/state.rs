@@ -92,6 +92,19 @@ pub enum ViewMode {
     Compact,
 }
 
+/// Which sidebar tab is active. `Projects` lists tmux sessions (the
+/// default view); `Agents` lists the detected coding agents as the
+/// primary, navigable list. Persisted to config so the choice survives
+/// a restart. Agent detection in the refresh worker runs only while the
+/// `Agents` tab is active (see `AppState::agents_tab_active`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarTab {
+    #[default]
+    Projects,
+    Agents,
+}
+
 pub const SETTINGS_ITEM_COUNT: usize = 8;
 pub const FRAME_RATE_LIMIT_OPTIONS: [u16; 4] = [2, 5, 10, 30];
 
@@ -112,11 +125,6 @@ pub fn frame_rate_limit_label(fps: u16) -> &'static str {
         _ => "Balanced 5 FPS",
     }
 }
-
-/// Blank rows appended under each section's agent-count footer, as a gap
-/// before the next section. The footer item is `1 + this` rows tall;
-/// `sidebar_layout` (height) and the renderer (blank lines) both use it.
-pub const AGENT_FOOTER_GAP_ROWS: u16 = 2;
 
 // --- Context menu ---
 
@@ -449,15 +457,18 @@ pub enum SidebarItemData {
     /// built in render order; storage routing happens via
     /// `AppState::session_target` in the action layer.
     Session { session_idx: usize },
-    /// Non-selectable footer at the bottom of a section: a `claude X,
-    /// codex Y` count line, then one line per agent's session/window/pane
-    /// (each clickable → switch). `host` keys the section (`None` = local)
-    /// so a clicked line knows where to switch. `agents` is `None` while
-    /// the section hasn't been probed yet ("claude …, codex …").
-    AgentCount {
-        host: Option<String>,
-        agents: Option<Vec<crate::agent::DetectedAgent>>,
-    },
+    /// A focusable agent row in the Agents tab. `row_idx` indexes into
+    /// `AppState::agent_rows()` (local agents first, then remote hosts in
+    /// section order), matching the `FocusTarget` numbering for that tab
+    /// so a click/keyboard move maps straight back to the agent.
+    Agent { row_idx: usize },
+    /// Non-selectable placeholder under a section divider in the Agents
+    /// tab when that section has no agents. `detecting` = the section
+    /// hasn't been probed yet (shows "detecting…" vs "no agents").
+    AgentsPlaceholder { detecting: bool },
+    /// Non-selectable blank row. Used in the Agents tab to set off each
+    /// remote `@host` section with a leading gap.
+    Spacer,
     /// Non-selectable placeholder under `@local` when the local tmux server
     /// has no sessions. Kept out of `FocusTarget` numbering so remote flat
     /// indices still start at `filtered.len()`.
@@ -469,20 +480,15 @@ pub enum SidebarItemData {
 /// across the renderer and the action layer.
 pub type SidebarLayout = ratatui_sectioned_list::SectionedList<SidebarItemData>;
 
-/// Push a section's non-selectable agent footer: a count line, one line
-/// per located agent, then a `AGENT_FOOTER_GAP_ROWS` gap. The layout
-/// height must match what the renderer draws, so it's computed from the
-/// agent count here. `None` agents = not probed yet (just the "…" line).
-fn push_agent_footer(
-    layout: &mut SidebarLayout,
-    host: Option<String>,
-    agents: Option<Vec<crate::agent::DetectedAgent>>,
-) {
-    let n = agents.as_ref().map_or(0, Vec::len) as u16;
-    layout.push_header(
-        SidebarItemData::AgentCount { host, agents },
-        1 + n + AGENT_FOOTER_GAP_ROWS,
-    );
+/// One focusable agent row in the Agents tab, in display order: local
+/// agents first, then each remote host's agents in section order. The
+/// renderer and the `Agent { row_idx }` layout items both index into the
+/// `Vec` this produces (`AppState::agent_rows`), so they can't disagree
+/// about which agent a row points at.
+#[derive(Debug, Clone)]
+pub struct AgentRow {
+    pub host: Option<String>,
+    pub agent: crate::agent::DetectedAgent,
 }
 
 /// Which button on a divider a `DividerHit` targets.
@@ -546,6 +552,9 @@ pub enum Effect {
     /// Switch the main view to a remote session. Carries (host, name)
     /// — App's dispatch layer routes the `tmux switch-client` over ssh.
     SwitchRemote(RemoteSwitchRequest),
+    /// Focus a detected agent's pane (Agents tab Enter / number jump).
+    /// App's dispatch layer routes this exactly like an agent-row click.
+    SwitchAgentPane(AgentTarget),
     /// Show a remote host placeholder in the main pane. Used for
     /// synthetic rows like "(no sessions)" that are focusable but don't
     /// have a tmux session to attach to.
@@ -610,6 +619,7 @@ impl SideEffect {
     effect_pushers! {
         switch_session(name: String) => Effect::SwitchSession(name);
         switch_remote(req: RemoteSwitchRequest) => Effect::SwitchRemote(req);
+        switch_agent_pane(target: AgentTarget) => Effect::SwitchAgentPane(target);
         show_remote_placeholder(host: String) => Effect::ShowRemotePlaceholder(host);
         kill_session(req: KillRequest) => Effect::KillSession(req);
         rename_session(req: RenameRequest) => Effect::RenameSession(req);
@@ -1012,11 +1022,15 @@ pub struct AppState {
     pub sidebar_height: u16,
     pub frame_rate_limit: u16,
     pub show_borders: bool,
-    /// Whether the per-section agent footers render and agent detection
-    /// runs. Toggled by the "Show Agents" checkbox in the sidebar header;
-    /// persisted to config. When false, `sidebar_layout` omits the
-    /// footers and the refresh worker skips agent detection entirely.
-    pub show_agents: bool,
+    /// Active sidebar tab. `Projects` lists tmux sessions; `Agents` lists
+    /// detected agents as the primary list. Persisted to config. Agent
+    /// detection in the refresh worker runs only while this is `Agents`
+    /// (see `agents_tab_active`).
+    pub sidebar_tab: SidebarTab,
+    /// Cursor row for the Agents tab, kept separate from `focused` (the
+    /// Projects cursor) so switching tabs preserves each one's position.
+    /// Indexes into `agent_rows()`.
+    pub agent_focused: usize,
     pub dragging_separator: bool,
 
     /// Transient sidebar overlays — help, kill-confirm, rename, context
@@ -1043,10 +1057,11 @@ pub struct AppState {
     /// captured during render for mouse hit-testing. (y, x_start, x_end).
     pub banner_upgrade_bounds: Option<Rect>,
 
-    /// Click-region of the "Show Agents" checkbox in the sidebar header,
-    /// captured during render for mouse hit-testing. `None` in layouts
-    /// without the header (tabs mode).
-    pub show_agents_checkbox: Option<Rect>,
+    /// Click-regions of the `Projects` / `Agents` tab labels in the
+    /// sidebar header, captured during render for mouse hit-testing.
+    /// `None` in layouts without the header (vertical/tabs layout).
+    pub projects_tab_rect: Option<Rect>,
+    pub agents_tab_rect: Option<Rect>,
 
     /// Result of the most recent manual config reload. Rendered in the
     /// sidebar footer and auto-cleared by the main loop after a short
@@ -1058,8 +1073,8 @@ pub struct AppState {
     /// renderer each frame. Read by mouse dispatch.
     pub divider_hits: Vec<DividerHit>,
 
-    /// Click-regions for agent footer lines, refilled by the sidebar
-    /// renderer each frame. A left click switches to that agent's pane.
+    /// Click-regions for agent rows in the Agents tab, refilled by the
+    /// sidebar renderer each frame. A left click switches to that pane.
     pub agent_hits: Vec<AgentHit>,
 
     /// The agent deck last switched to (via an agent-line click). Its
@@ -1095,8 +1110,8 @@ pub struct AppState {
     /// Sidebar groups the user has collapsed (Expanded view only). `None`
     /// is the `@local` group; `Some(host)` is a remote `@host` group. A
     /// collapsed group renders as just its divider — its session rows are
-    /// hidden by the layout and its agent footer is omitted. Persisted to
-    /// config (`collapsed_sections`) and restored at startup.
+    /// hidden by the layout. Persisted to config (`collapsed_sections`)
+    /// and restored at startup.
     pub collapsed_sections: HashSet<Option<String>>,
 }
 
@@ -1127,7 +1142,7 @@ impl AppState {
         layout_mode: LayoutMode,
         view_mode: ViewMode,
         show_borders: bool,
-        show_agents: bool,
+        sidebar_tab: SidebarTab,
         sidebar_width: u16,
         sidebar_height: u16,
         frame_rate_limit: u16,
@@ -1162,7 +1177,8 @@ impl AppState {
             sidebar_height,
             frame_rate_limit: normalize_frame_rate_limit(frame_rate_limit),
             show_borders,
-            show_agents,
+            sidebar_tab,
+            agent_focused: 0,
             dragging_separator: false,
             overlay: OverlayState::default(),
             term_width,
@@ -1175,7 +1191,8 @@ impl AppState {
             update_available: None,
             update_last_checked_secs: None,
             banner_upgrade_bounds: None,
-            show_agents_checkbox: None,
+            projects_tab_rect: None,
+            agents_tab_rect: None,
             reload_status: None,
             reload_status_at: None,
             divider_hits: Vec::new(),
@@ -1223,11 +1240,50 @@ impl AppState {
         }
     }
 
-    /// Whether `(col, row)` falls on the header's "Show Agents" checkbox.
-    pub fn show_agents_checkbox_at(&self, col: u16, row: u16) -> bool {
-        match self.show_agents_checkbox {
-            Some(r) => col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height,
-            None => false,
+    /// Which sidebar tab label `(col, row)` falls on in the header, if
+    /// any. Used by mouse dispatch to switch tabs on a click.
+    pub fn tab_at(&self, col: u16, row: u16) -> Option<SidebarTab> {
+        let hit = |rect: Option<Rect>| {
+            rect.is_some_and(|r| {
+                col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+            })
+        };
+        if hit(self.projects_tab_rect) {
+            Some(SidebarTab::Projects)
+        } else if hit(self.agents_tab_rect) {
+            Some(SidebarTab::Agents)
+        } else {
+            None
+        }
+    }
+
+    /// Whether the Agents tab is the active sidebar view. The tab selector
+    /// only exists in the Horizontal layout (the Vertical layout is a
+    /// session tab-bar with no header), so the Agents view is gated to
+    /// Horizontal — everything stays the Projects view in Vertical even if
+    /// `sidebar_tab` happens to be `Agents`. Gates agent detection in the
+    /// refresh worker and selects the agents layout / focus space.
+    pub fn agents_tab_active(&self) -> bool {
+        self.sidebar_tab == SidebarTab::Agents && self.layout_mode == LayoutMode::Horizontal
+    }
+
+    /// The active view's cursor: `focused` on Projects, `agent_focused`
+    /// on Agents. Centralizes the per-tab focus split so navigation code
+    /// doesn't branch on the tab everywhere.
+    pub fn cursor(&self) -> usize {
+        if self.agents_tab_active() {
+            self.agent_focused
+        } else {
+            self.focused
+        }
+    }
+
+    /// Set the active view's cursor (see [`cursor`](Self::cursor)).
+    pub fn set_cursor(&mut self, n: usize) {
+        if self.agents_tab_active() {
+            self.agent_focused = n;
+        } else {
+            self.focused = n;
         }
     }
 
@@ -1330,7 +1386,7 @@ impl AppState {
             return None;
         }
         let visible_height = sessions_bottom - sessions_top;
-        let layout = self.sidebar_layout(self.view_mode);
+        let layout = self.current_layout(self.view_mode);
         let scroll = layout.scroll_offset(self.focus_target().map(|f| f.0), visible_height);
         let viewport_y = row - sessions_top;
         Some((layout, viewport_y, scroll, visible_height))
@@ -1414,10 +1470,15 @@ impl AppState {
         None
     }
 
-    /// Total number of focusable rows in the sidebar: local sessions
-    /// (after filtering) followed by remote sessions.
+    /// Total number of focusable rows in the active sidebar tab. Projects:
+    /// local sessions (after filtering) followed by remote sessions.
+    /// Agents: the flattened agent list.
     pub fn focusable_count(&self) -> usize {
-        self.filtered.len() + self.remote_sessions.len()
+        if self.agents_tab_active() {
+            self.agent_rows().len()
+        } else {
+            self.filtered.len() + self.remote_sessions.len()
+        }
     }
 
     /// Flat focusable index of the row for `session` on `host` (`None` =
@@ -1528,14 +1589,6 @@ impl AppState {
             layout.push_header(SidebarItemData::LocalEmpty, card_h);
             header_count += 1;
         }
-        // Footer line under the local section: detected agent counts.
-        // Non-focusable (a header), so it can't be selected. Skipped
-        // entirely when the user turned agents off, or when the group is
-        // collapsed (a collapsed group shows just its divider).
-        if show_headers && self.show_agents && !self.filtered.is_empty() && !is_collapsed(&None) {
-            push_agent_footer(&mut layout, None, self.section_agents(None));
-            header_count += 1;
-        }
 
         // Remote groups: detect host transitions in render order
         // (which matches focus order — `remote_sessions` is already
@@ -1549,17 +1602,7 @@ impl AppState {
         for (remote_idx, r) in self.remote_sessions.iter().enumerate() {
             let new_host = Some(r.host.as_str()) != prev_host;
             if new_host {
-                if let Some(ph) = prev_host {
-                    // Close the previous host's section with its footer,
-                    // unless that group is collapsed (divider stands alone).
-                    if show_headers && self.show_agents && !is_collapsed(&Some(ph.to_string())) {
-                        push_agent_footer(
-                            &mut layout,
-                            Some(ph.to_string()),
-                            self.section_agents(Some(ph)),
-                        );
-                        header_count += 1;
-                    }
+                if prev_host.is_some() {
                     host_idx += 1;
                 }
                 if show_headers {
@@ -1590,18 +1633,6 @@ impl AppState {
                 card_h,
             );
         }
-        // Footer for the last remote host group (skipped if collapsed).
-        if show_headers && self.show_agents {
-            if let Some(ph) = prev_host {
-                if !is_collapsed(&Some(ph.to_string())) {
-                    push_agent_footer(
-                        &mut layout,
-                        Some(ph.to_string()),
-                        self.section_agents(Some(ph)),
-                    );
-                }
-            }
-        }
 
         // Flip each group header's collapsed flag so the widget hides its
         // rows and the geometry/scroll/hit-test all honor the collapse.
@@ -1610,6 +1641,121 @@ impl AppState {
         }
 
         layout
+    }
+
+    /// Distinct remote hosts in the order their rows first appear in
+    /// `remote_sessions` (the refresh worker emits hosts in config order,
+    /// one contiguous block each). Shared by `agent_rows` and
+    /// `agents_layout` so both walk sections identically.
+    fn remote_hosts_in_order(&self) -> Vec<String> {
+        let mut seen: HashSet<&str> = HashSet::new();
+        let mut hosts = Vec::new();
+        for r in &self.remote_sessions {
+            if seen.insert(r.host.as_str()) {
+                hosts.push(r.host.clone());
+            }
+        }
+        hosts
+    }
+
+    /// The flat list of detected agents for the Agents tab, in display
+    /// order: local agents first, then each remote host's agents in
+    /// section order. `Agent { row_idx }` items and the renderer index
+    /// into this, so its order is the Agents-tab `FocusTarget` numbering.
+    pub fn agent_rows(&self) -> Vec<AgentRow> {
+        let mut rows = Vec::new();
+        if let Some(list) = self.section_agents(None) {
+            for agent in list {
+                rows.push(AgentRow { host: None, agent });
+            }
+        }
+        for host in self.remote_hosts_in_order() {
+            if let Some(list) = self.section_agents(Some(&host)) {
+                for agent in list {
+                    rows.push(AgentRow {
+                        host: Some(host.clone()),
+                        agent,
+                    });
+                }
+            }
+        }
+        rows
+    }
+
+    /// Flat focusable index of the agent row matching `target`, or `None`
+    /// if it isn't currently listed. Lets the Agents-tab cursor track the
+    /// pane switched to via a click, the way `focusable_index_for` does
+    /// for the Projects tab.
+    pub fn agent_row_index_for(&self, target: &AgentTarget) -> Option<usize> {
+        self.agent_rows()
+            .iter()
+            .position(|row| row.host == target.host && row.agent.pane_id == target.pane_id)
+    }
+
+    /// Build the Agents-tab layout: an `@local` / `@host` divider per
+    /// section (in `agent_rows` order) with that section's agents as
+    /// focusable rows beneath it, or a non-focusable placeholder when a
+    /// section has no agents. `row_idx` on each `Agent` item matches the
+    /// `agent_rows()` position so focus/scroll/hit-test stay in sync.
+    pub fn agents_layout(&self) -> SidebarLayout {
+        let mut layout = SidebarLayout::new();
+        // No collapse on the Agents tab — sections are informational and
+        // always expanded, so the focus index maps straight to a row.
+        layout.set_collapsible(false);
+        let mut row_idx = 0usize;
+
+        let mut push_section = |layout: &mut SidebarLayout, host: Option<&str>| {
+            match self.section_agents(host) {
+                Some(list) if !list.is_empty() => {
+                    for _ in &list {
+                        layout.push_row(SidebarItemData::Agent { row_idx }, 1);
+                        row_idx += 1;
+                    }
+                }
+                Some(_) => {
+                    layout.push_header(
+                        SidebarItemData::AgentsPlaceholder { detecting: false },
+                        1,
+                    );
+                }
+                None => {
+                    layout.push_header(SidebarItemData::AgentsPlaceholder { detecting: true }, 1);
+                }
+            }
+        };
+
+        layout.push_header(SidebarItemData::LocalHeader, 1);
+        push_section(&mut layout, None);
+
+        for (host_idx, host) in self.remote_hosts_in_order().into_iter().enumerate() {
+            // A blank row sets each remote section off from what's above.
+            // Local stays flush at the top (no leading gap).
+            layout.push_header(SidebarItemData::Spacer, 1);
+            let status = self.host_conn_status(&host).unwrap_or(HostStatus::Connecting);
+            layout.push_header(
+                SidebarItemData::Header {
+                    host: host.clone(),
+                    host_idx,
+                    status,
+                    pf: self.host_pf_badge(&host),
+                },
+                1,
+            );
+            push_section(&mut layout, Some(&host));
+        }
+
+        layout
+    }
+
+    /// The layout for the active sidebar tab. Projects → the session
+    /// list; Agents → the agent list. Callers (renderer, hit-testers,
+    /// scroll) use this so they all see the same rows for the active tab.
+    pub fn current_layout(&self, view_mode: ViewMode) -> SidebarLayout {
+        if self.agents_tab_active() {
+            self.agents_layout()
+        } else {
+            self.sidebar_layout(view_mode)
+        }
     }
 
     /// The port-forward badge for a host's divider, or `None` when the host has
@@ -1712,6 +1858,9 @@ impl AppState {
     /// but the main pane must render an explicit status instead of a stale
     /// terminal screen.
     pub fn focused_remote_placeholder(&self) -> Option<&RemoteSessionRow> {
+        if self.agents_tab_active() {
+            return None;
+        }
         match self.session_target(self.focus_target()?)? {
             SessionTargetRef::Remote(row) if !row.is_attachable_session() => Some(row),
             SessionTargetRef::Local(_) | SessionTargetRef::Remote(_) => None,
@@ -1736,20 +1885,40 @@ impl AppState {
     /// Whether the row at flat focus index `idx` sits in a collapsed group
     /// (so keyboard focus should skip over it).
     pub fn is_focus_collapsed(&self, idx: usize) -> bool {
+        // The Agents tab is never collapsible — its rows map straight to
+        // `agent_rows`, and `section_key_of_focus` assumes session indexing.
+        if self.agents_tab_active() {
+            return false;
+        }
         idx < self.focusable_count()
             && self
                 .collapsed_sections
                 .contains(&self.section_key_of_focus(idx))
     }
 
-    /// Decode the current `focused` index into a structured target.
-    /// Returns `None` if nothing is focusable (empty sidebar).
+    /// Decode the active tab's cursor into a focus target. Returns `None`
+    /// if nothing is focusable (empty list). The index is into the active
+    /// tab's row space — sessions on Projects, agents on Agents.
     pub fn focus_target(&self) -> Option<FocusTarget> {
-        if self.focused < self.focusable_count() {
-            Some(FocusTarget(self.focused))
+        if self.cursor() < self.focusable_count() {
+            Some(FocusTarget(self.cursor()))
         } else {
             None
         }
+    }
+
+    /// The agent under the Agents-tab cursor, or `None` when off-tab or
+    /// no agent is focused. Resolves the cursor through `agent_rows`.
+    pub fn focused_agent(&self) -> Option<AgentTarget> {
+        if !self.agents_tab_active() {
+            return None;
+        }
+        let row = self.agent_rows().into_iter().nth(self.agent_focused)?;
+        Some(AgentTarget {
+            host: row.host,
+            session: row.agent.session,
+            pane_id: row.agent.pane_id,
+        })
     }
 
     /// Name to show in the kill-confirmation overlay: the focused row's
@@ -1795,9 +1964,23 @@ impl AppState {
         // Without remotes this collapses to the original local-only
         // behavior; with remotes it keeps focus inside the remote
         // section after the local list shrinks.
-        let total = self.focusable_count();
+        // Clamp against the Projects row space specifically (not the
+        // tab-aware `focusable_count`, which would use the agent count
+        // when the Agents tab is active and corrupt the Projects cursor).
+        let total = self.filtered.len() + self.remote_sessions.len();
         if total > 0 && self.focused >= total {
             self.focused = total - 1;
+        }
+    }
+
+    /// Keep the Agents-tab cursor inside the current agent list after the
+    /// detected agents change (agents come and go between refresh rounds).
+    pub fn clamp_agent_focus(&mut self) {
+        let total = self.agent_rows().len();
+        if total == 0 {
+            self.agent_focused = 0;
+        } else if self.agent_focused >= total {
+            self.agent_focused = total - 1;
         }
     }
 

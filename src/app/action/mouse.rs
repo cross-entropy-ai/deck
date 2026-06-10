@@ -34,10 +34,10 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         return Action::TriggerUpgrade;
     }
 
-    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-        && state.show_agents_checkbox_at(mouse.column, mouse.row)
-    {
-        return Action::ToggleShowAgents;
+    if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+        if let Some(tab) = state.tab_at(mouse.column, mouse.row) {
+            return Action::SelectTab(tab);
+        }
     }
 
     if let Some(menu) = state.overlay.context_menu.as_ref() {
@@ -151,7 +151,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             }
         }
 
-        // Agent footer lines: a click switches to (and focuses) that pane.
+        // Agent rows (Agents tab): a click switches to (and focuses) the pane.
         for hit in &state.agent_hits {
             if hit_rect(&hit.rect, mouse.column, mouse.row) {
                 return Action::SwitchToAgentPane(hit.target.clone());
@@ -160,8 +160,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
 
         // A click on a group divider that wasn't on one of its buttons
         // (handled above) collapses/expands that group. Dividers exist
-        // only in the Horizontal (Expanded) layout. Agent-count footers
-        // are not toggle targets — `divider_section_key_at` rejects them.
+        // only in the Horizontal (Expanded) layout.
         if state.layout_mode == LayoutMode::Horizontal {
             if let Some(key) = state.divider_section_key_at(mouse.row) {
                 return Action::ToggleSection(key);

@@ -191,7 +191,7 @@ impl App {
         let theme_index = THEMES.iter().position(|t| t.name == cfg.theme).unwrap_or(0);
         let layout_mode = cfg.layout;
         let show_borders = cfg.show_borders;
-        let show_agents = cfg.show_agents;
+        let sidebar_tab = cfg.sidebar_tab;
         let view_mode = cfg.view_mode;
         let frame_rate_limit = crate::state::normalize_frame_rate_limit(cfg.frame_rate_limit);
         let sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
@@ -213,7 +213,7 @@ impl App {
             layout_mode,
             view_mode,
             show_borders,
-            show_agents,
+            sidebar_tab,
             sidebar_width,
             sidebar_height,
             frame_rate_limit,

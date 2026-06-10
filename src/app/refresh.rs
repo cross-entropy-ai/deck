@@ -18,7 +18,7 @@ impl App {
                 .iter()
                 .map(|r| r.host.clone())
                 .collect(),
-            show_agents: self.state.show_agents,
+            show_agents: self.state.agents_tab_active(),
         }
     }
 
@@ -173,6 +173,7 @@ impl App {
         // stale agents on covered-but-failed hosts, prune to configured.
         // (Logic lives on AppState so it's unit-testable; see its tests.)
         self.state.apply_remote_agents(covered_hosts, agents);
+        self.state.clamp_agent_focus();
     }
 
     fn apply_local(
@@ -183,6 +184,7 @@ impl App {
     ) {
         // Local section is the `None`-host key.
         self.state.agents.insert(None, agents);
+        self.state.clamp_agent_focus();
 
         // On first load, restore the manual order persisted on each
         // session's `@deck_order` rank (written by ReorderSession).

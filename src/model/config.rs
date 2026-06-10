@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::keybindings::migrate_keybindings;
 
-use crate::state::{LayoutMode, ViewMode, SIDEBAR_HEIGHT};
+use crate::state::{LayoutMode, SidebarTab, ViewMode, SIDEBAR_HEIGHT};
 use crate::update::UpdateCheckMode;
 
 /// A command-based plugin that runs in its own PTY.
@@ -132,10 +132,9 @@ pub struct Config {
     pub theme: String,
     pub layout: LayoutMode,
     pub show_borders: bool,
-    /// Whether the sidebar shows the per-section agent footers
-    /// (`claude X, codex Y` + the detected agents). When false the
-    /// footers are hidden and agent detection is skipped entirely.
-    pub show_agents: bool,
+    /// Which sidebar tab is active on launch: `projects` (tmux sessions)
+    /// or `agents` (detected coding agents). Defaults to `projects`.
+    pub sidebar_tab: SidebarTab,
     pub sidebar_width: u16,
     pub sidebar_height: u16,
     pub view_mode: ViewMode,
@@ -158,7 +157,7 @@ impl Default for Config {
             theme: "Catppuccin Mocha (Dark)".to_string(),
             layout: LayoutMode::Horizontal,
             show_borders: true,
-            show_agents: false,
+            sidebar_tab: SidebarTab::Projects,
             sidebar_width: 28,
             sidebar_height: SIDEBAR_HEIGHT,
             view_mode: ViewMode::Expanded,
