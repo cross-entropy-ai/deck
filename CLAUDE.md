@@ -18,18 +18,30 @@ cargo clippy                   # lint
 ./target/release/deck          # run the release binary (needs tmux)
 ```
 
-Config is stored at `~/.config/deck/config.json`.
+Config is stored at `~/.config/deck/config.yaml`.
 
 ## Architecture
 
-See `docs/ARCHITECTURE.md` for the full diagram. The key layers:
+Source is split into five top-level modules under `src/` (plus `main.rs`).
+`docs/cleanup-plan.md` has a fuller map of the layering:
 
-- **Presentation**: `ui.rs` (pure rendering functions, no mutable state) + `bridge.rs` (vt100 screen -> ratatui buffer adapter)
-- **Application**: `app.rs` (event loop, state management) + `state.rs` (AppState, enums, constants) + `action.rs` (Action enum for key/mouse -> intent mapping)
-- **Data**: `tmux.rs`, `git.rs` (stateless CLI wrappers), `pty.rs` (PTY lifecycle), `config.rs` (JSON persistence)
-- **Theme**: `theme.rs` - static `THEMES` array of `Theme` structs with 12 named color slots (bg, surface, dim, muted, subtle, secondary, text, accent, green, teal, yellow, pink)
+- **`ui/`**: pure rendering functions (no mutable state), incl. `ui/sidebar/`
+  for the session sidebar, `ui/bridge.rs` (vt100 screen -> ratatui buffer
+  adapter), and `ui/theme.rs` (static `THEMES` array of `Theme` structs with
+  12 named color slots: bg, surface, dim, muted, subtle, secondary, text,
+  accent, green, teal, yellow, pink).
+- **`app/`**: the event loop and dispatch (`app/mod.rs`, `app/dispatch.rs`,
+  `app/update.rs`, `app/render.rs`, `app/pty.rs`) plus `app/action/` (the
+  `Action` enum for key/mouse -> intent mapping, and the reducers).
+- **`model/`**: `model/state.rs` (`AppState`, enums, constants),
+  `model/config.rs` (YAML persistence), `model/keybindings.rs`.
+- **`infra/`**: stateless backends and CLI wrappers — `infra/tmux.rs`,
+  `infra/remote_tmux.rs`, `infra/ssh.rs`, `infra/pty.rs`, `infra/agent.rs`, etc.
+- **`session/`**: the `SessionControl` backend trait abstracting local vs
+  remote (`session/local.rs`, `session/remote.rs`, `session/executor.rs`).
 
-The rendering path: `app.run()` loop -> build `SessionView` slices (borrowed, not cloned) -> `ui::draw_*()` pure functions -> `bridge::render_screen()` for the PTY pane.
+The rendering path: the `app` loop builds borrowed session slices ->
+`ui::draw_*()` pure functions -> `bridge::render_screen()` for the PTY pane.
 
 `vt100` is pinned to a long-lived `deck` branch on a fork (`Junyi-99/vt100-rust`) via `[patch.crates-io]` in `Cargo.toml`. See `docs/vt100-fork.md` for what's patched and how to add new fixes.
 

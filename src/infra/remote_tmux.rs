@@ -604,8 +604,8 @@ fn new_session_with(runner: &dyn CommandRunner, host: &str, name: &str, dir: &st
 /// it. The returned `Option<String>` is an error message, `None` on
 /// success.
 ///
-/// Mirrors the local `read_dir_entries`: directories only, sorted, with
-/// dotfiles included (the picker's pure filter hides them unless the
+/// Mirrors the local `LocalControl::list_dir`: directories only, sorted,
+/// with dotfiles included (the picker's pure filter hides them unless the
 /// typed leaf starts with `.`). Blocking, but the host's ControlMaster
 /// connection is already warm so each call is a fast multiplexed hop.
 pub fn list_dir(host: &str, path: &str) -> (Vec<String>, Option<String>) {

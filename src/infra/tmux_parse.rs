@@ -43,11 +43,11 @@ pub(crate) const SESSION_LIST_FORMAT_SSH: &str =
 pub(crate) const WINDOW_ACTIVITY_FORMAT: &str = "#{session_name}\t#{window_activity}";
 pub(crate) const WINDOW_ACTIVITY_FORMAT_SSH: &str = "$'#{session_name}\\t#{window_activity}'";
 
-/// Parse `tmux list-sessions` output. The local caller's format is
-/// `#{session_name}\t#{session_path}\t#{@deck_order}`; the remote caller
-/// omits the trailing rank (`#{session_name}\t#{session_path}`), so the
-/// order field is optional. `window_activity` provides per-session
-/// activity timestamps; sessions absent from the map get `activity = 0`.
+/// Parse `tmux list-sessions` output. Both callers use the same three
+/// fields (`#{session_name}\t#{session_path}\t#{@deck_order}`); the trailing
+/// rank is empty when the `@deck_order` option is unset, so the order field
+/// parses to `None`. `window_activity` provides per-session activity
+/// timestamps; sessions absent from the map get `activity = 0`.
 pub(crate) fn parse_sessions(
     raw: &str,
     window_activity: &HashMap<String, u64>,
@@ -55,10 +55,10 @@ pub(crate) fn parse_sessions(
     raw.lines()
         .filter_map(|line| {
             let (name, after_name) = line.split_once('\t')?;
-            // `@deck_order` (if requested) is the last field, a bare
-            // integer or empty. Split it off the tail so a dir that
-            // somehow contains a tab still parses. With no trailing field
-            // (remote listing) there's no rank.
+            // `@deck_order` is the last field, a bare integer or empty.
+            // Split it off the tail so a dir that somehow contains a tab
+            // still parses. A line with no trailing tab at all yields no
+            // rank.
             let (dir, order) = match after_name.rsplit_once('\t') {
                 Some((dir, rank)) => (dir, rank.parse::<u32>().ok()),
                 None => (after_name, None),
@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn parse_sessions_two_field_remote_form_has_no_order() {
         let activity = HashMap::new();
-        // Remote listing omits the trailing rank field entirely.
+        // A line with no trailing rank field still parses (unset @deck_order).
         let raw = "alpha\t/tmp/alpha";
         let got = parse_sessions(raw, &activity);
         assert_eq!(got.len(), 1);

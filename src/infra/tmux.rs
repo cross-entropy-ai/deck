@@ -22,9 +22,9 @@ pub struct SessionInfo {
     /// Unix timestamp of last buffer activity in this session.
     pub activity: u64,
     /// Deck's persisted display rank, read from the `@deck_order`
-    /// session option. `None` when the session was never reordered (no
-    /// option set). Remote sessions are always `None` — their listing
-    /// doesn't request the field.
+    /// session option. `None` when the session was never reordered (the
+    /// option is unset, so the field comes back empty). Both local and
+    /// remote listings request the field.
     pub order: Option<u32>,
 }
 

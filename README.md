@@ -123,7 +123,7 @@ Each plugin shows up in the sidebar; press its key while the sidebar is focused 
 cargo run
 ```
 
-For implementation details, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+For implementation details, see the Architecture section of [`CLAUDE.md`](CLAUDE.md).
 
 ## Build from source
 

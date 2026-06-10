@@ -69,9 +69,9 @@ impl SessionControl for LocalControl {
     }
 
     fn list_dir(&self, path: &str) -> (Vec<String>, Option<String>) {
-        // Mirror the local new-session browser's `read_dir_entries`
-        // (src/app/dispatch.rs): list immediate subdirectories, sorted, with
-        // a short one-line error message on failure.
+        // List immediate subdirectories, sorted, with a short one-line error
+        // message on failure. The remote counterpart is `remote_tmux::list_dir`;
+        // both feed the new-session picker's pure filter.
         match std::fs::read_dir(path) {
             Ok(rd) => {
                 let mut names: Vec<String> = rd
