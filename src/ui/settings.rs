@@ -40,6 +40,11 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
             "Left/right opens the theme list",
         ),
         (
+            "Transparent",
+            if settings.transparent_bg { "On" } else { "Off" }.to_string(),
+            "Use terminal's default background (enables transparency)",
+        ),
+        (
             "Layout",
             match settings.layout_mode {
                 LayoutMode::Horizontal => "Horizontal".to_string(),
@@ -98,11 +103,6 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
             "Agents probe",
             crate::state::agents_probe_interval_label(settings.agents_probe_interval).to_string(),
             "Left/right cycles how often the Agents tab probes",
-        ),
-        (
-            "Transparent",
-            if settings.transparent_bg { "On" } else { "Off" }.to_string(),
-            "Use terminal's default background (enables transparency)",
         ),
     ];
 

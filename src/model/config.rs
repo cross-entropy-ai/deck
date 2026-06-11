@@ -219,7 +219,7 @@ impl Default for Config {
             summary_height: default_summary_height(),
             summary_language: String::new(),
             agents_probe_interval: default_agents_probe_interval(),
-            transparent_bg: false,
+            transparent_bg: true,
         }
     }
 }

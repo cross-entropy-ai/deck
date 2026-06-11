@@ -502,16 +502,16 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             };
             let inner = match state.settings.selected {
                 0 => apply_action(state, Action::OpenThemePicker),
-                1 => apply_action(state, Action::ToggleLayout),
-                2 => apply_action(state, Action::ToggleBorders),
-                3 => apply_action(state, Action::ToggleViewMode),
-                4 => apply_action(state, Action::CycleFrameRateLimit(direction)),
-                5 => apply_action(state, Action::OpenExcludeEditor),
-                6 => apply_action(state, Action::OpenKeybindingsView),
-                7 => apply_action(state, Action::ToggleUpdateCheck),
-                8 => apply_action(state, Action::OpenSummaryLanguageEditor),
-                9 => apply_action(state, Action::CycleAgentsProbeInterval(direction)),
-                10 => apply_action(state, Action::ToggleTransparentBg),
+                1 => apply_action(state, Action::ToggleTransparentBg),
+                2 => apply_action(state, Action::ToggleLayout),
+                3 => apply_action(state, Action::ToggleBorders),
+                4 => apply_action(state, Action::ToggleViewMode),
+                5 => apply_action(state, Action::CycleFrameRateLimit(direction)),
+                6 => apply_action(state, Action::OpenExcludeEditor),
+                7 => apply_action(state, Action::OpenKeybindingsView),
+                8 => apply_action(state, Action::ToggleUpdateCheck),
+                9 => apply_action(state, Action::OpenSummaryLanguageEditor),
+                10 => apply_action(state, Action::CycleAgentsProbeInterval(direction)),
                 _ => SideEffect::default(),
             };
             fx.merge(inner);
