@@ -178,8 +178,12 @@ pub struct Config {
     pub agents_probe_interval: u64,
     /// Use the terminal's default (transparent) background instead of the
     /// theme's solid background color.
-    #[serde(default)]
+    #[serde(default = "default_transparent_bg")]
     pub transparent_bg: bool,
+}
+
+fn default_transparent_bg() -> bool {
+    true
 }
 
 fn default_agents_probe_interval() -> u64 {
