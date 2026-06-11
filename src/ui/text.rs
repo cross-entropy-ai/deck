@@ -238,8 +238,11 @@ pub(super) fn truncate(s: &str, max_width: usize) -> String {
 }
 
 pub(super) fn shorten_dir(dir: &str) -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
-    if !home.is_empty() && dir.starts_with(&home) {
+    // Resolved once: this runs per visible session card per frame, and
+    // `env::var` takes the process-global env lock + allocates each call.
+    static HOME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let home = HOME.get_or_init(|| std::env::var("HOME").unwrap_or_default());
+    if !home.is_empty() && dir.starts_with(home) {
         format!("~{}", &dir[home.len()..])
     } else {
         dir.to_string()

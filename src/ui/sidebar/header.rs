@@ -10,7 +10,7 @@ use crate::theme::Theme;
 
 /// Click rects for the two sidebar tab labels, returned so mouse dispatch
 /// can switch tabs on a click.
-pub(super) struct TabRects {
+pub struct TabRects {
     pub projects: Rect,
     pub agents: Rect,
 }

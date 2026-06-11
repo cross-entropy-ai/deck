@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::layout::plugin_block_rows;
+
 #[test]
 fn plugin_block_rows_is_zero_without_plugins() {
     assert_eq!(plugin_block_rows(0), 0);
@@ -152,7 +154,7 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
     terminal
         .draw(|frame| {
             let area = frame.area();
-            let (_, _, hits, _, _, _, _) = super::draw_sidebar(
+            let hits = super::draw_sidebar(
                 frame,
                 area,
                 SidebarProps {
@@ -181,7 +183,7 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
                     active_agent: None,
                 },
             );
-            kill_hits = hits;
+            kill_hits = hits.kill;
         })
         .unwrap();
 

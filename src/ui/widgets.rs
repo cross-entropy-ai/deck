@@ -96,6 +96,30 @@ pub fn list_item_line<'a>(
     ])
 }
 
+/// Per-row scrollbar glyphs for a `rows`-tall track showing `total` items
+/// scrolled to `scroll`. `None` = no bar on that row (content fits);
+/// `Some("█")` = thumb, `Some("░")` = track. Shared by the inline summary
+/// card and the summary popup so the two scrollbars can't diverge.
+pub fn scrollbar_cells(rows: usize, total: usize, scroll: usize) -> Vec<Option<&'static str>> {
+    if total <= rows || rows == 0 {
+        return vec![None; rows];
+    }
+    let max_scroll = total - rows;
+    let thumb = ((rows * rows) / total).clamp(1, rows);
+    let thumb_start = (scroll * (rows - thumb) + max_scroll / 2)
+        .checked_div(max_scroll)
+        .unwrap_or(0);
+    (0..rows)
+        .map(|i| {
+            if i >= thumb_start && i < thumb_start + thumb {
+                Some("█")
+            } else {
+                Some("░")
+            }
+        })
+        .collect()
+}
+
 /// Compute the first visible index so that `selected` stays in view.
 pub fn scroll_window(selected: usize, total: usize, window: usize) -> usize {
     if total <= window || selected < window {

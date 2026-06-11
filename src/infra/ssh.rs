@@ -104,8 +104,7 @@ pub fn suggested_snippet(host: &str) -> String {
 }
 
 fn ssh_config_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".ssh").join("config")
+    crate::config::home_dir().join(".ssh").join("config")
 }
 
 /// Parse `~/.ssh/config` text into the list of concrete `Host` aliases.

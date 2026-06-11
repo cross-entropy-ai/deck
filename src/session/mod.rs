@@ -41,14 +41,14 @@ pub trait SessionControl {
     /// Rename session `old` to `new` on this backend's server.
     fn rename(&self, old: &str, new: &str);
 
-    /// Kill session `name` on this backend's server. When `switch_to` is
-    /// `Some(other)`, the backend should pre-switch its own client off the
-    /// doomed session to `other` before killing it.
-    fn kill(&self, name: &str, switch_to: Option<&str>);
+    /// Kill session `name` on this backend's server. Any pre-switch off
+    /// the doomed session is App-level orchestration and happens before
+    /// the op is submitted, not here.
+    fn kill(&self, name: &str);
 
-    /// Create a detached session `name` starting in `dir`. Returns the
-    /// created session's name on success, `None` on failure.
-    fn new_session(&self, name: &str, dir: &str) -> Option<String>;
+    /// Create a detached session `name` starting in `dir`. Returns
+    /// whether the create succeeded.
+    fn new_session(&self, name: &str, dir: &str) -> bool;
 
     /// Persist `order` (session names in display order) onto this
     /// backend's tmux server via the `@deck_order` user option.

@@ -39,6 +39,23 @@ fn wrap_width(s: &str, width: usize) -> Vec<String> {
     out
 }
 
+/// Wrap a status body: the first row fits after the `reload:` prefix,
+/// continuation rows after the indent. Shared by `reload_row_count` and
+/// `draw_reload_bar` so the reserved rows always match the drawn rows.
+fn wrapped_body_lines(body: &str, width: usize) -> Vec<String> {
+    let first_w = width.saturating_sub(RELOAD_PREFIX.width());
+    let cont_w = width.saturating_sub(RELOAD_CONT_INDENT.width());
+    let mut lines = wrap_width(body, first_w.max(1));
+    if lines.len() > 1 && cont_w > 0 && cont_w != first_w {
+        let head = lines.remove(0);
+        let tail: String = lines.concat();
+        let mut rewrapped = vec![head];
+        rewrapped.extend(wrap_width(&tail, cont_w));
+        lines = rewrapped;
+    }
+    lines
+}
+
 /// How many terminal rows the reload bar needs at the given width.
 /// Returns 0 when no status is active — callers use this to reserve
 /// (or skip reserving) the bottom strip.
@@ -48,20 +65,10 @@ pub fn reload_row_count(status: Option<&ReloadStatus>, width: u16) -> u16 {
         ReloadStatus::Ok => 1,
         ReloadStatus::Err(e) => {
             let w = width as usize;
-            let first = w.saturating_sub(RELOAD_PREFIX.width());
-            let cont = w.saturating_sub(RELOAD_CONT_INDENT.width());
-            if first == 0 {
+            if w <= RELOAD_PREFIX.width() {
                 return 1;
             }
-            let mut lines = wrap_width(e, first);
-            if lines.len() > 1 && cont > 0 && cont != first {
-                let head = lines.remove(0);
-                let tail: String = lines.concat();
-                let mut rewrapped = vec![head];
-                rewrapped.extend(wrap_width(&tail, cont));
-                lines = rewrapped;
-            }
-            lines.len().clamp(1, RELOAD_MAX_ROWS) as u16
+            wrapped_body_lines(e, w).len().clamp(1, RELOAD_MAX_ROWS) as u16
         }
     }
 }
@@ -75,20 +82,14 @@ pub fn draw_reload_bar(frame: &mut Frame, area: Rect, status: &ReloadStatus, the
         ReloadStatus::Ok => (theme.green, "applied".to_string()),
         ReloadStatus::Err(e) => (theme.pink, e.clone()),
     };
-    let first_w = w.saturating_sub(RELOAD_PREFIX.width());
-    let cont_w = w.saturating_sub(RELOAD_CONT_INDENT.width());
-    let mut wrapped = wrap_width(&body, first_w.max(1));
-    if wrapped.len() > 1 && cont_w > 0 && cont_w != first_w {
-        let head = wrapped.remove(0);
-        let tail: String = wrapped.concat();
-        let mut rewrapped = vec![head];
-        rewrapped.extend(wrap_width(&tail, cont_w));
-        wrapped = rewrapped;
-    }
+    let mut wrapped = wrapped_body_lines(&body, w);
     if wrapped.len() > RELOAD_MAX_ROWS {
         wrapped.truncate(RELOAD_MAX_ROWS);
         if let Some(last) = wrapped.last_mut() {
-            let room = cont_w.max(1).saturating_sub(1);
+            let room = w
+                .saturating_sub(RELOAD_CONT_INDENT.width())
+                .max(1)
+                .saturating_sub(1);
             *last = format!("{}…", truncate(last, room));
         }
     }

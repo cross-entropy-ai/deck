@@ -21,7 +21,7 @@ use crate::config::{Config, KeyBindingValue};
 use crate::keybindings::Keybindings;
 use crate::pty::Pty;
 use crate::refresh::RefreshWorker;
-use crate::state::{AppState, FocusMode, MainView, WarningState, SIDEBAR_MAX, SIDEBAR_MIN};
+use crate::state::{AppState, FocusMode, MainView, WarningState};
 use crate::theme::THEMES;
 use crate::tmux;
 use crate::update::UpdateCheckMode;
@@ -38,21 +38,25 @@ fn render_min_interval(frame_rate_limit: u16) -> Duration {
     Duration::from_micros(1_000_000 / u64::from(fps))
 }
 
-struct PluginInstance {
-    pty: Pty,
-    parser: vt100::Parser,
-    alive: bool,
-}
-
-/// A PTY-backed terminal view in the main pane. Both the local
-/// `tmux attach` and each remote `ssh -t host tmux attach` are
-/// modeled with this struct — the render / input / resize code
-/// doesn't care which is which. Step 5 will use `active_remote` to
-/// pick which one drives the main pane.
+/// A PTY-backed terminal view in the main pane. The local `tmux attach`,
+/// each remote `ssh -t host tmux attach`, plugin commands, and the
+/// upgrade pane are all modeled with this struct — the render / input /
+/// resize code doesn't care which is which.
 pub(super) struct TerminalPane {
     pub pty: Pty,
     pub parser: vt100::Parser,
     pub alive: bool,
+}
+
+impl TerminalPane {
+    /// Wrap a freshly spawned PTY with a vt100 parser sized to match.
+    pub(super) fn new(pty: Pty, rows: u16, cols: u16) -> Self {
+        Self {
+            pty,
+            parser: vt100::Parser::new(rows, cols, 0),
+            alive: true,
+        }
+    }
 }
 
 /// Liveness of the persistent `ssh -t host tmux attach` PTY for a
@@ -93,6 +97,16 @@ pub(super) struct RemoteConn {
     pub(super) marker_ready: bool,
 }
 
+impl RemoteConn {
+    /// Whether this connection can serve a switch/focus right now: the
+    /// status says Connected AND the attach PTY is actually present (the
+    /// documented invariant is "pane present iff Connected"; checking both
+    /// keeps every call site honest if that ever wobbles).
+    pub(super) fn is_live(&self) -> bool {
+        matches!(self.status, RemoteConnStatus::Connected) && self.pane.is_some()
+    }
+}
+
 pub struct App {
     state: AppState,
     /// The always-present local tmux PTY.
@@ -121,7 +135,7 @@ pub struct App {
     /// target with the current marker. Removed when its outcome is verified.
     remote_switch_verify: HashMap<String, (String, u64)>,
     warning_state: Option<WarningState>,
-    plugin_instances: Vec<Option<PluginInstance>>,
+    plugin_instances: Vec<Option<TerminalPane>>,
     refresh_worker: RefreshWorker,
     /// Runs mutating control-plane ops (switch/rename/kill/new/order) and
     /// on-demand `list_dir` off the UI thread, one FIFO worker per backend.
@@ -129,7 +143,7 @@ pub struct App {
     session_exec: crate::session::executor::SessionExecutor,
     raw_keybindings: BTreeMap<String, KeyBindingValue>,
     update_checker: Option<crate::update::UpdateChecker>,
-    upgrade_instance: Option<PluginInstance>,
+    upgrade_instance: Option<TerminalPane>,
     last_update_request: Option<Instant>,
     /// Last config-file mtime deck itself wrote or the watcher accepted.
     /// `save_config` refreshes this after writing so the ~2s config watcher
@@ -204,39 +218,16 @@ impl App {
         }
 
         let theme_index = THEMES.iter().position(|t| t.name == cfg.theme).unwrap_or(0);
-        let layout_mode = cfg.layout;
-        let show_borders = cfg.show_borders;
-        let sidebar_tab = cfg.sidebar_tab;
-        let view_mode = cfg.view_mode;
-        let frame_rate_limit = crate::state::normalize_frame_rate_limit(cfg.frame_rate_limit);
-        let sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
-        let sidebar_height = cfg.sidebar_height;
-        let collapsed_sections: std::collections::HashSet<Option<String>> =
-            cfg.collapsed_sections.iter().cloned().collect();
+        let plugin_count = cfg.plugins.len();
+        let (keybindings, kb_warnings) = Keybindings::from_config(&cfg.keybindings, &cfg.plugins);
 
-        let exclude_patterns = cfg.exclude_patterns.clone();
-        let plugins = cfg.plugins.clone();
-        let plugin_count = plugins.len();
-
-        let (keybindings, kb_warnings) = Keybindings::from_config(&cfg.keybindings, &plugins);
-
-        let mut state = AppState::new(
-            theme_index,
-            layout_mode,
-            view_mode,
-            show_borders,
-            sidebar_tab,
-            sidebar_width,
-            sidebar_height,
-            frame_rate_limit,
-            term_width,
-            term_height,
-            exclude_patterns,
-            plugins,
-            keybindings,
-            cfg.update_check,
-            collapsed_sections,
-        );
+        let mut state = AppState::new(term_width, term_height);
+        // Same field list reload uses, so startup and hot-reload can't
+        // disagree about which config fields apply.
+        state.apply_config(&cfg, theme_index, keybindings);
+        // Seeded once at startup only — a later reload must not stomp the
+        // user's live collapse state (see `apply_config`).
+        state.collapsed_sections = cfg.collapsed_sections.iter().cloned().collect();
 
         // The TUI owns the alternate screen, so a startup eprintln! would be
         // wiped invisibly. Surface keybinding warnings in the reload strip
@@ -256,30 +247,14 @@ impl App {
 
         let (pty_rows, pty_cols) = state.pty_size();
         let pty = Self::spawn_tmux_pty((pty_rows, pty_cols), attach_override.as_deref())?;
-        let parser = vt100::Parser::new(pty_rows, pty_cols, 0);
-        let local_terminal = TerminalPane {
-            pty,
-            parser,
-            alive: true,
-        };
+        let local_terminal = TerminalPane::new(pty, pty_rows, pty_cols);
 
         // Seed the in-memory mirror of remote configs so port-forward
         // state is available from the very first frame.
         state.config_remotes = cfg.remotes.clone();
-        state.summary_prompt = cfg.summary_prompt.clone();
-        state.summary_model = cfg.summary_model.clone();
-        state.summary_language = cfg.summary_language.clone();
-        state.agents_probe_interval_secs =
-            crate::state::normalize_agents_probe_interval(cfg.agents_probe_interval);
-        state.set_summary_height(cfg.summary_height);
 
         let remotes: Vec<String> = cfg.remotes.iter().map(|r| r.host.clone()).collect();
-        let pty_size = portable_pty::PtySize {
-            rows: pty_rows,
-            cols: pty_cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        };
+        let pty_size = pty::pane_size(pty_rows, pty_cols);
         let remote_spawner = remote_spawn::RemoteSpawner::start(&remotes, pty_size);
         let remote_conns: HashMap<String, RemoteConn> = remotes
             .iter()
@@ -707,22 +682,33 @@ impl App {
                             force_render = true;
                             continue;
                         }
+                        // `Action::None` (an unbound key) changes nothing —
+                        // don't force a full redraw for it.
+                        let is_noop = matches!(action, Action::None);
                         if self.dispatch(action) {
                             break;
                         }
-                        needs_render = true;
-                        force_render = true;
+                        if !is_noop {
+                            needs_render = true;
+                            force_render = true;
+                        }
                     }
                     Event::Mouse(mouse) => {
                         let action = action::mouse_to_action(&mouse, &self.state);
                         if self.warning_state.is_some() && Self::warning_blocks_action(&action) {
                             continue;
                         }
+                        // Bare motion maps to `Action::None`; with mouse
+                        // capture on, those arrive at 30–100+/s — forcing a
+                        // full draw for each one burns CPU for no change.
+                        let is_noop = matches!(action, Action::None);
                         if self.dispatch(action) {
                             break;
                         }
-                        needs_render = true;
-                        force_render = true;
+                        if !is_noop {
+                            needs_render = true;
+                            force_render = true;
+                        }
                     }
                     Event::Paste(text) if self.state.focus_mode == FocusMode::Main => {
                         let mut bytes = b"\x1b[200~".to_vec();

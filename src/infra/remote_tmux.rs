@@ -9,15 +9,13 @@
 //! do, but this is the safety net).
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::agent::DetectedAgent;
-use crate::infra::command::{CommandError, CommandRunner, RealRunner};
+use crate::infra::command::{default_runner, CommandError, CommandRunner};
 use crate::infra::tmux::{PaneFocus, SessionInfo};
 use crate::infra::tmux_parse::{
-    exact_target, parse_sessions, parse_window_activity, DECK_ORDER_OPTION,
-    SESSION_LIST_FORMAT_SSH, WINDOW_ACTIVITY_FORMAT_SSH,
+    exact_target, parse_sessions, DECK_ORDER_OPTION, SESSION_LIST_FORMAT_SSH,
 };
 
 /// Marker separating the pane-pid list from the `ps` snapshot in the
@@ -39,11 +37,6 @@ const FOCUS_SESSION_MARKER: &str = "__DECK_FOCUS_SESSION__";
 /// for the SSH master to come up (if we got here before the master
 /// finished establishing).
 pub const REMOTE_TIMEOUT: Duration = Duration::from_secs(5);
-
-fn default_runner() -> &'static dyn CommandRunner {
-    static R: OnceLock<RealRunner> = OnceLock::new();
-    R.get_or_init(RealRunner::default)
-}
 
 /// SSH options we apply on *every* remote call. See
 /// [`crate::ssh::CONTROL_OPTS`] for why these must be identical across
@@ -105,10 +98,11 @@ fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Sess
         host,
         &["tmux", "list-sessions", "-F", SESSION_LIST_FORMAT_SSH],
     ) {
-        Ok(raw) => {
-            let window_activity = latest_window_activity_with(runner, host);
-            Some(parse_sessions(&raw, &window_activity))
-        }
+        // No window-activity probe here, unlike the local path: nothing
+        // reads remote activity (`RemoteSessionRow` renders no idle badge),
+        // so the extra `list-windows -a` ssh roundtrip per host per refresh
+        // tick would be pure waste. Rows parse with `activity = 0`.
+        Ok(raw) => Some(parse_sessions(&raw, &HashMap::new())),
         // ssh connected and tmux reported there's no server running: the
         // host is reachable, it just has no sessions. This is the *only*
         // failure we read as empty — other non-zero exits (tmux missing,
@@ -175,22 +169,16 @@ fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Detect
     Some(agents)
 }
 
-/// Capture the visible buffer of a remote pane (`%N`) as plain text, for
-/// the Agents-tab summary. Mirrors `tmux::capture_pane` over ssh. The
-/// `%N` pane id is shell-safe (no leading `=`/`-`), so it needs no
-/// quoting. `None` on any ssh/tmux failure.
-pub fn capture_pane(host: &str, pane_id: &str) -> Option<String> {
-    run_ssh(
-        default_runner(),
-        host,
-        &["tmux", "capture-pane", "-p", "-J", "-t", pane_id],
-    )
-    .ok()
-}
-
 /// Marker line emitted before each pane's buffer in a batched capture. The
 /// leading `_` keeps it clear of the remote-shell `=`/`-` traps.
 const CAPTURE_MARKER: &str = "__deck_cap__";
+
+/// Capture several remote panes in a SINGLE ssh hop, returning `pane_id ->
+/// buffer`. Shared by the agent status probe and the summary generator so
+/// neither pays one ssh roundtrip per pane. Empty map on failure / no panes.
+pub(crate) fn capture_panes(host: &str, pane_ids: &[String]) -> HashMap<String, String> {
+    capture_panes_with(default_runner(), host, pane_ids)
+}
 
 /// Capture several remote panes in a SINGLE ssh hop, returning `pane_id ->
 /// buffer`. Used to classify remote agents' status without one hop per
@@ -272,17 +260,6 @@ fn is_no_server_error(err: &CommandError) -> bool {
     msg.contains("no server running")
         || msg.contains("failed to connect to server")
         || msg.contains("error connecting to")
-}
-
-fn latest_window_activity_with(runner: &dyn CommandRunner, host: &str) -> HashMap<String, u64> {
-    let Ok(raw) = run_ssh(
-        runner,
-        host,
-        &["tmux", "list-windows", "-a", "-F", WINDOW_ACTIVITY_FORMAT_SSH],
-    ) else {
-        return HashMap::new();
-    };
-    parse_window_activity(&raw)
 }
 
 /// Single-quote a value so the remote shell treats it as one literal
@@ -674,8 +651,7 @@ mod tests {
     }
 
     /// Hands back the configured result for the `list-sessions` call and
-    /// succeeds (empty) for anything else — namely the follow-up
-    /// `list-windows` activity probe in the reachable path.
+    /// succeeds (empty stdout, unless overridden) for anything else.
     struct FakeRunner {
         list_sessions: Mutex<Option<Result<Output, CommandError>>>,
         /// Joined-arg string of every `run` call, for asserting what was

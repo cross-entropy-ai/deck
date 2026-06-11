@@ -81,30 +81,35 @@ fn parse_client_session_returns_none_when_tty_missing() {
 
 // --- integration with FakeRunner ---
 
+/// The single `;`-chained invocation `list_sessions_with` issues: both
+/// lists in one tmux spawn, each `-F` format tagged with a one-char
+/// prefix so the combined stdout demuxes.
+const LIST_SESSIONS_ARGS: &[&str] = &[
+    "list-sessions",
+    "-F",
+    "S\t#{session_name}\t#{session_path}\t#{@deck_order}",
+    ";",
+    "list-windows",
+    "-a",
+    "-F",
+    "W\t#{session_name}\t#{window_activity}",
+];
+
 #[test]
 fn list_sessions_with_runner_returns_parsed_rows() {
     let runner = FakeRunner::new();
     // `alpha` carries a `@deck_order` rank; `beta` was never reordered
-    // (empty trailing field).
+    // (empty trailing field). Session and window lines arrive interleaved
+    // in one stdout, demuxed by their `S`/`W` prefixes.
     runner.set(
-        &[
-            "list-sessions",
-            "-F",
-            "#{session_name}\t#{session_path}\t#{@deck_order}",
-        ],
-        FakeResponse::Ok("alpha\t/tmp/alpha\t1\nbeta\t/tmp/beta\t".to_string()),
-    );
-    runner.set(
-        &[
-            "list-windows",
-            "-a",
-            "-F",
-            "#{session_name}\t#{window_activity}",
-        ],
-        FakeResponse::Ok("alpha\t99".to_string()),
+        LIST_SESSIONS_ARGS,
+        FakeResponse::Ok(
+            "S\talpha\t/tmp/alpha\t1\nS\tbeta\t/tmp/beta\t\nW\talpha\t99".to_string(),
+        ),
     );
 
     let got = list_sessions_with(&runner);
+    assert_eq!(runner.calls().len(), 1, "one batched tmux invocation");
     assert_eq!(got.len(), 2);
     assert_eq!(got[0].name, "alpha");
     assert_eq!(got[0].dir, "/tmp/alpha");
@@ -143,14 +148,7 @@ fn persist_session_order_empty_is_noop() {
 #[test]
 fn list_sessions_with_runner_returns_empty_on_timeout() {
     let runner = FakeRunner::new();
-    runner.set(
-        &[
-            "list-sessions",
-            "-F",
-            "#{session_name}\t#{session_path}\t#{@deck_order}",
-        ],
-        FakeResponse::Timeout,
-    );
+    runner.set(LIST_SESSIONS_ARGS, FakeResponse::Timeout);
     assert!(list_sessions_with(&runner).is_empty());
 }
 

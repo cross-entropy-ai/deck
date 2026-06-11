@@ -25,8 +25,17 @@
 
 use std::io;
 use std::process::ExitStatus;
+use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
+
+/// Process-wide production runner, shared by every infra backend
+/// (`tmux`, `remote_tmux`, `agent`). Callers can't override it; tests
+/// reach the parsers + `_with`-runner helpers instead.
+pub(crate) fn default_runner() -> &'static dyn CommandRunner {
+    static R: OnceLock<RealRunner> = OnceLock::new();
+    R.get_or_init(RealRunner::default)
+}
 
 /// Successful command output. Mirrors `std::process::Output` but only
 /// carries the fields infra layers actually use, and guarantees the

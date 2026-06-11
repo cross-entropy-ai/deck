@@ -167,13 +167,12 @@ fn run(backend: Box<dyn SessionControl + Send>, op: SessionOp) -> OpOutcome {
         SessionOp::Kill { name } => {
             // The doomed-session pre-switch stays on the UI thread (it
             // depends on App-level active_remote state), so the worker just
-            // runs the kill — matching today's backends, which ignore
-            // `switch_to`.
-            backend.kill(&name, None);
+            // runs the kill.
+            backend.kill(&name);
             OpOutcome::Killed
         }
         SessionOp::NewSession { name, dir } => {
-            let created = backend.new_session(&name, &dir).is_some();
+            let created = backend.new_session(&name, &dir);
             OpOutcome::Created { name, created }
         }
         SessionOp::PersistOrder { order } => {

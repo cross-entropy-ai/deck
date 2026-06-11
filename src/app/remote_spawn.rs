@@ -151,14 +151,7 @@ fn spawn_one(host: String, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
             argv.push(host_for_args.as_str());
             argv.push(remote_cmd.as_str());
             let spawned = match Pty::spawn("ssh", &argv, size) {
-                Ok(pty) => {
-                    let parser = vt100::Parser::new(size.rows, size.cols, 0);
-                    Some(Box::new(TerminalPane {
-                        pty,
-                        parser,
-                        alive: true,
-                    }))
-                }
+                Ok(pty) => Some(Box::new(TerminalPane::new(pty, size.rows, size.cols))),
                 Err(_) => None,
             };
             let Some(pane) = spawned else {

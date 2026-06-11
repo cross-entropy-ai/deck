@@ -33,20 +33,19 @@ impl App {
         let theme = &THEMES[s.theme_index];
         let show_help = s.overlay.show_help;
         let rename_input = s.overlay.renaming.as_ref().map(|r| &r.input);
-        let context_menu = s.overlay.context_menu.clone();
+        // Overlay state is only *read* inside the draw closure, so borrow
+        // it — cloning TextAreas/entry lists/summary text every frame was
+        // pure allocation churn.
+        let context_menu = s.overlay.context_menu.as_ref();
         // The summary popup shows the Ready text in a big centered view.
-        let summary_popup = if s.overlay.summary_popup {
-            match &s.summary {
-                crate::state::SummaryState::Ready { text, .. } => Some(text.clone()),
-                _ => None,
-            }
-        } else {
-            None
+        let summary_popup = match (&s.summary, s.overlay.summary_popup) {
+            (crate::state::SummaryState::Ready { text, .. }, true) => Some(text.as_str()),
+            _ => None,
         };
         let summary_popup_scroll = s.summary_popup_scroll;
-        let new_session_overlay = s.overlay.new_session.clone();
-        let add_remote_overlay = s.overlay.add_remote.clone();
-        let port_forward_overlay = s.overlay.port_forward.clone();
+        let new_session_overlay = s.overlay.new_session.as_ref();
+        let add_remote_overlay = s.overlay.add_remote.as_ref();
+        let port_forward_overlay = s.overlay.port_forward.as_ref();
         let show_borders = s.show_borders;
         let sidebar_tab = s.sidebar_tab;
         let layout_mode = s.layout_mode;
@@ -54,7 +53,7 @@ impl App {
         let sidebar_width = s.sidebar_width;
         let sidebar_height = s.effective_sidebar_height();
         let main_view = s.main_view;
-        let warning_state = self.warning_state.clone();
+        let warning_state = self.warning_state.as_ref();
         let remote_placeholder = s.focused_remote_placeholder().map(|row| {
             let title = if row.loading {
                 format!("Connecting to @{}", row.host)
@@ -77,18 +76,12 @@ impl App {
 
         let confirm_name = s.confirm_kill_name();
 
-        let update_available = s.update_available.clone();
-        let reload_status = s.reload_status.clone();
+        let update_available = s.update_available.as_ref();
+        let reload_status = s.reload_status.as_ref();
         let dragging_sep = s.dragging_separator;
 
-        let mut captured_banner_bounds: Option<Rect> = None;
-        let mut captured_divider_hits: Vec<crate::state::DividerHit> = Vec::new();
-        let mut captured_kill_hits: Option<crate::state::KillConfirmHits> = None;
-        let mut captured_agent_hits: Vec<crate::state::AgentHit> = Vec::new();
-        let mut captured_tab_rects: Option<(Rect, Rect)> = None;
-        let mut captured_summary: ui::SummaryHits = ui::SummaryHits::default();
+        let mut captured_hits = ui::SidebarHits::default();
         let mut captured_summary_popup_max_scroll: usize = 0;
-        let mut captured_menu_bounds: Option<Rect> = None;
         terminal.draw(|frame| {
             // Unified slice the sidebar consumes: local rows first
             // (flat index == filtered_pos), then remotes (flat index
@@ -111,7 +104,7 @@ impl App {
                 .collect();
 
             let full = frame.area();
-            let reload_height = ui::reload_row_count(reload_status.as_ref(), full.width);
+            let reload_height = ui::reload_row_count(reload_status, full.width);
             // Paint the reload bar as an overlay after everything else,
             // not as its own layout slot. Keeping the content area at
             // full height means PTY sizing (see `AppState::pty_size`)
@@ -197,50 +190,35 @@ impl App {
             let layout = self.state.current_layout(view_mode);
             let agent_rows = self.state.agent_rows();
             let focus_target = self.state.focus_target();
-            let (
-                banner_bounds,
-                divider_hits,
-                kill_hits,
-                agent_hits,
-                tab_rects,
-                summary_hits,
-                menu_bounds,
-            ) = ui::draw_sidebar(
-                    frame,
-                    sidebar_area,
-                    ui::SidebarProps {
-                        sessions: &sessions_dyn,
-                        local_count,
-                        layout: &layout,
-                        focus_target,
-                        sidebar_active,
-                        theme,
-                        show_help,
-                        confirm_kill: confirm_name.as_deref(),
-                        rename_input,
-                        show_borders,
-                        sidebar_tab,
-                        agent_rows: &agent_rows,
-                        summary: &self.state.summary,
-                        summary_age: summary_age.as_deref(),
-                        spinner_idx,
-                        summary_scroll: self.state.summary_scroll,
-                        tabs_mode: layout_mode == LayoutMode::Vertical,
-                        view_mode,
-                        plugins: &plugin_views,
-                        blink_on,
-                        keybindings: &self.state.keybindings,
-                        update_available: update_available.as_ref(),
-                        active_agent: self.state.active_agent.as_ref(),
-                    },
-                );
-            captured_summary = summary_hits;
-            captured_menu_bounds = menu_bounds;
-            captured_banner_bounds = banner_bounds;
-            captured_divider_hits = divider_hits;
-            captured_kill_hits = kill_hits;
-            captured_agent_hits = agent_hits;
-            captured_tab_rects = tab_rects;
+            captured_hits = ui::draw_sidebar(
+                frame,
+                sidebar_area,
+                ui::SidebarProps {
+                    sessions: &sessions_dyn,
+                    local_count,
+                    layout: &layout,
+                    focus_target,
+                    sidebar_active,
+                    theme,
+                    show_help,
+                    confirm_kill: confirm_name.as_deref(),
+                    rename_input,
+                    show_borders,
+                    sidebar_tab,
+                    agent_rows: &agent_rows,
+                    summary: &self.state.summary,
+                    summary_age: summary_age.as_deref(),
+                    spinner_idx,
+                    summary_scroll: self.state.summary_scroll,
+                    tabs_mode: layout_mode == LayoutMode::Vertical,
+                    view_mode,
+                    plugins: &plugin_views,
+                    blink_on,
+                    keybindings: &self.state.keybindings,
+                    update_available,
+                    active_agent: self.state.active_agent.as_ref(),
+                },
+            );
 
             if let Some(gap) = gap_area {
                 let (sep_char, sep_fg) = if dragging_sep {
@@ -276,7 +254,7 @@ impl App {
                     .map(|inst| inst.parser.screen()),
                 _ => None,
             };
-            let background_screen = match (warning_state.as_ref(), main_view) {
+            let background_screen = match (warning_state, main_view) {
                 (Some(crate::state::WarningState::Proactive { .. }), _) => None,
                 (None, MainView::Terminal) if remote_placeholder.is_some() => None,
                 // Dead local pane (no sessions to attach to) renders the
@@ -431,8 +409,8 @@ impl App {
                             theme.yellow,
                             Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
                             Style::default().fg(theme.dim),
-                            text.to_string(),
-                            detail,
+                            *text,
+                            detail.as_str(),
                         ),
                     };
 
@@ -460,7 +438,7 @@ impl App {
                 frame.render_widget(warning, popup_area);
             }
 
-            if let Some(ref menu) = context_menu {
+            if let Some(menu) = context_menu {
                 ui::draw_context_menu(
                     frame,
                     menu.x,
@@ -472,7 +450,7 @@ impl App {
                 );
             }
 
-            if let Some(ref ns) = new_session_overlay {
+            if let Some(ns) = new_session_overlay {
                 let view = ui::NewSessionView {
                     name: &ns.name,
                     focus_name: matches!(ns.focus, crate::new_session::PickerFocus::Name),
@@ -486,11 +464,11 @@ impl App {
                 ui::draw_new_session(frame, frame.area(), &view, theme);
             }
 
-            if let Some(ref ar) = add_remote_overlay {
+            if let Some(ar) = add_remote_overlay {
                 ui::draw_add_remote(frame, frame.area(), ar, theme);
             }
 
-            if let Some(ref overlay) = port_forward_overlay {
+            if let Some(overlay) = port_forward_overlay {
                 let pf_area = frame.area();
                 crate::ui::overlays::port_forward::draw_port_forward(
                     frame.buffer_mut(),
@@ -502,7 +480,7 @@ impl App {
                 );
             }
 
-            if let Some(ref text) = summary_popup {
+            if let Some(text) = summary_popup {
                 captured_summary_popup_max_scroll = ui::draw_summary_popup(
                     frame,
                     frame.area(),
@@ -516,27 +494,27 @@ impl App {
             // footer, main pane, warning popup, and context menu. The
             // underlying layouts keep their full area, so PTY sizing and
             // mouse routing are unaffected by the bar's presence.
-            if let (Some(status), Some(area)) = (reload_status.as_ref(), reload_area) {
+            if let (Some(status), Some(area)) = (reload_status, reload_area) {
                 frame.render_widget(Clear, area);
                 ui::draw_reload_bar(frame, area, status, theme);
             }
         })?;
 
-        self.state.banner_upgrade_bounds = captured_banner_bounds;
-        self.state.menu_button_bounds = captured_menu_bounds;
-        self.state.divider_hits = captured_divider_hits;
-        self.state.kill_confirm_hits = captured_kill_hits;
-        self.state.agent_hits = captured_agent_hits;
-        let (projects_rect, agents_rect) = match captured_tab_rects {
-            Some((p, a)) => (Some(p), Some(a)),
+        self.state.banner_upgrade_bounds = captured_hits.banner;
+        self.state.menu_button_bounds = captured_hits.menu;
+        self.state.divider_hits = captured_hits.dividers;
+        self.state.kill_confirm_hits = captured_hits.kill;
+        self.state.agent_hits = captured_hits.agents;
+        let (projects_rect, agents_rect) = match captured_hits.tabs {
+            Some(t) => (Some(t.projects), Some(t.agents)),
             None => (None, None),
         };
         self.state.projects_tab_rect = projects_rect;
         self.state.agents_tab_rect = agents_rect;
-        self.state.summary_button_rect = captured_summary.button;
-        self.state.summary_popup_button_rect = captured_summary.popup;
-        self.state.summary_card_rect = captured_summary.card;
-        self.state.summary_max_scroll = captured_summary.max_scroll;
+        self.state.summary_button_rect = captured_hits.summary.button;
+        self.state.summary_popup_button_rect = captured_hits.summary.popup;
+        self.state.summary_card_rect = captured_hits.summary.card;
+        self.state.summary_max_scroll = captured_hits.summary.max_scroll;
         self.state.summary_popup_max_scroll = captured_summary_popup_max_scroll;
 
         Ok(())

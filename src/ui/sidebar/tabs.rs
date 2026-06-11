@@ -24,7 +24,7 @@ pub(super) fn draw_sidebar_tabs(
     area: Rect,
     ctx: &SidebarRenderCtx<'_>,
     props: TabsProps<'_>,
-) -> Option<Rect> {
+) {
     let theme = ctx.theme;
     let keybindings = ctx.keybindings;
     let sessions = props.sessions;
@@ -33,7 +33,7 @@ pub(super) fn draw_sidebar_tabs(
         draw_sidebar_container(frame, area, theme, props.sidebar_active, props.show_borders);
 
     if content.height == 0 {
-        return None;
+        return;
     }
 
     let tab_area = Rect {
@@ -136,6 +136,4 @@ pub(super) fn draw_sidebar_tabs(
         Paragraph::new(vec![tab_line]).style(Style::default().bg(theme.bg)),
         tab_area,
     );
-
-    None
 }

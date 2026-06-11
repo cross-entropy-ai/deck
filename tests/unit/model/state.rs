@@ -15,23 +15,9 @@ fn make_state(
     term_width: u16,
     term_height: u16,
 ) -> AppState {
-    let mut state = AppState::new(
-        0,
-        layout_mode,
-        ViewMode::Expanded,
-        show_borders,
-        SidebarTab::Projects,
-        28,
-        SIDEBAR_HEIGHT,
-        5,
-        term_width,
-        term_height,
-        vec![],
-        vec![],
-        Keybindings::default(),
-        UpdateCheckMode::Enabled,
-        std::collections::HashSet::new(),
-    );
+    let mut state = AppState::new(term_width, term_height);
+    state.layout_mode = layout_mode;
+    state.show_borders = show_borders;
     state.sessions = vec![make_session("alpha"), make_session("beta")];
     state.session_order = state.sessions.iter().map(|s| s.name.clone()).collect();
     state.recompute_filter();
@@ -501,12 +487,11 @@ fn vertical_tabs_hit_test_remote_sessions() {
 #[test]
 fn context_menu_navigation_skips_disabled_items() {
     use crate::state::{ContextMenu, MenuKind};
-    // A placeholder remote menu: both items disabled.
+    // A placeholder remote menu: every session item disabled.
     let all_disabled = ContextMenu {
         kind: MenuKind::Session {
             focus: FocusTarget(0),
-            items: &["Rename", "Kill"],
-            disabled: &["Rename", "Kill"],
+            disabled: &["Rename", "Kill", "Move up", "Move down"],
         },
         x: 0,
         y: 0,
@@ -519,10 +504,10 @@ fn context_menu_navigation_skips_disabled_items() {
     assert_eq!(all_disabled.next_enabled(), 0);
 
     // One disabled item among enabled ones: navigation hops over it.
+    // Items are the fixed session list: Rename, Kill, Move up, Move down.
     let mixed = ContextMenu {
         kind: MenuKind::Session {
             focus: FocusTarget(0),
-            items: &["Rename", "Kill", "Move up"],
             disabled: &["Kill"],
         },
         x: 0,

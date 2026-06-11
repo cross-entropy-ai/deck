@@ -219,9 +219,14 @@ impl Default for Config {
     }
 }
 
-fn config_dir_for(app_name: &str) -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".config").join(app_name)
+/// `$HOME`, falling back to `.` when unset — deck's one home-dir
+/// convention, shared by config/cache paths and local `~` expansion.
+pub(crate) fn home_dir() -> PathBuf {
+    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+}
+
+pub(crate) fn config_dir_for(app_name: &str) -> PathBuf {
+    home_dir().join(".config").join(app_name)
 }
 
 fn config_path() -> PathBuf {

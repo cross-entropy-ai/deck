@@ -4,9 +4,7 @@ use crate::keybindings::{self, Keybindings};
 use crate::session::local::LocalControl;
 use crate::session::remote::RemoteControl;
 use crate::session::SessionControl;
-use crate::state::{
-    Effect, FocusMode, MainView, ReloadStatus, SideEffect, SIDEBAR_MAX, SIDEBAR_MIN,
-};
+use crate::state::{Effect, FocusMode, MainView, ReloadStatus, SideEffect};
 use crate::theme::THEMES;
 use crate::tmux;
 
@@ -55,15 +53,28 @@ fn new_session_list_query(ns: &crate::new_session::NewSessionState) -> (Option<S
     match &ns.remote_host {
         Some(host) => (Some(host.clone()), parent.to_string()),
         None => {
-            let home =
-                std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
-            let expanded = crate::new_session::expand_path(parent, &home);
+            let expanded = crate::new_session::expand_path(parent, &crate::config::home_dir());
             (None, expanded.to_string_lossy().to_string())
         }
     }
 }
 
 impl App {
+    /// Where keyboard focus lands after a session switch. A switch must not
+    /// leave focus in the sidebar: users kept clicking a session on the
+    /// left, forgot focus was there, and typed into the sidebar by mistake
+    /// (keyboard `ToggleFocus` is the way to focus the sidebar). The
+    /// doomed-switch warning is the one case that keeps focus left so the
+    /// prompt stays actionable. One place, shared by every switch-shaped
+    /// action, so the arms can't drift.
+    fn settle_focus_after_switch(&mut self) {
+        self.state.focus_mode = if self.warning_state.is_some() {
+            FocusMode::Sidebar
+        } else {
+            FocusMode::Main
+        };
+    }
+
     pub(super) fn dispatch(&mut self, action: Action) -> bool {
         match action {
             Action::ForwardKey(ref bytes) => {
@@ -75,7 +86,7 @@ impl App {
                 self.state.focus_mode = FocusMode::Main;
                 false
             }
-            Action::SidebarClickSession(idx) => {
+            Action::SidebarClickSession(idx) | Action::NumberKeyJump(idx) => {
                 let mut fx = SideEffect::default();
                 fx.merge(action::apply_action(
                     &mut self.state,
@@ -83,31 +94,7 @@ impl App {
                 ));
                 fx.merge(action::apply_action(&mut self.state, Action::SwitchProject));
                 self.execute_side_effects(&fx);
-                // A mouse click selects and switches the session but must not
-                // steal keyboard focus into the sidebar: users kept clicking a
-                // session on the left, forgot focus was there, and typed into
-                // the sidebar by mistake. Keyboard `ToggleFocus` is the way to
-                // focus the sidebar. The doomed-switch warning is the one case
-                // that keeps focus left so the prompt stays actionable (same
-                // rule as `NumberKeyJump`/`SwitchProject`).
-                if self.warning_state.is_some() {
-                    self.state.focus_mode = FocusMode::Sidebar;
-                } else {
-                    self.state.focus_mode = FocusMode::Main;
-                }
-                false
-            }
-            Action::NumberKeyJump(idx) => {
-                let mut fx = SideEffect::default();
-                fx.merge(action::apply_action(
-                    &mut self.state,
-                    Action::FocusIndex(idx),
-                ));
-                fx.merge(action::apply_action(&mut self.state, Action::SwitchProject));
-                self.execute_side_effects(&fx);
-                if self.warning_state.is_none() {
-                    self.state.focus_mode = FocusMode::Main;
-                }
+                self.settle_focus_after_switch();
                 false
             }
             Action::SwitchToAgentPane(target) => {
@@ -121,11 +108,7 @@ impl App {
             Action::SwitchProject => {
                 let fx = action::apply_action(&mut self.state, action);
                 self.execute_side_effects(&fx);
-                if self.warning_state.is_some() {
-                    self.state.focus_mode = FocusMode::Sidebar;
-                } else {
-                    self.state.focus_mode = FocusMode::Main;
-                }
+                self.settle_focus_after_switch();
                 fx.has_quit()
             }
             Action::MenuClickItem(idx) => {
@@ -474,11 +457,8 @@ impl App {
     /// (the reconnect button and refresh auto-recovery), so switching
     /// starts working again once the pane reconnects.
     pub(super) fn switch_to_remote(&mut self, host: &str, name: &str) {
-        use crate::app::RemoteConnStatus;
         let conn = self.remote_conns.get(host);
-        let connected = conn
-            .is_some_and(|c| matches!(c.status, RemoteConnStatus::Connected) && c.pane.is_some());
-        if !connected {
+        if !conn.is_some_and(super::RemoteConn::is_live) {
             return;
         }
         // The marker-gated `switch_client` no-ops until the attach prelude
@@ -621,14 +601,13 @@ impl App {
     /// isn't connected or its marker hasn't been written yet — focusing
     /// then would just bail server-side and waste an ssh round-trip.
     fn spawn_remote_agent_focus(&mut self, target: crate::state::AgentTarget) {
-        use crate::app::RemoteConnStatus;
         let Some(host) = target.host.clone() else {
             return;
         };
-        let marker_id = self.remote_conns.get(&host).and_then(|c| {
-            (matches!(c.status, RemoteConnStatus::Connected) && c.pane.is_some() && c.marker_ready)
-                .then_some(c.client_marker_id)
-        });
+        let marker_id = self
+            .remote_conns
+            .get(&host)
+            .and_then(|c| (c.is_live() && c.marker_ready).then_some(c.client_marker_id));
         let Some(marker_id) = marker_id else {
             return;
         };
@@ -687,14 +666,13 @@ impl App {
     /// connected and the agent is still detected on it. Guards stale
     /// completions whose host was removed or whose agent has since exited.
     fn agent_focus_target_live(&self, target: &crate::state::AgentTarget) -> bool {
-        use crate::app::RemoteConnStatus;
         let Some(host) = target.host.as_deref() else {
             return true; // local targets are committed inline, not here
         };
         let connected = self
             .remote_conns
             .get(host)
-            .is_some_and(|c| matches!(c.status, RemoteConnStatus::Connected) && c.pane.is_some());
+            .is_some_and(super::RemoteConn::is_live);
         let still_detected = self
             .state
             .agents
@@ -812,11 +790,9 @@ impl App {
                 }
                 Effect::KillSession(kill) => {
                     // App-level orchestration around the kill stays in App; only the
-                    // leaf kill call routes through the backend. The trait's
-                    // `switch_to` arg is the doomed-session pre-switch contract, but
-                    // both backends ignore it today (local pre-switches via
-                    // `switch_to_session_if_safe`, remote via the `active_remote`
-                    // reset), so it stays `None` here — behaviour is unchanged.
+                    // leaf kill call routes through the backend (local pre-switches
+                    // via `switch_to_session_if_safe`, remote via the
+                    // `active_remote` reset below).
                     match &kill.host {
                         None => {
                             if let Some(ref alt_name) = kill.switch_to {
@@ -872,13 +848,10 @@ impl App {
                     // Persist this host's group order to its remote tmux server, on
                     // the executor's per-host FIFO (ordered behind any rename/kill
                     // for the host, and off the UI thread).
-                    let names: Vec<String> = self
-                        .state
-                        .remote_sessions
-                        .iter()
-                        .filter(|r| &r.host == host && r.is_attachable_session())
-                        .map(|r| r.name.clone())
-                        .collect();
+                    let names: Vec<String> =
+                        crate::state::attachable_on_host(&self.state.remote_sessions, host)
+                            .map(|r| r.name.clone())
+                            .collect();
                     self.submit_session(
                         Some(host.clone()),
                         crate::session::executor::SessionOp::PersistOrder { order: names },
@@ -965,28 +938,11 @@ impl App {
         let new_theme_index = THEMES.iter().position(|t| t.name == cfg.theme).unwrap_or(0);
         let theme_changed = new_theme_index != self.state.theme_index;
 
-        self.state.theme_index = new_theme_index;
-        self.state.layout_mode = cfg.layout;
-        self.state.show_borders = cfg.show_borders;
-        self.state.sidebar_tab = cfg.sidebar_tab;
-        self.state.view_mode = cfg.view_mode;
-        self.state.frame_rate_limit =
-            crate::state::normalize_frame_rate_limit(cfg.frame_rate_limit);
-        self.state.sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
-        self.state.sidebar_height = cfg.sidebar_height;
-        self.state.exclude_patterns = cfg.exclude_patterns;
-        self.state.plugins = cfg.plugins;
-        self.state.keybindings = compiled;
-        self.state.update_check_mode = cfg.update_check;
-        self.state.summary_prompt = cfg.summary_prompt;
-        self.state.summary_model = cfg.summary_model;
-        self.state.summary_language = cfg.summary_language;
-        self.state.agents_probe_interval_secs =
-            crate::state::normalize_agents_probe_interval(cfg.agents_probe_interval);
-        self.state.set_summary_height(cfg.summary_height);
+        // The shared config→state field list lives in `apply_config` (also
+        // used at startup) so reload can't silently miss a field.
+        self.state.apply_config(&cfg, new_theme_index, compiled);
 
         // Reset sub-UIs whose indices may no longer be valid.
-        self.state.settings.theme_picker_selected = new_theme_index;
         self.state.overlay.exclude_editor = None;
 
         self.raw_keybindings = cfg.keybindings;
@@ -1001,6 +957,8 @@ impl App {
         }
 
         // Diff old vs new remote forwards and send ops to the worker.
+        // (`config_remotes` is deliberately outside `apply_config`: the
+        // diff below needs the old list before the new one is committed.)
         let old_remotes = std::mem::take(&mut self.state.config_remotes);
         let new_remotes = cfg.remotes.clone();
 
@@ -1101,7 +1059,9 @@ impl App {
                     .get(self.state.focused)
                     .and_then(|&i| self.state.sessions.get(i))
                     .map(|s| s.dir.clone())
-                    .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+                    .unwrap_or_else(|| {
+                        crate::config::home_dir().to_string_lossy().into_owned()
+                    });
                 let existing_names: Vec<String> =
                     self.state.sessions.iter().map(|s| s.name.clone()).collect();
                 NewSessionTarget {
@@ -1112,13 +1072,10 @@ impl App {
                 }
             }
             Some(host) => {
-                let existing_names: Vec<String> = self
-                    .state
-                    .remote_sessions
-                    .iter()
-                    .filter(|r| r.host == host && r.is_attachable_session())
-                    .map(|r| r.name.clone())
-                    .collect();
+                let existing_names: Vec<String> =
+                    crate::state::attachable_on_host(&self.state.remote_sessions, host)
+                        .map(|r| r.name.clone())
+                        .collect();
                 NewSessionTarget {
                     host: Some(host.to_string()),
                     start_dir: "~/".to_string(),
@@ -1184,11 +1141,7 @@ impl App {
         // the browsed path (it can't be stat'd locally — tmux fails
         // loudly if it's bad), and let the remote shell expand `~`.
         if let Some(host) = remote_host {
-            let existing = self
-                .state
-                .remote_sessions
-                .iter()
-                .filter(|r| r.host == host && r.is_attachable_session())
+            let existing = crate::state::attachable_on_host(&self.state.remote_sessions, &host)
                 .map(|r| r.name.as_str());
             let err = validate_unique_session_name(&name, existing);
             if let Some(err) = err {
@@ -1226,9 +1179,7 @@ impl App {
             .as_ref()?
             .input_str()
             .to_string();
-        let home =
-            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
-        let resolved = expand_path(&input, &home);
+        let resolved = expand_path(&input, &crate::config::home_dir());
         match std::fs::metadata(&resolved) {
             Ok(m) if m.is_dir() => {
                 let dir = resolved.to_string_lossy().to_string();
@@ -1277,9 +1228,7 @@ impl App {
     }
 
     fn create_new_session(&mut self, name: &str, dir: &str) {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let home_path = std::path::PathBuf::from(&home);
-        let expanded = crate::new_session::expand_path(dir, &home_path);
+        let expanded = crate::new_session::expand_path(dir, &crate::config::home_dir());
         let dir_str = expanded.to_string_lossy().to_string();
 
         // Create on the executor; the post-create switch happens when the
@@ -1320,9 +1269,10 @@ impl App {
         match host {
             None => self.switch_client(name),
             Some(host) => {
-                let connected = self.remote_conns.get(&host).is_some_and(|c| {
-                    matches!(c.status, crate::app::RemoteConnStatus::Connected) && c.pane.is_some()
-                });
+                let connected = self
+                    .remote_conns
+                    .get(&host)
+                    .is_some_and(super::RemoteConn::is_live);
                 if connected {
                     self.switch_to_remote(&host, name);
                 } else {
@@ -1411,7 +1361,14 @@ impl App {
             (host, spec)
         };
 
-        persist_forward(&mut self.state.config_remotes, &host, spec.clone(), false);
+        if let Some(r) = self
+            .state
+            .config_remotes
+            .iter_mut()
+            .find(|r| r.host == host)
+        {
+            r.forwards.retain(|s| *s != spec);
+        }
         self.save_config();
 
         let new_len = self
@@ -1431,23 +1388,5 @@ impl App {
         let _ = self
             .port_forward_tx
             .send(crate::app::port_forward_task::Op::CancelForward { host, spec });
-    }
-}
-
-// `push` and `retain` are called on `r.forwards` (a field), not on `remotes`
-// directly, but the Vec signature is needed to allow mutating elements.
-#[allow(clippy::ptr_arg)]
-fn persist_forward(
-    remotes: &mut Vec<crate::config::RemoteConfig>,
-    host: &str,
-    spec: crate::config::ForwardSpec,
-    add: bool,
-) {
-    if let Some(r) = remotes.iter_mut().find(|r| r.host == host) {
-        if add {
-            r.forwards.push(spec);
-        } else {
-            r.forwards.retain(|s| *s != spec);
-        }
     }
 }

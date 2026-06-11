@@ -51,17 +51,17 @@ impl SessionControl for LocalControl {
         tmux::rename_session(old, new);
     }
 
-    fn kill(&self, name: &str, _switch_to: Option<&str>) {
+    fn kill(&self, name: &str) {
         // The pre-switch off the doomed session (`switch_to_session_if_safe`)
         // stays in App. This method just runs the kill, matching the local
         // kill handler.
         tmux::kill_session(name);
     }
 
-    fn new_session(&self, name: &str, dir: &str) -> Option<String> {
+    fn new_session(&self, name: &str, dir: &str) -> bool {
         // `create_new_session`'s post-create switch stays in App; this is
-        // just the create call, which already returns `Some(name)`/`None`.
-        tmux::new_session(name, dir)
+        // just the create call.
+        tmux::new_session(name, dir).is_some()
     }
 
     fn persist_order(&self, order: &[String]) {

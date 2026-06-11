@@ -1,16 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 use ratatui_sectioned_list::ItemKind;
 use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
 use crate::config::PluginConfig;
 use crate::keybindings::Keybindings;
-use crate::layout::{
-    card_height, context_menu_width, plugin_block_rows, tab_col_ranges, tab_label, BANNER_MIN_WIDTH,
-};
+use crate::layout::{card_height, context_menu_rect, tab_col_ranges, tab_label};
 use crate::new_session::{make_textarea, textarea_line, NewSessionState};
 use crate::update::{UpdateCheckMode, UpdateStatus};
 
@@ -26,17 +24,17 @@ const SIDEBAR_HEIGHT_MAX_BORDERED: u16 = 6;
 const MIN_MAIN_WIDTH: u16 = 10;
 const MIN_MAIN_HEIGHT: u16 = 1;
 
-// "Switch" is dropped — the focus already triggers the switch, so the
-// menu item was redundant.
+// One list for local and remote rows. "Switch" is dropped — the focus
+// already triggers the switch, so the menu item was redundant. On a remote
+// row Rename/Kill map to `ssh <host> tmux <cmd>` and Move up/down reorder
+// *within the host group* (hosts can't interleave), persisted to that
+// server's `@deck_order` — same labels, different backend.
 const SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill", "Move up", "Move down"];
-// Remote sessions live on a different tmux server. Rename/Kill map to
-// `ssh <host> tmux <cmd>`; Move up/down reorder *within the host group*
-// (hosts can't interleave), persisted to that server's `@deck_order`.
-const REMOTE_SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill", "Move up", "Move down"];
 // Items shown but greyed-out / unselectable when the right-clicked row
 // is a synthetic placeholder (a remote host with no sessions, or an
-// unreachable one): there's no real session to Rename/Kill/reorder.
-const PLACEHOLDER_DISABLED_ITEMS: &[&str] = &["Rename", "Kill", "Move up", "Move down"];
+// unreachable one): there's no real session to Rename/Kill/reorder —
+// i.e. every session item.
+const PLACEHOLDER_DISABLED_ITEMS: &[&str] = SESSION_MENU_ITEMS;
 // Only Kill is greyed when the row is the last live session on a remote
 // host: killing it would tear down that host's tmux server. Rename is
 // still fine.
@@ -158,6 +156,16 @@ pub fn agents_probe_interval_label(secs: u64) -> &'static str {
     }
 }
 
+/// Step `delta` positions through `options` from `current`, wrapping at
+/// both ends. A `current` not in the slice steps from the first option.
+/// Shared by the settings cyclers and the port-forward form's field/mode
+/// cycling so the wrap-around arithmetic lives once.
+pub fn cycle_option<T: Copy + PartialEq>(options: &[T], current: T, delta: i32) -> T {
+    let i = options.iter().position(|&o| o == current).unwrap_or(0) as i32;
+    let n = options.len() as i32;
+    options[(i + delta).rem_euclid(n) as usize]
+}
+
 pub fn normalize_frame_rate_limit(fps: u16) -> u16 {
     if FRAME_RATE_LIMIT_OPTIONS.contains(&fps) {
         fps
@@ -180,13 +188,11 @@ pub fn frame_rate_limit_label(fps: u16) -> &'static str {
 
 #[derive(Debug, Clone)]
 pub enum MenuKind {
-    /// Right-clicked a session row. `items` is decided at construction
-    /// (e.g. local rows include `Move up/down`, remotes don't) so the
-    /// reducer doesn't have to redo that lookup on every keypress.
+    /// Right-clicked a session row. Local and remote rows share one item
+    /// list (`SESSION_MENU_ITEMS`); only the greyed subset is per-row.
     Session {
         focus: FocusTarget,
-        items: &'static [&'static str],
-        /// Subset of `items` shown greyed-out and not selectable (e.g.
+        /// Subset of the items shown greyed-out and not selectable (e.g.
         /// Rename/Kill on a synthetic placeholder row). Empty for a real
         /// session, where every item is actionable.
         disabled: &'static [&'static str],
@@ -206,7 +212,7 @@ pub enum MenuKind {
 impl MenuKind {
     pub fn items(&self) -> &'static [&'static str] {
         match self {
-            MenuKind::Session { items, .. } => items,
+            MenuKind::Session { .. } => SESSION_MENU_ITEMS,
             MenuKind::Global => GLOBAL_MENU_ITEMS,
             MenuKind::HostDivider { .. } | MenuKind::LocalDivider => HOST_DIVIDER_MENU_ITEMS,
         }
@@ -221,16 +227,6 @@ impl MenuKind {
             MenuKind::LocalDivider => LOCAL_DIVIDER_DISABLED,
             MenuKind::Global | MenuKind::HostDivider { .. } => &[],
         }
-    }
-}
-
-/// Menu items shown after right-clicking a session row. The action
-/// layer reads `session_target` to decide which list applies; the
-/// renderer never needs to know.
-pub fn session_menu_items(target: &SessionTargetRef<'_>) -> &'static [&'static str] {
-    match target {
-        SessionTargetRef::Local(_) => SESSION_MENU_ITEMS,
-        SessionTargetRef::Remote(_) => REMOTE_SESSION_MENU_ITEMS,
     }
 }
 
@@ -249,11 +245,7 @@ pub fn session_menu_disabled(
     match target {
         SessionTargetRef::Remote(row) if !row.is_attachable_session() => PLACEHOLDER_DISABLED_ITEMS,
         SessionTargetRef::Remote(row)
-            if remote_sessions
-                .iter()
-                .filter(|r| r.host == row.host && r.is_attachable_session())
-                .count()
-                <= 1 =>
+            if attachable_on_host(remote_sessions, &row.host).nth(1).is_none() =>
         {
             LAST_REMOTE_SESSION_DISABLED
         }
@@ -368,6 +360,17 @@ impl RemoteSessionRow {
     pub fn is_attachable_session(&self) -> bool {
         !self.loading && !self.unreachable && self.name != REMOTE_NO_SESSIONS_LABEL
     }
+}
+
+/// The attachable (real) sessions on `host`, in display order. The one
+/// filter behind the last-session-on-host kill policy and the per-host
+/// name/order collectors, so the call sites can't drift.
+pub fn attachable_on_host<'a>(
+    rows: &'a [RemoteSessionRow],
+    host: &'a str,
+) -> impl Iterator<Item = &'a RemoteSessionRow> {
+    rows.iter()
+        .filter(move |r| r.host == host && r.is_attachable_session())
 }
 
 /// Identifies a focused sidebar row by its flat index.
@@ -1235,24 +1238,10 @@ impl ReloadStatus {
 }
 
 impl AppState {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        theme_index: usize,
-        layout_mode: LayoutMode,
-        view_mode: ViewMode,
-        show_borders: bool,
-        sidebar_tab: SidebarTab,
-        sidebar_width: u16,
-        sidebar_height: u16,
-        frame_rate_limit: u16,
-        term_width: u16,
-        term_height: u16,
-        exclude_patterns: Vec<String>,
-        plugins: Vec<PluginConfig>,
-        keybindings: Keybindings,
-        update_check_mode: UpdateCheckMode,
-        collapsed_sections: HashSet<Option<String>>,
-    ) -> Self {
+    /// A fresh state with sensible defaults (mirroring `Config::default`).
+    /// Callers apply the loaded config right after via [`apply_config`]
+    /// (Self::apply_config); tests set the fields they care about directly.
+    pub fn new(term_width: u16, term_height: u16) -> Self {
         Self {
             sessions: Vec::new(),
             filtered: Vec::new(),
@@ -1262,22 +1251,16 @@ impl AppState {
             remote_sessions: Vec::new(),
             main_view: MainView::Terminal,
             focus_mode: FocusMode::Main,
-            theme_index,
-            settings: SettingsState {
-                selected: 0,
-                theme_picker_open: false,
-                theme_picker_selected: theme_index,
-                keybindings_view_open: false,
-                keybindings_view_scroll: 0,
-            },
-            layout_mode,
-            view_mode,
-            sidebar_width,
-            sidebar_height,
-            frame_rate_limit: normalize_frame_rate_limit(frame_rate_limit),
+            theme_index: 0,
+            settings: SettingsState::default(),
+            layout_mode: LayoutMode::default(),
+            view_mode: ViewMode::default(),
+            sidebar_width: 28,
+            sidebar_height: SIDEBAR_HEIGHT,
+            frame_rate_limit: 5,
             agents_probe_interval_secs: DEFAULT_AGENTS_PROBE_INTERVAL,
-            show_borders,
-            sidebar_tab,
+            show_borders: true,
+            sidebar_tab: SidebarTab::default(),
             agent_focused: 0,
             summary: SummaryState::Idle,
             summary_prompt: String::new(),
@@ -1297,10 +1280,10 @@ impl AppState {
             term_width,
             term_height,
             last_scroll: Instant::now(),
-            exclude_patterns,
-            plugins,
-            keybindings,
-            update_check_mode,
+            exclude_patterns: Vec::new(),
+            plugins: Vec::new(),
+            keybindings: Keybindings::default(),
+            update_check_mode: UpdateCheckMode::default(),
             update_available: None,
             update_last_checked_secs: None,
             banner_upgrade_bounds: None,
@@ -1316,8 +1299,45 @@ impl AppState {
             agents: HashMap::new(),
             agent_hits: Vec::new(),
             active_agent: None,
-            collapsed_sections,
+            collapsed_sections: HashSet::new(),
         }
+    }
+
+    /// Apply every config-derived field shared by startup (`App::new`) and
+    /// hot-reload (`reload_config`). One list, so a new config field can't
+    /// be applied at startup but silently missed on reload (or vice versa).
+    ///
+    /// Deliberately NOT covered here:
+    /// - `config_remotes` — reload diffs old vs new forwards/hosts around
+    ///   this call and commits the new list itself;
+    /// - `collapsed_sections` — runtime state seeded from config once at
+    ///   startup; a reload must not stomp the user's live collapse state.
+    pub fn apply_config(
+        &mut self,
+        cfg: &crate::config::Config,
+        theme_index: usize,
+        keybindings: Keybindings,
+    ) {
+        self.theme_index = theme_index;
+        self.layout_mode = cfg.layout;
+        self.show_borders = cfg.show_borders;
+        self.sidebar_tab = cfg.sidebar_tab;
+        self.view_mode = cfg.view_mode;
+        self.frame_rate_limit = normalize_frame_rate_limit(cfg.frame_rate_limit);
+        self.sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+        self.sidebar_height = cfg.sidebar_height;
+        self.exclude_patterns = cfg.exclude_patterns.clone();
+        self.plugins = cfg.plugins.clone();
+        self.keybindings = keybindings;
+        self.update_check_mode = cfg.update_check;
+        self.summary_prompt = cfg.summary_prompt.clone();
+        self.summary_model = cfg.summary_model.clone();
+        self.summary_language = cfg.summary_language.clone();
+        self.agents_probe_interval_secs =
+            normalize_agents_probe_interval(cfg.agents_probe_interval);
+        self.set_summary_height(cfg.summary_height);
+        // Theme indices may have shifted; keep the picker's cursor valid.
+        self.settings.theme_picker_selected = theme_index;
     }
 
     /// Drop the reload banner once its per-variant TTL has elapsed.
@@ -1334,45 +1354,31 @@ impl AppState {
     }
 
     pub fn cycle_frame_rate_limit(&mut self, direction: i32) {
-        let current = normalize_frame_rate_limit(self.frame_rate_limit);
-        let Some(pos) = FRAME_RATE_LIMIT_OPTIONS
-            .iter()
-            .position(|&fps| fps == current)
-        else {
-            self.frame_rate_limit = normalize_frame_rate_limit(current);
-            return;
-        };
-        let len = FRAME_RATE_LIMIT_OPTIONS.len() as i32;
-        let next = (pos as i32 + direction).rem_euclid(len) as usize;
-        self.frame_rate_limit = FRAME_RATE_LIMIT_OPTIONS[next];
+        self.frame_rate_limit = cycle_option(
+            &FRAME_RATE_LIMIT_OPTIONS,
+            normalize_frame_rate_limit(self.frame_rate_limit),
+            direction,
+        );
     }
 
     pub fn cycle_agents_probe_interval(&mut self, direction: i32) {
-        let current = normalize_agents_probe_interval(self.agents_probe_interval_secs);
-        let pos = AGENTS_PROBE_INTERVAL_OPTIONS
-            .iter()
-            .position(|&s| s == current)
-            .unwrap_or(1);
-        let len = AGENTS_PROBE_INTERVAL_OPTIONS.len() as i32;
-        let next = (pos as i32 + direction).rem_euclid(len) as usize;
-        self.agents_probe_interval_secs = AGENTS_PROBE_INTERVAL_OPTIONS[next];
+        self.agents_probe_interval_secs = cycle_option(
+            &AGENTS_PROBE_INTERVAL_OPTIONS,
+            normalize_agents_probe_interval(self.agents_probe_interval_secs),
+            direction,
+        );
     }
 
     pub fn banner_upgrade_at(&self, col: u16, row: u16) -> bool {
-        match self.banner_upgrade_bounds {
-            Some(r) => col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height,
-            None => false,
-        }
+        let pos = Position::new(col, row);
+        self.banner_upgrade_bounds.is_some_and(|r| r.contains(pos))
     }
 
     /// Which sidebar tab label `(col, row)` falls on in the header, if
     /// any. Used by mouse dispatch to switch tabs on a click.
     pub fn tab_at(&self, col: u16, row: u16) -> Option<SidebarTab> {
-        let hit = |rect: Option<Rect>| {
-            rect.is_some_and(|r| {
-                col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
-            })
-        };
+        let pos = Position::new(col, row);
+        let hit = |rect: Option<Rect>| rect.is_some_and(|r| r.contains(pos));
         if hit(self.projects_tab_rect) {
             Some(SidebarTab::Projects)
         } else if hit(self.agents_tab_rect) {
@@ -1479,22 +1485,21 @@ impl AppState {
         }
     }
 
-    /// Height of the sidebar footer in rows. Must equal the renderer's
-    /// `footer_height` in `draw_sidebar` (`ui::sidebar`): `2` fixed rows —
-    /// the top separator + the menu/version line — plus the update banner
-    /// (when shown) plus the plugin block. Kept on AppState so mouse
-    /// hit-testing doesn't drift from the renderer; the two formulas must
-    /// change together. (Until this was fixed it used `3`, one too many,
-    /// so the bottom visible session row was click-dead — Phase 1 collapses
-    /// the two into a single source.)
+    /// Height of the sidebar footer in rows, for mouse hit-testing. The
+    /// formula itself lives in `crate::layout::sidebar_footer_height`,
+    /// shared with the renderer (`ui::sidebar::draw_sidebar`) so the two
+    /// can't drift — when they did, the bottom visible session row was
+    /// click-dead.
     pub fn sidebar_footer_height(&self) -> u16 {
         let b = if self.show_borders { 2u16 } else { 0 };
         let content_width = match self.layout_mode {
             LayoutMode::Horizontal => self.sidebar_width.saturating_sub(b),
             LayoutMode::Vertical => self.term_width.saturating_sub(b),
         };
-        let banner_visible = self.update_available.is_some() && content_width >= BANNER_MIN_WIDTH;
-        2 + banner_visible as u16 + plugin_block_rows(self.plugins.len())
+        crate::layout::sidebar_footer_height(
+            crate::layout::banner_visible(self.update_available.is_some(), content_width),
+            self.plugins.len(),
+        )
     }
 
     /// Resolve a screen row inside the sidebar's scrollable session area
@@ -1508,7 +1513,7 @@ impl AppState {
             LayoutMode::Horizontal => self.term_height,
             LayoutMode::Vertical => self.effective_sidebar_height(),
         };
-        let header_height = 2u16;
+        let header_height = crate::layout::SIDEBAR_HEADER_HEIGHT;
         let footer_height = self.sidebar_footer_height();
         let sessions_top = b + header_height;
         let sessions_bottom = sidebar_h.saturating_sub(b + footer_height);
@@ -1647,8 +1652,10 @@ impl AppState {
     /// Agents detected in a sidebar section, addressed uniformly by host
     /// (`None` = local). `None` result = not probed yet. The layout uses
     /// this without caring whether the section is local or remote.
-    pub fn section_agents(&self, host: Option<&str>) -> Option<Vec<crate::agent::DetectedAgent>> {
-        self.agents.get(&host.map(str::to_string)).cloned()
+    pub fn section_agents(&self, host: Option<&str>) -> Option<&[crate::agent::DetectedAgent]> {
+        self.agents
+            .get(&host.map(str::to_string))
+            .map(Vec::as_slice)
     }
 
     /// Fold a remote refresh round's agent detection into `agents`.
@@ -1796,7 +1803,10 @@ impl AppState {
         let mut rows = Vec::new();
         if let Some(list) = self.section_agents(None) {
             for agent in list {
-                rows.push(AgentRow { host: None, agent });
+                rows.push(AgentRow {
+                    host: None,
+                    agent: agent.clone(),
+                });
             }
         }
         for host in self.remote_hosts_in_order() {
@@ -1804,7 +1814,7 @@ impl AppState {
                 for agent in list {
                     rows.push(AgentRow {
                         host: Some(host.clone()),
-                        agent,
+                        agent: agent.clone(),
                     });
                 }
             }
@@ -1844,24 +1854,22 @@ impl AppState {
 
     /// Whether `(col, row)` falls on the Summary card's "Generate" button.
     pub fn summary_button_at(&self, col: u16, row: u16) -> bool {
-        self.summary_button_rect.is_some_and(|r| {
-            col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
-        })
+        let pos = Position::new(col, row);
+        self.summary_button_rect.is_some_and(|r| r.contains(pos))
     }
 
     /// Whether `(col, row)` falls on the Summary card's "popup" button.
     pub fn summary_popup_button_at(&self, col: u16, row: u16) -> bool {
-        self.summary_popup_button_rect.is_some_and(|r| {
-            col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
-        })
+        let pos = Position::new(col, row);
+        self.summary_popup_button_rect
+            .is_some_and(|r| r.contains(pos))
     }
 
     /// Whether `(col, row)` falls anywhere on the Summary card — used to
     /// route wheel events to scrolling its text.
     pub fn summary_card_at(&self, col: u16, row: u16) -> bool {
-        self.summary_card_rect.is_some_and(|r| {
-            col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
-        })
+        let pos = Position::new(col, row);
+        self.summary_card_rect.is_some_and(|r| r.contains(pos))
     }
 
     /// Whether `(col, row)` is on the card's bottom drag-handle row.
@@ -1910,7 +1918,7 @@ impl AppState {
         let mut push_section = |layout: &mut SidebarLayout, host: Option<&str>| {
             match self.section_agents(host) {
                 Some(list) if !list.is_empty() => {
-                    for _ in &list {
+                    for _ in list {
                         layout.push_row(SidebarItemData::Agent { row_idx }, 1);
                         row_idx += 1;
                     }
@@ -2161,12 +2169,9 @@ impl AppState {
                 Some("no session to kill")
             }
             SessionTargetRef::Remote(row)
-                if self
-                    .remote_sessions
-                    .iter()
-                    .filter(|r| r.host == row.host && r.is_attachable_session())
-                    .count()
-                    <= 1 =>
+                if attachable_on_host(&self.remote_sessions, &row.host)
+                    .nth(1)
+                    .is_none() =>
             {
                 Some("last session on host")
             }
@@ -2185,12 +2190,11 @@ impl AppState {
     pub fn menu_item_at(&self, col: u16, row: u16) -> Option<usize> {
         let menu = self.overlay.context_menu.as_ref()?;
         let items = menu.items();
-        let menu_width = context_menu_width(items);
-        let menu_height = items.len() as u16 + 2;
-        let mx = menu.x.min(self.term_width.saturating_sub(menu_width));
-        let my = menu.y.min(self.term_height.saturating_sub(menu_height));
-        if col > mx && col < mx + menu_width - 1 && row > my && row < my + menu_height - 1 {
-            let idx = (row - my - 1) as usize;
+        // Same rect the renderer draws into (`ui::menu::draw_context_menu`).
+        let r = context_menu_rect(items, menu.x, menu.y, self.term_width, self.term_height);
+        // Interior only: clicks on the border select nothing.
+        if col > r.x && col < r.x + r.width - 1 && row > r.y && row < r.y + r.height - 1 {
+            let idx = (row - r.y - 1) as usize;
             if idx < items.len() {
                 return Some(idx);
             }

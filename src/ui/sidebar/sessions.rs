@@ -22,6 +22,7 @@ use super::super::text::{
     format_idle_badge, idle_color, md_line_spans, md_line_width, pad_line, shorten_dir, truncate,
     wrap_markdown,
 };
+use super::super::widgets::scrollbar_cells;
 use super::super::{SessionOrigin, SidebarSession};
 use super::SidebarRenderCtx;
 
@@ -502,29 +503,6 @@ pub(super) fn draw_sessions(
     }
 
     (hits, agent_hits, summary)
-}
-
-/// Per-row scrollbar glyphs for a `rows`-tall track showing `total` items
-/// scrolled to `scroll`. `None` = no bar on that row (content fits);
-/// `Some("█")` = thumb, `Some("░")` = track.
-fn scrollbar_cells(rows: usize, total: usize, scroll: usize) -> Vec<Option<&'static str>> {
-    if total <= rows || rows == 0 {
-        return vec![None; rows];
-    }
-    let max_scroll = total - rows;
-    let thumb = ((rows * rows) / total).clamp(1, rows);
-    let thumb_start = (scroll * (rows - thumb) + max_scroll / 2)
-        .checked_div(max_scroll)
-        .unwrap_or(0);
-    (0..rows)
-        .map(|i| {
-            if i >= thumb_start && i < thumb_start + thumb {
-                Some("█")
-            } else {
-                Some("░")
-            }
-        })
-        .collect()
 }
 
 fn divider_hit_at(

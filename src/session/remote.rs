@@ -49,21 +49,12 @@ impl SessionControl for RemoteControl {
         remote_tmux::rename_session(&self.host, old, new);
     }
 
-    fn kill(&self, name: &str, _switch_to: Option<&str>) {
-        // Remote kill ignores `switch_to` today (there is no remote
-        // pre-switch off the doomed session — only the local path does
-        // that). Preserve that exactly: ignore `switch_to`, just kill.
+    fn kill(&self, name: &str) {
         remote_tmux::kill_session(&self.host, name);
     }
 
-    fn new_session(&self, name: &str, dir: &str) -> Option<String> {
-        // `remote_tmux::new_session` returns `bool`; bridge to the trait's
-        // `Option<String>`: success -> the created name, failure -> None.
-        if remote_tmux::new_session(&self.host, name, dir) {
-            Some(name.to_string())
-        } else {
-            None
-        }
+    fn new_session(&self, name: &str, dir: &str) -> bool {
+        remote_tmux::new_session(&self.host, name, dir)
     }
 
     fn persist_order(&self, order: &[String]) {

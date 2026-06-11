@@ -7,6 +7,7 @@
 //! both read from these constants/helpers, so tweaking the tab visual
 //! width automatically keeps click-target math in sync.
 
+use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
 use super::text::truncate;
@@ -45,6 +46,35 @@ pub const TAB_SEPARATOR: &str = "│";
 
 /// Minimum sidebar content width before the update banner renders at all.
 pub const BANNER_MIN_WIDTH: u16 = 8;
+
+/// Rows of the sidebar header (the `Projects / Agents` tab selector).
+pub const SIDEBAR_HEADER_HEIGHT: u16 = 2;
+
+/// Whether the update banner renders: an update is known and the sidebar
+/// content is wide enough for the label.
+pub fn banner_visible(has_update: bool, content_width: u16) -> bool {
+    has_update && content_width >= BANNER_MIN_WIDTH
+}
+
+/// Height of the sidebar footer in rows: `2` fixed rows (the top
+/// separator and the menu/version line) plus the update banner (when
+/// shown) plus the plugin block. Shared by the renderer and mouse
+/// hit-testing so the two can't drift (when they did, the bottom visible
+/// session row went click-dead).
+pub fn sidebar_footer_height(banner_visible: bool, plugin_count: usize) -> u16 {
+    2 + banner_visible as u16 + plugin_block_rows(plugin_count)
+}
+
+/// On-screen rect of the context menu anchored at `(menu_x, menu_y)`,
+/// clamped inside the terminal. Shared by the renderer and mouse
+/// hit-testing so they can't disagree about where the menu actually is.
+pub fn context_menu_rect(items: &[&str], menu_x: u16, menu_y: u16, term_w: u16, term_h: u16) -> Rect {
+    let w = context_menu_width(items);
+    let h = items.len() as u16 + 2;
+    let x = menu_x.min(term_w.saturating_sub(w));
+    let y = menu_y.min(term_h.saturating_sub(h));
+    Rect::new(x, y, w, h)
+}
 
 /// Rows the plugin status block takes in the sidebar footer: title +
 /// one row per plugin + trailing separator. Zero when no plugins are

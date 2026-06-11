@@ -179,11 +179,7 @@ pub fn relative_age(elapsed_secs: u64) -> String {
 // --- Cache ---
 
 fn cache_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
-        .join(".config")
-        .join("deck")
-        .join("update-cache.json")
+    crate::config::config_dir_for("deck").join("update-cache.json")
 }
 
 pub struct UpdateCache;

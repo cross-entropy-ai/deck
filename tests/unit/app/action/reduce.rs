@@ -14,23 +14,7 @@ fn make_session(name: &str, idle: u64) -> SessionRow {
 }
 
 fn make_test_state(n: usize) -> AppState {
-    let mut state = AppState::new(
-        0,
-        LayoutMode::Horizontal,
-        ViewMode::Expanded,
-        true,
-        crate::state::SidebarTab::Projects,
-        28,
-        crate::state::SIDEBAR_HEIGHT,
-        5,
-        120,
-        40,
-        vec![],
-        vec![],
-        crate::keybindings::Keybindings::default(),
-        crate::update::UpdateCheckMode::Enabled,
-        std::collections::HashSet::new(),
-    );
+    let mut state = AppState::new(120, 40);
     state.sessions = (0..n)
         .map(|i| make_session(&format!("sess-{}", i), 0))
         .collect();
@@ -1186,34 +1170,17 @@ fn global_menu_has_no_new_session() {
 }
 
 #[test]
-fn remote_session_menu_has_no_switch_or_remove() {
-    use crate::state::{session_menu_items, RemoteSessionRow, SessionTargetRef};
-    let row = RemoteSessionRow {
-        host: "h".into(),
-        name: "s".into(),
-        dir: "/".into(),
-        unreachable: false,
-        loading: false,
+fn session_menu_has_no_switch_or_remove() {
+    use crate::state::{FocusTarget, MenuKind};
+    // One item list serves local and remote rows. "Switch" is gone (the
+    // focus already triggers the switch) and "Remove from list" lives on
+    // the host-divider menu, not the per-session menu.
+    let menu = MenuKind::Session {
+        focus: FocusTarget(0),
+        disabled: &[],
     };
-    let items = session_menu_items(&SessionTargetRef::Remote(&row));
-    assert!(!items.contains(&"Switch"));
-    // "Remove from list" lives on the host-divider menu, not the
-    // per-session menu.
-    assert!(!items.contains(&"Remove from list"));
-}
-
-#[test]
-fn local_menu_has_no_switch_or_remove() {
-    use crate::state::{session_menu_items, SessionRow, SessionTargetRef};
-    let row = SessionRow {
-        name: "s".into(),
-        dir: "/".into(),
-        is_current: false,
-        idle_seconds: 0,
-    };
-    let items = session_menu_items(&SessionTargetRef::Local(&row));
-    assert!(!items.contains(&"Switch"));
-    assert!(!items.contains(&"Remove from list"));
+    assert!(!menu.items().contains(&"Switch"));
+    assert!(!menu.items().contains(&"Remove from list"));
 }
 
 #[test]

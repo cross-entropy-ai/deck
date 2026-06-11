@@ -11,7 +11,7 @@ use ratatui::Frame;
 use crate::theme::Theme;
 
 use super::text::{md_line_spans, md_line_width, wrap_markdown};
-use super::widgets::{centered_rect, popup_frame, PopupStyle};
+use super::widgets::{centered_rect, popup_frame, scrollbar_cells, PopupStyle};
 
 /// Draw the summary popup over `area` and return the max scroll offset for
 /// the current text/size, so the caller can clamp scroll input.
@@ -77,26 +77,4 @@ pub fn draw_summary_popup(
 
     frame.render_widget(Paragraph::new(lines), inner);
     max_scroll
-}
-
-/// Per-row scrollbar glyphs (mirrors the inline card's). `None` when the
-/// content fits; `Some("█")` thumb, `Some("░")` track.
-fn scrollbar_cells(rows: usize, total: usize, scroll: usize) -> Vec<Option<&'static str>> {
-    if total <= rows || rows == 0 {
-        return vec![None; rows];
-    }
-    let max_scroll = total - rows;
-    let thumb = ((rows * rows) / total).clamp(1, rows);
-    let thumb_start = (scroll * (rows - thumb) + max_scroll / 2)
-        .checked_div(max_scroll)
-        .unwrap_or(0);
-    (0..rows)
-        .map(|i| {
-            if i >= thumb_start && i < thumb_start + thumb {
-                Some("█")
-            } else {
-                Some("░")
-            }
-        })
-        .collect()
 }

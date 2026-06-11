@@ -4,7 +4,43 @@ use portable_pty::PtySize;
 
 use crate::pty::{Pty, PtyEvent};
 
-use super::{App, PluginInstance};
+use super::{App, TerminalPane};
+
+/// The `PtySize` for a deck pane: rows/cols only, no pixel dimensions.
+pub(super) fn pane_size(rows: u16, cols: u16) -> PtySize {
+    PtySize {
+        rows,
+        cols,
+        pixel_width: 0,
+        pixel_height: 0,
+    }
+}
+
+impl TerminalPane {
+    /// Resize the PTY and its vt100 screen together so they can't drift.
+    fn resize(&mut self, rows: u16, cols: u16) {
+        self.parser.screen_mut().set_size(rows, cols);
+        let _ = self.pty.resize(pane_size(rows, cols));
+    }
+}
+
+/// Spawn `program` in a PTY sized to the main pane, with COLUMNS/LINES
+/// exported for programs that read them instead of the tty. Shared by the
+/// plugin and upgrade panes.
+fn spawn_sized_pane(
+    program: &str,
+    args: &[&str],
+    rows: u16,
+    cols: u16,
+) -> io::Result<TerminalPane> {
+    let pty = Pty::spawn_with_env(
+        program,
+        args,
+        pane_size(rows, cols),
+        &[("COLUMNS", &cols.to_string()), ("LINES", &rows.to_string())],
+    )?;
+    Ok(TerminalPane::new(pty, rows, cols))
+}
 
 impl App {
     pub(super) fn spawn_tmux_pty(
@@ -17,50 +53,28 @@ impl App {
         // that `target` happens to be a prefix of.
         let target = crate::infra::tmux_parse::exact_target(&target);
         let args = ["attach", "-t", target.as_str()];
-        Pty::spawn(
-            "tmux",
-            &args,
-            PtySize {
-                rows: size.0,
-                cols: size.1,
-                pixel_width: 0,
-                pixel_height: 0,
-            },
-        )
+        Pty::spawn("tmux", &args, pane_size(size.0, size.1))
     }
 
     pub(super) fn resize_pty(&mut self) {
         let (pty_rows, pty_cols) = self.state.pty_size();
-        let size = PtySize {
-            rows: pty_rows,
-            cols: pty_cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        };
         // Resize every PTY-backed pane, active or not — when the user
         // switches to a remote pane later we don't want it to inherit
         // a stale size.
-        self.local_terminal
-            .parser
-            .screen_mut()
-            .set_size(pty_rows, pty_cols);
-        let _ = self.local_terminal.pty.resize(size);
+        self.local_terminal.resize(pty_rows, pty_cols);
         for conn in self.remote_conns.values_mut() {
             if let Some(pane) = conn.pane.as_mut() {
-                pane.parser.screen_mut().set_size(pty_rows, pty_cols);
-                let _ = pane.pty.resize(size);
+                pane.resize(pty_rows, pty_cols);
             }
         }
         for inst in self.plugin_instances.iter_mut().flatten() {
-            inst.parser.screen_mut().set_size(pty_rows, pty_cols);
-            let _ = inst.pty.resize(size);
+            inst.resize(pty_rows, pty_cols);
         }
         // The upgrade pane runs in the foreground during a self-update; keep
         // it reflowing on resize too, or it stays at its spawn size until the
         // upgrade exits.
         if let Some(inst) = self.upgrade_instance.as_mut() {
-            inst.parser.screen_mut().set_size(pty_rows, pty_cols);
-            let _ = inst.pty.resize(size);
+            inst.resize(pty_rows, pty_cols);
         }
     }
 
@@ -127,11 +141,7 @@ impl App {
     pub(super) fn respawn_pty(&mut self) -> io::Result<()> {
         let (pty_rows, pty_cols) = self.state.pty_size();
         let pty = Self::spawn_tmux_pty((pty_rows, pty_cols), None)?;
-        self.local_terminal = crate::app::TerminalPane {
-            pty,
-            parser: vt100::Parser::new(pty_rows, pty_cols, 0),
-            alive: true,
-        };
+        self.local_terminal = TerminalPane::new(pty, pty_rows, pty_cols);
         Ok(())
     }
 
@@ -140,23 +150,7 @@ impl App {
     /// based on `infra::self_update::detect_install_method`.
     pub(super) fn spawn_upgrade_pty(&mut self, program: &str, args: &[&str]) -> io::Result<()> {
         let (rows, cols) = self.state.pty_size();
-        let pty = Pty::spawn_with_env(
-            program,
-            args,
-            PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            },
-            &[("COLUMNS", &cols.to_string()), ("LINES", &rows.to_string())],
-        )?;
-        let parser = vt100::Parser::new(rows, cols, 0);
-        self.upgrade_instance = Some(PluginInstance {
-            pty,
-            parser,
-            alive: true,
-        });
+        self.upgrade_instance = Some(spawn_sized_pane(program, args, rows, cols)?);
         Ok(())
     }
 
@@ -169,24 +163,7 @@ impl App {
             .split_first()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty plugin command"))?;
 
-        let pty = Pty::spawn_with_env(
-            program,
-            args,
-            PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            },
-            &[("COLUMNS", &cols.to_string()), ("LINES", &rows.to_string())],
-        )?;
-        let parser = vt100::Parser::new(rows, cols, 0);
-
-        self.plugin_instances[idx] = Some(PluginInstance {
-            pty,
-            parser,
-            alive: true,
-        });
+        self.plugin_instances[idx] = Some(spawn_sized_pane(program, args, rows, cols)?);
         Ok(())
     }
 }

@@ -1,8 +1,6 @@
-use std::collections::HashMap;
-use std::sync::OnceLock;
 use std::time::Duration;
 
-use crate::infra::command::{CommandError, CommandRunner, RealRunner};
+use crate::infra::command::{default_runner, CommandError, CommandRunner};
 use crate::infra::tmux_parse::{
     exact_target, parse_sessions, parse_window_activity, DECK_ORDER_OPTION, SESSION_LIST_FORMAT,
     WINDOW_ACTIVITY_FORMAT,
@@ -28,13 +26,6 @@ pub struct SessionInfo {
     pub order: Option<u32>,
 }
 
-/// Process-wide runner. Module-private so callers can't override it;
-/// tests reach the parsers + `_with_runner` helpers instead.
-fn default_runner() -> &'static dyn CommandRunner {
-    static R: OnceLock<RealRunner> = OnceLock::new();
-    R.get_or_init(RealRunner::default)
-}
-
 /// Run a tmux command and return stdout, trimmed. `None` on any
 /// failure (spawn, non-zero exit, timeout). The error reason is
 /// dropped here; we only carry it through the typed paths used in
@@ -55,13 +46,41 @@ pub fn list_sessions() -> Vec<SessionInfo> {
 }
 
 fn list_sessions_with(runner: &dyn CommandRunner) -> Vec<SessionInfo> {
+    // One tmux invocation for both the session list and the per-window
+    // activity (`;`-chained like `apply_theme`), instead of two spawns per
+    // refresh tick. A one-char prefix on each `-F` format tags which list
+    // every output line belongs to so the combined stdout demuxes cleanly.
     // The trailing `#{@deck_order}` carries the persisted display rank
-    // (empty when unset). See `persist_session_order`.
-    let Ok(raw) = tmux_with(runner, &["list-sessions", "-F", SESSION_LIST_FORMAT]) else {
+    // (empty when unset) — see `persist_session_order`.
+    let session_fmt = format!("S\t{SESSION_LIST_FORMAT}");
+    let window_fmt = format!("W\t{WINDOW_ACTIVITY_FORMAT}");
+    let Ok(raw) = tmux_with(
+        runner,
+        &[
+            "list-sessions",
+            "-F",
+            &session_fmt,
+            ";",
+            "list-windows",
+            "-a",
+            "-F",
+            &window_fmt,
+        ],
+    ) else {
         return Vec::new();
     };
-    let window_activity = latest_window_activity_with(runner);
-    parse_sessions(&raw, &window_activity)
+    let mut sessions_raw = String::new();
+    let mut windows_raw = String::new();
+    for line in raw.lines() {
+        if let Some(rest) = line.strip_prefix("S\t") {
+            sessions_raw.push_str(rest);
+            sessions_raw.push('\n');
+        } else if let Some(rest) = line.strip_prefix("W\t") {
+            windows_raw.push_str(rest);
+            windows_raw.push('\n');
+        }
+    }
+    parse_sessions(&sessions_raw, &parse_window_activity(&windows_raw))
 }
 
 /// Persist the local session display order onto the tmux sessions
@@ -109,14 +128,6 @@ pub fn agent_panes() -> Vec<crate::agent::PaneInfo> {
 /// `None` on any tmux failure (the pane vanished, server down).
 pub fn capture_pane(pane_id: &str) -> Option<String> {
     tmux(&["capture-pane", "-p", "-J", "-t", pane_id])
-}
-
-/// Get the max window_activity timestamp per session.
-fn latest_window_activity_with(runner: &dyn CommandRunner) -> HashMap<String, u64> {
-    let Ok(raw) = tmux_with(runner, &["list-windows", "-a", "-F", WINDOW_ACTIVITY_FORMAT]) else {
-        return HashMap::new();
-    };
-    parse_window_activity(&raw)
 }
 
 /// The tmux session deck itself is running inside, if any — resolved from

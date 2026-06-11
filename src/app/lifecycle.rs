@@ -24,17 +24,13 @@ impl App {
         // Start the bootstrap session in $HOME (tmux tolerates a missing
         // `-c` dir by falling back silently, so a hardcoded author-specific
         // path like ~/claude would just land the session somewhere arbitrary).
-        let dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let mut idx = sessions.len();
-        let name = loop {
-            let candidate = format!("session-{}", idx);
-            if !sessions.iter().any(|session| session.name == candidate) {
-                break candidate;
-            }
-            idx += 1;
-        };
+        let dir = crate::config::home_dir();
+        // Same `session-N` scheme the new-session picker pre-fills, so the
+        // bootstrap session and the picker can't diverge on naming.
+        let names: Vec<&str> = sessions.iter().map(|s| s.name.as_str()).collect();
+        let name = crate::new_session::auto_session_name(&names, sessions.len());
 
-        tmux::new_session(&name, &dir)?;
+        tmux::new_session(&name, &dir.to_string_lossy())?;
         Some(name)
     }
 

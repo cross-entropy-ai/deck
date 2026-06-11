@@ -105,14 +105,31 @@ pub fn generate(
     if agents.is_empty() {
         return Err("No agents detected to summarize.".to_string());
     }
+    // Remote panes are captured one batched ssh hop per HOST (not one hop
+    // per pane — N sequential 5s-budget roundtrips added up fast); local
+    // captures stay per-pane, they're cheap tmux IPC.
+    let mut by_host: std::collections::HashMap<&str, Vec<String>> =
+        std::collections::HashMap::new();
+    for a in agents {
+        if let Some(host) = &a.host {
+            by_host.entry(host).or_default().push(a.pane_id.clone());
+        }
+    }
+    let remote_buffers: std::collections::HashMap<&str, _> = by_host
+        .into_iter()
+        .map(|(host, ids)| (host, crate::remote_tmux::capture_panes(host, &ids)))
+        .collect();
     let captures: Vec<PaneCapture> = agents
         .iter()
         .map(|a| {
             let raw = match &a.host {
-                None => crate::tmux::capture_pane(&a.pane_id),
-                Some(host) => crate::remote_tmux::capture_pane(host, &a.pane_id),
-            }
-            .unwrap_or_default();
+                None => crate::tmux::capture_pane(&a.pane_id).unwrap_or_default(),
+                Some(host) => remote_buffers
+                    .get(host.as_str())
+                    .and_then(|m| m.get(&a.pane_id))
+                    .cloned()
+                    .unwrap_or_default(),
+            };
             // A pane showing deck's own UI is a nested deck, not an agent's
             // work — don't feed deck's chrome back into the summary; mark it
             // nested and omit the buffer.
@@ -150,8 +167,7 @@ pub fn generate(
 /// other on-screen secrets) and must not sit world-readable in a shared
 /// temp dir.
 pub fn log_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
+    crate::config::home_dir()
         .join(".cache")
         .join("deck")
         .join("summary")

@@ -1,10 +1,9 @@
-use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::layout::context_menu_width;
+use crate::layout::context_menu_rect;
 use crate::theme::Theme;
 use crate::ui::widgets::{popup_frame, PopupStyle};
 
@@ -17,13 +16,9 @@ pub fn draw_context_menu(
     disabled: &[&str],
     theme: &Theme,
 ) {
-    let w = context_menu_width(items);
-    let h = items.len() as u16 + 2;
+    // Same rect `AppState::menu_item_at` hit-tests against.
     let area = frame.area();
-    let x = menu_x.min(area.width.saturating_sub(w));
-    let y = menu_y.min(area.height.saturating_sub(h));
-
-    let menu_area = Rect::new(x, y, w, h);
+    let menu_area = context_menu_rect(items, menu_x, menu_y, area.width, area.height);
 
     let inner = popup_frame(
         frame.buffer_mut(),

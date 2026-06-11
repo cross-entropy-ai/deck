@@ -133,6 +133,13 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
     // we don't pile up threads racing to update the same state.
     let remote_in_flight = Arc::new(AtomicBool::new(false));
 
+    // Compiled exclude patterns, memoized across ticks: the raw strings
+    // change only on a config edit, so recompiling every regex on every
+    // 1 Hz tick was pure churn. (The empty initial cache is already the
+    // compiled form of no patterns.)
+    let mut cached_raw: Vec<String> = Vec::new();
+    let mut compiled: Vec<ExcludePattern> = Vec::new();
+
     while let Ok(mut req) = req_rx.recv() {
         // Coalesce: pick up the latest queued request before doing
         // any work.
@@ -140,9 +147,14 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
             req = newer;
         }
 
+        if req.exclude_patterns != cached_raw {
+            compiled = config::compile_patterns(&req.exclude_patterns);
+            cached_raw = req.exclude_patterns.clone();
+        }
+
         // Local update synchronously — fast (~ms), users see the
         // sidebar populate immediately on startup.
-        let (current, local_rows, agents) = collect_local(&req);
+        let (current, local_rows, agents) = collect_local(&req, &compiled);
         if update_tx
             .send(RefreshUpdate::Local {
                 current_session: current,
@@ -176,6 +188,7 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
 
 fn collect_local(
     req: &RefreshRequest,
+    compiled: &[ExcludePattern],
 ) -> (String, Vec<SnapshotRow>, Vec<crate::agent::DetectedAgent>) {
     let current = if req.slave_tty.is_empty() {
         tmux::current_session()
@@ -184,7 +197,6 @@ fn collect_local(
     }
     .unwrap_or_default();
 
-    let compiled: Vec<ExcludePattern> = config::compile_patterns(&req.exclude_patterns);
     let sessions = tmux::list_sessions();
 
     let now = std::time::SystemTime::now()
@@ -194,7 +206,7 @@ fn collect_local(
 
     let rows = sessions
         .into_iter()
-        .filter(|s| !config::session_excluded(&s.name, &compiled))
+        .filter(|s| !config::session_excluded(&s.name, compiled))
         .map(|s| {
             let idle_seconds = now.saturating_sub(s.activity);
             SnapshotRow {
@@ -215,7 +227,7 @@ fn collect_local(
     let agents = if req.show_agents {
         let mut agents =
             crate::agent::detect_agents(&tmux::agent_panes(), &crate::agent::ps_snapshot());
-        agents.retain(|a| !config::session_excluded(&a.session, &compiled));
+        agents.retain(|a| !config::session_excluded(&a.session, compiled));
         // Classify each agent's traffic-light status from its pane buffer.
         // Local capture is cheap; remote agents stay `Unknown` (gray) until
         // their probe captures buffers too.

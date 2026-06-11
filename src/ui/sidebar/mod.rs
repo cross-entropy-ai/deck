@@ -2,7 +2,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::Frame;
 
 use crate::keybindings::Keybindings;
-use crate::layout::{plugin_block_rows, BANNER_MIN_WIDTH};
+use crate::layout::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
 use crate::state::{
     AgentHit, AgentRow, AgentTarget, DividerHit, FocusTarget, KillConfirmHits, SidebarLayout,
     SidebarTab, ViewMode,
@@ -21,8 +21,9 @@ mod sessions;
 mod tabs;
 
 use container::draw_sidebar_container;
-use footer::{draw_footer, FooterProps, FooterHits};
-use header::{draw_header, TabRects};
+use footer::{draw_footer, FooterHits, FooterProps};
+use header::draw_header;
+pub use header::TabRects;
 use sessions::{draw_sessions, SessionsProps};
 use tabs::{draw_sidebar_tabs, TabsProps};
 
@@ -83,6 +84,29 @@ pub struct SummaryHits {
     pub max_scroll: usize,
 }
 
+/// Every clickable region the sidebar publishes for one frame, captured
+/// by the render loop and written back into `AppState` for mouse
+/// dispatch. Same pattern as `FooterHits`/`SummaryHits`/`TabRects`, one
+/// level up.
+#[derive(Default)]
+pub struct SidebarHits {
+    /// The footer banner's clickable "upgrade" span.
+    pub banner: Option<Rect>,
+    /// Divider `[⟳]` / `[…]` / pf-badge buttons.
+    pub dividers: Vec<DividerHit>,
+    /// The kill-confirmation `[No]` / `[Yes]` buttons, while shown.
+    pub kill: Option<KillConfirmHits>,
+    /// Agent rows in the Agents tab.
+    pub agents: Vec<AgentHit>,
+    /// The `Projects` / `Agents` header tab labels (`None` in tabs mode,
+    /// which has no header).
+    pub tabs: Option<TabRects>,
+    /// The Summary card's buttons/card/scroll bound.
+    pub summary: SummaryHits,
+    /// The footer's "menu" button.
+    pub menu: Option<Rect>,
+}
+
 #[derive(Clone, Copy)]
 struct SidebarRenderCtx<'a> {
     theme: &'a Theme,
@@ -90,25 +114,9 @@ struct SidebarRenderCtx<'a> {
     keybindings: &'a Keybindings,
 }
 
-// Returns the frame's clickable regions for mouse dispatch: banner
-// bounds, divider buttons, kill-prompt buttons, agent rows, and the
-// `Projects` / `Agents` tab labels. A struct would only add ceremony for
-// a single internal caller.
-#[allow(clippy::type_complexity)]
-pub fn draw_sidebar(
-    frame: &mut Frame,
-    area: Rect,
-    props: SidebarProps<'_>,
-) -> (
-    Option<Rect>,
-    Vec<DividerHit>,
-    Option<KillConfirmHits>,
-    Vec<AgentHit>,
-    Option<(Rect, Rect)>,
-    SummaryHits,
-    // The footer's "menu" button, for click hit-testing.
-    Option<Rect>,
-) {
+/// Draw the sidebar and return the frame's clickable regions for mouse
+/// dispatch.
+pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> SidebarHits {
     let ctx = SidebarRenderCtx {
         theme: props.theme,
         blink_on: props.blink_on,
@@ -120,7 +128,7 @@ pub fn draw_sidebar(
         // then remotes) so the flat focus index maps straight through —
         // remotes render as `host:session` tabs alongside local ones.
         let focused = props.focus_target.map_or(0, |t| t.0);
-        let banner_bounds = draw_sidebar_tabs(
+        draw_sidebar_tabs(
             frame,
             area,
             &ctx,
@@ -147,16 +155,12 @@ pub fn draw_sidebar(
             );
             draw_confirm_kill(frame, content, props.theme, name)
         });
-        // Vertical/tabs layout has no sidebar header, hence no tab labels.
-        return (
-            banner_bounds,
-            Vec::new(),
-            kill_hits,
-            Vec::new(),
-            None,
-            SummaryHits::default(),
-            None,
-        );
+        // Vertical/tabs layout has no sidebar header (no tab labels), no
+        // banner, and no session-area hit regions.
+        return SidebarHits {
+            kill: kill_hits,
+            ..SidebarHits::default()
+        };
     }
     let content = draw_sidebar_container(
         frame,
@@ -166,21 +170,19 @@ pub fn draw_sidebar(
         props.show_borders,
     );
 
-    let banner_visible = props.update_available.is_some() && content.width >= BANNER_MIN_WIDTH;
-    let plugin_rows = plugin_block_rows(props.plugins.len());
-    let footer_height: u16 = 2 + banner_visible as u16 + plugin_rows;
+    // Footer geometry shared with `AppState::sidebar_footer_height` so
+    // mouse hit-testing can't drift from what is drawn.
+    let banner_visible = banner_visible(props.update_available.is_some(), content.width);
+    let footer_height = sidebar_footer_height(banner_visible, props.plugins.len());
 
     let [header_area, sessions_area, footer_area] = Layout::vertical([
-        Constraint::Length(2),
+        Constraint::Length(SIDEBAR_HEADER_HEIGHT),
         Constraint::Min(1),
         Constraint::Length(footer_height),
     ])
     .areas(content);
 
-    let TabRects {
-        projects: projects_tab,
-        agents: agents_tab,
-    } = draw_header(
+    let tab_rects = draw_header(
         frame,
         header_area,
         props.local_count,
@@ -233,15 +235,15 @@ pub fn draw_sidebar(
             },
         },
     );
-    (
-        banner_bounds,
-        divider_hits,
-        kill_hits,
-        agent_hits,
-        Some((projects_tab, agents_tab)),
-        summary_hits,
-        menu_bounds,
-    )
+    SidebarHits {
+        banner: banner_bounds,
+        dividers: divider_hits,
+        kill: kill_hits,
+        agents: agent_hits,
+        tabs: Some(tab_rects),
+        summary: summary_hits,
+        menu: menu_bounds,
+    }
 }
 
 #[cfg(test)]

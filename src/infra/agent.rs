@@ -288,10 +288,17 @@ pub const PANE_FORMAT: &str =
 
 /// Snapshot of the process table for agent detection: `ps -axo
 /// pid=,ppid=,args=`. Empty string on failure (→ no agents).
+///
+/// Runs through the bounded `CommandRunner` — this is called from the
+/// single refresh worker thread, where an unbounded spawn that wedges
+/// would freeze the whole status pipeline (see `infra::command`).
 pub fn ps_snapshot() -> String {
-    std::process::Command::new("ps")
-        .args(["-axo", "pid=,ppid=,args="])
-        .output()
+    // A full process-table dump can be slower than a tmux IPC call on a
+    // busy box; give it more headroom than `TMUX_TIMEOUT` while still
+    // rescuing the worker from a hang.
+    const PS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+    crate::infra::command::default_runner()
+        .run("ps", &["-axo", "pid=,ppid=,args="], PS_TIMEOUT)
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default()
 }

@@ -1,7 +1,7 @@
 use crate::config::ForwardMode;
 use crate::new_session::textarea_line;
 use crate::state::{
-    session_menu_disabled, session_menu_items, AppState, ContextMenu, FocusMode, KillRequest,
+    cycle_option, session_menu_disabled, AppState, ContextMenu, FocusMode, KillRequest,
     LayoutMode, MainView, MenuKind, PfAddForm, PfField, PortForwardOverlay, RemoteSwitchRequest,
     RenameRequest, RenameState, SessionTargetRef, SideEffect, SidebarTab, ViewMode,
     SETTINGS_ITEM_COUNT,
@@ -835,7 +835,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             let kind = match state.session_target(target) {
                 Some(ref tgt) => MenuKind::Session {
                     focus: target,
-                    items: session_menu_items(tgt),
                     disabled: session_menu_disabled(tgt, &state.remote_sessions),
                 },
                 // Index points outside any row — treat as a global
@@ -1201,20 +1200,12 @@ fn pf_field_order(mode: ForwardMode) -> &'static [PfField] {
     }
 }
 
-/// Step `delta` positions through `pf_field_order`, wrapping at both ends.
-fn cycle_field(f: PfField, mode: ForwardMode, delta: isize) -> PfField {
-    let order = pf_field_order(mode);
-    let n = order.len() as isize;
-    let i = order.iter().position(|x| *x == f).unwrap_or(0) as isize;
-    order[(((i + delta) % n + n) % n) as usize]
-}
-
 fn next_field(f: PfField, mode: ForwardMode) -> PfField {
-    cycle_field(f, mode, 1)
+    cycle_option(pf_field_order(mode), f, 1)
 }
 
 fn prev_field(f: PfField, mode: ForwardMode) -> PfField {
-    cycle_field(f, mode, -1)
+    cycle_option(pf_field_order(mode), f, -1)
 }
 
 fn set_mode(o: &mut Option<PortForwardOverlay>, delta: i32) {
@@ -1225,10 +1216,7 @@ fn set_mode(o: &mut Option<PortForwardOverlay>, delta: i32) {
                 ForwardMode::Remote,
                 ForwardMode::Dynamic,
             ];
-            let i = modes.iter().position(|m| *m == f.mode).unwrap_or(0) as i32;
-            let n = modes.len() as i32;
-            let j = ((i + delta) % n + n) % n;
-            f.mode = modes[j as usize];
+            f.mode = cycle_option(&modes, f.mode, delta);
             if matches!(f.mode, ForwardMode::Dynamic)
                 && matches!(f.focus, PfField::TargetHost | PfField::TargetPort)
             {
