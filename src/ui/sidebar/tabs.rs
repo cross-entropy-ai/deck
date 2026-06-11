@@ -96,8 +96,8 @@ pub(super) fn draw_sidebar_tabs(
     let width = content.width as usize;
     let menu_label = "\u{2261} menu";
     let menu_width = menu_label.width();
-    let menu_bounds = if tabs_width + menu_width + 1 < width {
-        let gap = width - tabs_width - menu_width;
+    let menu_bounds = if tabs_width + menu_width + 2 < width {
+        let gap = width - tabs_width - menu_width - 1;
         spans.push(Span::styled(" ".repeat(gap), Style::default().bg(theme.bg)));
         spans.push(Span::styled(
             menu_label,
@@ -106,7 +106,7 @@ pub(super) fn draw_sidebar_tabs(
                 .add_modifier(Modifier::BOLD),
         ));
         Some(Rect {
-            x: content.x + (width - menu_width) as u16,
+            x: content.x + (width - menu_width - 1) as u16,
             y: content.y,
             width: menu_width as u16,
             height: 1,
