@@ -207,14 +207,6 @@ pub(super) fn format_keys_for(keybindings: &Keybindings, cmd: Command) -> String
         .join("/")
 }
 
-pub(super) fn primary_key_string(keybindings: &Keybindings, cmd: Command) -> String {
-    keybindings
-        .keys_for(cmd)
-        .first()
-        .map(format_key)
-        .unwrap_or_default()
-}
-
 pub(super) fn truncate(s: &str, max_width: usize) -> String {
     if s.width() <= max_width {
         return s.to_string();

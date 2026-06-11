@@ -111,7 +111,6 @@ pub struct SidebarHits {
 struct SidebarRenderCtx<'a> {
     theme: &'a Theme,
     blink_on: bool,
-    keybindings: &'a Keybindings,
 }
 
 /// Draw the sidebar and return the frame's clickable regions for mouse
@@ -120,7 +119,6 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> S
     let ctx = SidebarRenderCtx {
         theme: props.theme,
         blink_on: props.blink_on,
-        keybindings: props.keybindings,
     };
 
     if props.tabs_mode {
@@ -128,7 +126,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> S
         // then remotes) so the flat focus index maps straight through —
         // remotes render as `host:session` tabs alongside local ones.
         let focused = props.focus_target.map_or(0, |t| t.0);
-        draw_sidebar_tabs(
+        let menu_bounds = draw_sidebar_tabs(
             frame,
             area,
             &ctx,
@@ -159,6 +157,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> S
         // banner, and no session-area hit regions.
         return SidebarHits {
             kill: kill_hits,
+            menu: menu_bounds,
             ..SidebarHits::default()
         };
     }

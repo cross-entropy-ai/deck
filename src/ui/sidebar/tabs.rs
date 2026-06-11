@@ -3,11 +3,11 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
+use unicode_width::UnicodeWidthStr;
 
-use crate::keybindings::Command;
 use crate::layout::{TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR};
 
-use super::super::text::{pad_line, primary_key_string};
+use super::super::text::pad_line;
 use super::super::{SessionOrigin, SidebarSession};
 use super::container::draw_sidebar_container;
 use super::SidebarRenderCtx;
@@ -24,16 +24,15 @@ pub(super) fn draw_sidebar_tabs(
     area: Rect,
     ctx: &SidebarRenderCtx<'_>,
     props: TabsProps<'_>,
-) {
+) -> Option<Rect> {
     let theme = ctx.theme;
-    let keybindings = ctx.keybindings;
     let sessions = props.sessions;
     let focused = props.focused;
     let content =
         draw_sidebar_container(frame, area, theme, props.sidebar_active, props.show_borders);
 
     if content.height == 0 {
-        return;
+        return None;
     }
 
     let tab_area = Rect {
@@ -95,45 +94,30 @@ pub(super) fn draw_sidebar_tabs(
 
     let tabs_width: usize = spans.iter().map(|s| s.width()).sum();
     let width = content.width as usize;
-    let hint_pairs: Vec<(String, String)> = if props.sidebar_active {
-        vec![
-            (
-                primary_key_string(keybindings, Command::ToggleHelp),
-                " help  ".into(),
-            ),
-            (
-                primary_key_string(keybindings, Command::Quit),
-                " quit".into(),
-            ),
-        ]
-    } else {
-        vec![(
-            primary_key_string(keybindings, Command::ToggleFocus),
-            " sidebar".into(),
-        )]
-    };
-    let hint_pairs: Vec<(String, String)> = hint_pairs
-        .into_iter()
-        .filter(|(k, _)| !k.is_empty())
-        .collect();
-    let hint_width: usize = hint_pairs.iter().map(|(k, v)| k.len() + v.len()).sum();
-    if tabs_width + hint_width + 2 < width {
-        let gap = width - tabs_width - hint_width;
+    let menu_label = "\u{2261} menu";
+    let menu_width = menu_label.width();
+    let menu_bounds = if tabs_width + menu_width + 1 < width {
+        let gap = width - tabs_width - menu_width;
         spans.push(Span::styled(" ".repeat(gap), Style::default().bg(theme.bg)));
-        for (k, v) in hint_pairs {
-            spans.push(Span::styled(
-                k,
-                Style::default().fg(theme.muted).bg(theme.bg),
-            ));
-            spans.push(Span::styled(
-                v,
-                Style::default().fg(theme.subtle).bg(theme.bg),
-            ));
-        }
-    }
+        spans.push(Span::styled(
+            menu_label,
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+        Some(Rect {
+            x: content.x + (width - menu_width) as u16,
+            y: content.y,
+            width: menu_width as u16,
+            height: 1,
+        })
+    } else {
+        None
+    };
     let tab_line = pad_line(spans, theme.bg, width);
     frame.render_widget(
         Paragraph::new(vec![tab_line]).style(Style::default().bg(theme.bg)),
         tab_area,
     );
+    menu_bounds
 }
