@@ -5,14 +5,25 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
-use crate::state::SidebarTab;
+use crate::state::{SidebarTab, TabRects};
 use crate::theme::Theme;
 
-/// Click rects for the two sidebar tab labels, returned so mouse dispatch
-/// can switch tabs on a click.
-pub struct TabRects {
-    pub projects: Rect,
-    pub agents: Rect,
+/// Clamp a tab label's click rect to the header `area` so a narrow sidebar
+/// can't leak the rect into the PTY pane (bug #16): a tab starting past the
+/// area's right edge becomes zero-width (un-hittable), and one that merely
+/// overflows is trimmed to end at the edge.
+fn clamp_to_area(rect: Rect, area: Rect) -> Rect {
+    let area_right = area.x + area.width;
+    if rect.x >= area_right {
+        return Rect {
+            width: 0,
+            ..rect
+        };
+    }
+    Rect {
+        width: rect.width.min(area_right - rect.x),
+        ..rect
+    }
 }
 
 /// Draws the sidebar header: a `Projects (N)` / `Agents (M)` tab selector.
@@ -71,17 +82,23 @@ pub(super) fn draw_header(
     );
 
     TabRects {
-        projects: Rect {
-            x: projects_x,
-            y: area.y,
-            width: projects_w,
-            height: 1,
-        },
-        agents: Rect {
-            x: agents_x,
-            y: area.y,
-            width: agents_w,
-            height: 1,
-        },
+        projects: clamp_to_area(
+            Rect {
+                x: projects_x,
+                y: area.y,
+                width: projects_w,
+                height: 1,
+            },
+            area,
+        ),
+        agents: clamp_to_area(
+            Rect {
+                x: agents_x,
+                y: area.y,
+                width: agents_w,
+                height: 1,
+            },
+            area,
+        ),
     }
 }

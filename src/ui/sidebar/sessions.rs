@@ -8,15 +8,13 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::state::{
     AgentHit, AgentRow, AgentTarget, DividerButton, DividerHit, FocusTarget, HostStatus, PfBadge,
-    PfBadgeColor, SidebarItemData, SidebarLayout, SummaryState, ViewMode,
+    PfBadgeColor, SidebarItemData, SidebarLayout, SummaryHits, SummaryState, ViewMode,
 };
 use crate::theme::Theme;
 
 /// Braille spinner frames for the Summary card's "Generating…" state.
 pub(super) const SUMMARY_SPINNER: [&str; 10] =
     ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-use super::SummaryHits;
 
 use super::super::text::{
     format_idle_badge, idle_color, md_line_spans, md_line_width, pad_line, shorten_dir, truncate,
@@ -265,21 +263,34 @@ pub(super) fn draw_sessions(
                                 .add_modifier(Modifier::BOLD),
                         ));
                     }
-                    // Buttons hug the right edge: Generate then popup.
-                    let gen_x = width.saturating_sub(buttons_w) as u16;
-                    let popup_x = width.saturating_sub(popup_w) as u16;
+                    // Hit rects must match the *drawn* button cells, not a
+                    // right-edge assumption: the spans are laid out left to
+                    // right as `left + filler + [age] + Generate + [popup]`,
+                    // so at narrow widths (where `filler` is clamped to 1 and
+                    // the buttons slide rightward) a right-edge `width - w`
+                    // would diverge from where the button actually painted and
+                    // put the Generate hit over the card title (bug #17).
+                    // Derive each button's column from the running offset and
+                    // clamp to the card content width.
+                    let age_run = if show_age { age.width() + 1 } else { 0 };
+                    let gen_x = (left_w + filler + age_run) as u16;
+                    let popup_x = gen_x + gen_w as u16;
+                    // Width available before the card's right edge, so a button
+                    // that overflows a too-narrow card reports only its visible
+                    // cells (and never a rect past `area`).
+                    let clamp_w = |x: u16, w: usize| (w as u16).min(area.width.saturating_sub(x));
                     if let Some(y) = visible.viewport_y_for_item_line(title_line) {
                         summary.button = Some(Rect {
                             x: area.x + gen_x,
                             y: area.y + y,
-                            width: (gen_w as u16).min(area.width.saturating_sub(gen_x)),
+                            width: clamp_w(gen_x, gen_w),
                             height: 1,
                         });
                         if is_ready {
                             summary.popup = Some(Rect {
                                 x: area.x + popup_x,
                                 y: area.y + y,
-                                width: (popup_w as u16).min(area.width.saturating_sub(popup_x)),
+                                width: clamp_w(popup_x, popup_w),
                                 height: 1,
                             });
                         }

@@ -563,8 +563,8 @@ pub enum DividerButton {
 }
 
 /// Click-region for one button (`[⟳]` or `[…]`) on a remote-host
-/// divider. The sidebar renderer fills `divider_hits` after each render;
-/// mouse hit-testing consults it before `focus_at_row()`.
+/// divider. The sidebar renderer fills `HitRegions.dividers` after each
+/// render; mouse hit-testing resolves it before `focus_at_row()`.
 #[derive(Debug, Clone)]
 pub struct DividerHit {
     pub host: String,
@@ -584,8 +584,8 @@ pub struct AgentTarget {
 }
 
 /// Click-region for one agent line in a section footer. The sidebar
-/// renderer fills `agent_hits` after each render; a left click in `rect`
-/// switches to (and focuses) that agent's pane.
+/// renderer fills `HitRegions.agents` after each render; a left click in
+/// `rect` switches to (and focuses) that agent's pane.
 #[derive(Debug, Clone)]
 pub struct AgentHit {
     pub rect: Rect,
@@ -593,12 +593,143 @@ pub struct AgentHit {
 }
 
 /// Click-regions for the two buttons in the kill-confirmation prompt.
-/// The sidebar renderer fills `kill_confirm_hits` while the prompt is
-/// shown; mouse hit-testing maps a click in `yes`/`no` to confirm/cancel.
+/// The sidebar renderer fills `HitRegions.kill` while the prompt is shown;
+/// mouse hit-testing maps a click in `yes`/`no` to confirm/cancel.
 #[derive(Debug, Clone, Copy)]
 pub struct KillConfirmHits {
     pub yes: Rect,
     pub no: Rect,
+}
+
+/// Click rects for the two sidebar tab labels (`Projects` / `Agents`),
+/// published by the header renderer so mouse dispatch can switch tabs on
+/// a click. Each rect is clamped to the header area so a narrow sidebar
+/// can't leak a tab's click target into the PTY pane (bug #16).
+#[derive(Debug, Clone, Copy)]
+pub struct TabRects {
+    pub projects: Rect,
+    pub agents: Rect,
+}
+
+/// Click/scroll regions the Agents-tab Summary card publishes each frame.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SummaryHits {
+    /// The "Generate" button, for click hit-testing.
+    pub button: Option<Rect>,
+    /// The "popup" (big view) button; `None` unless the summary is Ready.
+    pub popup: Option<Rect>,
+    /// The card's full rect, for routing wheel events to text scrolling.
+    pub card: Option<Rect>,
+    /// Max scroll offset for the Ready text at this width (0 = no overflow).
+    pub max_scroll: usize,
+}
+
+/// Every clickable region the sidebar publishes for one frame: the
+/// renderer captures it whole and `AppState` stores it as a single field.
+/// `HitRegions::hit` is the one resolver mouse dispatch consults for every
+/// rect-based button/region test, so hit-test priority lives in one place
+/// and geometry can't drift across the layers (it dissolves the
+/// point-in-rect copies of D1).
+///
+/// Rects are clamped to the sidebar content area at capture time, so a
+/// narrow sidebar can never publish a button that overlaps the PTY pane.
+#[derive(Debug, Clone, Default)]
+pub struct HitRegions {
+    /// The footer banner's clickable "upgrade" span.
+    pub banner: Option<Rect>,
+    /// Divider `[⟳]` / `[…]` / pf-badge buttons.
+    pub dividers: Vec<DividerHit>,
+    /// The kill-confirmation `[No]` / `[Yes]` buttons, while shown.
+    pub kill: Option<KillConfirmHits>,
+    /// Agent rows in the Agents tab.
+    pub agents: Vec<AgentHit>,
+    /// The `Projects` / `Agents` header tab labels (`None` in tabs mode,
+    /// which has no header).
+    pub tabs: Option<TabRects>,
+    /// The Summary card's buttons/card/scroll bound.
+    pub summary: SummaryHits,
+    /// The footer's "menu" button.
+    pub menu: Option<Rect>,
+}
+
+/// What a `(col, row)` click resolves to among the sidebar's rect-based
+/// regions. Vecs are carried by index so the caller reads the matched
+/// `DividerHit` / `AgentHit` straight out of the registry — keeping the
+/// hit data (host, kind, target, rect) in one place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HitKind {
+    /// The kill-confirmation `[Yes]` button.
+    KillYes,
+    /// The kill-confirmation `[No]` button.
+    KillNo,
+    /// The footer banner's "upgrade" span.
+    Banner,
+    /// A header tab label; carries which tab.
+    Tab(SidebarTab),
+    /// The Summary card's "Generate" button.
+    SummaryButton,
+    /// The Summary card's "popup" (big view) button.
+    SummaryPopup,
+    /// Anywhere on the Summary card (for routing wheel events).
+    SummaryCard,
+    /// The footer "menu" button; carries its rect (mouse anchors the menu
+    /// at its x/y).
+    Menu(Rect),
+    /// A divider button; carries an index into `HitRegions.dividers`.
+    Divider(usize),
+    /// An agent row; carries an index into `HitRegions.agents`.
+    Agent(usize),
+}
+
+impl HitRegions {
+    /// Resolve a click at `(col, row)` to the region it lands on, if any.
+    /// The match order encodes hit-test priority: the kill buttons,
+    /// banner, tabs, and summary buttons take precedence over the menu
+    /// button, then dividers (whose buttons sit on a group header row),
+    /// then agent rows. Uses `Rect::contains` throughout.
+    pub fn hit(&self, col: u16, row: u16) -> Option<HitKind> {
+        let pos = Position::new(col, row);
+        if let Some(kill) = self.kill {
+            if kill.yes.contains(pos) {
+                return Some(HitKind::KillYes);
+            }
+            if kill.no.contains(pos) {
+                return Some(HitKind::KillNo);
+            }
+        }
+        if self.banner.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::Banner);
+        }
+        if let Some(tabs) = self.tabs {
+            if tabs.projects.contains(pos) {
+                return Some(HitKind::Tab(SidebarTab::Projects));
+            }
+            if tabs.agents.contains(pos) {
+                return Some(HitKind::Tab(SidebarTab::Agents));
+            }
+        }
+        if self.summary.button.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::SummaryButton);
+        }
+        if self.summary.popup.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::SummaryPopup);
+        }
+        if let Some(r) = self.menu {
+            if r.contains(pos) {
+                return Some(HitKind::Menu(r));
+            }
+        }
+        if let Some(i) = self.dividers.iter().position(|h| h.rect.contains(pos)) {
+            return Some(HitKind::Divider(i));
+        }
+        if let Some(i) = self.agents.iter().position(|h| h.rect.contains(pos)) {
+            return Some(HitKind::Agent(i));
+        }
+        if self.summary.card.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::SummaryCard);
+        }
+        None
+    }
 }
 
 // --- Side effects ---
@@ -1110,27 +1241,14 @@ pub struct AppState {
     /// Body height (text rows) of the inline summary card, drag-adjustable
     /// from its bottom edge and persisted to config.
     pub summary_height: u16,
-    /// Click-region of the card's "Generate Summary" button, captured each
-    /// frame for mouse hit-testing. `None` when the button isn't shown
-    /// (not on the Agents tab, or while generating).
-    pub summary_button_rect: Option<Rect>,
-    /// Click-region of the card's "popup" button (open the big view),
-    /// captured each frame. `None` unless the summary is `Ready`.
-    pub summary_popup_button_rect: Option<Rect>,
     /// True while dragging the card's bottom edge to resize it.
     pub dragging_summary: bool,
     /// Scroll offset (in wrapped text rows) of the Ready summary's content,
     /// when it overflows the card's fixed text area.
     pub summary_scroll: usize,
-    /// Max scroll offset for the current Ready text at the current width,
-    /// captured by the renderer each frame so scroll input can clamp.
-    pub summary_max_scroll: usize,
     /// Scroll offset of the summary popup's text, and its captured max.
     pub summary_popup_scroll: usize,
     pub summary_popup_max_scroll: usize,
-    /// The card's full rect, captured each frame so the mouse layer can
-    /// route wheel events over it to scrolling the summary.
-    pub summary_card_rect: Option<Rect>,
     pub dragging_separator: bool,
 
     /// Transient sidebar overlays — help, kill-confirm, rename, context
@@ -1153,18 +1271,12 @@ pub struct AppState {
     pub update_check_mode: UpdateCheckMode,
     pub update_available: Option<UpdateStatus>,
     pub update_last_checked_secs: Option<u64>,
-    /// Column range of the clickable "upgrade" span in the footer banner,
-    /// captured during render for mouse hit-testing. (y, x_start, x_end).
-    pub banner_upgrade_bounds: Option<Rect>,
-    /// Click-region of the footer's "menu" button, captured during render
-    /// for mouse hit-testing. Opens the global context menu.
-    pub menu_button_bounds: Option<Rect>,
 
-    /// Click-regions of the `Projects` / `Agents` tab labels in the
-    /// sidebar header, captured during render for mouse hit-testing.
-    /// `None` in layouts without the header (vertical/tabs layout).
-    pub projects_tab_rect: Option<Rect>,
-    pub agents_tab_rect: Option<Rect>,
+    /// Every clickable region the sidebar publishes, captured whole by the
+    /// render loop each frame and consulted by mouse dispatch through
+    /// [`HitRegions::hit`]. One field, not a dozen — geometry can't drift
+    /// across the rect tests because they all decode from here.
+    pub hit_regions: HitRegions,
 
     /// Result of the most recent manual config reload. Rendered in the
     /// sidebar footer and auto-cleared by the main loop after a short
@@ -1172,24 +1284,11 @@ pub struct AppState {
     pub reload_status: Option<ReloadStatus>,
     pub reload_status_at: Option<Instant>,
 
-    /// Click-regions for divider `[…]` buttons, refilled by the sidebar
-    /// renderer each frame. Read by mouse dispatch.
-    pub divider_hits: Vec<DividerHit>,
-
-    /// Click-regions for agent rows in the Agents tab, refilled by the
-    /// sidebar renderer each frame. A left click switches to that pane.
-    pub agent_hits: Vec<AgentHit>,
-
     /// The agent deck last switched to (via an agent-line click). Its
     /// footer line renders highlighted as "you are here". Identified by
     /// `(host, pane_id)` so the highlight is uniform for local and remote
     /// — never branches on origin. Cleared by any non-agent switch.
     pub active_agent: Option<AgentTarget>,
-
-    /// Click-regions for the kill-confirmation `[No]` / `[Yes]` buttons,
-    /// refilled by the sidebar renderer while the prompt is up.
-    /// Read by mouse dispatch. `None` when the prompt is not shown.
-    pub kill_confirm_hits: Option<KillConfirmHits>,
 
     /// Mirror of `Config.remotes` so reducers can read per-host forwards
     /// without round-tripping through dispatch. Kept in sync by startup
@@ -1269,14 +1368,10 @@ impl AppState {
             summary_model: String::new(),
             summary_language: String::new(),
             summary_height: DEFAULT_SUMMARY_HEIGHT,
-            summary_button_rect: None,
-            summary_popup_button_rect: None,
             dragging_summary: false,
             summary_scroll: 0,
             summary_popup_scroll: 0,
             summary_popup_max_scroll: 0,
-            summary_max_scroll: 0,
-            summary_card_rect: None,
             dragging_separator: false,
             overlay: OverlayState::default(),
             term_width,
@@ -1288,18 +1383,12 @@ impl AppState {
             update_check_mode: UpdateCheckMode::default(),
             update_available: None,
             update_last_checked_secs: None,
-            banner_upgrade_bounds: None,
-            menu_button_bounds: None,
-            projects_tab_rect: None,
-            agents_tab_rect: None,
+            hit_regions: HitRegions::default(),
             reload_status: None,
             reload_status_at: None,
-            divider_hits: Vec::new(),
-            kill_confirm_hits: None,
             config_remotes: Vec::new(),
             forward_health: HashMap::new(),
             agents: HashMap::new(),
-            agent_hits: Vec::new(),
             active_agent: None,
             collapsed_sections: HashSet::new(),
         }
@@ -1370,25 +1459,6 @@ impl AppState {
             normalize_agents_probe_interval(self.agents_probe_interval_secs),
             direction,
         );
-    }
-
-    pub fn banner_upgrade_at(&self, col: u16, row: u16) -> bool {
-        let pos = Position::new(col, row);
-        self.banner_upgrade_bounds.is_some_and(|r| r.contains(pos))
-    }
-
-    /// Which sidebar tab label `(col, row)` falls on in the header, if
-    /// any. Used by mouse dispatch to switch tabs on a click.
-    pub fn tab_at(&self, col: u16, row: u16) -> Option<SidebarTab> {
-        let pos = Position::new(col, row);
-        let hit = |rect: Option<Rect>| rect.is_some_and(|r| r.contains(pos));
-        if hit(self.projects_tab_rect) {
-            Some(SidebarTab::Projects)
-        } else if hit(self.agents_tab_rect) {
-            Some(SidebarTab::Agents)
-        } else {
-            None
-        }
     }
 
     /// Whether the Agents tab is the active sidebar view. The tab selector
@@ -1855,29 +1925,19 @@ impl AppState {
         }
     }
 
-    /// Whether `(col, row)` falls on the Summary card's "Generate" button.
-    pub fn summary_button_at(&self, col: u16, row: u16) -> bool {
-        let pos = Position::new(col, row);
-        self.summary_button_rect.is_some_and(|r| r.contains(pos))
-    }
-
-    /// Whether `(col, row)` falls on the Summary card's "popup" button.
-    pub fn summary_popup_button_at(&self, col: u16, row: u16) -> bool {
-        let pos = Position::new(col, row);
-        self.summary_popup_button_rect
-            .is_some_and(|r| r.contains(pos))
-    }
-
-    /// Whether `(col, row)` falls anywhere on the Summary card — used to
-    /// route wheel events to scrolling its text.
+    /// Whether `pos` falls anywhere on the Summary card. Used by the wheel
+    /// path to route scroll events to the card text. Checked directly,
+    /// independent of `HitRegions::hit` priority, because the card rect
+    /// spans the whole Agents-tab viewport and the agent rows/dividers
+    /// drawn over it outrank the card for *clicks* but not for the wheel.
     pub fn summary_card_at(&self, col: u16, row: u16) -> bool {
         let pos = Position::new(col, row);
-        self.summary_card_rect.is_some_and(|r| r.contains(pos))
+        self.hit_regions.summary.card.is_some_and(|r| r.contains(pos))
     }
 
     /// Whether `(col, row)` is on the card's bottom drag-handle row.
     pub fn summary_resize_at(&self, col: u16, row: u16) -> bool {
-        self.summary_card_rect.is_some_and(|r| {
+        self.hit_regions.summary.card.is_some_and(|r| {
             let handle_y = r.y + r.height.saturating_sub(1);
             row == handle_y && col >= r.x && col < r.x + r.width
         })
@@ -1887,7 +1947,7 @@ impl AppState {
     /// between the card top and the pointer, minus the title/blank/handle
     /// chrome. Clamped by `set_summary_height`.
     pub fn summary_height_for_drag(&self, row: u16) -> u16 {
-        let top = self.summary_card_rect.map_or(0, |r| r.y);
+        let top = self.hit_regions.summary.card.map_or(0, |r| r.y);
         // total = row - top + 1; body rows = total - 3 (title, blank, handle).
         row.saturating_sub(top).saturating_sub(2)
     }
@@ -1895,7 +1955,7 @@ impl AppState {
     /// Apply a wheel/keyboard scroll delta to the Summary text, clamped to
     /// the captured max offset.
     pub fn scroll_summary(&mut self, delta: i32) {
-        let max = self.summary_max_scroll as i32;
+        let max = self.hit_regions.summary.max_scroll as i32;
         self.summary_scroll = (self.summary_scroll as i32 + delta).clamp(0, max) as usize;
     }
 

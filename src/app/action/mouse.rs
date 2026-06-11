@@ -1,25 +1,24 @@
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::Position;
 
-use crate::state::{AppState, DividerButton, FocusTarget, LayoutMode, MainView};
+use crate::state::{AppState, DividerButton, FocusTarget, HitKind, LayoutMode, MainView};
 
 use super::Action;
 
 pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
-    let pos = Position::new(mouse.column, mouse.row);
+    // Single resolver for every rect-based button/region the sidebar
+    // publishes; the modal guards below decide *whether* to consult it and
+    // which hits they honor, preserving the original priority order.
+    let hit = state.hit_regions.hit(mouse.column, mouse.row);
     if state.overlay.confirm_kill {
         // The kill prompt owns the sidebar while it's up: clicking a
         // button confirms/cancels, every other click is inert — including
         // the update banner — so nothing punches through a pending
         // destructive confirmation.
         if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-            if let Some(hits) = state.kill_confirm_hits {
-                if hits.yes.contains(pos) {
-                    return Action::ConfirmKill;
-                }
-                if hits.no.contains(pos) {
-                    return Action::CancelKill;
-                }
+            match hit {
+                Some(HitKind::KillYes) => return Action::ConfirmKill,
+                Some(HitKind::KillNo) => return Action::CancelKill,
+                _ => {}
             }
         }
         return Action::None;
@@ -36,28 +35,22 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         };
     }
 
-    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-        && state.banner_upgrade_at(mouse.column, mouse.row)
-    {
+    if mouse.kind == MouseEventKind::Down(MouseButton::Left) && hit == Some(HitKind::Banner) {
         return Action::TriggerUpgrade;
     }
 
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-        if let Some(tab) = state.tab_at(mouse.column, mouse.row) {
-            return Action::SelectTab(tab);
-        }
-        if state.summary_button_at(mouse.column, mouse.row) {
-            return Action::GenerateSummary;
-        }
-        if state.summary_popup_button_at(mouse.column, mouse.row) {
-            return Action::OpenSummaryPopup;
-        }
-        // The footer "menu" button opens the global context menu, anchored
-        // at the button (the menu renderer clamps it on-screen).
-        if let Some(r) = state.menu_button_bounds {
-            if r.contains(pos) {
-                return Action::OpenGlobalMenu { x: r.x, y: r.y };
-            }
+        // Button rects (tabs / summary buttons / menu) are resolved before
+        // the context-menu and picker guards below — matching the original
+        // ordering (see bug #7, fixed in Phase 2, not here).
+        match hit {
+            Some(HitKind::Tab(tab)) => return Action::SelectTab(tab),
+            Some(HitKind::SummaryButton) => return Action::GenerateSummary,
+            Some(HitKind::SummaryPopup) => return Action::OpenSummaryPopup,
+            // The footer "menu" button opens the global context menu, anchored
+            // at the button (the menu renderer clamps it on-screen).
+            Some(HitKind::Menu(r)) => return Action::OpenGlobalMenu { x: r.x, y: r.y },
+            _ => {}
         }
     }
 
@@ -150,8 +143,13 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
                     return Action::None;
                 }
                 // Wheel over the Summary card scrolls its text (when it
-                // overflows), not the sidebar list.
-                if state.summary_max_scroll > 0
+                // overflows), not the sidebar list. This tests the card
+                // rect *directly*, not via the priority resolver: the card
+                // spans the whole Agents-tab viewport, so the agent rows and
+                // dividers drawn over it outrank `HitKind::SummaryCard` in
+                // `hit()` (correct for clicks) — but the wheel must still
+                // scroll the summary when rolled anywhere over the card.
+                if state.hit_regions.summary.max_scroll > 0
                     && state.summary_card_at(mouse.column, mouse.row)
                 {
                     return match mouse.kind {
@@ -174,32 +172,32 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         }
         // Check divider […] button hit regions before falling through to
         // session-row dispatch so a click on the button isn't mistaken for
-        // a row selection.
-        for hit in &state.divider_hits {
-            if hit.rect.contains(pos) {
-                return match hit.kind {
+        // a row selection. Agent rows (Agents tab) come next: a click
+        // switches to (and focuses) the pane. The resolver returns indices
+        // into the registry's vecs; read the matched hit straight out.
+        match hit {
+            Some(HitKind::Divider(i)) => {
+                let dh = &state.hit_regions.dividers[i];
+                return match dh.kind {
                     DividerButton::Reconnect => Action::ReconnectHost {
-                        host: hit.host.clone(),
+                        host: dh.host.clone(),
                     },
                     DividerButton::More => Action::OpenHostDividerMenu {
-                        host: hit.host.clone(),
-                        x: hit.rect.x,
-                        y: hit.rect.y + 1, // open just below the button
+                        host: dh.host.clone(),
+                        x: dh.rect.x,
+                        y: dh.rect.y + 1, // open just below the button
                     },
-                    DividerButton::PfBadge => Action::OpenPortForward(hit.host.clone()),
+                    DividerButton::PfBadge => Action::OpenPortForward(dh.host.clone()),
                     DividerButton::LocalMore => Action::OpenLocalDividerMenu {
-                        x: hit.rect.x,
-                        y: hit.rect.y + 1, // open just below the button
+                        x: dh.rect.x,
+                        y: dh.rect.y + 1, // open just below the button
                     },
                 };
             }
-        }
-
-        // Agent rows (Agents tab): a click switches to (and focuses) the pane.
-        for hit in &state.agent_hits {
-            if hit.rect.contains(pos) {
-                return Action::SwitchToAgentPane(hit.target.clone());
+            Some(HitKind::Agent(i)) => {
+                return Action::SwitchToAgentPane(state.hit_regions.agents[i].target.clone());
             }
+            _ => {}
         }
 
         // A click on a group divider that wasn't on one of its buttons
@@ -278,3 +276,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
 
     Action::None
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/app/action/mouse.rs"]
+mod tests;

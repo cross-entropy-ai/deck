@@ -4,8 +4,8 @@ use ratatui::Frame;
 use crate::keybindings::Keybindings;
 use crate::layout::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
 use crate::state::{
-    AgentHit, AgentRow, AgentTarget, DividerHit, FocusTarget, KillConfirmHits, SidebarLayout,
-    SidebarTab, ViewMode,
+    AgentRow, AgentTarget, FocusTarget, HitRegions, KillConfirmHits, SidebarLayout, SidebarTab,
+    SummaryHits, ViewMode,
 };
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
@@ -23,7 +23,6 @@ mod tabs;
 use container::draw_sidebar_container;
 use footer::{draw_footer, FooterHits, FooterProps};
 use header::draw_header;
-pub use header::TabRects;
 use sessions::{draw_sessions, SessionsProps};
 use tabs::{draw_sidebar_tabs, TabsProps};
 
@@ -71,51 +70,69 @@ pub struct SidebarProps<'a> {
     pub active_agent: Option<&'a AgentTarget>,
 }
 
-/// Click/scroll regions the Agents-tab Summary card publishes each frame.
-#[derive(Default)]
-pub struct SummaryHits {
-    /// The "Generate" button, for click hit-testing.
-    pub button: Option<Rect>,
-    /// The "popup" (big view) button; `None` unless the summary is Ready.
-    pub popup: Option<Rect>,
-    /// The card's full rect, for routing wheel events to text scrolling.
-    pub card: Option<Rect>,
-    /// Max scroll offset for the Ready text at this width (0 = no overflow).
-    pub max_scroll: usize,
-}
-
-/// Every clickable region the sidebar publishes for one frame, captured
-/// by the render loop and written back into `AppState` for mouse
-/// dispatch. Same pattern as `FooterHits`/`SummaryHits`/`TabRects`, one
-/// level up.
-#[derive(Default)]
-pub struct SidebarHits {
-    /// The footer banner's clickable "upgrade" span.
-    pub banner: Option<Rect>,
-    /// Divider `[⟳]` / `[…]` / pf-badge buttons.
-    pub dividers: Vec<DividerHit>,
-    /// The kill-confirmation `[No]` / `[Yes]` buttons, while shown.
-    pub kill: Option<KillConfirmHits>,
-    /// Agent rows in the Agents tab.
-    pub agents: Vec<AgentHit>,
-    /// The `Projects` / `Agents` header tab labels (`None` in tabs mode,
-    /// which has no header).
-    pub tabs: Option<TabRects>,
-    /// The Summary card's buttons/card/scroll bound.
-    pub summary: SummaryHits,
-    /// The footer's "menu" button.
-    pub menu: Option<Rect>,
-}
-
 #[derive(Clone, Copy)]
 struct SidebarRenderCtx<'a> {
     theme: &'a Theme,
     blink_on: bool,
 }
 
+/// Clamp a captured rect to `area`, returning `None` if the intersection
+/// is empty. Belt-and-suspenders with the per-rect clamps in `header.rs`
+/// and `sessions.rs`: published rects can never extend past the sidebar
+/// into the PTY pane (bug #16/#17), so a click outside the sidebar can't
+/// resolve to a sidebar button.
+fn clamp_rect(rect: Rect, area: Rect) -> Option<Rect> {
+    let r = rect.intersection(area);
+    (r.width > 0 && r.height > 0).then_some(r)
+}
+
+/// Clamp every published rect in `hits` to the sidebar content `area`.
+fn clamp_hits(hits: &mut HitRegions, area: Rect) {
+    hits.banner = hits.banner.and_then(|r| clamp_rect(r, area));
+    hits.menu = hits.menu.and_then(|r| clamp_rect(r, area));
+    if let Some(tabs) = hits.tabs.as_mut() {
+        tabs.projects = clamp_rect(tabs.projects, area).unwrap_or(Rect {
+            width: 0,
+            ..tabs.projects
+        });
+        tabs.agents = clamp_rect(tabs.agents, area).unwrap_or(Rect {
+            width: 0,
+            ..tabs.agents
+        });
+    }
+    hits.summary.button = hits.summary.button.and_then(|r| clamp_rect(r, area));
+    hits.summary.popup = hits.summary.popup.and_then(|r| clamp_rect(r, area));
+    hits.summary.card = hits.summary.card.and_then(|r| clamp_rect(r, area));
+    hits.dividers.retain_mut(|h| match clamp_rect(h.rect, area) {
+        Some(r) => {
+            h.rect = r;
+            true
+        }
+        None => false,
+    });
+    hits.agents.retain_mut(|h| match clamp_rect(h.rect, area) {
+        Some(r) => {
+            h.rect = r;
+            true
+        }
+        None => false,
+    });
+    if let Some(kill) = hits.kill.as_mut() {
+        // The kill buttons live inside the sidebar by construction; clamp
+        // for symmetry without dropping a button (a zero-width Yes/No would
+        // be worse than an over-wide one, and the prompt owns the sidebar).
+        if let Some(r) = clamp_rect(kill.yes, area) {
+            kill.yes = r;
+        }
+        if let Some(r) = clamp_rect(kill.no, area) {
+            kill.no = r;
+        }
+    }
+}
+
 /// Draw the sidebar and return the frame's clickable regions for mouse
 /// dispatch.
-pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> SidebarHits {
+pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> HitRegions {
     let ctx = SidebarRenderCtx {
         theme: props.theme,
         blink_on: props.blink_on,
@@ -155,11 +172,13 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> S
         });
         // Vertical/tabs layout has no sidebar header (no tab labels), no
         // banner, and no session-area hit regions.
-        return SidebarHits {
+        let mut hits = HitRegions {
             kill: kill_hits,
             menu: menu_bounds,
-            ..SidebarHits::default()
+            ..HitRegions::default()
         };
+        clamp_hits(&mut hits, area);
+        return hits;
     }
     let content = draw_sidebar_container(
         frame,
@@ -234,7 +253,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> S
             },
         },
     );
-    SidebarHits {
+    let mut hits = HitRegions {
         banner: banner_bounds,
         dividers: divider_hits,
         kill: kill_hits,
@@ -242,7 +261,12 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> S
         tabs: Some(tab_rects),
         summary: summary_hits,
         menu: menu_bounds,
-    }
+    };
+    // Belt-and-suspenders: every rect was captured against its own drawing
+    // area, but clamp the whole registry to the sidebar content area so no
+    // published rect can ever reach into the PTY pane.
+    clamp_hits(&mut hits, content);
+    hits
 }
 
 #[cfg(test)]

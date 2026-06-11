@@ -207,3 +207,212 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
         "prompt text missing: {text:?}"
     );
 }
+
+// --- Phase 1: one geometry, one hit-test ---
+
+use ratatui::backend::TestBackend;
+use ratatui::layout::Rect;
+use ratatui::Terminal;
+
+use crate::layout::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
+use crate::state::{HitKind, HitRegions, SidebarTab, SummaryState};
+use crate::update::UpdateStatus;
+
+/// Render the sidebar at `width` x `height` on the Projects tab and return
+/// the captured hit registry. `has_update` toggles the footer banner;
+/// `plugins` adds plugin rows so the footer block varies.
+fn render_hits(
+    width: u16,
+    height: u16,
+    has_update: bool,
+    plugins: &[PluginView<'_>],
+) -> HitRegions {
+    let theme = &crate::theme::THEMES[0];
+    let layout = SidebarLayout::new();
+    let keybindings = Keybindings::default();
+    let sessions: Vec<&dyn SidebarSession> = Vec::new();
+    let update = UpdateStatus {
+        latest_version: "9.9.9".to_string(),
+        current_version: "0.0.1".to_string(),
+        release_url: "https://example.invalid".to_string(),
+        checked_at: 0,
+    };
+
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut captured = HitRegions::default();
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            captured = super::draw_sidebar(
+                frame,
+                area,
+                SidebarProps {
+                    sessions: &sessions,
+                    local_count: 0,
+                    layout: &layout,
+                    focus_target: None,
+                    sidebar_active: true,
+                    theme,
+                    show_help: false,
+                    confirm_kill: None,
+                    rename_input: None,
+                    show_borders: true,
+                    sidebar_tab: SidebarTab::Projects,
+                    agent_rows: &[],
+                    summary: &SummaryState::Idle,
+                    summary_age: None,
+                    spinner_idx: 0,
+                    summary_scroll: 0,
+                    tabs_mode: false,
+                    view_mode: ViewMode::Expanded,
+                    plugins,
+                    blink_on: false,
+                    keybindings: &keybindings,
+                    update_available: has_update.then_some(&update),
+                    active_agent: None,
+                },
+            );
+        })
+        .unwrap();
+    captured
+}
+
+/// The content area `draw_sidebar` lays out within for a horizontal
+/// sidebar with borders: the bordered container insets the full area by
+/// one cell on each side.
+fn content_area(width: u16, height: u16) -> Rect {
+    Rect::new(1, 1, width.saturating_sub(2), height.saturating_sub(2))
+}
+
+#[test]
+fn footer_allocation_matches_shared_formula() {
+    // The renderer must split off exactly `sidebar_footer_height` rows for
+    // the footer, for every banner/plugin combination — the same formula
+    // the mouse hit-tester uses (`AppState::sidebar_footer_height`), so a
+    // click can't land a row off from what was drawn (bug #5 class).
+    let width = 30;
+    let height = 24;
+    let content = content_area(width, height);
+
+    let mk_plugin = || PluginView {
+        key: 'a',
+        name: "demo",
+        status: crate::ui::PluginStatus::Background,
+    };
+    let one = [mk_plugin()];
+    for (has_update, plugins) in [
+        (false, &[][..]),
+        (true, &[][..]),
+        (false, &one[..]),
+        (true, &one[..]),
+    ] {
+        let hits = render_hits(width, height, has_update, plugins);
+        let banner_shown = banner_visible(has_update, content.width);
+        let footer_height = sidebar_footer_height(banner_shown, plugins.len());
+        // The footer occupies the bottom `footer_height` rows of the
+        // content area; the tab labels sit on the header's first row.
+        let tabs = hits.tabs.expect("Projects tab has a header");
+        assert_eq!(
+            tabs.projects.y, content.y,
+            "tab row must be the header's first row"
+        );
+        // The header is `SIDEBAR_HEADER_HEIGHT` rows; sessions fill the
+        // middle; the footer is the formula's height — so the sessions
+        // area height is content - header - footer, and must be >= 1.
+        let sessions_h = content
+            .height
+            .saturating_sub(SIDEBAR_HEADER_HEIGHT)
+            .saturating_sub(footer_height);
+        assert!(
+            sessions_h >= 1,
+            "sessions area underflowed (banner {banner_shown}, plugins {})",
+            plugins.len()
+        );
+        // The banner hit, when shown, lands inside the footer band.
+        if banner_shown {
+            let banner = hits.banner.expect("banner hit present when shown");
+            let footer_top = content.bottom() - footer_height;
+            assert!(
+                banner.y >= footer_top && banner.y < content.bottom(),
+                "banner row {} outside footer band [{footer_top}, {})",
+                banner.y,
+                content.bottom()
+            );
+        }
+    }
+}
+
+#[test]
+fn captured_rects_stay_within_sidebar_area() {
+    // Regression guard for #16/#17: every published rect must be a subset
+    // of the sidebar content area — nothing may reach into the PTY pane,
+    // at any width including very narrow ones.
+    for width in [14u16, 15, 16, 20, 30, 48] {
+        let height = 24;
+        let content = content_area(width, height);
+        let right = content.x + content.width;
+        let bottom = content.y + content.height;
+        let hits = render_hits(width, height, true, &[]);
+
+        let mut rects: Vec<Rect> = Vec::new();
+        rects.extend(hits.banner);
+        rects.extend(hits.menu);
+        rects.extend(hits.summary.button);
+        rects.extend(hits.summary.popup);
+        rects.extend(hits.summary.card);
+        if let Some(t) = hits.tabs {
+            // A zero-width (clamped-away) tab rect is fine; only non-empty
+            // rects must sit inside the area.
+            if t.projects.width > 0 {
+                rects.push(t.projects);
+            }
+            if t.agents.width > 0 {
+                rects.push(t.agents);
+            }
+        }
+        rects.extend(hits.dividers.iter().map(|h| h.rect));
+        rects.extend(hits.agents.iter().map(|h| h.rect));
+        if let Some(k) = hits.kill {
+            rects.push(k.yes);
+            rects.push(k.no);
+        }
+
+        for r in rects {
+            assert!(
+                r.x >= content.x && r.x + r.width <= right,
+                "rect {r:?} escapes horizontally at width {width} (content {content:?})"
+            );
+            assert!(
+                r.y >= content.y && r.y + r.height <= bottom,
+                "rect {r:?} escapes vertically at width {width} (content {content:?})"
+            );
+        }
+    }
+}
+
+#[test]
+fn narrow_agents_tab_does_not_leak_into_pty() {
+    // Bug #16: at a narrow sidebar width the un-clamped `Agents` tab label
+    // overflows the sidebar. A click in a column beyond the sidebar must
+    // resolve to `None`, never `Tab(Agents)`.
+    let width = 16;
+    let height = 24;
+    let content = content_area(width, height);
+    let hits = render_hits(width, height, false, &[]);
+
+    // A column at/just past the sidebar's right edge is outside the area.
+    let beyond = content.x + content.width;
+    for row in content.y..content.y + SIDEBAR_HEADER_HEIGHT {
+        assert_ne!(
+            hits.hit(beyond, row),
+            Some(HitKind::Tab(SidebarTab::Agents)),
+            "click at col {beyond}, row {row} leaked into a tab hit"
+        );
+        assert_eq!(
+            hits.hit(beyond, row),
+            None,
+            "click past the sidebar must be inert"
+        );
+    }
+}

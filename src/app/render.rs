@@ -90,7 +90,7 @@ impl App {
         let reload_status = s.reload_status.as_ref();
         let dragging_sep = s.dragging_separator;
 
-        let mut captured_hits = ui::SidebarHits::default();
+        let mut captured_hits = crate::state::HitRegions::default();
         let mut captured_summary_popup_max_scroll: usize = 0;
         terminal.draw(|frame| {
             // Unified slice the sidebar consumes: local rows first
@@ -511,21 +511,7 @@ impl App {
             }
         })?;
 
-        self.state.banner_upgrade_bounds = captured_hits.banner;
-        self.state.menu_button_bounds = captured_hits.menu;
-        self.state.divider_hits = captured_hits.dividers;
-        self.state.kill_confirm_hits = captured_hits.kill;
-        self.state.agent_hits = captured_hits.agents;
-        let (projects_rect, agents_rect) = match captured_hits.tabs {
-            Some(t) => (Some(t.projects), Some(t.agents)),
-            None => (None, None),
-        };
-        self.state.projects_tab_rect = projects_rect;
-        self.state.agents_tab_rect = agents_rect;
-        self.state.summary_button_rect = captured_hits.summary.button;
-        self.state.summary_popup_button_rect = captured_hits.summary.popup;
-        self.state.summary_card_rect = captured_hits.summary.card;
-        self.state.summary_max_scroll = captured_hits.summary.max_scroll;
+        self.state.hit_regions = captured_hits;
         self.state.summary_popup_max_scroll = captured_summary_popup_max_scroll;
 
         Ok(())

@@ -196,7 +196,7 @@ fn summary_card_height_is_fixed_across_states() {
 #[test]
 fn scroll_summary_clamps_to_max() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.summary_max_scroll = 3;
+    state.hit_regions.summary.max_scroll = 3;
     state.scroll_summary(-5);
     assert_eq!(state.summary_scroll, 0, "can't scroll above the top");
     state.scroll_summary(10);
