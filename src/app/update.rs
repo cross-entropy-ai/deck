@@ -33,6 +33,7 @@ impl App {
             summary_height: self.state.summary_height,
             summary_language: self.state.summary_language.clone(),
             agents_probe_interval: self.state.agents_probe_interval_secs,
+            transparent_bg: self.state.transparent_bg,
         }
         .save();
         // We just wrote the file; adopt its new mtime so the config watcher

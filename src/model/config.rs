@@ -176,6 +176,10 @@ pub struct Config {
     /// seconds (one of 1/2/5/10). Set from the settings page.
     #[serde(default = "default_agents_probe_interval")]
     pub agents_probe_interval: u64,
+    /// Use the terminal's default (transparent) background instead of the
+    /// theme's solid background color.
+    #[serde(default)]
+    pub transparent_bg: bool,
 }
 
 fn default_agents_probe_interval() -> u64 {
@@ -215,6 +219,7 @@ impl Default for Config {
             summary_height: default_summary_height(),
             summary_language: String::new(),
             agents_probe_interval: default_agents_probe_interval(),
+            transparent_bg: false,
         }
     }
 }

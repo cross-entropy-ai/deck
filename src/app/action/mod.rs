@@ -30,6 +30,7 @@ pub enum Action {
 
     ToggleLayout,
     ToggleBorders,
+    ToggleTransparentBg,
     /// Switch the sidebar to a specific tab (clicked tab label).
     SelectTab(crate::state::SidebarTab),
     /// Toggle between the Projects and Agents sidebar tabs (keybinding).

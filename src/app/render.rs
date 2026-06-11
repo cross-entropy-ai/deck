@@ -30,7 +30,17 @@ impl App {
         }
         let s = &self.state;
         let sidebar_active = s.focus_mode == FocusMode::Sidebar;
-        let theme = &THEMES[s.theme_index];
+        let base_theme = THEMES[s.theme_index];
+        let effective_theme;
+        let theme = if s.transparent_bg {
+            effective_theme = crate::theme::Theme {
+                bg: ratatui::style::Color::Reset,
+                ..base_theme
+            };
+            &effective_theme
+        } else {
+            &base_theme
+        };
         let show_help = s.overlay.show_help;
         let rename_input = s.overlay.renaming.as_ref().map(|r| &r.input);
         // Overlay state is only *read* inside the draw closure, so borrow
@@ -381,6 +391,7 @@ impl App {
                     summary_language: crate::summary::language_label(&s.summary_language),
                     summary_lang_input: s.overlay.summary_lang_input.as_ref(),
                     agents_probe_interval: s.agents_probe_interval_secs,
+                    transparent_bg: s.transparent_bg,
                 };
                 ui::draw_settings_page(frame, main_inner, &settings_view, theme);
             }

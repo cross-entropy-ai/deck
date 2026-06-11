@@ -434,6 +434,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.resize_pty(true);
             fx.save_config();
         }
+        Action::ToggleTransparentBg => {
+            state.transparent_bg = !state.transparent_bg;
+            fx.save_config();
+        }
         Action::SelectTab(tab) => switch_tab(state, &mut fx, tab),
         Action::ToggleSidebarTab => {
             let next = match state.sidebar_tab {
@@ -507,6 +511,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 7 => apply_action(state, Action::ToggleUpdateCheck),
                 8 => apply_action(state, Action::OpenSummaryLanguageEditor),
                 9 => apply_action(state, Action::CycleAgentsProbeInterval(direction)),
+                10 => apply_action(state, Action::ToggleTransparentBg),
                 _ => SideEffect::default(),
             };
             fx.merge(inner);

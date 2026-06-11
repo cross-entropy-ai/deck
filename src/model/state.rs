@@ -130,7 +130,7 @@ pub const DEFAULT_SUMMARY_HEIGHT: u16 = 6;
 pub const SUMMARY_MIN_HEIGHT: u16 = 2;
 pub const SUMMARY_MAX_HEIGHT: u16 = 40;
 
-pub const SETTINGS_ITEM_COUNT: usize = 10;
+pub const SETTINGS_ITEM_COUNT: usize = 11;
 pub const FRAME_RATE_LIMIT_OPTIONS: [u16; 4] = [2, 5, 10, 30];
 
 /// How often the Agents tab probes for agents + their status, in seconds.
@@ -1086,6 +1086,7 @@ pub struct AppState {
     /// while that tab is active; see `App`'s run loop.
     pub agents_probe_interval_secs: u64,
     pub show_borders: bool,
+    pub transparent_bg: bool,
     /// Active sidebar tab. `Projects` lists tmux sessions; `Agents` lists
     /// detected agents as the primary list. Persisted to config. Agent
     /// detection in the refresh worker runs only while this is `Agents`
@@ -1260,6 +1261,7 @@ impl AppState {
             frame_rate_limit: 5,
             agents_probe_interval_secs: DEFAULT_AGENTS_PROBE_INTERVAL,
             show_borders: true,
+            transparent_bg: false,
             sidebar_tab: SidebarTab::default(),
             agent_focused: 0,
             summary: SummaryState::Idle,
@@ -1321,6 +1323,7 @@ impl AppState {
         self.theme_index = theme_index;
         self.layout_mode = cfg.layout;
         self.show_borders = cfg.show_borders;
+        self.transparent_bg = cfg.transparent_bg;
         self.sidebar_tab = cfg.sidebar_tab;
         self.view_mode = cfg.view_mode;
         self.frame_rate_limit = normalize_frame_rate_limit(cfg.frame_rate_limit);

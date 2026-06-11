@@ -168,4 +168,5 @@ pub struct SettingsView<'a> {
     pub summary_lang_input: Option<&'a ratatui_textarea::TextArea<'static>>,
     /// Agents-tab probe interval, in seconds.
     pub agents_probe_interval: u64,
+    pub transparent_bg: bool,
 }

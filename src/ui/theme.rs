@@ -1,5 +1,6 @@
 use ratatui::style::Color;
 
+#[derive(Clone, Copy)]
 pub struct Theme {
     pub name: &'static str,
     pub bg: Color,
