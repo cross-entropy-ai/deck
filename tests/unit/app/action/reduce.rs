@@ -296,7 +296,7 @@ fn theme_picker_next_previews_theme_immediately() {
 #[test]
 fn settings_adjust_layout_resizes_and_saves() {
     let mut state = make_test_state(1);
-    state.settings.selected = 1;
+    state.settings.selected = 2;
     let fx = apply_action(&mut state, Action::SettingsAdjust);
     assert_eq!(state.layout_mode, LayoutMode::Vertical);
     assert!(fx.has_resize_pty());
@@ -307,7 +307,7 @@ fn settings_adjust_layout_resizes_and_saves() {
 fn settings_adjust_borders_resizes_and_saves() {
     let mut state = make_test_state(1);
     let initial = state.show_borders;
-    state.settings.selected = 2;
+    state.settings.selected = 3;
     let fx = apply_action(&mut state, Action::SettingsAdjust);
     assert_ne!(state.show_borders, initial);
     assert!(fx.has_resize_pty());
@@ -590,7 +590,7 @@ fn toggle_view_mode_flips_and_saves() {
 #[test]
 fn settings_adjust_view_mode_toggles() {
     let mut state = make_test_state(1);
-    state.settings.selected = 3;
+    state.settings.selected = 4;
     let fx = apply_action(&mut state, Action::SettingsAdjust);
     assert_eq!(state.view_mode, ViewMode::Compact);
     assert!(fx.has_save_config());
@@ -600,7 +600,7 @@ fn settings_adjust_view_mode_toggles() {
 fn settings_adjust_frame_rate_cycles_and_saves() {
     let mut state = make_test_state(1);
     state.frame_rate_limit = 5;
-    state.settings.selected = 4;
+    state.settings.selected = 5;
     let fx = apply_action(&mut state, Action::SettingsAdjust);
     assert_eq!(state.frame_rate_limit, 10);
     assert!(fx.has_save_config());
@@ -610,7 +610,7 @@ fn settings_adjust_frame_rate_cycles_and_saves() {
 fn settings_adjust_prev_frame_rate_cycles_backwards() {
     let mut state = make_test_state(1);
     state.frame_rate_limit = 5;
-    state.settings.selected = 4;
+    state.settings.selected = 5;
     let fx = apply_action(&mut state, Action::SettingsAdjustPrev);
     assert_eq!(state.frame_rate_limit, 2);
     assert!(fx.has_save_config());
@@ -620,7 +620,7 @@ fn settings_adjust_prev_frame_rate_cycles_backwards() {
 fn frame_rate_cycle_wraps_in_both_directions() {
     let mut state = make_test_state(1);
     state.frame_rate_limit = 2;
-    state.settings.selected = 4;
+    state.settings.selected = 5;
     apply_action(&mut state, Action::SettingsAdjustPrev);
     assert_eq!(state.frame_rate_limit, 30);
 
@@ -631,7 +631,7 @@ fn frame_rate_cycle_wraps_in_both_directions() {
 #[test]
 fn settings_adjust_exclude_opens_editor_after_frame_rate_row() {
     let mut state = make_test_state(1);
-    state.settings.selected = 5;
+    state.settings.selected = 6;
     let fx = apply_action(&mut state, Action::SettingsAdjust);
     assert!(state.overlay.exclude_editor.is_some());
     assert!(!fx.has_save_config());
@@ -640,7 +640,7 @@ fn settings_adjust_exclude_opens_editor_after_frame_rate_row() {
 #[test]
 fn settings_adjust_keybindings_opens_view_after_exclude_row() {
     let mut state = make_test_state(1);
-    state.settings.selected = 6;
+    state.settings.selected = 7;
     let fx = apply_action(&mut state, Action::SettingsAdjust);
     assert!(state.settings.keybindings_view_open);
     assert!(!fx.has_save_config());
