@@ -1,15 +1,12 @@
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::Rect;
+use ratatui::layout::Position;
 
 use crate::state::{AppState, DividerButton, FocusTarget, LayoutMode, MainView};
 
 use super::Action;
 
-fn hit_rect(rect: &Rect, col: u16, row: u16) -> bool {
-    col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
-}
-
 pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
+    let pos = Position::new(mouse.column, mouse.row);
     if state.overlay.confirm_kill {
         // The kill prompt owns the sidebar while it's up: clicking a
         // button confirms/cancels, every other click is inert — including
@@ -17,10 +14,10 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         // destructive confirmation.
         if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
             if let Some(hits) = state.kill_confirm_hits {
-                if hit_rect(&hits.yes, mouse.column, mouse.row) {
+                if hits.yes.contains(pos) {
                     return Action::ConfirmKill;
                 }
-                if hit_rect(&hits.no, mouse.column, mouse.row) {
+                if hits.no.contains(pos) {
                     return Action::CancelKill;
                 }
             }
@@ -58,7 +55,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         // The footer "menu" button opens the global context menu, anchored
         // at the button (the menu renderer clamps it on-screen).
         if let Some(r) = state.menu_button_bounds {
-            if hit_rect(&r, mouse.column, mouse.row) {
+            if r.contains(pos) {
                 return Action::OpenGlobalMenu { x: r.x, y: r.y };
             }
         }
@@ -172,15 +169,14 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     }
 
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) && in_sidebar {
+        if state.main_view == MainView::Settings {
+            return Action::CloseSettings;
+        }
         // Check divider […] button hit regions before falling through to
         // session-row dispatch so a click on the button isn't mistaken for
         // a row selection.
         for hit in &state.divider_hits {
-            if mouse.column >= hit.rect.x
-                && mouse.column < hit.rect.x + hit.rect.width
-                && mouse.row >= hit.rect.y
-                && mouse.row < hit.rect.y + hit.rect.height
-            {
+            if hit.rect.contains(pos) {
                 return match hit.kind {
                     DividerButton::Reconnect => Action::ReconnectHost {
                         host: hit.host.clone(),
@@ -201,7 +197,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
 
         // Agent rows (Agents tab): a click switches to (and focuses) the pane.
         for hit in &state.agent_hits {
-            if hit_rect(&hit.rect, mouse.column, mouse.row) {
+            if hit.rect.contains(pos) {
                 return Action::SwitchToAgentPane(hit.target.clone());
             }
         }
@@ -264,24 +260,17 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             }
             return Action::None;
         }
-        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-            let b = if state.show_borders { 1u16 } else { 0 };
-            let (col_off, row_off) = match state.layout_mode {
-                LayoutMode::Horizontal => (state.sidebar_width + 1 + b, b),
-                LayoutMode::Vertical => (b, state.effective_sidebar_height() + b),
-            };
-            let bytes = crate::pty::encode_mouse(mouse, col_off, row_off);
-            if bytes.is_empty() {
-                return Action::SetFocusMain;
-            }
-            return Action::ForwardMouse(bytes);
-        }
         let b = if state.show_borders { 1u16 } else { 0 };
         let (col_off, row_off) = match state.layout_mode {
             LayoutMode::Horizontal => (state.sidebar_width + 1 + b, b),
             LayoutMode::Vertical => (b, state.effective_sidebar_height() + b),
         };
         let bytes = crate::pty::encode_mouse(mouse, col_off, row_off);
+        // An unencodable left click still claims keyboard focus for the
+        // main pane; anything else unencodable is inert.
+        if bytes.is_empty() && mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            return Action::SetFocusMain;
+        }
         if !bytes.is_empty() {
             return Action::ForwardMouse(bytes);
         }
