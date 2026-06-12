@@ -354,17 +354,20 @@
   **`default_runner()` ×2** (remote_tmux/local/tmux) — extract one each.
   *(`default_runner` now single — command.rs:35; ssh-error / dir-error
   mapping not verified-extracted)*
-- [~] **D15. UI duplicates**: `scrollbar_cells` verbatim ×2
+- [x] **D15. UI duplicates**: `scrollbar_cells` verbatim ×2
   (`sessions.rs:510` / `summary_popup.rs:84`); markdown-window painting
   loop ×2 (+ error arm); reload rewrap block ×2; selected-row styling ×3
   beside `list_item_line`; rename + summary-language editors hand-roll
   the `form::field_row` stanza; mouse PTY offset math ×2
   (`mouse.rs:267,279`); `ExcludeEditorConfirm` bodies ×2
   (`reduce.rs:648,662`); checker spawn+request ×2 (`app/update.rs:52`
-  vs `136`). *(`ui/widgets.rs` now centralizes `scrollbar_cells`,
-  `list_item_line`, `scroll_window`, `popup_frame`, `centered_rect`,
-  `style_textarea`; remaining dups — field_row reuse, PTY offset math,
-  checker spawn — open)*
+  vs `136`). *(done across Phases 1/3/6: `ui/widgets.rs` centralizes
+  `scrollbar_cells`/`list_item_line`/`scroll_window`/`popup_frame`/
+  `centered_rect`/`style_textarea`/`markdown_window`/`draw_picker_list`;
+  rename + summary-language editors use `form::field_row`; the
+  `ExcludeConfirm` body and the checker spawn+request are unified. The
+  mouse PTY-offset math is already a single computation, and the summary
+  *error* arm is genuinely distinct — both left as-is.)*
 - [~] **D16. Seven hand-rolled worker patterns** (refresh, update checker,
   port-forward, executor, remote spawner, focus one-shots, summary
   one-shot) — each with different lifecycle/timeout/drop semantics;
@@ -572,7 +575,7 @@ Plan, in order:
    them is churn at unrelated layers. D17 borrow-not-clone done.)*
 5. [x] Prune the executor's sender map on offboard (bug #22).
 
-### Phase 6 — UI consolidation — [~] PARTIAL
+### Phase 6 — UI consolidation — [x] DONE
 
 - [x] One generic **filter-picker widget** (+ shared picker state) for
   new-session / add-remote / exclude-editor (D4). *(shared
@@ -584,20 +587,43 @@ Plan, in order:
   new-session windowed-list loops. The exclude editor is NOT a
   filter-picker — no live filter (its items live in `Prefs`) and an
   `adding` sub-mode — so it stayed bespoke, as the plan allowed.)*
-- [~] Move `scrollbar_cells`, the markdown-window painter, and a padded-
+- [x] Move `scrollbar_cells`, the markdown-window painter, and a padded-
   selectable-row helper into `ui/widgets.rs` (D15); use
   `form::field_row` for the rename and summary-language editors.
-  *(`ui/widgets.rs` now holds `scrollbar_cells` + `list_item_line` +
-  others; markdown painter and field_row reuse still pending)*
-- [ ] **Theme semantics**: add `error`/`warning`/`success` slots (today
+  *(done: `ui/widgets.rs` holds `scrollbar_cells`/`list_item_line`/
+  `markdown_window`/`draw_picker_list`/…; the rename + summary-language
+  editors route through `form::field_row`; the genuinely-different summary
+  *error* arm and the already-single mouse-offset calc were left as-is.)*
+- [x] **Theme semantics**: add `error`/`warning`/`success` slots (today
   `pink` simultaneously means working-status, error, down-health,
   unreachable, *and* a decorative host accent — a pink-accented host
   shows "healthy" in the unreachable color). Map old themes mechanically.
-- [ ] `ui/text.rs`: fix `truncate(_, 0)`, preserve leading spaces in
+  *(done: three slots added to `Theme` + all 25 `THEMES`, seeded
+  mechanically `error`=`pink`, `warning`=`yellow`, `success`=`green` so
+  appearance is unchanged. Semantic call sites repointed: error text
+  (reload-err strip, add-remote / new-session / exclude-editor error
+  rows, summary error body), down/unreachable health (`HostStatus::
+  Unreachable`, `PfBadgeColor::Degraded`, `ForwardHealth::Down`, pf-form
+  error), the working-status agent dot → `error`; the kill prompt, the
+  "Heads up" warning popup, `HostStatus::Connecting`, `PfBadgeColor::
+  Probing`, pf-form "applying" → `warning`; OK/health (reload "applied",
+  `ForwardHealth::Up`, `PfBadgeColor::Healthy`, idle agent dot) →
+  `success`. Left decorative: the `host_accent` tint cycle (still
+  `pink`), the drag-separator highlight, the exclude-editor input marker
+  (green), focus/here highlights.)*
+- [x] `ui/text.rs`: fix `truncate(_, 0)`, preserve leading spaces in
   `wrap_markdown`, and sweep the byte-`len()` width computations
   (settings/theme-picker/menu/tabs) to `UnicodeWidthStr` — summaries
-  and session names are CJK-bearing.
-- [ ] Port-forward overlay: take `&mut Frame` like every other overlay.
+  and session names are CJK-bearing. *(done: `truncate(_, 0)` → `""`,
+  width 1 → ellipsis only; `wrap_markdown` keeps leading indentation on
+  logical lines; width sweep landed on the theme-picker popup width and
+  exclude-editor pattern width (`ui/settings.rs`) and `context_menu_width`
+  (`model/geometry.rs`) — tab/header widths already used `UnicodeWidthStr`.
+  Tests: `truncate` at width 0/1/2 + CJK, `wrap_markdown` leading-indent +
+  CJK, `tab_col_ranges`/`context_menu_width` display-width.)*
+- [x] Port-forward overlay: take `&mut Frame` like every other overlay.
+  *(done: `draw_port_forward(frame: &mut Frame)`, matching the other
+  overlays; rendering identical.)*
 
 ### Phase 7 — Tests that hold the line — [ ] NOT STARTED
 
