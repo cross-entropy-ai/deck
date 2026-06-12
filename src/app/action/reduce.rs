@@ -28,6 +28,7 @@ fn close_settings_page(state: &mut AppState) {
     state.settings.theme_picker_open = false;
     state.settings.keybindings_view_open = false;
     state.overlay.exclude_editor = None;
+    state.overlay.summary_lang_input = None;
 }
 
 /// Fill the appropriate `SideEffect` field based on the currently
@@ -687,7 +688,7 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
             if let Some(ref mut editor) = state.overlay.exclude_editor {
                 if !editor.adding && !state.prefs.exclude_patterns.is_empty() {
                     state.prefs.exclude_patterns.remove(editor.selected);
-                    if editor.selected > 0 && editor.selected >= state.prefs.exclude_patterns.len() {
+                    if editor.selected >= state.prefs.exclude_patterns.len() {
                         editor.selected = state.prefs.exclude_patterns.len().saturating_sub(1);
                     }
                     fx.save_config();

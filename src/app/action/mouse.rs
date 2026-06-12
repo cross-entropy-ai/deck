@@ -43,7 +43,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     let (on_separator, in_sidebar) = match state.prefs.layout_mode {
         LayoutMode::Horizontal => {
             let gap_col = state.prefs.sidebar_width;
-            let on_sep = mouse.column >= gap_col.saturating_sub(1) && mouse.column <= gap_col + 1;
+            let on_sep = mouse.column >= gap_col && mouse.column <= gap_col + 1;
             let in_sb = mouse.column < state.prefs.sidebar_width;
             (on_sep, in_sb)
         }

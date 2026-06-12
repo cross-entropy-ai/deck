@@ -887,8 +887,8 @@ impl App {
             .map(|r| r.forwards.len())
             .unwrap_or(0);
         if let Some(overlay) = self.state.overlay.port_forward.as_mut() {
-            if overlay.selected >= new_len && new_len > 0 {
-                overlay.selected = new_len - 1;
+            if overlay.selected >= new_len {
+                overlay.selected = new_len.saturating_sub(1);
             }
             overlay.status = Some("cancelling...".into());
         }

@@ -152,13 +152,13 @@ fn draw_keybindings_view(
 
     let name_width = rows
         .iter()
-        .map(|(n, _, _)| n.len())
+        .map(|(n, _, _)| UnicodeWidthStr::width(*n))
         .max()
         .unwrap_or(16)
         .max(16);
     let keys_width = rows
         .iter()
-        .map(|(_, k, _)| k.len())
+        .map(|(_, k, _)| UnicodeWidthStr::width(k.as_str()))
         .max()
         .unwrap_or(8)
         .max(8);
