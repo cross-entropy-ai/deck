@@ -296,6 +296,21 @@ fn theme_picker_next_previews_theme_immediately() {
 }
 
 #[test]
+fn theme_picker_next_at_end_still_saves() {
+    // Next is intentionally asymmetric: even pinned at the last theme it
+    // re-applies + persists (so a repeat at the end isn't a silent no-op),
+    // unlike Prev which only fires effects when it actually moves.
+    let mut state = make_test_state(1);
+    let last = crate::theme::THEMES.len() - 1;
+    state.prefs.theme_index = last;
+    state.settings.theme_picker_open = true;
+    state.settings.theme_picker_selected = last;
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::ThemePickerNext));
+    assert_eq!(state.settings.theme_picker_selected, last, "stays pinned at the end");
+    assert!(fx.has_save_config(), "Next at the end still persists");
+}
+
+#[test]
 fn settings_adjust_layout_resizes_and_saves() {
     let mut state = make_test_state(1);
     state.settings.selected = 2;

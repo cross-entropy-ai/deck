@@ -814,13 +814,15 @@ fn prefs_config_round_trip_is_identity() {
 
     let theme_index = 2;
     let prefs = Prefs::from_config(&cfg, theme_index);
-    let round_tripped = Prefs::from_config(
-        &prefs.to_config(
-            std::collections::BTreeMap::new(),
-            Vec::new(),
-            Vec::new(),
-        ),
-        theme_index,
-    );
+    let written = prefs.to_config(std::collections::BTreeMap::new(), Vec::new(), Vec::new());
+    // Re-derive the theme index from the written name rather than reusing the
+    // input, so the round trip actually exercises the name<->index mapping
+    // that lives outside Prefs (to_config writes THEMES[idx].name).
+    let rederived_index = crate::theme::THEMES
+        .iter()
+        .position(|t| t.name == written.theme)
+        .expect("written theme name must resolve to an index");
+    let round_tripped = Prefs::from_config(&written, rederived_index);
     assert_eq!(prefs, round_tripped);
+    assert_eq!(rederived_index, theme_index, "theme name<->index round-trips");
 }
