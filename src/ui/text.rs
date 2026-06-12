@@ -207,27 +207,10 @@ pub(super) fn format_keys_for(keybindings: &Keybindings, cmd: Command) -> String
         .join("/")
 }
 
-pub(super) fn truncate(s: &str, max_width: usize) -> String {
-    if s.width() <= max_width {
-        return s.to_string();
-    }
-    if max_width <= 1 {
-        return ".".to_string();
-    }
-    let mut out = String::new();
-    let mut width = 0usize;
-
-    for ch in s.chars() {
-        let ch_width = ch.width().unwrap_or(0);
-        if width + ch_width + 1 > max_width {
-            break;
-        }
-        out.push(ch);
-        width += ch_width;
-    }
-
-    format!("{out}…")
-}
+// `truncate` is a pure string helper that lives in `model::geometry`
+// (the leaf shared by the renderer and the hit-tester); re-exported here
+// so the `ui::text` call sites and tests keep their `super::truncate` path.
+pub(super) use crate::geometry::truncate;
 
 pub(super) fn shorten_dir(dir: &str) -> String {
     // Resolved once: this runs per visible session card per frame, and

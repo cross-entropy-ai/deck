@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::layout::plugin_block_rows;
+use crate::geometry::plugin_block_rows;
 
 #[test]
 fn plugin_block_rows_is_zero_without_plugins() {
@@ -214,7 +214,7 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use crate::layout::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
+use crate::geometry::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
 use crate::state::{HitKind, HitRegions, SidebarTab, SummaryState};
 use crate::update::UpdateStatus;
 

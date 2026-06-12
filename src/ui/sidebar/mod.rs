@@ -2,7 +2,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::Frame;
 
 use crate::keybindings::Keybindings;
-use crate::layout::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
+use crate::geometry::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
 use crate::state::{
     AgentRow, AgentTarget, FocusTarget, HitRegions, KillConfirmHits, SidebarLayout, SidebarTab,
     SummaryHits, ViewMode,

@@ -9,8 +9,10 @@ pub(crate) use infra::{
     agent, instance_guard, preflight_guard, pty, refresh, remote_tmux, self_update, shutdown, ssh,
     summary, terminal_guard, tmux, update, worker,
 };
-pub(crate) use model::{add_remote, config, keybindings, new_session, state};
-pub(crate) use ui::{bridge, layout, theme};
+pub(crate) use model::{
+    add_remote, config, effects, forwards, geometry, keybindings, menu, new_session, overlay, state,
+};
+pub(crate) use ui::{bridge, theme};
 
 use std::io::{self, Write};
 

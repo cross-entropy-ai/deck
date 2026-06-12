@@ -1,0 +1,214 @@
+//! Port-forward model: per-forward liveness (`ForwardHealth` / `ForwardKey`),
+//! the divider badge rollup, and the add-forward overlay form state.
+
+use ratatui_textarea::TextArea;
+
+use crate::new_session::{make_textarea, textarea_line};
+
+// --- Port-forward liveness types ---
+
+/// Liveness of a single configured forward, refreshed each probe tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForwardHealth {
+    /// Not yet probed this session, enumeration was unavailable, or the host
+    /// is still connecting.
+    Probing,
+    /// `-L`/`-D`: a local listener is present on the listen port. `-R`: the
+    /// host connection is up (the remote listener can't be confirmed locally,
+    /// so it simply tracks reachability).
+    Up,
+    /// `-L`/`-D`: no local listener. `-R`: the host is unreachable.
+    Down,
+}
+
+/// Stable identity of a configured forward, used to key liveness across config
+/// reloads and reorders. A local listen port is unique per host, but `mode` and
+/// `bind_addr` are included so an `-L` and an `-R` sharing a port number (one
+/// local, one remote) don't collide.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ForwardKey {
+    pub host: String,
+    pub mode: crate::config::ForwardMode,
+    pub bind_addr: Option<String>,
+    pub listen_port: u16,
+}
+
+impl ForwardKey {
+    pub fn from_spec(host: &str, spec: &crate::config::ForwardSpec) -> Self {
+        Self {
+            host: host.to_string(),
+            mode: spec.mode,
+            bind_addr: spec.bind_addr.clone(),
+            listen_port: spec.listen_port,
+        }
+    }
+}
+
+/// Per-host port-forward badge shown on the sidebar divider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PfBadge {
+    pub count: usize,
+    pub color: PfBadgeColor,
+}
+
+/// Rolled-up health color for a host's forwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PfBadgeColor {
+    /// All forwards Up → green.
+    Healthy,
+    /// At least one Down → pink.
+    Degraded,
+    /// At least one Probing, none Down → yellow.
+    Probing,
+}
+
+/// Roll a host's per-forward healths into one badge color. `Down` dominates,
+/// then `Probing`, else `Healthy` (all `Up`).
+pub fn rollup_color(healths: &[ForwardHealth]) -> PfBadgeColor {
+    if healths.contains(&ForwardHealth::Down) {
+        PfBadgeColor::Degraded
+    } else if healths.contains(&ForwardHealth::Probing) {
+        PfBadgeColor::Probing
+    } else {
+        PfBadgeColor::Healthy
+    }
+}
+
+// --- Port forward overlay ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PfField {
+    Mode,
+    BindAddr,
+    ListenPort,
+    TargetHost,
+    TargetPort,
+}
+
+/// One input field, backed by `ratatui-textarea`. Each field carries
+/// its own cursor and edit history; the keyboard dispatcher feeds key
+/// events to whichever one is focused.
+#[derive(Debug, Clone)]
+pub struct PfAddForm {
+    pub mode: crate::config::ForwardMode,
+    pub focus: PfField,
+    pub bind_addr: TextArea<'static>,
+    pub listen_port: TextArea<'static>,
+    pub target_host: TextArea<'static>,
+    pub target_port: TextArea<'static>,
+    /// True while a validated spec is in flight to the worker. The
+    /// form stays rendered (read-only) until `PfTaskResult` for this
+    /// host's Forward op clears or fails the submission. Lazy
+    /// persist: config is only written when the worker reports
+    /// success.
+    pub submitting: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PfFormError {
+    ListenPortRange,
+    TargetPortRange,
+    TargetHostRequired,
+}
+
+impl PfFormError {
+    pub fn message(&self) -> &'static str {
+        match self {
+            PfFormError::ListenPortRange => "Listen port must be a number from 0 to 65535.",
+            PfFormError::TargetPortRange => "Target port must be a number from 0 to 65535.",
+            PfFormError::TargetHostRequired => "Target host is required for -L and -R forwards.",
+        }
+    }
+}
+
+impl PfAddForm {
+    pub fn default_for(mode: crate::config::ForwardMode) -> Self {
+        Self {
+            mode,
+            focus: PfField::ListenPort,
+            bind_addr: make_textarea("0.0.0.0"),
+            listen_port: make_textarea(""),
+            target_host: make_textarea("127.0.0.1"),
+            target_port: make_textarea(""),
+            submitting: false,
+        }
+    }
+
+    /// Read the current text of a field. Returns `""` for `Mode`.
+    pub fn field_text(&self, field: PfField) -> &str {
+        match field {
+            PfField::Mode => "",
+            PfField::BindAddr => textarea_line(&self.bind_addr),
+            PfField::ListenPort => textarea_line(&self.listen_port),
+            PfField::TargetHost => textarea_line(&self.target_host),
+            PfField::TargetPort => textarea_line(&self.target_port),
+        }
+    }
+
+    /// Mutable handle to the focused field's textarea. `None` for `Mode`.
+    pub fn focused_textarea_mut(&mut self) -> Option<&mut TextArea<'static>> {
+        match self.focus {
+            PfField::Mode => None,
+            PfField::BindAddr => Some(&mut self.bind_addr),
+            PfField::ListenPort => Some(&mut self.listen_port),
+            PfField::TargetHost => Some(&mut self.target_host),
+            PfField::TargetPort => Some(&mut self.target_port),
+        }
+    }
+
+    pub fn validate(&self) -> Result<crate::config::ForwardSpec, PfFormError> {
+        use crate::config::{ForwardMode, ForwardSpec};
+        // Belt-and-braces: input filtering already blocks whitespace, but
+        // trim defensively so any value that somehow made it through is
+        // persisted clean. Port range is 0..=65535 — `u16::parse` already
+        // enforces the upper bound; port 0 means "let kernel pick" and is
+        // accepted.
+        let listen_port: u16 = self
+            .field_text(PfField::ListenPort)
+            .trim()
+            .parse()
+            .map_err(|_| PfFormError::ListenPortRange)?;
+        let bind_raw = self.field_text(PfField::BindAddr).trim();
+        let bind_addr = if bind_raw.is_empty() {
+            None
+        } else {
+            Some(bind_raw.to_string())
+        };
+
+        match self.mode {
+            ForwardMode::Dynamic => Ok(ForwardSpec {
+                mode: ForwardMode::Dynamic,
+                bind_addr,
+                listen_port,
+                target_host: None,
+                target_port: None,
+            }),
+            ForwardMode::Local | ForwardMode::Remote => {
+                let target_host = self.field_text(PfField::TargetHost).trim();
+                if target_host.is_empty() {
+                    return Err(PfFormError::TargetHostRequired);
+                }
+                let target_port: u16 = self
+                    .field_text(PfField::TargetPort)
+                    .trim()
+                    .parse()
+                    .map_err(|_| PfFormError::TargetPortRange)?;
+                Ok(ForwardSpec {
+                    mode: self.mode,
+                    bind_addr,
+                    listen_port,
+                    target_host: Some(target_host.to_string()),
+                    target_port: Some(target_port),
+                })
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PortForwardOverlay {
+    pub host: String,
+    pub selected: usize,
+    pub add_form: Option<PfAddForm>,
+    pub status: Option<String>,
+}

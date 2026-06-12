@@ -5,7 +5,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
-use crate::layout::{TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR};
+use crate::geometry::{TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR};
 
 use super::super::text::pad_line;
 use super::super::{SessionOrigin, SidebarSession};
@@ -48,8 +48,8 @@ pub(super) fn draw_sidebar_tabs(
         let is_focused = i == focused;
 
         let label = match session.origin() {
-            SessionOrigin::Local => crate::layout::tab_label(None, session.name()),
-            SessionOrigin::Remote { host } => crate::layout::tab_label(Some(host), session.name()),
+            SessionOrigin::Local => crate::geometry::tab_label(None, session.name()),
+            SessionOrigin::Remote { host } => crate::geometry::tab_label(Some(host), session.name()),
         };
 
         let bg = if is_focused { theme.surface } else { theme.bg };

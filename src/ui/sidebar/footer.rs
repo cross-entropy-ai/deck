@@ -5,7 +5,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
-use crate::layout::plugin_block_rows;
+use crate::geometry::plugin_block_rows;
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
 

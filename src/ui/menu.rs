@@ -3,7 +3,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::layout::context_menu_rect;
+use crate::geometry::context_menu_rect;
 use crate::state::MenuItem;
 use crate::theme::Theme;
 use crate::ui::widgets::{popup_frame, PopupStyle};

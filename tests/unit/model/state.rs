@@ -533,7 +533,7 @@ fn context_menu_navigation_skips_disabled_items() {
 // --- PfAddForm::validate() tests ---
 
 use crate::config::ForwardMode;
-use crate::state::{PfAddForm, PfField, PfFormError};
+use crate::forwards::{PfAddForm, PfField, PfFormError};
 use ratatui_textarea::TextArea;
 
 fn ta(text: &str) -> TextArea<'static> {
@@ -619,7 +619,7 @@ fn validate_bind_addr_passthrough() {
 
 #[test]
 fn rollup_down_dominates() {
-    use crate::state::{rollup_color, ForwardHealth, PfBadgeColor};
+    use crate::forwards::{rollup_color, ForwardHealth, PfBadgeColor};
     let healths = [
         ForwardHealth::Up,
         ForwardHealth::Down,
@@ -630,14 +630,14 @@ fn rollup_down_dominates() {
 
 #[test]
 fn rollup_probing_when_no_down() {
-    use crate::state::{rollup_color, ForwardHealth, PfBadgeColor};
+    use crate::forwards::{rollup_color, ForwardHealth, PfBadgeColor};
     let healths = [ForwardHealth::Up, ForwardHealth::Probing];
     assert_eq!(rollup_color(&healths), PfBadgeColor::Probing);
 }
 
 #[test]
 fn rollup_healthy_when_all_up() {
-    use crate::state::{rollup_color, ForwardHealth, PfBadgeColor};
+    use crate::forwards::{rollup_color, ForwardHealth, PfBadgeColor};
     let healths = [ForwardHealth::Up, ForwardHealth::Up];
     assert_eq!(rollup_color(&healths), PfBadgeColor::Healthy);
 }
