@@ -570,7 +570,6 @@ mod tests {
         let start = t.last;
         // Not yet due.
         assert!(!t.due(start + Duration::from_millis(50)));
-        // last unchanged.
         assert_eq!(t.last, start);
         // Due once interval elapsed; last advances to the queried instant.
         let now = start + Duration::from_millis(150);

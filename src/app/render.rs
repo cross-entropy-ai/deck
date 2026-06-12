@@ -46,7 +46,6 @@ impl App {
         // it — cloning TextAreas/entry lists/summary text every frame was
         // pure allocation churn.
         let context_menu = s.overlay.context_menu.as_ref();
-        // The summary popup shows the Ready text in a big centered view.
         let summary_popup = match (&s.summary.state, s.overlay.summary_popup) {
             (crate::state::SummaryState::Ready { text, .. }, true) => Some(text.as_str()),
             _ => None,

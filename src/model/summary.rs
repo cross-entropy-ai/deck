@@ -40,7 +40,6 @@ pub const SUMMARY_MAX_HEIGHT: u16 = 40;
 /// here — this is the transient per-run state.
 #[derive(Debug, Default)]
 pub struct SummaryCard {
-    /// Generation state (idle / generating / ready / error).
     pub state: SummaryState,
     /// The state captured just before flipping to `Generating`, so
     /// cancelling (Esc on the Agents tab) restores the prior Idle / Ready /

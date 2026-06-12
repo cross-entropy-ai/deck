@@ -71,7 +71,6 @@ pub fn expand_path(s: &str, home: &std::path::Path) -> PathBuf {
     } else {
         home.join(s)
     };
-    // Normalize `..` and redundant separators.
     let mut normalized = PathBuf::new();
     for comp in buf.components() {
         match comp {

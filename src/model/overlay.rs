@@ -85,8 +85,6 @@ impl ExcludeEditorState {
     }
 }
 
-// --- Warning overlay state ---
-
 /// Modal warning banner shown over the main pane. Used by the
 /// self-update flow to surface "can't self-update from here" /
 /// "unsupported platform" messages. Lives on `App` (as
@@ -97,8 +95,6 @@ impl ExcludeEditorState {
 pub enum WarningState {
     Proactive { text: &'static str, detail: String },
 }
-
-// --- Overlay state ---
 
 /// UI state for transient sidebar overlays — help screen, kill-confirm
 /// prompt, in-progress rename, right-click context menu, and the

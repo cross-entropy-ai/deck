@@ -64,7 +64,6 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
 
     let mut row_idx: usize = 0;
 
-    // --- Name row ---
     render_input_row(
         frame,
         rows[row_idx],
@@ -75,7 +74,6 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
     );
     row_idx += 1;
 
-    // --- Path row ---
     render_input_row(
         frame,
         rows[row_idx],
@@ -89,7 +87,6 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
     // blank
     row_idx += 1;
 
-    // --- Entries ---
     if view.filtered.is_empty() {
         Paragraph::new(Span::styled(
             "    (no entries)",
@@ -114,7 +111,6 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
     // blank
     row_idx += 1;
 
-    // --- Error ---
     if let Some(err) = view.error {
         Paragraph::new(Span::styled(
             format!("  ⚠ {}", err),
@@ -124,7 +120,6 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
         row_idx += 1;
     }
 
-    // --- Footer ---
     let footer = if view.focus_name {
         "  ⏎ create   ⇥ switch   ←→ cursor   ⎋ cancel"
     } else {

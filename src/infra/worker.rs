@@ -149,7 +149,6 @@ impl<Req, Res> Drop for Worker<Req, Res> {
     /// — see the module docs (bug #19).
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
-        // `req_tx`/`res_rx` drop here; nothing to join.
     }
 }
 

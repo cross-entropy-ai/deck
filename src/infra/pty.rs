@@ -120,8 +120,6 @@ impl Drop for Pty {
     }
 }
 
-// --- Key encoding: crossterm KeyEvent → terminal bytes ---
-
 /// Encode a crossterm key event as the byte sequence a real terminal would send.
 pub fn encode_key(key: &KeyEvent) -> Vec<u8> {
     let mods = key.modifiers;

@@ -5,8 +5,6 @@
 
 use crate::geometry::AgentTarget;
 
-// --- Side effects ---
-
 #[derive(Debug)]
 pub enum Effect {
     SwitchSession(String),

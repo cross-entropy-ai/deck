@@ -74,7 +74,6 @@ impl App {
     fn new_session_target(&self, host: Option<&str>) -> NewSessionTarget {
         match host {
             None => {
-                // Starting dir: focused session's dir if any, else $HOME.
                 // Starting dir: focused local row's dir if the cursor is on
                 // one, else $HOME. Remote focus falls through to $HOME.
                 let start_dir = self

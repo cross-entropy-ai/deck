@@ -40,7 +40,6 @@ pub(crate) fn default_runner() -> &'static dyn CommandRunner {
 /// Successful command output. Mirrors `std::process::Output` but only
 /// carries the fields infra layers actually use, and guarantees the
 /// process exited (it didn't time out).
-///
 #[derive(Debug, Clone)]
 pub struct Output {
     pub stdout: Vec<u8>,

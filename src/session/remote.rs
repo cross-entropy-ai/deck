@@ -38,10 +38,7 @@ impl SessionControl for RemoteControl {
         // The Connected/marker_ready gate, the `pending_remote_switch`
         // hold-until-marker dance, and the `active_remote` flip all stay on
         // the UI thread in `App::switch_to_remote` (they read PTY/conn
-        // state); the executor only runs this ssh call off-thread. The
-        // marker id was read from the `RemoteConn` when this backend was
-        // built (`0` = unknown, which makes the call a no-op, exactly as
-        // dispatch's `conn.map(...).unwrap_or(0)` did inline).
+        // state); the executor only runs this ssh call off-thread.
         remote_tmux::switch_client(&self.host, self.marker_id, name);
     }
 

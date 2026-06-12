@@ -464,7 +464,6 @@ fn run_command(mut cmd: Command, prompt: &str, cancel: &Cancel) -> Result<String
         }
     }
 
-    // Child has exited; collect its output and status.
     let out = child
         .wait_with_output()
         .map_err(|e| format!("waiting on claude: {e}"))?;

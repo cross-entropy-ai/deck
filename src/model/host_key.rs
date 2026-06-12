@@ -145,13 +145,11 @@ mod tests {
         map.insert(HostKey::remote("alpha"), 1);
         map.insert(HostKey::remote("beta"), 2);
 
-        // Allocation-free lookups via the borrowed query.
         assert_eq!(map.get(HostQuery::from_host(None)), Some(&0));
         assert_eq!(map.get(HostQuery::from_host(Some("alpha"))), Some(&1));
         assert_eq!(map.get(HostQuery::from_host(Some("beta"))), Some(&2));
         assert_eq!(map.get(HostQuery::from_host(Some("missing"))), None);
 
-        // And the owned key hashes/compares to the same bucket.
         assert_eq!(map.get(&HostKey::remote("alpha")), Some(&1));
     }
 

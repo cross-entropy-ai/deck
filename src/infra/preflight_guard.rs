@@ -62,7 +62,6 @@ fn ensure_requested_session(name: Option<&str>, create_new: bool) -> Result<(), 
         if create_new {
             return Err(format!("session '{name}' already exists"));
         }
-        // Plain `deck <name>`: the session already exists, attach to it.
         return Ok(());
     }
 
