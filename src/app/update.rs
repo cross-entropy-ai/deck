@@ -1,7 +1,5 @@
 use std::time::{Duration, Instant};
 
-use crate::config::Config;
-use crate::theme::THEMES;
 use crate::update::{
     self, UpdateCache, UpdateChecker, UpdateRequest, UpdateResult, CACHE_TTL_SECS,
 };
@@ -10,32 +8,20 @@ use super::{App, UPDATE_CHECK_INTERVAL};
 
 impl App {
     pub(super) fn save_config(&mut self) {
-        Config {
-            theme: THEMES[self.state.theme_index].name.to_string(),
-            layout: self.state.layout_mode,
-            show_borders: self.state.show_borders,
-            sidebar_tab: self.state.sidebar_tab,
-            sidebar_width: self.state.sidebar_width,
-            sidebar_height: self.state.sidebar_height,
-            view_mode: self.state.view_mode,
-            frame_rate_limit: self.state.frame_rate_limit,
-            exclude_patterns: self.state.exclude_patterns.clone(),
-            plugins: self.state.plugins.clone(),
-            keybindings: self.raw_keybindings.clone(),
-            update_check: self.state.update_check_mode,
-            // `forwards` (UI-managed) lives on `state.config_remotes`. CLI-side
-            // changes to remotes themselves still flow in via hot-reload.
-            remotes: self.state.config_remotes.clone(),
-            collapsed_sections: self.state.collapsed_sections.iter().cloned().collect(),
-            summary_prompt: self.state.summary_prompt.clone(),
-            summary_prompt_version: crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION,
-            summary_model: self.state.summary_model.clone(),
-            summary_height: self.state.summary_height,
-            summary_language: self.state.summary_language.clone(),
-            agents_probe_interval: self.state.agents_probe_interval_secs,
-            transparent_bg: self.state.transparent_bg,
-        }
-        .save();
+        // The single prefs→Config mapping site (`Prefs::to_config`), fed the
+        // App/runtime-level fields that live outside `Prefs`:
+        // - `raw_keybindings` (the serializable bindings live on `App`);
+        // - `config_remotes` — `forwards` (UI-managed) lives here. CLI-side
+        //   changes to remotes themselves still flow in via hot-reload;
+        // - `collapsed_sections` — runtime state, not a pref.
+        self.state
+            .prefs
+            .to_config(
+                self.raw_keybindings.clone(),
+                self.state.config_remotes.clone(),
+                self.state.collapsed_sections.iter().cloned().collect(),
+            )
+            .save();
         // We just wrote the file; adopt its new mtime so the config watcher
         // in `run` doesn't see our own save as an external edit and trigger a
         // self-reload (which would kill plugin PTYs, close the exclude editor
@@ -45,7 +31,7 @@ impl App {
 
     pub(super) fn tick_update_check(&mut self) -> bool {
         let mut changed = false;
-        match self.state.update_check_mode {
+        match self.state.prefs.update_check_mode {
             crate::update::UpdateCheckMode::Disabled => {
                 if self.update_checker.is_some() {
                     self.update_checker = None;

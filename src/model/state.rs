@@ -1277,6 +1277,126 @@ pub struct SettingsState {
     pub keybindings_view_scroll: u16,
 }
 
+// --- Prefs ---
+
+/// The round-trippable persisted preferences, grouped into one unit so the
+/// config↔state mapping lives in exactly two places ([`Prefs::from_config`]
+/// and [`Prefs::to_config`]) instead of being re-enumerated at every call
+/// site. Each field mirrors a `Config` field (with the same default) and is
+/// read widely across the UI/render/dispatch layers via `state.prefs.<f>`.
+///
+/// Deliberately NOT here (stay direct `AppState` / `App` fields):
+/// - `keybindings` (compiled) / `raw_keybindings` (serializable, on `App`);
+/// - `collapsed_sections` — runtime state seeded from config *once* at
+///   startup and deliberately not re-applied on hot-reload (bug #14);
+/// - `config_remotes` and the `summary_prompt_version` constant — App/runtime,
+///   not user prefs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Prefs {
+    pub theme_index: usize,
+    pub layout_mode: LayoutMode,
+    pub show_borders: bool,
+    /// Use the terminal's default (transparent) background instead of the
+    /// theme's solid background color.
+    pub transparent_bg: bool,
+    /// Active sidebar tab. `Projects` lists tmux sessions; `Agents` lists
+    /// detected agents as the primary list. Persisted to config. Agent
+    /// detection in the refresh worker runs only while this is `Agents`
+    /// (see `agents_tab_active`).
+    pub sidebar_tab: SidebarTab,
+    pub sidebar_width: u16,
+    pub sidebar_height: u16,
+    pub view_mode: ViewMode,
+    pub frame_rate_limit: u16,
+    pub exclude_patterns: Vec<String>,
+    pub plugins: Vec<PluginConfig>,
+    pub update_check_mode: UpdateCheckMode,
+    /// The summary prompt template (from config), `{{SESSIONS}}` filled
+    /// with the agent panes at generation time. Seeded in `App::new` and
+    /// refreshed on config reload.
+    pub summary_prompt: String,
+    /// Model passed to `claude --model` for the summary (from config); empty
+    /// follows the user's Claude Code default.
+    pub summary_model: String,
+    /// Body height (text rows) of the inline summary card, drag-adjustable
+    /// from its bottom edge and persisted to config.
+    pub summary_height: u16,
+    /// Language the summary is asked to use (from config); empty = default.
+    pub summary_language: String,
+    /// How often the Agents tab probes (seconds). Drives the refresh cadence
+    /// while that tab is active; see `App`'s run loop.
+    pub agents_probe_interval_secs: u64,
+}
+
+impl Prefs {
+    /// Build prefs from a loaded `Config`, applying the load-time
+    /// clamps/normalizations. `theme_index` is resolved by the caller (the
+    /// theme name → index lookup lives outside config). This is one of the
+    /// two config↔prefs mapping sites; its inverse is [`Prefs::to_config`].
+    ///
+    /// `summary_height` is normalized via the same clamp `set_summary_height`
+    /// uses (`SUMMARY_MIN_HEIGHT..=SUMMARY_MAX_HEIGHT`).
+    pub fn from_config(cfg: &crate::config::Config, theme_index: usize) -> Self {
+        Self {
+            theme_index,
+            layout_mode: cfg.layout,
+            show_borders: cfg.show_borders,
+            transparent_bg: cfg.transparent_bg,
+            sidebar_tab: cfg.sidebar_tab,
+            sidebar_width: cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX),
+            sidebar_height: cfg.sidebar_height,
+            view_mode: cfg.view_mode,
+            frame_rate_limit: normalize_frame_rate_limit(cfg.frame_rate_limit),
+            exclude_patterns: cfg.exclude_patterns.clone(),
+            plugins: cfg.plugins.clone(),
+            update_check_mode: cfg.update_check,
+            summary_prompt: cfg.summary_prompt.clone(),
+            summary_model: cfg.summary_model.clone(),
+            summary_height: cfg
+                .summary_height
+                .clamp(SUMMARY_MIN_HEIGHT, SUMMARY_MAX_HEIGHT),
+            summary_language: cfg.summary_language.clone(),
+            agents_probe_interval_secs: normalize_agents_probe_interval(cfg.agents_probe_interval),
+        }
+    }
+
+    /// Map the prefs back into a `Config`, filling the App/runtime-level
+    /// fields that don't live in `Prefs` from the caller-supplied arguments
+    /// (`keybindings`, `remotes`, `collapsed`) and the
+    /// `summary_prompt_version` constant. The inverse of [`Prefs::from_config`];
+    /// `from_config(to_config(p)) == p` holds on the prefs fields.
+    pub fn to_config(
+        &self,
+        keybindings: std::collections::BTreeMap<String, crate::config::KeyBindingValue>,
+        remotes: Vec<crate::config::RemoteConfig>,
+        collapsed: Vec<Option<String>>,
+    ) -> crate::config::Config {
+        crate::config::Config {
+            theme: crate::theme::THEMES[self.theme_index].name.to_string(),
+            layout: self.layout_mode,
+            show_borders: self.show_borders,
+            sidebar_tab: self.sidebar_tab,
+            sidebar_width: self.sidebar_width,
+            sidebar_height: self.sidebar_height,
+            view_mode: self.view_mode,
+            frame_rate_limit: self.frame_rate_limit,
+            exclude_patterns: self.exclude_patterns.clone(),
+            plugins: self.plugins.clone(),
+            keybindings,
+            update_check: self.update_check_mode,
+            remotes,
+            collapsed_sections: collapsed,
+            summary_prompt: self.summary_prompt.clone(),
+            summary_prompt_version: crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION,
+            summary_model: self.summary_model.clone(),
+            summary_height: self.summary_height,
+            summary_language: self.summary_language.clone(),
+            agents_probe_interval: self.agents_probe_interval_secs,
+            transparent_bg: self.transparent_bg,
+        }
+    }
+}
+
 // --- AppState ---
 
 pub struct AppState {
@@ -1295,43 +1415,20 @@ pub struct AppState {
     // UI state
     pub main_view: MainView,
     pub focus_mode: FocusMode,
-    pub theme_index: usize,
+    /// The round-trippable persisted preferences (theme, layout, sidebar
+    /// geometry, summary settings, …). See [`Prefs`]. Read widely as
+    /// `state.prefs.<field>`; loaded via [`AppState::apply_config`] and
+    /// written back via [`Prefs::to_config`].
+    pub prefs: Prefs,
     /// Settings page navigation + theme picker / keybindings viewer
     /// overlays. See `SettingsState`.
     pub settings: SettingsState,
-    pub layout_mode: LayoutMode,
-    pub view_mode: ViewMode,
-    pub sidebar_width: u16,
-    pub sidebar_height: u16,
-    pub frame_rate_limit: u16,
-    /// How often the Agents tab probes (seconds). Drives the refresh cadence
-    /// while that tab is active; see `App`'s run loop.
-    pub agents_probe_interval_secs: u64,
-    pub show_borders: bool,
-    pub transparent_bg: bool,
-    /// Active sidebar tab. `Projects` lists tmux sessions; `Agents` lists
-    /// detected agents as the primary list. Persisted to config. Agent
-    /// detection in the refresh worker runs only while this is `Agents`
-    /// (see `agents_tab_active`).
-    pub sidebar_tab: SidebarTab,
     /// Cursor row for the Agents tab, kept separate from `focused` (the
     /// Projects cursor) so switching tabs preserves each one's position.
     /// Indexes into `agent_rows()`.
     pub agent_focused: usize,
     /// State of the Agents-tab "Summary" card (idle / generating / ready).
     pub summary: SummaryState,
-    /// The summary prompt template (from config), `{{SESSIONS}}` filled
-    /// with the agent panes at generation time. Seeded in `App::new` and
-    /// refreshed on config reload.
-    pub summary_prompt: String,
-    /// Model passed to `claude --model` for the summary (from config); empty
-    /// follows the user's Claude Code default.
-    pub summary_model: String,
-    /// Language the summary is asked to use (from config); empty = default.
-    pub summary_language: String,
-    /// Body height (text rows) of the inline summary card, drag-adjustable
-    /// from its bottom edge and persisted to config.
-    pub summary_height: u16,
     /// True while dragging the card's bottom edge to resize it.
     pub dragging_summary: bool,
     /// Scroll offset (in wrapped text rows) of the Ready summary's content,
@@ -1354,12 +1451,9 @@ pub struct AppState {
     pub last_scroll: Instant,
 
     // Config
-    pub exclude_patterns: Vec<String>,
-    pub plugins: Vec<PluginConfig>,
     pub keybindings: Keybindings,
 
     // Update check
-    pub update_check_mode: UpdateCheckMode,
     pub update_available: Option<UpdateStatus>,
     pub update_last_checked_secs: Option<u64>,
 
@@ -1442,23 +1536,28 @@ impl AppState {
             remote_sessions: Vec::new(),
             main_view: MainView::Terminal,
             focus_mode: FocusMode::Main,
-            theme_index: 0,
+            prefs: Prefs {
+                theme_index: 0,
+                layout_mode: LayoutMode::default(),
+                show_borders: true,
+                transparent_bg: false,
+                sidebar_tab: SidebarTab::default(),
+                sidebar_width: 28,
+                sidebar_height: SIDEBAR_HEIGHT,
+                view_mode: ViewMode::default(),
+                frame_rate_limit: 5,
+                exclude_patterns: Vec::new(),
+                plugins: Vec::new(),
+                update_check_mode: UpdateCheckMode::default(),
+                summary_prompt: String::new(),
+                summary_model: String::new(),
+                summary_height: DEFAULT_SUMMARY_HEIGHT,
+                summary_language: String::new(),
+                agents_probe_interval_secs: DEFAULT_AGENTS_PROBE_INTERVAL,
+            },
             settings: SettingsState::default(),
-            layout_mode: LayoutMode::default(),
-            view_mode: ViewMode::default(),
-            sidebar_width: 28,
-            sidebar_height: SIDEBAR_HEIGHT,
-            frame_rate_limit: 5,
-            agents_probe_interval_secs: DEFAULT_AGENTS_PROBE_INTERVAL,
-            show_borders: true,
-            transparent_bg: false,
-            sidebar_tab: SidebarTab::default(),
             agent_focused: 0,
             summary: SummaryState::Idle,
-            summary_prompt: String::new(),
-            summary_model: String::new(),
-            summary_language: String::new(),
-            summary_height: DEFAULT_SUMMARY_HEIGHT,
             dragging_summary: false,
             summary_scroll: 0,
             summary_popup_scroll: 0,
@@ -1468,10 +1567,7 @@ impl AppState {
             term_width,
             term_height,
             last_scroll: Instant::now(),
-            exclude_patterns: Vec::new(),
-            plugins: Vec::new(),
             keybindings: Keybindings::default(),
-            update_check_mode: UpdateCheckMode::default(),
             update_available: None,
             update_last_checked_secs: None,
             hit_regions: HitRegions::default(),
@@ -1500,25 +1596,10 @@ impl AppState {
         theme_index: usize,
         keybindings: Keybindings,
     ) {
-        self.theme_index = theme_index;
-        self.layout_mode = cfg.layout;
-        self.show_borders = cfg.show_borders;
-        self.transparent_bg = cfg.transparent_bg;
-        self.sidebar_tab = cfg.sidebar_tab;
-        self.view_mode = cfg.view_mode;
-        self.frame_rate_limit = normalize_frame_rate_limit(cfg.frame_rate_limit);
-        self.sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
-        self.sidebar_height = cfg.sidebar_height;
-        self.exclude_patterns = cfg.exclude_patterns.clone();
-        self.plugins = cfg.plugins.clone();
+        // The single Config→prefs mapping site (its inverse is
+        // `Prefs::to_config`). Clamps/normalizations live in `from_config`.
+        self.prefs = Prefs::from_config(cfg, theme_index);
         self.keybindings = keybindings;
-        self.update_check_mode = cfg.update_check;
-        self.summary_prompt = cfg.summary_prompt.clone();
-        self.summary_model = cfg.summary_model.clone();
-        self.summary_language = cfg.summary_language.clone();
-        self.agents_probe_interval_secs =
-            normalize_agents_probe_interval(cfg.agents_probe_interval);
-        self.set_summary_height(cfg.summary_height);
         // Theme indices may have shifted; keep the picker's cursor valid.
         self.settings.theme_picker_selected = theme_index;
     }
@@ -1537,17 +1618,17 @@ impl AppState {
     }
 
     pub fn cycle_frame_rate_limit(&mut self, direction: i32) {
-        self.frame_rate_limit = cycle_option(
+        self.prefs.frame_rate_limit = cycle_option(
             &FRAME_RATE_LIMIT_OPTIONS,
-            normalize_frame_rate_limit(self.frame_rate_limit),
+            normalize_frame_rate_limit(self.prefs.frame_rate_limit),
             direction,
         );
     }
 
     pub fn cycle_agents_probe_interval(&mut self, direction: i32) {
-        self.agents_probe_interval_secs = cycle_option(
+        self.prefs.agents_probe_interval_secs = cycle_option(
             &AGENTS_PROBE_INTERVAL_OPTIONS,
-            normalize_agents_probe_interval(self.agents_probe_interval_secs),
+            normalize_agents_probe_interval(self.prefs.agents_probe_interval_secs),
             direction,
         );
     }
@@ -1559,7 +1640,8 @@ impl AppState {
     /// `sidebar_tab` happens to be `Agents`. Gates agent detection in the
     /// refresh worker and selects the agents layout / focus space.
     pub fn agents_tab_active(&self) -> bool {
-        self.sidebar_tab == SidebarTab::Agents && self.layout_mode == LayoutMode::Horizontal
+        self.prefs.sidebar_tab == SidebarTab::Agents
+            && self.prefs.layout_mode == LayoutMode::Horizontal
     }
 
     /// The active view's cursor: `focused` on Projects, `agent_focused`
@@ -1587,11 +1669,11 @@ impl AppState {
         // second detail row to resize into, so the sidebar is pinned to
         // exactly the tab bar (plus top/bottom border when shown) and
         // the stored `sidebar_height` is ignored.
-        if self.layout_mode == LayoutMode::Vertical {
-            return if self.show_borders { 3 } else { 1 };
+        if self.prefs.layout_mode == LayoutMode::Vertical {
+            return if self.prefs.show_borders { 3 } else { 1 };
         }
         let (min_height, max_height) = self.sidebar_height_bounds();
-        self.sidebar_height.clamp(min_height, max_height)
+        self.prefs.sidebar_height.clamp(min_height, max_height)
     }
 
     fn sidebar_width_bounds(&self) -> (u16, u16) {
@@ -1605,7 +1687,7 @@ impl AppState {
     }
 
     fn sidebar_height_bounds(&self) -> (u16, u16) {
-        let (min_height, max_height, available_height) = if self.show_borders {
+        let (min_height, max_height, available_height) = if self.prefs.show_borders {
             (
                 SIDEBAR_HEIGHT_MIN_BORDERED,
                 SIDEBAR_HEIGHT_MAX_BORDERED,
@@ -1628,12 +1710,12 @@ impl AppState {
     }
 
     pub fn pty_size(&self) -> (u16, u16) {
-        let bo = if self.show_borders { 2u16 } else { 0 };
-        match self.layout_mode {
+        let bo = if self.prefs.show_borders { 2u16 } else { 0 };
+        match self.prefs.layout_mode {
             LayoutMode::Horizontal => {
                 let cols = self
                     .term_width
-                    .saturating_sub(self.sidebar_width + 1 + bo)
+                    .saturating_sub(self.prefs.sidebar_width + 1 + bo)
                     .max(1);
                 let rows = self.term_height.saturating_sub(bo).max(1);
                 (rows, cols)
@@ -1655,14 +1737,14 @@ impl AppState {
     /// can't drift — when they did, the bottom visible session row was
     /// click-dead.
     pub fn sidebar_footer_height(&self) -> u16 {
-        let b = if self.show_borders { 2u16 } else { 0 };
-        let content_width = match self.layout_mode {
-            LayoutMode::Horizontal => self.sidebar_width.saturating_sub(b),
+        let b = if self.prefs.show_borders { 2u16 } else { 0 };
+        let content_width = match self.prefs.layout_mode {
+            LayoutMode::Horizontal => self.prefs.sidebar_width.saturating_sub(b),
             LayoutMode::Vertical => self.term_width.saturating_sub(b),
         };
         crate::layout::sidebar_footer_height(
             crate::layout::banner_visible(self.update_available.is_some(), content_width),
-            self.plugins.len(),
+            self.prefs.plugins.len(),
         )
     }
 
@@ -1672,8 +1754,8 @@ impl AppState {
     /// sidebar. Shared by the row and divider hit-testers so they agree
     /// on geometry and the scroll offset the renderer applied.
     fn session_row_hit(&self, row: u16) -> Option<(SidebarLayout, u16, u16, u16)> {
-        let b = if self.show_borders { 1u16 } else { 0 };
-        let sidebar_h = match self.layout_mode {
+        let b = if self.prefs.show_borders { 1u16 } else { 0 };
+        let sidebar_h = match self.prefs.layout_mode {
             LayoutMode::Horizontal => self.term_height,
             LayoutMode::Vertical => self.effective_sidebar_height(),
         };
@@ -1685,7 +1767,7 @@ impl AppState {
             return None;
         }
         let visible_height = sessions_bottom - sessions_top;
-        let layout = self.current_layout(self.view_mode);
+        let layout = self.current_layout(self.prefs.view_mode);
         let scroll = layout.scroll_offset(self.focus_target().map(|f| f.0), visible_height);
         let viewport_y = row - sessions_top;
         Some((layout, viewport_y, scroll, visible_height))
@@ -1743,7 +1825,7 @@ impl AppState {
 
     /// Map a screen column to a tab index in vertical/tabs mode.
     pub fn session_at_col(&self, col: u16, row: u16) -> Option<usize> {
-        let b = if self.show_borders { 1u16 } else { 0 };
+        let b = if self.prefs.show_borders { 1u16 } else { 0 };
         if row != b {
             return None;
         }
@@ -2001,15 +2083,15 @@ impl AppState {
     /// for every state, so overflowing Ready text scrolls inside it rather
     /// than growing the card; the user resizes it by dragging the handle.
     pub fn summary_card_height(&self) -> u16 {
-        3 + self.summary_height
+        3 + self.prefs.summary_height
     }
 
     /// Set the card body height (rows), clamped to the drag-resize bounds.
     /// Returns whether it changed.
     pub fn set_summary_height(&mut self, rows: u16) -> bool {
         let clamped = rows.clamp(SUMMARY_MIN_HEIGHT, SUMMARY_MAX_HEIGHT);
-        if clamped != self.summary_height {
-            self.summary_height = clamped;
+        if clamped != self.prefs.summary_height {
+            self.prefs.summary_height = clamped;
             true
         } else {
             false
@@ -2503,10 +2585,10 @@ impl AppState {
     pub fn resize_sidebar(&mut self, new_width: u16) -> bool {
         let (min_width, max_width) = self.sidebar_width_bounds();
         let clamped = new_width.clamp(min_width, max_width);
-        if clamped == self.sidebar_width {
+        if clamped == self.prefs.sidebar_width {
             return false;
         }
-        self.sidebar_width = clamped;
+        self.prefs.sidebar_width = clamped;
         true
     }
 
@@ -2514,10 +2596,10 @@ impl AppState {
     pub fn resize_sidebar_height(&mut self, new_height: u16) -> bool {
         let (min_height, max_height) = self.sidebar_height_bounds();
         let clamped = new_height.clamp(min_height, max_height);
-        if clamped == self.sidebar_height {
+        if clamped == self.prefs.sidebar_height {
             return false;
         }
-        self.sidebar_height = clamped;
+        self.prefs.sidebar_height = clamped;
         true
     }
 }

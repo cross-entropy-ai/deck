@@ -155,7 +155,7 @@ impl App {
     }
 
     pub(super) fn spawn_plugin_pty(&mut self, idx: usize) -> io::Result<()> {
-        let plugin = &self.state.plugins[idx];
+        let plugin = &self.state.prefs.plugins[idx];
         let (rows, cols) = self.state.pty_size();
 
         let parts: Vec<&str> = plugin.command.split_whitespace().collect();

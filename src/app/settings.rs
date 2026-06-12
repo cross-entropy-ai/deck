@@ -34,19 +34,19 @@ pub struct SettingRow {
 pub const SETTING_ROWS: &[SettingRow] = &[
     SettingRow {
         label: "Theme",
-        value: |s| THEMES[s.theme_index].name.to_string(),
+        value: |s| THEMES[s.prefs.theme_index].name.to_string(),
         help: |_| "Left/right opens the theme list".to_string(),
         adjust: |_| Action::Settings(SettingsAction::OpenThemePicker),
     },
     SettingRow {
         label: "Transparent",
-        value: |s| if s.transparent_bg { "On" } else { "Off" }.to_string(),
+        value: |s| if s.prefs.transparent_bg { "On" } else { "Off" }.to_string(),
         help: |_| "Use terminal's default background (enables transparency)".to_string(),
         adjust: |_| Action::ToggleTransparentBg,
     },
     SettingRow {
         label: "Layout",
-        value: |s| match s.layout_mode {
+        value: |s| match s.prefs.layout_mode {
             LayoutMode::Horizontal => "Horizontal".to_string(),
             LayoutMode::Vertical => "Vertical".to_string(),
         },
@@ -55,13 +55,13 @@ pub const SETTING_ROWS: &[SettingRow] = &[
     },
     SettingRow {
         label: "Borders",
-        value: |s| if s.show_borders { "On" } else { "Off" }.to_string(),
+        value: |s| if s.prefs.show_borders { "On" } else { "Off" }.to_string(),
         help: |_| "Left/right toggles pane borders".to_string(),
         adjust: |_| Action::ToggleBorders,
     },
     SettingRow {
         label: "View",
-        value: |s| match s.view_mode {
+        value: |s| match s.prefs.view_mode {
             ViewMode::Expanded => "Expanded".to_string(),
             ViewMode::Compact => "Compact".to_string(),
         },
@@ -70,9 +70,9 @@ pub const SETTING_ROWS: &[SettingRow] = &[
     },
     SettingRow {
         label: "Frame rate",
-        value: |s| crate::state::frame_rate_limit_label(s.frame_rate_limit).to_string(),
+        value: |s| crate::state::frame_rate_limit_label(s.prefs.frame_rate_limit).to_string(),
         help: |s| {
-            if s.frame_rate_limit == 30 {
+            if s.prefs.frame_rate_limit == 30 {
                 "Smooth increases terminal rendering pressure"
             } else {
                 "Left/right cycles the render limit"
@@ -83,7 +83,7 @@ pub const SETTING_ROWS: &[SettingRow] = &[
     },
     SettingRow {
         label: "Exclude",
-        value: |s| format!("{} patterns", s.exclude_patterns.len()),
+        value: |s| format!("{} patterns", s.prefs.exclude_patterns.len()),
         help: |_| "Left/right opens the pattern editor".to_string(),
         adjust: |_| Action::Settings(SettingsAction::ExcludeOpen),
     },
@@ -96,7 +96,7 @@ pub const SETTING_ROWS: &[SettingRow] = &[
     SettingRow {
         label: "Update check",
         value: |s| {
-            if s.update_check_mode == crate::update::UpdateCheckMode::Enabled {
+            if s.prefs.update_check_mode == crate::update::UpdateCheckMode::Enabled {
                 "Enabled"
             } else {
                 "Disabled"
@@ -108,13 +108,13 @@ pub const SETTING_ROWS: &[SettingRow] = &[
     },
     SettingRow {
         label: "Summary lang",
-        value: |s| crate::summary::language_label(&s.summary_language).to_string(),
+        value: |s| crate::summary::language_label(&s.prefs.summary_language).to_string(),
         help: |_| "Left/right cycles the generated summary's language".to_string(),
         adjust: |_| Action::Summary(SummaryAction::OpenLanguageEditor),
     },
     SettingRow {
         label: "Agents probe",
-        value: |s| crate::state::agents_probe_interval_label(s.agents_probe_interval_secs).to_string(),
+        value: |s| crate::state::agents_probe_interval_label(s.prefs.agents_probe_interval_secs).to_string(),
         help: |_| "Left/right cycles how often the Agents tab probes".to_string(),
         adjust: |dir| Action::Settings(SettingsAction::CycleAgentsProbeInterval(dir)),
     },

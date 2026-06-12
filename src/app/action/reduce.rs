@@ -136,10 +136,10 @@ fn fill_switch_agent_effect(state: &AppState, fx: &mut SideEffect) -> bool {
 /// shown. If an agent is already active (a prior switch), the cursor
 /// lands on it first so returning to the tab restores the position.
 fn switch_tab(state: &mut AppState, fx: &mut SideEffect, tab: SidebarTab) {
-    if state.sidebar_tab == tab {
+    if state.prefs.sidebar_tab == tab {
         return;
     }
-    state.sidebar_tab = tab;
+    state.prefs.sidebar_tab = tab;
     if tab == SidebarTab::Agents {
         if let Some(active) = state.active_agent.clone() {
             if let Some(idx) = state.agent_row_index_for(&active) {
@@ -400,7 +400,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
 
         Action::ToggleLayout => {
-            state.layout_mode = match state.layout_mode {
+            state.prefs.layout_mode = match state.prefs.layout_mode {
                 LayoutMode::Horizontal => LayoutMode::Vertical,
                 LayoutMode::Vertical => LayoutMode::Horizontal,
             };
@@ -408,24 +408,24 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.save_config();
         }
         Action::ToggleBorders => {
-            state.show_borders = !state.show_borders;
+            state.prefs.show_borders = !state.prefs.show_borders;
             fx.resize_pty(true);
             fx.save_config();
         }
         Action::ToggleTransparentBg => {
-            state.transparent_bg = !state.transparent_bg;
+            state.prefs.transparent_bg = !state.prefs.transparent_bg;
             fx.save_config();
         }
         Action::SelectTab(tab) => switch_tab(state, &mut fx, tab),
         Action::ToggleSidebarTab => {
-            let next = match state.sidebar_tab {
+            let next = match state.prefs.sidebar_tab {
                 SidebarTab::Projects => SidebarTab::Agents,
                 SidebarTab::Agents => SidebarTab::Projects,
             };
             switch_tab(state, &mut fx, next);
         }
         Action::ToggleViewMode => {
-            state.view_mode = match state.view_mode {
+            state.prefs.view_mode = match state.prefs.view_mode {
                 ViewMode::Expanded => ViewMode::Compact,
                 ViewMode::Compact => ViewMode::Expanded,
             };
@@ -503,7 +503,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
 
         Action::ActivatePlugin(idx) => {
-            if idx < state.plugins.len() {
+            if idx < state.prefs.plugins.len() {
                 state.main_view = MainView::Plugin(idx);
                 state.focus_mode = FocusMode::Main;
             }
@@ -546,7 +546,7 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
             state.main_view = MainView::Settings;
             state.focus_mode = FocusMode::Main;
             state.settings.theme_picker_open = false;
-            state.settings.theme_picker_selected = state.theme_index;
+            state.settings.theme_picker_selected = state.prefs.theme_index;
         }
         SettingsAction::Close => {
             state.main_view = MainView::Terminal;
@@ -592,7 +592,7 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
             // closing the picker returns to wherever it was opened from.
             state.settings.theme_picker_open = true;
             state.settings.theme_picker_selected =
-                state.theme_index.min(THEMES.len().saturating_sub(1));
+                state.prefs.theme_index.min(THEMES.len().saturating_sub(1));
         }
         SettingsAction::CloseThemePicker => {
             state.settings.theme_picker_open = false;
@@ -600,7 +600,7 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
         SettingsAction::ThemePickerNext => {
             state.settings.theme_picker_selected =
                 step_clamped(state.settings.theme_picker_selected, THEMES.len(), 1);
-            state.theme_index = state.settings.theme_picker_selected;
+            state.prefs.theme_index = state.settings.theme_picker_selected;
             fx.save_config();
             fx.apply_tmux_theme();
         }
@@ -610,7 +610,7 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
             if state.settings.theme_picker_selected > 0 {
                 state.settings.theme_picker_selected =
                     step_clamped(state.settings.theme_picker_selected, THEMES.len(), -1);
-                state.theme_index = state.settings.theme_picker_selected;
+                state.prefs.theme_index = state.settings.theme_picker_selected;
                 fx.save_config();
                 fx.apply_tmux_theme();
             }
@@ -636,11 +636,11 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
         }
 
         SettingsAction::ToggleUpdateCheck => {
-            state.update_check_mode = match state.update_check_mode {
+            state.prefs.update_check_mode = match state.prefs.update_check_mode {
                 crate::update::UpdateCheckMode::Enabled => crate::update::UpdateCheckMode::Disabled,
                 crate::update::UpdateCheckMode::Disabled => crate::update::UpdateCheckMode::Enabled,
             };
-            if state.update_check_mode == crate::update::UpdateCheckMode::Disabled {
+            if state.prefs.update_check_mode == crate::update::UpdateCheckMode::Disabled {
                 state.update_available = None;
             }
             fx.save_config();
@@ -654,9 +654,9 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
         }
         SettingsAction::ExcludeNext => {
             if let Some(ref mut editor) = state.overlay.exclude_editor {
-                if !editor.adding && !state.exclude_patterns.is_empty() {
+                if !editor.adding && !state.prefs.exclude_patterns.is_empty() {
                     editor.selected =
-                        step_clamped(editor.selected, state.exclude_patterns.len(), 1);
+                        step_clamped(editor.selected, state.prefs.exclude_patterns.len(), 1);
                 }
             }
         }
@@ -664,7 +664,7 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
             if let Some(ref mut editor) = state.overlay.exclude_editor {
                 if !editor.adding {
                     editor.selected =
-                        step_clamped(editor.selected, state.exclude_patterns.len(), -1);
+                        step_clamped(editor.selected, state.prefs.exclude_patterns.len(), -1);
                 }
             }
         }
@@ -684,10 +684,10 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
         }
         SettingsAction::ExcludeDelete => {
             if let Some(ref mut editor) = state.overlay.exclude_editor {
-                if !editor.adding && !state.exclude_patterns.is_empty() {
-                    state.exclude_patterns.remove(editor.selected);
-                    if editor.selected > 0 && editor.selected >= state.exclude_patterns.len() {
-                        editor.selected = state.exclude_patterns.len().saturating_sub(1);
+                if !editor.adding && !state.prefs.exclude_patterns.is_empty() {
+                    state.prefs.exclude_patterns.remove(editor.selected);
+                    if editor.selected > 0 && editor.selected >= state.prefs.exclude_patterns.len() {
+                        editor.selected = state.prefs.exclude_patterns.len().saturating_sub(1);
                     }
                     fx.save_config();
                     fx.refresh_sessions();
@@ -713,11 +713,11 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
                     {
                         match regex::Regex::new(inner) {
                             Ok(_) => {
-                                state.exclude_patterns.push(pattern);
+                                state.prefs.exclude_patterns.push(pattern);
                                 editor.adding = false;
                                 editor.reset_input();
                                 editor.error = None;
-                                editor.selected = state.exclude_patterns.len().saturating_sub(1);
+                                editor.selected = state.prefs.exclude_patterns.len().saturating_sub(1);
                                 fx.save_config();
                                 fx.refresh_sessions();
                             }
@@ -726,11 +726,11 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
                             }
                         }
                     } else {
-                        state.exclude_patterns.push(pattern);
+                        state.prefs.exclude_patterns.push(pattern);
                         editor.adding = false;
                         editor.reset_input();
                         editor.error = None;
-                        editor.selected = state.exclude_patterns.len().saturating_sub(1);
+                        editor.selected = state.prefs.exclude_patterns.len().saturating_sub(1);
                         fx.save_config();
                         fx.refresh_sessions();
                     }
@@ -774,7 +774,7 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
         }
         SummaryAction::OpenLanguageEditor => {
             state.overlay.summary_lang_input =
-                Some(crate::new_session::make_textarea(&state.summary_language));
+                Some(crate::new_session::make_textarea(&state.prefs.summary_language));
         }
         SummaryAction::LanguageInputKey(key) => {
             if let Some(ref mut ta) = state.overlay.summary_lang_input {
@@ -783,7 +783,7 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
         }
         SummaryAction::LanguageConfirm => {
             if let Some(ta) = state.overlay.summary_lang_input.take() {
-                state.summary_language = textarea_line(&ta).trim().to_string();
+                state.prefs.summary_language = textarea_line(&ta).trim().to_string();
                 fx.save_config();
             }
         }

@@ -29,9 +29,9 @@ impl App {
         }
         let s = &self.state;
         let sidebar_active = s.focus_mode == FocusMode::Sidebar;
-        let base_theme = THEMES[s.theme_index];
+        let base_theme = THEMES[s.prefs.theme_index];
         let effective_theme;
-        let theme = if s.transparent_bg {
+        let theme = if s.prefs.transparent_bg {
             effective_theme = crate::theme::Theme {
                 bg: ratatui::style::Color::Reset,
                 ..base_theme
@@ -55,11 +55,11 @@ impl App {
         let new_session_overlay = s.overlay.new_session.as_ref();
         let add_remote_overlay = s.overlay.add_remote.as_ref();
         let port_forward_overlay = s.overlay.port_forward.as_ref();
-        let show_borders = s.show_borders;
-        let sidebar_tab = s.sidebar_tab;
-        let layout_mode = s.layout_mode;
-        let view_mode = s.view_mode;
-        let sidebar_width = s.sidebar_width;
+        let show_borders = s.prefs.show_borders;
+        let sidebar_tab = s.prefs.sidebar_tab;
+        let layout_mode = s.prefs.layout_mode;
+        let view_mode = s.prefs.view_mode;
+        let sidebar_width = s.prefs.sidebar_width;
         let sidebar_height = s.effective_sidebar_height();
         let main_view = s.main_view;
         let warning_state = self.warning_state.as_ref();
@@ -149,6 +149,7 @@ impl App {
 
             let plugin_views: Vec<PluginView> = self
                 .state
+                .prefs
                 .plugins
                 .iter()
                 .enumerate()
@@ -382,7 +383,7 @@ impl App {
                     rows,
                     exclude_editor: s.overlay.exclude_editor.as_ref().map(|e| {
                         ui::ExcludeEditorView {
-                            patterns: &s.exclude_patterns,
+                            patterns: &s.prefs.exclude_patterns,
                             selected: e.selected,
                             adding: e.adding,
                             input: &e.input,

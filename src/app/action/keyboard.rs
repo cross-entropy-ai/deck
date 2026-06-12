@@ -153,7 +153,7 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     }
 
     if let KeyCode::Char(ch) = key.code {
-        if let Some(idx) = state.plugins.iter().position(|p| p.key == ch) {
+        if let Some(idx) = state.prefs.plugins.iter().position(|p| p.key == ch) {
             return Action::ActivatePlugin(idx);
         }
     }

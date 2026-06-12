@@ -11,7 +11,7 @@ impl App {
             // for local rows. Remote rows aren't subject to ack/current
             // logic, so we don't need to plumb their slave_ttys.
             slave_tty: self.local_terminal.pty.slave_tty.clone(),
-            exclude_patterns: self.state.exclude_patterns.clone(),
+            exclude_patterns: self.state.prefs.exclude_patterns.clone(),
             remotes: self
                 .state
                 .config_remotes

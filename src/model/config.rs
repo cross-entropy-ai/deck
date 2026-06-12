@@ -10,7 +10,7 @@ use crate::state::{LayoutMode, SidebarTab, ViewMode, SIDEBAR_HEIGHT};
 use crate::update::UpdateCheckMode;
 
 /// A command-based plugin that runs in its own PTY.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginConfig {
     pub name: String,
     pub command: String,

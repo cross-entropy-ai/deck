@@ -405,7 +405,7 @@ impl App {
         let mut last_refresh = Instant::now();
         let mut needs_render = true;
         let mut force_render = true;
-        let mut last_render = Instant::now() - render_min_interval(self.state.frame_rate_limit);
+        let mut last_render = Instant::now() - render_min_interval(self.state.prefs.frame_rate_limit);
         let mut last_blink_render = Instant::now();
         let mut last_summary_render = Instant::now();
         // Watcher for ~/.config/deck/config.yaml: poll its mtime every
@@ -665,7 +665,7 @@ impl App {
 
             if needs_render
                 && (force_render
-                    || last_render.elapsed() >= render_min_interval(self.state.frame_rate_limit))
+                    || last_render.elapsed() >= render_min_interval(self.state.prefs.frame_rate_limit))
             {
                 self.render(terminal)?;
                 needs_render = false;
@@ -742,7 +742,7 @@ impl App {
             // interval (probing every tick there is expensive, esp. remote);
             // the Projects tab keeps the snappy 1s session refresh.
             let refresh_interval = if self.state.agents_tab_active() {
-                Duration::from_secs(self.state.agents_probe_interval_secs.max(1))
+                Duration::from_secs(self.state.prefs.agents_probe_interval_secs.max(1))
             } else {
                 REFRESH_INTERVAL
             };

@@ -557,9 +557,9 @@ impl App {
                 pane_id: row.agent.pane_id.clone(),
             })
             .collect();
-        let template = self.state.summary_prompt.clone();
-        let model = self.state.summary_model.clone();
-        let language = self.state.summary_language.clone();
+        let template = self.state.prefs.summary_prompt.clone();
+        let model = self.state.prefs.summary_model.clone();
+        let language = self.state.prefs.summary_language.clone();
 
         self.state.summary = crate::state::SummaryState::Generating;
         self.state.summary_scroll = 0;
@@ -872,7 +872,7 @@ impl App {
                     self.offboard_remote_host(host);
                 }
                 Effect::ApplyTmuxTheme => {
-                    tmux::apply_theme(&THEMES[self.state.theme_index]);
+                    tmux::apply_theme(&THEMES[self.state.prefs.theme_index]);
                 }
                 Effect::RefreshSessions => {
                     self.request_refresh();
@@ -939,7 +939,7 @@ impl App {
         }
 
         let new_theme_index = THEMES.iter().position(|t| t.name == cfg.theme).unwrap_or(0);
-        let theme_changed = new_theme_index != self.state.theme_index;
+        let theme_changed = new_theme_index != self.state.prefs.theme_index;
 
         // The shared config→state field list lives in `apply_config` (also
         // used at startup) so reload can't silently miss a field.
@@ -1032,7 +1032,7 @@ impl App {
 
         self.resize_pty();
         if theme_changed {
-            tmux::apply_theme(&THEMES[self.state.theme_index]);
+            tmux::apply_theme(&THEMES[self.state.prefs.theme_index]);
         }
         self.request_refresh();
     }

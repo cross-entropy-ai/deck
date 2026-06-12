@@ -16,8 +16,8 @@ fn make_state(
     term_height: u16,
 ) -> AppState {
     let mut state = AppState::new(term_width, term_height);
-    state.layout_mode = layout_mode;
-    state.show_borders = show_borders;
+    state.prefs.layout_mode = layout_mode;
+    state.prefs.show_borders = show_borders;
     state.sessions = vec![make_session("alpha"), make_session("beta")];
     state.session_order = state.sessions.iter().map(|s| s.name.clone()).collect();
     state.recompute_filter();
@@ -94,7 +94,7 @@ fn agent_cursor_tracks_its_agent_when_the_list_changes() {
     // agent, or the left highlight slides onto a different agent than the
     // pane shown on the right (active_agent).
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.sidebar_tab = SidebarTab::Agents;
+    state.prefs.sidebar_tab = SidebarTab::Agents;
     state.agents.insert(
         None,
         vec![
@@ -119,7 +119,7 @@ fn agent_cursor_tracks_its_agent_when_the_list_changes() {
 #[test]
 fn agent_cursor_clamps_when_focused_agent_disappears() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.sidebar_tab = SidebarTab::Agents;
+    state.prefs.sidebar_tab = SidebarTab::Agents;
     state.agents.insert(
         None,
         vec![detected("a", "%1"), detected("b", "%2"), detected("c", "%3")],
@@ -137,7 +137,7 @@ fn agent_cursor_clamps_when_focused_agent_disappears() {
 #[test]
 fn agents_layout_groups_agents_under_host_dividers() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.sidebar_tab = SidebarTab::Agents;
+    state.prefs.sidebar_tab = SidebarTab::Agents;
     state.remote_sessions = vec![remote_row("h1", false, false)];
     state.recompute_filter();
     state.agents.insert(None, vec![detected("local", "%1")]);
@@ -163,7 +163,7 @@ fn agents_layout_groups_agents_under_host_dividers() {
 #[test]
 fn agents_layout_pins_summary_card_at_top() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.sidebar_tab = SidebarTab::Agents;
+    state.prefs.sidebar_tab = SidebarTab::Agents;
     let layout = state.agents_layout();
     // First item is the Summary card; it sits above the @local divider.
     let first = &layout.items()[0].data;
@@ -206,7 +206,7 @@ fn scroll_summary_clamps_to_max() {
 #[test]
 fn agents_layout_shows_placeholder_for_empty_section() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.sidebar_tab = SidebarTab::Agents;
+    state.prefs.sidebar_tab = SidebarTab::Agents;
     // Local probed but empty -> "no agents"; never probed -> "detecting".
     state.agents.insert(None, vec![]);
     let layout = state.agents_layout();
@@ -433,7 +433,7 @@ fn sync_remote_forward_health_mirrors_host_status() {
 fn resize_sidebar_handles_small_terminals() {
     let mut state = make_state(LayoutMode::Horizontal, true, 20, 40);
     assert!(state.resize_sidebar(30));
-    assert_eq!(state.sidebar_width, 10);
+    assert_eq!(state.prefs.sidebar_width, 10);
 }
 
 #[test]
@@ -742,13 +742,85 @@ fn agents_probe_interval_cycles_and_labels() {
     assert_eq!(agents_probe_interval_label(10), "10s (very slow)");
 
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.agents_probe_interval_secs = 2;
+    state.prefs.agents_probe_interval_secs = 2;
     state.cycle_agents_probe_interval(1);
-    assert_eq!(state.agents_probe_interval_secs, 5);
+    assert_eq!(state.prefs.agents_probe_interval_secs, 5);
     state.cycle_agents_probe_interval(-1);
-    assert_eq!(state.agents_probe_interval_secs, 2);
+    assert_eq!(state.prefs.agents_probe_interval_secs, 2);
     // Wraps at the ends.
-    state.agents_probe_interval_secs = 1;
+    state.prefs.agents_probe_interval_secs = 1;
     state.cycle_agents_probe_interval(-1);
-    assert_eq!(state.agents_probe_interval_secs, 10);
+    assert_eq!(state.prefs.agents_probe_interval_secs, 10);
+}
+
+#[test]
+fn step_clamped_forward_stops_at_last() {
+    // Mid-range advances by one; at the last index it stays put.
+    assert_eq!(step_clamped(0, 3, 1), 1);
+    assert_eq!(step_clamped(1, 3, 1), 2);
+    assert_eq!(step_clamped(2, 3, 1), 2);
+}
+
+#[test]
+fn step_clamped_back_stops_at_zero() {
+    assert_eq!(step_clamped(2, 3, -1), 1);
+    assert_eq!(step_clamped(1, 3, -1), 0);
+    assert_eq!(step_clamped(0, 3, -1), 0);
+}
+
+#[test]
+fn step_clamped_handles_empty_and_single() {
+    // len == 0 always yields 0, either direction.
+    assert_eq!(step_clamped(0, 0, 1), 0);
+    assert_eq!(step_clamped(0, 0, -1), 0);
+    // len == 1 pins to the only index.
+    assert_eq!(step_clamped(0, 1, 1), 0);
+    assert_eq!(step_clamped(0, 1, -1), 0);
+}
+
+#[test]
+fn prefs_config_round_trip_is_identity() {
+    // Phase-7 invariant: `from_config(to_config(p)) == p` on the prefs.
+    // Start from a Config carrying already-normalized, non-default values
+    // (so the load-time clamps are no-ops and the comparison is exact), map
+    // it into prefs, write it back out, and re-derive — the prefs must match.
+    let cfg = crate::config::Config {
+        theme: crate::theme::THEMES[2].name.to_string(),
+        layout: LayoutMode::Vertical,
+        show_borders: false,
+        sidebar_tab: SidebarTab::Agents,
+        sidebar_width: 40,
+        sidebar_height: 3,
+        view_mode: ViewMode::Compact,
+        frame_rate_limit: 30,
+        exclude_patterns: vec!["foo*".to_string(), "/bar/".to_string()],
+        plugins: vec![crate::config::PluginConfig {
+            name: "p".to_string(),
+            command: "cmd".to_string(),
+            key: 'p',
+        }],
+        keybindings: std::collections::BTreeMap::new(),
+        update_check: crate::update::UpdateCheckMode::Disabled,
+        remotes: Vec::new(),
+        collapsed_sections: Vec::new(),
+        summary_prompt: "prompt".to_string(),
+        summary_prompt_version: crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION,
+        summary_model: "model".to_string(),
+        summary_height: 12,
+        summary_language: "English".to_string(),
+        agents_probe_interval: 5,
+        transparent_bg: false,
+    };
+
+    let theme_index = 2;
+    let prefs = Prefs::from_config(&cfg, theme_index);
+    let round_tripped = Prefs::from_config(
+        &prefs.to_config(
+            std::collections::BTreeMap::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
+        theme_index,
+    );
+    assert_eq!(prefs, round_tripped);
 }

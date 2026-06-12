@@ -220,9 +220,9 @@ fn cancel_kill_clears_flag() {
 #[test]
 fn toggle_layout_flips_and_signals_resize() {
     let mut state = make_test_state(1);
-    assert_eq!(state.layout_mode, LayoutMode::Horizontal);
+    assert_eq!(state.prefs.layout_mode, LayoutMode::Horizontal);
     let fx = apply_action(&mut state, Action::ToggleLayout);
-    assert_eq!(state.layout_mode, LayoutMode::Vertical);
+    assert_eq!(state.prefs.layout_mode, LayoutMode::Vertical);
     assert!(fx.has_resize_pty());
     assert!(fx.has_full_redraw_after_resize());
     assert!(fx.has_save_config());
@@ -231,9 +231,9 @@ fn toggle_layout_flips_and_signals_resize() {
 #[test]
 fn toggle_borders_signals_resize_and_save() {
     let mut state = make_test_state(1);
-    let was = state.show_borders;
+    let was = state.prefs.show_borders;
     let fx = apply_action(&mut state, Action::ToggleBorders);
-    assert_ne!(state.show_borders, was);
+    assert_ne!(state.prefs.show_borders, was);
     assert!(fx.has_resize_pty());
     assert!(fx.has_full_redraw_after_resize());
     assert!(fx.has_save_config());
@@ -251,7 +251,7 @@ fn open_settings_switches_main_pane_to_settings() {
 #[test]
 fn settings_adjust_theme_opens_picker() {
     let mut state = make_test_state(1);
-    state.theme_index = 0;
+    state.prefs.theme_index = 0;
     state.settings.selected = 0;
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(state.settings.theme_picker_open);
@@ -275,7 +275,7 @@ fn open_theme_picker_from_sidebar_bypasses_settings() {
 #[test]
 fn confirm_theme_picker_selects_theme_and_saves() {
     let mut state = make_test_state(1);
-    state.theme_index = 0;
+    state.prefs.theme_index = 0;
     state.settings.theme_picker_open = true;
     state.settings.theme_picker_selected = 3;
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::ConfirmThemePicker));
@@ -286,12 +286,12 @@ fn confirm_theme_picker_selects_theme_and_saves() {
 #[test]
 fn theme_picker_next_previews_theme_immediately() {
     let mut state = make_test_state(1);
-    state.theme_index = 0;
+    state.prefs.theme_index = 0;
     state.settings.theme_picker_open = true;
     state.settings.theme_picker_selected = 0;
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::ThemePickerNext));
     assert_eq!(state.settings.theme_picker_selected, 1);
-    assert_eq!(state.theme_index, 1);
+    assert_eq!(state.prefs.theme_index, 1);
     assert!(fx.has_save_config());
 }
 
@@ -300,7 +300,7 @@ fn settings_adjust_layout_resizes_and_saves() {
     let mut state = make_test_state(1);
     state.settings.selected = 2;
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert_eq!(state.layout_mode, LayoutMode::Vertical);
+    assert_eq!(state.prefs.layout_mode, LayoutMode::Vertical);
     assert!(fx.has_resize_pty());
     assert!(fx.has_save_config());
 }
@@ -308,10 +308,10 @@ fn settings_adjust_layout_resizes_and_saves() {
 #[test]
 fn settings_adjust_borders_resizes_and_saves() {
     let mut state = make_test_state(1);
-    let initial = state.show_borders;
+    let initial = state.prefs.show_borders;
     state.settings.selected = 3;
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert_ne!(state.show_borders, initial);
+    assert_ne!(state.prefs.show_borders, initial);
     assert!(fx.has_resize_pty());
     assert!(fx.has_save_config());
 }
@@ -427,7 +427,7 @@ fn resize_signals_pty_resize() {
 fn sidebar_resize_does_not_force_full_redraw() {
     let mut state = make_test_state(1);
     let fx = apply_action(&mut state, Action::ResizeSidebar(30));
-    assert_eq!(state.sidebar_width, 30);
+    assert_eq!(state.prefs.sidebar_width, 30);
     assert!(fx.has_resize_pty());
     assert!(!fx.has_full_redraw_after_resize());
 }
@@ -435,9 +435,9 @@ fn sidebar_resize_does_not_force_full_redraw() {
 #[test]
 fn sidebar_height_resize_does_not_force_full_redraw() {
     let mut state = make_test_state(1);
-    state.layout_mode = LayoutMode::Vertical;
+    state.prefs.layout_mode = LayoutMode::Vertical;
     let fx = apply_action(&mut state, Action::ResizeSidebarHeight(5));
-    assert_eq!(state.sidebar_height, 5);
+    assert_eq!(state.prefs.sidebar_height, 5);
     assert!(fx.has_resize_pty());
     assert!(!fx.has_full_redraw_after_resize());
 }
@@ -526,7 +526,7 @@ fn open_close_exclude_editor() {
 fn exclude_editor_add_pattern() {
     use crossterm::event::KeyCode;
     let mut state = make_test_state(1);
-    state.exclude_patterns = vec!["_*".to_string()];
+    state.prefs.exclude_patterns = vec!["_*".to_string()];
     apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
     apply_action(&mut state, Action::Settings(SettingsAction::ExcludeStartAdd));
     assert!(state.overlay.exclude_editor.as_ref().unwrap().adding);
@@ -539,7 +539,7 @@ fn exclude_editor_add_pattern() {
         Action::Settings(SettingsAction::ExcludeInputKey(key(KeyCode::Char('*')))),
     );
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::ExcludeConfirm));
-    assert_eq!(state.exclude_patterns, vec!["_*", "t*"]);
+    assert_eq!(state.prefs.exclude_patterns, vec!["_*", "t*"]);
     assert!(fx.has_save_config());
     assert!(fx.has_refresh_sessions());
     assert!(!state.overlay.exclude_editor.as_ref().unwrap().adding);
@@ -548,11 +548,11 @@ fn exclude_editor_add_pattern() {
 #[test]
 fn exclude_editor_delete_pattern() {
     let mut state = make_test_state(1);
-    state.exclude_patterns = vec!["_*".to_string(), "scratch*".to_string()];
+    state.prefs.exclude_patterns = vec!["_*".to_string(), "scratch*".to_string()];
     apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
     state.overlay.exclude_editor.as_mut().unwrap().selected = 0;
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::ExcludeDelete));
-    assert_eq!(state.exclude_patterns, vec!["scratch*"]);
+    assert_eq!(state.prefs.exclude_patterns, vec!["scratch*"]);
     assert!(fx.has_save_config());
     assert!(fx.has_refresh_sessions());
 }
@@ -561,7 +561,7 @@ fn exclude_editor_delete_pattern() {
 fn exclude_editor_invalid_regex_shows_error() {
     use crossterm::event::KeyCode;
     let mut state = make_test_state(1);
-    state.exclude_patterns = vec![];
+    state.prefs.exclude_patterns = vec![];
     apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
     apply_action(&mut state, Action::Settings(SettingsAction::ExcludeStartAdd));
     for ch in "/[invalid/".chars() {
@@ -574,18 +574,18 @@ fn exclude_editor_invalid_regex_shows_error() {
     let editor = state.overlay.exclude_editor.as_ref().unwrap();
     assert!(editor.adding);
     assert!(editor.error.is_some());
-    assert!(state.exclude_patterns.is_empty());
+    assert!(state.prefs.exclude_patterns.is_empty());
 }
 
 #[test]
 fn toggle_view_mode_flips_and_saves() {
     let mut state = make_test_state(1);
-    assert_eq!(state.view_mode, ViewMode::Expanded);
+    assert_eq!(state.prefs.view_mode, ViewMode::Expanded);
     let fx = apply_action(&mut state, Action::ToggleViewMode);
-    assert_eq!(state.view_mode, ViewMode::Compact);
+    assert_eq!(state.prefs.view_mode, ViewMode::Compact);
     assert!(fx.has_save_config());
     let fx = apply_action(&mut state, Action::ToggleViewMode);
-    assert_eq!(state.view_mode, ViewMode::Expanded);
+    assert_eq!(state.prefs.view_mode, ViewMode::Expanded);
     assert!(fx.has_save_config());
 }
 
@@ -594,40 +594,40 @@ fn settings_adjust_view_mode_toggles() {
     let mut state = make_test_state(1);
     state.settings.selected = 4;
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert_eq!(state.view_mode, ViewMode::Compact);
+    assert_eq!(state.prefs.view_mode, ViewMode::Compact);
     assert!(fx.has_save_config());
 }
 
 #[test]
 fn settings_adjust_frame_rate_cycles_and_saves() {
     let mut state = make_test_state(1);
-    state.frame_rate_limit = 5;
+    state.prefs.frame_rate_limit = 5;
     state.settings.selected = 5;
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert_eq!(state.frame_rate_limit, 10);
+    assert_eq!(state.prefs.frame_rate_limit, 10);
     assert!(fx.has_save_config());
 }
 
 #[test]
 fn settings_adjust_prev_frame_rate_cycles_backwards() {
     let mut state = make_test_state(1);
-    state.frame_rate_limit = 5;
+    state.prefs.frame_rate_limit = 5;
     state.settings.selected = 5;
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::AdjustPrev));
-    assert_eq!(state.frame_rate_limit, 2);
+    assert_eq!(state.prefs.frame_rate_limit, 2);
     assert!(fx.has_save_config());
 }
 
 #[test]
 fn frame_rate_cycle_wraps_in_both_directions() {
     let mut state = make_test_state(1);
-    state.frame_rate_limit = 2;
+    state.prefs.frame_rate_limit = 2;
     state.settings.selected = 5;
     apply_action(&mut state, Action::Settings(SettingsAction::AdjustPrev));
-    assert_eq!(state.frame_rate_limit, 30);
+    assert_eq!(state.prefs.frame_rate_limit, 30);
 
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert_eq!(state.frame_rate_limit, 2);
+    assert_eq!(state.prefs.frame_rate_limit, 2);
 }
 
 #[test]
@@ -1381,13 +1381,13 @@ mod agents_tab {
     fn toggle_switches_tab_and_refreshes_on_agents() {
         let mut state = make_test_state(3);
         let fx = apply_action(&mut state, Action::ToggleSidebarTab);
-        assert_eq!(state.sidebar_tab, SidebarTab::Agents);
+        assert_eq!(state.prefs.sidebar_tab, SidebarTab::Agents);
         // Arriving on Agents kicks a refresh so detection starts at once.
         assert!(fx.has_refresh_sessions());
         assert!(fx.has_save_config());
 
         let fx = apply_action(&mut state, Action::ToggleSidebarTab);
-        assert_eq!(state.sidebar_tab, SidebarTab::Projects);
+        assert_eq!(state.prefs.sidebar_tab, SidebarTab::Projects);
         assert!(!fx.has_refresh_sessions());
     }
 
@@ -1424,7 +1424,7 @@ mod agents_tab {
     fn select_same_tab_is_noop() {
         let mut state = make_test_state(3);
         let fx = apply_action(&mut state, Action::SelectTab(SidebarTab::Projects));
-        assert_eq!(state.sidebar_tab, SidebarTab::Projects);
+        assert_eq!(state.prefs.sidebar_tab, SidebarTab::Projects);
         assert!(!fx.has_save_config());
     }
 
