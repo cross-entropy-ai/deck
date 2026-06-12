@@ -179,30 +179,54 @@ fn no_modal_leaks_a_forbidden_keyboard_action() {
     }
 }
 
+fn mouse_at(kind: MouseEventKind, col: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column: col,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+/// Probe the no-modal state for a sidebar coordinate that actually lands on
+/// a session row, so the modal-swallow assertions below are known to be
+/// meaningful (clicking a dead cell would trivially "not leak"). The row
+/// offset depends on layout/borders/header, so discover it rather than
+/// hard-coding.
+fn session_row_coord(state: &AppState) -> (u16, u16) {
+    for row in 0..40u16 {
+        if let Action::SidebarClickSession(_) =
+            mouse_to_action(&mouse_at(MouseEventKind::Down(MouseButton::Left), 2, row), state)
+        {
+            return (2, row);
+        }
+    }
+    panic!("no session row found in the sidebar for the test fixture");
+}
+
 #[test]
 fn no_modal_leaks_a_forbidden_mouse_action() {
-    // A session row sits near the top of the sidebar; (2, 1) lands on one in
-    // both layouts. Left-down, right-down, and a wheel-up over it.
+    let base = make_state();
+    let (col, row) = session_row_coord(&base);
+
     let inputs = [
-        MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: 2,
-            row: 1,
-            modifiers: KeyModifiers::NONE,
-        },
-        MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Right),
-            column: 2,
-            row: 1,
-            modifiers: KeyModifiers::NONE,
-        },
-        MouseEvent {
-            kind: MouseEventKind::ScrollUp,
-            column: 2,
-            row: 1,
-            modifiers: KeyModifiers::NONE,
-        },
+        mouse_at(MouseEventKind::Down(MouseButton::Left), col, row),
+        mouse_at(MouseEventKind::Down(MouseButton::Right), col, row),
+        mouse_at(MouseEventKind::ScrollUp, col, row),
     ];
+
+    // Negative control: with NO modal up, the left- and right-clicks on this
+    // exact cell DO produce forbidden actions (a session select and a session
+    // menu). If this ever stops holding, the coordinate is wrong and the
+    // modal assertions below would be vacuous — fail loudly here instead.
+    assert!(
+        is_forbidden(&mouse_to_action(&inputs[0], &base)),
+        "fixture sanity: left-click on a session row must be forbidden with no modal"
+    );
+    assert!(
+        is_forbidden(&mouse_to_action(&inputs[1], &base)),
+        "fixture sanity: right-click on a session row must be forbidden with no modal"
+    );
 
     for modal in all_modals() {
         let mut state = make_state();
