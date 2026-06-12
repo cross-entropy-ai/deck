@@ -165,7 +165,6 @@ pub const DEFAULT_SUMMARY_HEIGHT: u16 = 6;
 pub const SUMMARY_MIN_HEIGHT: u16 = 2;
 pub const SUMMARY_MAX_HEIGHT: u16 = 40;
 
-pub const SETTINGS_ITEM_COUNT: usize = 11;
 pub const FRAME_RATE_LIMIT_OPTIONS: [u16; 4] = [2, 5, 10, 30];
 
 /// How often the Agents tab probes for agents + their status, in seconds.

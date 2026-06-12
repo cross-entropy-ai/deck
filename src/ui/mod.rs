@@ -14,7 +14,7 @@ pub mod theme;
 pub mod widgets;
 
 use crate::keybindings::Keybindings;
-use crate::state::{LayoutMode, RemoteSessionRow, SessionRow, ViewMode};
+use crate::state::{RemoteSessionRow, SessionRow};
 
 pub use add_remote::draw_add_remote;
 pub use menu::draw_context_menu;
@@ -148,25 +148,24 @@ pub struct NewSessionView<'a> {
     pub host: Option<&'a str>,
 }
 
+/// One settings row, already reduced to display strings by the render
+/// loop. The `app::settings::SETTING_ROWS` descriptor table is the source
+/// of label/value/help; the loop calls each row's closures against
+/// `&AppState` and hands the results here, keeping `draw_settings_page` a
+/// pure `ui` fn that never sees `AppState`.
+pub struct SettingRowView {
+    pub label: &'static str,
+    pub value: String,
+    pub help: String,
+}
+
 pub struct SettingsView<'a> {
     pub selected: usize,
-    pub theme_name: &'a str,
-    pub layout_mode: LayoutMode,
-    pub show_borders: bool,
-    pub view_mode: ViewMode,
-    pub frame_rate_limit: u16,
-    pub exclude_count: usize,
+    pub rows: Vec<SettingRowView>,
     pub exclude_editor: Option<ExcludeEditorView<'a>>,
     pub keybindings: &'a Keybindings,
     pub keybindings_view_open: bool,
     pub keybindings_view_scroll: u16,
-    pub update_check_enabled: bool,
-    pub update_check_help: String,
-    /// Display label for the generated-summary language ("Default" = unset).
-    pub summary_language: &'a str,
     /// When `Some`, the language input box is open over the settings page.
     pub summary_lang_input: Option<&'a ratatui_textarea::TextArea<'static>>,
-    /// Agents-tab probe interval, in seconds.
-    pub agents_probe_interval: u64,
-    pub transparent_bg: bool,
 }

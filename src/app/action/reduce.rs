@@ -5,8 +5,8 @@ use crate::state::{
     LayoutMode, MainView, MenuItem, MenuKind, PfAddForm, PfField, PortForwardOverlay,
     RemoteSwitchRequest,
     RenameRequest, RenameState, SessionTargetRef, SideEffect, SidebarTab, ViewMode,
-    SETTINGS_ITEM_COUNT,
 };
+use crate::app::settings::SETTING_ROWS;
 use crate::theme::THEMES;
 
 use super::{
@@ -553,7 +553,8 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
             state.settings.theme_picker_open = false;
         }
         SettingsAction::Next => {
-            state.settings.selected = (state.settings.selected + 1).min(SETTINGS_ITEM_COUNT - 1);
+            state.settings.selected =
+                (state.settings.selected + 1).min(SETTING_ROWS.len() - 1);
         }
         SettingsAction::Prev => {
             if state.settings.selected > 0 {
@@ -566,25 +567,12 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
             } else {
                 1
             };
-            let inner = match state.settings.selected {
-                0 => apply_action(state, Action::Settings(SettingsAction::OpenThemePicker)),
-                1 => apply_action(state, Action::ToggleTransparentBg),
-                2 => apply_action(state, Action::ToggleLayout),
-                3 => apply_action(state, Action::ToggleBorders),
-                4 => apply_action(state, Action::ToggleViewMode),
-                5 => apply_action(
-                    state,
-                    Action::Settings(SettingsAction::CycleFrameRateLimit(direction)),
-                ),
-                6 => apply_action(state, Action::Settings(SettingsAction::ExcludeOpen)),
-                7 => apply_action(state, Action::Settings(SettingsAction::OpenKeybindingsView)),
-                8 => apply_action(state, Action::Settings(SettingsAction::ToggleUpdateCheck)),
-                9 => apply_action(state, Action::Summary(SummaryAction::OpenLanguageEditor)),
-                10 => apply_action(
-                    state,
-                    Action::Settings(SettingsAction::CycleAgentsProbeInterval(direction)),
-                ),
-                _ => SideEffect::default(),
+            // Look up the selected row in the descriptor table and fire its
+            // adjust action. The table is the single source of which row maps
+            // to which action — no positional match to keep in lockstep.
+            let inner = match SETTING_ROWS.get(state.settings.selected) {
+                Some(row) => apply_action(state, (row.adjust)(direction)),
+                None => SideEffect::default(),
             };
             fx.merge(inner);
         }

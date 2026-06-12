@@ -10,10 +10,9 @@ use ratatui::DefaultTerminal;
 use crate::bridge;
 use crate::state::{FocusMode, LayoutMode, MainView, REMOTE_NO_SESSIONS_LABEL};
 use crate::theme::THEMES;
-use crate::ui::{self, PluginStatus, PluginView, SettingsView};
-use crate::update::UpdateCheckMode;
+use crate::ui::{self, PluginStatus, PluginView, SettingRowView, SettingsView};
 
-use super::update::format_update_check_help;
+use super::settings::SETTING_ROWS;
 use super::App;
 
 impl App {
@@ -366,14 +365,21 @@ impl App {
             // it allocates the update-check help string, which would
             // otherwise be thrown away every other frame.
             if warning_state.is_none() && main_view == MainView::Settings {
+                // Reduce the descriptor table to display strings here, where
+                // we still hold `&AppState`: the value/help closures read it,
+                // but `draw_settings_page` is a pure `ui` fn that only sees
+                // the resulting `Vec<SettingRowView>`.
+                let rows: Vec<SettingRowView> = SETTING_ROWS
+                    .iter()
+                    .map(|row| SettingRowView {
+                        label: row.label,
+                        value: (row.value)(s),
+                        help: (row.help)(s),
+                    })
+                    .collect();
                 let settings_view = SettingsView {
                     selected: s.settings.selected,
-                    theme_name: THEMES[s.theme_index].name,
-                    layout_mode: s.layout_mode,
-                    show_borders: s.show_borders,
-                    view_mode: s.view_mode,
-                    frame_rate_limit: s.frame_rate_limit,
-                    exclude_count: s.exclude_patterns.len(),
+                    rows,
                     exclude_editor: s.overlay.exclude_editor.as_ref().map(|e| {
                         ui::ExcludeEditorView {
                             patterns: &s.exclude_patterns,
@@ -386,12 +392,7 @@ impl App {
                     keybindings: &s.keybindings,
                     keybindings_view_open: s.settings.keybindings_view_open,
                     keybindings_view_scroll: s.settings.keybindings_view_scroll,
-                    update_check_enabled: s.update_check_mode == UpdateCheckMode::Enabled,
-                    update_check_help: format_update_check_help(s.update_last_checked_secs),
-                    summary_language: crate::summary::language_label(&s.summary_language),
                     summary_lang_input: s.overlay.summary_lang_input.as_ref(),
-                    agents_probe_interval: s.agents_probe_interval_secs,
-                    transparent_bg: s.transparent_bg,
                 };
                 ui::draw_settings_page(frame, main_inner, &settings_view, theme);
             }

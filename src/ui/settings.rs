@@ -5,10 +5,10 @@ use ratatui::widgets::{Block, Clear, Paragraph, Widget};
 use ratatui::Frame;
 
 use crate::keybindings::{Command, Keybindings};
-use crate::state::{LayoutMode, ViewMode};
 use crate::theme::Theme;
 use crate::ui::widgets::{
-    centered_rect, list_item_line, popup_frame, style_textarea, PopupStyle, TextAreaColors,
+    centered_rect, list_item_line, popup_frame, scroll_window, style_textarea, PopupStyle,
+    TextAreaColors,
 };
 
 use super::text::format_keys_for;
@@ -17,7 +17,7 @@ use super::{ExcludeEditorView, SettingsView};
 pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView, theme: &Theme) {
     frame.render_widget(Block::default().style(Style::default().bg(theme.bg)), area);
 
-    let mut lines = vec![
+    let header: Vec<Line> = vec![
         Line::raw(""),
         Line::from(vec![
             Span::styled(
@@ -32,81 +32,35 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
         )),
         Line::raw(""),
     ];
+    let footer = Line::from(Span::styled(
+        "  j/k move  h/l change  Enter select  Esc close",
+        Style::default().fg(theme.muted),
+    ));
 
-    let entries: Vec<(&str, String, &str)> = vec![
-        (
-            "Theme",
-            settings.theme_name.to_string(),
-            "Left/right opens the theme list",
-        ),
-        (
-            "Transparent",
-            if settings.transparent_bg { "On" } else { "Off" }.to_string(),
-            "Use terminal's default background (enables transparency)",
-        ),
-        (
-            "Layout",
-            match settings.layout_mode {
-                LayoutMode::Horizontal => "Horizontal".to_string(),
-                LayoutMode::Vertical => "Vertical".to_string(),
-            },
-            "Left/right toggles the split direction",
-        ),
-        (
-            "Borders",
-            if settings.show_borders { "On" } else { "Off" }.to_string(),
-            "Left/right toggles pane borders",
-        ),
-        (
-            "View",
-            match settings.view_mode {
-                ViewMode::Expanded => "Expanded".to_string(),
-                ViewMode::Compact => "Compact".to_string(),
-            },
-            "Left/right toggles compact mode",
-        ),
-        (
-            "Frame rate",
-            crate::state::frame_rate_limit_label(settings.frame_rate_limit).to_string(),
-            if settings.frame_rate_limit == 30 {
-                "Smooth increases terminal rendering pressure"
-            } else {
-                "Left/right cycles the render limit"
-            },
-        ),
-        (
-            "Exclude",
-            format!("{} patterns", settings.exclude_count),
-            "Left/right opens the pattern editor",
-        ),
-        (
-            "Keybindings",
-            "View".to_string(),
-            "Left/right shows current key bindings",
-        ),
-        (
-            "Update check",
-            if settings.update_check_enabled {
-                "Enabled"
-            } else {
-                "Disabled"
-            }
-            .to_string(),
-            settings.update_check_help.as_str(),
-        ),
-        (
-            "Summary lang",
-            settings.summary_language.to_string(),
-            "Left/right cycles the generated summary's language",
-        ),
-        (
-            "Agents probe",
-            crate::state::agents_probe_interval_label(settings.agents_probe_interval).to_string(),
-            "Left/right cycles how often the Agents tab probes",
-        ),
-    ];
+    // Window the entries so the selected row stays visible on a short
+    // terminal (#15). Each entry is variable-height (marker+label+value,
+    // 1–2 help lines, blank), so size the window by how many *whole*
+    // entries fit in the space left after the header and footer, then
+    // window by entry index around `selected`. No persisted scroll state:
+    // the offset is derived from `selected` each frame.
+    let entries = &settings.rows;
+    let entry_height = |row: &super::SettingRowView| 1 + row.help.lines().count() + 1;
+    let body_rows = (area.height as usize)
+        .saturating_sub(header.len())
+        .saturating_sub(1); // footer
+    // Worst-case entry height bounds the window so a selected tall entry
+    // can't be pushed past the bottom.
+    let max_entry_height = entries.iter().map(entry_height).max().unwrap_or(1).max(1);
+    let visible = (body_rows / max_entry_height).max(1);
+    let start = scroll_window(settings.selected, entries.len(), visible);
+    let end = (start + visible).min(entries.len());
 
-    for (idx, (label, value, help)) in entries.iter().enumerate() {
+    let mut lines = header;
+    for (offset, row) in entries[start..end].iter().enumerate() {
+        let idx = start + offset;
+        let label = row.label;
+        let value = &row.value;
+        let help = &row.help;
         let selected = idx == settings.selected;
         let row_bg = if selected { theme.surface } else { theme.bg };
         let label_style = if selected {
@@ -148,10 +102,7 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
         lines.push(Line::raw(""));
     }
 
-    lines.push(Line::from(Span::styled(
-        "  j/k move  h/l change  Enter select  Esc close",
-        Style::default().fg(theme.muted),
-    )));
+    lines.push(footer);
 
     frame.render_widget(
         Paragraph::new(lines).style(Style::default().bg(theme.bg)),
@@ -269,7 +220,7 @@ fn draw_keybindings_view(
         Style::default().fg(theme.muted),
     )));
     lines.push(Line::from(Span::styled(
-        "  edit ~/.config/deck/config.json to change",
+        "  edit ~/.config/deck/config.yaml to change",
         Style::default().fg(theme.dim),
     )));
 
@@ -329,12 +280,18 @@ pub fn draw_theme_picker(
         },
     );
 
+    // Window the list around the selection like the keybindings view, so
+    // the highlight can't walk off-screen when the theme count exceeds the
+    // visible height (#15).
     let inner_w = inner.width as usize;
-    let lines: Vec<Line> = theme_names
+    let visible = (inner.height as usize).max(1);
+    let start = scroll_window(selected_idx, theme_names.len(), visible);
+    let end = (start + visible).min(theme_names.len());
+    let lines: Vec<Line> = theme_names[start..end]
         .iter()
         .enumerate()
-        .map(|(idx, name)| {
-            let selected = idx == selected_idx;
+        .map(|(offset, name)| {
+            let selected = start + offset == selected_idx;
             let label = format!(" {:<width$}", name, width = inner_w.saturating_sub(1));
             if selected {
                 Line::from(Span::styled(
@@ -521,4 +478,67 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
     };
     Paragraph::new(Span::styled(help, Style::default().fg(theme.muted)))
         .render(rows[row_idx], frame.buffer_mut());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keybindings::Keybindings;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    fn sample_rows() -> Vec<super::super::SettingRowView> {
+        // Mirror the descriptor table's labels but with long help text, so
+        // the windowing math is exercised the way the real page exercises it.
+        crate::app::settings::SETTING_ROWS
+            .iter()
+            .map(|row| super::super::SettingRowView {
+                label: row.label,
+                value: "value".to_string(),
+                help: "a fairly long help line that takes a row".to_string(),
+            })
+            .collect()
+    }
+
+    /// #15 regression guard: on a short terminal the selected (last) row
+    /// must still be painted, i.e. the page windows around the selection
+    /// instead of letting it scroll off the bottom.
+    #[test]
+    fn short_terminal_keeps_selected_setting_in_view() {
+        let theme = &crate::theme::THEMES[0];
+        let keybindings = Keybindings::default();
+        let rows = sample_rows();
+        let last = rows.len() - 1;
+        let last_label = rows[last].label;
+
+        let backend = TestBackend::new(60, 18);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                let view = SettingsView {
+                    selected: last,
+                    rows,
+                    exclude_editor: None,
+                    keybindings: &keybindings,
+                    keybindings_view_open: false,
+                    keybindings_view_scroll: 0,
+                    summary_lang_input: None,
+                };
+                super::draw_settings_page(frame, area, &view, theme);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                text.push_str(buf[(x, y)].symbol());
+            }
+        }
+        assert!(
+            text.contains(last_label),
+            "selected (last) setting {last_label:?} must be visible on a short \
+             terminal; screen was: {text:?}"
+        );
+    }
 }

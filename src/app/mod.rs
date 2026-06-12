@@ -7,6 +7,7 @@ mod pty;
 mod refresh;
 mod remote_spawn;
 mod render;
+pub mod settings;
 mod update;
 
 use std::collections::{BTreeMap, HashMap};

@@ -648,6 +648,45 @@ fn settings_adjust_keybindings_opens_view_after_exclude_row() {
     assert!(!fx.has_save_config());
 }
 
+#[test]
+fn settings_next_clamps_to_descriptor_table_length() {
+    // The descriptor table is the single source for the row count: Next
+    // must clamp at its last index, and the by-index tests above (rows
+    // 0–7) must stay inside it.
+    use crate::app::settings::SETTING_ROWS;
+    let mut state = make_test_state(1);
+    state.settings.selected = 0;
+    for _ in 0..(SETTING_ROWS.len() + 5) {
+        apply_action(&mut state, Action::Settings(SettingsAction::Next));
+    }
+    assert_eq!(state.settings.selected, SETTING_ROWS.len() - 1);
+}
+
+#[test]
+fn settings_descriptor_table_order_matches_indexed_tests() {
+    // The index-driven settings tests assert behavior at fixed rows; pin
+    // those labels so a reorder of SETTING_ROWS can't silently invalidate
+    // them.
+    use crate::app::settings::SETTING_ROWS;
+    let labels: Vec<&str> = SETTING_ROWS.iter().map(|r| r.label).collect();
+    assert_eq!(
+        labels,
+        vec![
+            "Theme",
+            "Transparent",
+            "Layout",
+            "Borders",
+            "View",
+            "Frame rate",
+            "Exclude",
+            "Keybindings",
+            "Update check",
+            "Summary lang",
+            "Agents probe",
+        ]
+    );
+}
+
 fn rename_state(initial: &str) -> RenameState {
     RenameState::new(initial.to_string(), initial.to_string(), None)
 }
