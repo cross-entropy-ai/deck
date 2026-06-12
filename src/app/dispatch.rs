@@ -642,7 +642,7 @@ impl App {
                     if self
                         .state
                         .focused_remote_placeholder()
-                        .is_none_or(|row| row.host != host.as_str())
+                        .is_none_or(|e| e.host.as_deref() != Some(host.as_str()))
                     {
                         continue;
                     }
@@ -736,8 +736,8 @@ impl App {
                     // the executor's per-host FIFO (ordered behind any rename/kill
                     // for the host, and off the UI thread).
                     let names: Vec<String> =
-                        crate::state::attachable_on_host(&self.state.remote_sessions, host)
-                            .map(|r| r.name.clone())
+                        crate::state::attachable_on_host(&self.state.entries, Some(host))
+                            .map(|e| e.name.clone())
                             .collect();
                     self.submit_session(
                         Some(host.clone()),

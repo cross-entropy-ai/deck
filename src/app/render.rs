@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::DefaultTerminal;
 
 use crate::bridge;
-use crate::state::{FocusMode, LayoutMode, MainView, REMOTE_NO_SESSIONS_LABEL};
+use crate::state::{FocusMode, LayoutMode, MainView};
 use crate::theme::THEMES;
 use crate::ui::{self, PluginStatus, PluginView, SettingRowView, SettingsView};
 
@@ -63,22 +63,27 @@ impl App {
         let sidebar_height = s.effective_sidebar_height();
         let main_view = s.main_view;
         let warning_state = self.warning_state.as_ref();
-        let remote_placeholder = s.focused_remote_placeholder().map(|row| {
-            let title = if row.loading {
-                format!("Connecting to @{}", row.host)
-            } else if row.unreachable {
-                format!("Cannot reach @{}", row.host)
-            } else if row.name == REMOTE_NO_SESSIONS_LABEL {
-                format!("No sessions for @{}", row.host)
-            } else {
-                format!("No attachable session for @{}", row.host)
-            };
-            let detail = if row.loading {
-                "Waiting for the remote terminal to connect".to_string()
-            } else if row.unreachable {
-                "Reconnect this host from the sidebar".to_string()
-            } else {
-                "Create one from the host menu to attach here".to_string()
+        let remote_placeholder = s.focused_remote_placeholder().map(|entry| {
+            let host = entry.host.as_deref().unwrap_or_default();
+            let (title, detail) = match entry.kind {
+                crate::state::SessionKind::Connecting => (
+                    format!("Connecting to @{host}"),
+                    "Waiting for the remote terminal to connect".to_string(),
+                ),
+                crate::state::SessionKind::Unreachable => (
+                    format!("Cannot reach @{host}"),
+                    "Reconnect this host from the sidebar".to_string(),
+                ),
+                crate::state::SessionKind::NoSessions => (
+                    format!("No sessions for @{host}"),
+                    "Create one from the host menu to attach here".to_string(),
+                ),
+                // A focused remote placeholder is never `Live`, but keep a
+                // sensible fallback string rather than panic.
+                crate::state::SessionKind::Live { .. } => (
+                    format!("No attachable session for @{host}"),
+                    "Create one from the host menu to attach here".to_string(),
+                ),
             };
             (title, detail)
         });
@@ -92,24 +97,16 @@ impl App {
         let mut captured_hits = crate::state::HitRegions::default();
         let mut captured_summary_popup_max_scroll: usize = 0;
         terminal.draw(|frame| {
-            // Unified slice the sidebar consumes: local rows first
-            // (flat index == session position), then remotes (flat index
-            // == local_count + remote_idx). Both SessionRow and
-            // RemoteSessionRow impl SidebarSession directly, so the
-            // sidebar reads straight from storage — no per-frame
-            // borrowed-view shells needed.
-            let local_count = self.state.sessions.len();
+            // Unified slice the sidebar consumes: `entries` is already in
+            // render/flat order (local rows first, then remotes), and
+            // `SessionEntry` impls `SidebarSession`, so the sidebar reads
+            // straight from storage — no per-frame borrowed-view shells.
+            let local_count = self.state.local_count();
             let sessions_dyn: Vec<&dyn ui::SidebarSession> = self
                 .state
-                .sessions
+                .entries
                 .iter()
-                .map(|s| s as &dyn ui::SidebarSession)
-                .chain(
-                    self.state
-                        .remote_sessions
-                        .iter()
-                        .map(|r| r as &dyn ui::SidebarSession),
-                )
+                .map(|e| e as &dyn ui::SidebarSession)
                 .collect();
 
             let full = frame.area();

@@ -48,12 +48,14 @@ pub struct SnapshotRow {
 }
 
 /// One row from a remote host. Mirrors the subset of `SnapshotRow`
-/// fields we can cheaply produce over ssh — no Claude status.
+/// fields we can cheaply produce over ssh — no Claude status. `kind`
+/// is `Live` for a real session, or a `Unreachable` / `NoSessions`
+/// placeholder; `apply_remote` maps it straight onto a `SessionEntry`.
 pub struct RemoteSnapshotRow {
     pub host: String,
     pub name: String,
     pub dir: String,
-    pub unreachable: bool,
+    pub kind: crate::state::SessionKind,
 }
 
 /// An update from the refresh worker. Decoupled into Local + Remote
@@ -294,9 +296,9 @@ fn collect_remotes(
                 // original host string, mark unreachable.
                 out.push(RemoteSnapshotRow {
                     host: host.clone(),
-                    name: crate::state::REMOTE_UNREACHABLE_LABEL.to_string(),
+                    name: String::new(),
                     dir: String::new(),
-                    unreachable: true,
+                    kind: crate::state::SessionKind::Unreachable,
                 });
                 continue;
             }
@@ -316,24 +318,28 @@ fn collect_remotes(
                         host: host_name.clone(),
                         name: s.name,
                         dir: s.dir,
-                        unreachable: false,
+                        // Remote refresh doesn't collect idle activity yet.
+                        kind: crate::state::SessionKind::Live {
+                            is_current: false,
+                            idle_seconds: None,
+                        },
                     });
                 }
             }
             Some(_empty) => {
                 out.push(RemoteSnapshotRow {
                     host: host_name,
-                    name: crate::state::REMOTE_NO_SESSIONS_LABEL.to_string(),
+                    name: String::new(),
                     dir: String::new(),
-                    unreachable: false,
+                    kind: crate::state::SessionKind::NoSessions,
                 });
             }
             None => {
                 out.push(RemoteSnapshotRow {
                     host: host_name,
-                    name: crate::state::REMOTE_UNREACHABLE_LABEL.to_string(),
+                    name: String::new(),
                     dir: String::new(),
-                    unreachable: true,
+                    kind: crate::state::SessionKind::Unreachable,
                 });
             }
         }

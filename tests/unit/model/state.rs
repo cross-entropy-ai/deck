@@ -1,11 +1,14 @@
 use super::*;
 
-fn make_session(name: &str) -> SessionRow {
-    SessionRow {
+fn make_session(name: &str) -> SessionEntry {
+    SessionEntry {
+        host: None,
         name: name.to_string(),
         dir: format!("/tmp/{name}"),
-        is_current: false,
-        idle_seconds: 0,
+        kind: SessionKind::Live {
+            is_current: false,
+            idle_seconds: Some(0),
+        },
     }
 }
 
@@ -18,38 +21,57 @@ fn make_state(
     let mut state = AppState::new(term_width, term_height);
     state.prefs.layout_mode = layout_mode;
     state.prefs.show_borders = show_borders;
-    state.sessions = vec![make_session("alpha"), make_session("beta")];
-    state.session_order = state.sessions.iter().map(|s| s.name.clone()).collect();
+    state.entries = vec![make_session("alpha"), make_session("beta")];
+    state.session_order = state.entries.iter().map(|s| s.name.clone()).collect();
     state.clamp_projects_focus();
     state
 }
 
-fn remote_row(host: &str, unreachable: bool, loading: bool) -> RemoteSessionRow {
-    RemoteSessionRow {
-        host: host.to_string(),
+fn kind_for(unreachable: bool, loading: bool) -> SessionKind {
+    if unreachable {
+        SessionKind::Unreachable
+    } else if loading {
+        SessionKind::Connecting
+    } else {
+        SessionKind::Live {
+            is_current: false,
+            idle_seconds: None,
+        }
+    }
+}
+
+fn remote_row(host: &str, unreachable: bool, loading: bool) -> SessionEntry {
+    SessionEntry {
+        host: Some(host.to_string()),
         name: "s".to_string(),
         dir: "/tmp".to_string(),
-        unreachable,
-        loading,
+        kind: kind_for(unreachable, loading),
     }
+}
+
+/// Set the remote rows on a freshly-built state, keeping the local block
+/// (built by `make_state`) at the front so `entries` stays in flat order.
+fn set_remote(state: &mut AppState, rows: Vec<SessionEntry>) {
+    state.entries.retain(|e| e.is_local());
+    state.entries.extend(rows);
 }
 
 #[test]
 fn mark_host_reconnecting_sets_loading_clears_unreachable() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.remote_sessions = vec![remote_row("h1", true, false)];
+    set_remote(&mut state, vec![remote_row("h1", true, false)]);
     state.mark_host_reconnecting("h1");
-    assert!(state.remote_sessions[0].loading);
-    assert!(!state.remote_sessions[0].unreachable);
+    let row = state.entries.iter().find(|e| !e.is_local()).unwrap();
+    assert_eq!(row.kind, SessionKind::Connecting);
 }
 
 #[test]
 fn mark_host_reconnecting_ignores_other_hosts() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.remote_sessions = vec![remote_row("h2", true, false)];
+    set_remote(&mut state, vec![remote_row("h2", true, false)]);
     state.mark_host_reconnecting("h1");
-    assert!(state.remote_sessions[0].unreachable);
-    assert!(!state.remote_sessions[0].loading);
+    let row = state.entries.iter().find(|e| !e.is_local()).unwrap();
+    assert_eq!(row.kind, SessionKind::Unreachable);
 }
 
 #[test]
@@ -61,7 +83,7 @@ fn sidebar_header_status_reflects_host_reachability() {
     ];
     for (row, expected) in cases {
         let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-        state.remote_sessions = vec![row];
+        set_remote(&mut state, vec![row]);
         state.clamp_projects_focus();
         let layout = state.sidebar_layout(ViewMode::Expanded);
         let status = layout.items().iter().find_map(|item| match &item.data {
@@ -75,7 +97,7 @@ fn sidebar_header_status_reflects_host_reachability() {
 #[test]
 fn agent_rows_ordered_local_then_hosts() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.remote_sessions = vec![remote_row("h1", false, false)];
+    set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
     state.agents.insert(None, vec![detected("local", "%1")]);
     state
@@ -138,7 +160,7 @@ fn agent_cursor_clamps_when_focused_agent_disappears() {
 fn agents_layout_groups_agents_under_host_dividers() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
-    state.remote_sessions = vec![remote_row("h1", false, false)];
+    set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
     state.agents.insert(None, vec![detected("local", "%1")]);
     state
@@ -322,7 +344,7 @@ fn sidebar_layout_omits_local_header_in_compact() {
 #[test]
 fn sidebar_layout_keeps_local_header_and_placeholder_when_empty() {
     let mut empty = make_state(LayoutMode::Horizontal, false, 80, 24);
-    empty.sessions.clear();
+    empty.entries.retain(|e| !e.is_local());
     empty.clamp_projects_focus();
     let layout = empty.sidebar_layout(ViewMode::Expanded);
     assert!(
@@ -423,7 +445,7 @@ fn sync_remote_forward_health_mirrors_host_status() {
             host: "h1".into(),
             forwards: vec![r_spec.clone()],
         }];
-        state.remote_sessions = vec![row];
+        set_remote(&mut state, vec![row]);
         state.sync_remote_forward_health();
         assert_eq!(state.forward_health.get(&key).copied(), Some(expected));
     }
@@ -467,7 +489,7 @@ fn vertical_tabs_hit_test_remote_sessions() {
     // index (local_count + remote_idx == 2), and that index decodes back
     // to the remote row for switch/menu dispatch.
     let mut state = make_state(LayoutMode::Vertical, true, 120, 40);
-    state.remote_sessions = vec![remote_row("h1", false, false)];
+    set_remote(&mut state, vec![remote_row("h1", false, false)]);
 
     // Tab columns (bordered, leading pad 1): alpha (1..9), beta (10..17),
     // h1:s (18..25). Probe a column inside the remote tab, offset by the
@@ -475,13 +497,9 @@ fn vertical_tabs_hit_test_remote_sessions() {
     let hit = state.session_at_col(1 + 20, 1);
     assert_eq!(hit, Some(2));
 
-    match state.session_target(FocusTarget(hit.unwrap())) {
-        Some(SessionTargetRef::Remote(row)) => {
-            assert_eq!(row.host, "h1");
-            assert_eq!(row.name, "s");
-        }
-        other => panic!("expected remote target, got {other:?}"),
-    }
+    let entry = state.entry_at(FocusTarget(hit.unwrap())).unwrap();
+    assert_eq!(entry.host.as_deref(), Some("h1"));
+    assert_eq!(entry.name, "s");
 }
 
 #[test]
@@ -668,7 +686,7 @@ fn confirm_kill_name_resolves_remote_focused_row() {
     // local row). The name must come from whichever store the focused row
     // lives in.
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.remote_sessions = vec![remote_row("h1", false, false)]; // named "s"
+    set_remote(&mut state, vec![remote_row("h1", false, false)]); // named "s"
                                                                   // Flat index 2 == local_count(2) + remote_idx(0): the remote row.
     state.focused = 2;
     state.overlay.confirm_kill = true;
@@ -686,7 +704,7 @@ fn confirm_kill_name_resolves_local_focused_row() {
 #[test]
 fn confirm_kill_name_none_when_not_pending() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.remote_sessions = vec![remote_row("h1", false, false)];
+    set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.focused = 2;
     // No pending kill -> no name regardless of what's focused.
     assert_eq!(state.confirm_kill_name(), None);
@@ -715,7 +733,7 @@ fn expanded_local_group_shows_rows() {
 fn focus_skips_collapsed_remote_group() {
     // Layout: 2 local rows (idx 0,1), then host h1 (idx 2). Collapse local.
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.remote_sessions = vec![remote_row("h1", false, false)];
+    set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
     state.collapsed_sections.insert(None);
 
@@ -728,7 +746,7 @@ fn focus_skips_collapsed_remote_group() {
 #[test]
 fn section_key_of_focus_maps_local_and_remote() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.remote_sessions = vec![remote_row("h1", false, false)];
+    set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
     assert_eq!(state.section_key_of_focus(0), None); // local
     assert_eq!(state.section_key_of_focus(1), None); // local
@@ -833,26 +851,127 @@ fn session_indexing_matches_direct_storage_after_filtered_removal() {
     // `sessions`, so removing it must leave the flat focus index decoding
     // straight into `sessions` (local) then `remote_sessions`, unchanged.
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.sessions = vec![make_session("a"), make_session("b"), make_session("c")];
-    state.session_order = state.sessions.iter().map(|s| s.name.clone()).collect();
-    state.remote_sessions = vec![remote_row("h1", false, false)];
+    state.entries = vec![make_session("a"), make_session("b"), make_session("c")];
+    state.session_order = state.entries.iter().map(|s| s.name.clone()).collect();
+    set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
 
-    // Local rows occupy 0..sessions.len(); each flat index resolves to the
-    // session at that exact position (the old `sessions[filtered[i]]`).
+    // Local rows occupy the front of `entries`; each flat index resolves to
+    // the entry at that exact position.
     for (i, expected) in ["a", "b", "c"].iter().enumerate() {
-        match state.session_target(FocusTarget(i)) {
-            Some(SessionTargetRef::Local(row)) => assert_eq!(&row.name, expected),
-            other => panic!("flat index {i} should be local {expected}, got {other:?}"),
-        }
+        let entry = state.entry_at(FocusTarget(i)).unwrap();
+        assert!(entry.is_local(), "flat index {i} should be local");
+        assert_eq!(&entry.name, expected);
         assert_eq!(state.focusable_index_for(None, expected), Some(i));
     }
-    // Remote rows follow at sessions.len()..
-    let remote_flat = state.sessions.len();
-    match state.session_target(FocusTarget(remote_flat)) {
-        Some(SessionTargetRef::Remote(row)) => assert_eq!(row.host, "h1"),
-        other => panic!("flat index {remote_flat} should be remote h1, got {other:?}"),
-    }
+    // Remote rows follow the local block.
+    let remote_flat = state.local_count();
+    let entry = state.entry_at(FocusTarget(remote_flat)).unwrap();
+    assert_eq!(entry.host.as_deref(), Some("h1"));
     assert_eq!(state.focusable_index_for(Some("h1"), "s"), Some(remote_flat));
     assert_eq!(state.focusable_count(), 4);
+}
+
+#[test]
+fn flat_index_decodes_to_host_and_kind() {
+    // The unified-store decode: a flat focus index resolves straight to the
+    // entry, and host/kind are read off it (no `idx - local_count` math).
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24); // alpha, beta
+    set_remote(
+        &mut state,
+        vec![
+            remote_row("h", false, false),  // Live
+            remote_row("d", true, false),   // Unreachable
+            SessionEntry {
+                host: Some("e".into()),
+                name: String::new(),
+                dir: String::new(),
+                kind: SessionKind::NoSessions,
+            },
+        ],
+    );
+
+    // 0,1 local; 2 remote Live; 3 remote Unreachable; 4 remote NoSessions.
+    let e0 = state.entry_at(FocusTarget(0)).unwrap();
+    assert!(e0.is_local() && e0.is_attachable());
+
+    let e2 = state.entry_at(FocusTarget(2)).unwrap();
+    assert_eq!(e2.host.as_deref(), Some("h"));
+    assert!(e2.is_attachable());
+
+    let e3 = state.entry_at(FocusTarget(3)).unwrap();
+    assert_eq!(e3.host.as_deref(), Some("d"));
+    assert_eq!(e3.kind, SessionKind::Unreachable);
+    assert!(!e3.is_attachable());
+
+    let e4 = state.entry_at(FocusTarget(4)).unwrap();
+    assert_eq!(e4.kind, SessionKind::NoSessions);
+    assert!(!e4.is_attachable());
+
+    assert!(state.entry_at(FocusTarget(5)).is_none());
+    // Section key reads off the entry's host directly.
+    assert_eq!(state.section_key_of_focus(0), None);
+    assert_eq!(state.section_key_of_focus(2), Some("h".to_string()));
+}
+
+#[test]
+fn kill_policy_over_entries_guards_placeholder_and_last_remote() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24); // 2 locals
+    set_remote(
+        &mut state,
+        vec![
+            SessionEntry {
+                host: Some("e".into()),
+                name: String::new(),
+                dir: String::new(),
+                kind: SessionKind::NoSessions,
+            }, // flat 2: placeholder
+            remote_row("solo", false, false), // flat 3: host "solo"'s only live session
+            remote_row("pair", false, false), // flat 4
+            remote_row("pair", false, false), // flat 5 (sibling)
+        ],
+    );
+    // Give the two "pair" rows distinct names so they're two real sessions.
+    state.entries[4].name = "p1".into();
+    state.entries[5].name = "p2".into();
+
+    let blocked = |s: &AppState, i: usize| {
+        s.kill_blocked_reason(s.entry_at(FocusTarget(i)).unwrap())
+    };
+    assert_eq!(blocked(&state, 2), Some("no session to kill")); // placeholder
+    assert_eq!(blocked(&state, 3), Some("last session on host")); // solo
+    assert_eq!(blocked(&state, 4), None); // pair has a sibling
+    assert_eq!(blocked(&state, 0), None); // two locals: killable
+}
+
+#[test]
+fn no_sessions_name_is_a_normal_live_session_now() {
+    // Sentinel removal: a real session literally named "(no sessions)" is a
+    // normal Live entry — attachable, killable, and never treated as a
+    // placeholder (the magic-name special-casing is gone).
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24); // 2 locals
+    set_remote(
+        &mut state,
+        vec![
+            SessionEntry {
+                host: Some("h".into()),
+                name: crate::state::NO_SESSIONS_LABEL.to_string(),
+                dir: "/tmp".into(),
+                kind: SessionKind::Live {
+                    is_current: false,
+                    idle_seconds: None,
+                },
+            }, // flat 2
+            remote_row("h", false, false), // flat 3 (sibling so it isn't "last on host")
+        ],
+    );
+    let entry = state.entry_at(FocusTarget(2)).unwrap();
+    assert_eq!(entry.name, crate::state::NO_SESSIONS_LABEL);
+    assert!(entry.is_attachable(), "a real session is attachable");
+    assert_eq!(
+        state.kill_blocked_reason(entry),
+        None,
+        "a real session named '(no sessions)' is killable, not a placeholder"
+    );
+    assert!(state.focused_remote_placeholder().is_none() || state.focused != 2);
 }

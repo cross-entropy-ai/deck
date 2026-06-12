@@ -1,9 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::keybindings::Command;
-use crate::state::{
-    AppState, FocusMode, MainView, Modal, PfField, PortForwardOverlay, SessionTargetRef,
-};
+use crate::state::{AppState, FocusMode, MainView, Modal, PfField, PortForwardOverlay};
 
 use super::{
     Action, AddRemoteAction, MenuAction, NewSessionAction, PfAction, SettingsAction, SummaryAction,
@@ -172,8 +170,8 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         // Port-forward is a per-host/session action — Projects tab only.
         if !state.agents_tab_active() {
             if let Some(target) = state.focus_target() {
-                if let Some(SessionTargetRef::Remote(r)) = state.session_target(target) {
-                    return Action::Pf(PfAction::Open(r.host.clone()));
+                if let Some(host) = state.entry_at(target).and_then(|e| e.host.clone()) {
+                    return Action::Pf(PfAction::Open(host));
                 }
             }
         }

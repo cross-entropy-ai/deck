@@ -5,7 +5,7 @@ use crate::state::{
     KillRequest,
     LayoutMode, MainView, MenuItem, MenuKind, PfAddForm, PfField, PortForwardOverlay,
     RemoteSwitchRequest,
-    RenameRequest, RenameState, SessionTargetRef, SideEffect, SidebarTab, ViewMode,
+    RenameRequest, RenameState, SideEffect, SidebarTab, ViewMode,
 };
 use crate::app::settings::SETTING_ROWS;
 use crate::theme::THEMES;
@@ -32,31 +32,34 @@ fn close_settings_page(state: &mut AppState) {
 
 /// Fill the appropriate `SideEffect` field based on the currently
 /// focused row — `switch_session` for a local row, `switch_remote`
-/// for a remote one. Local-vs-remote dispatch lives in
-/// `AppState::session_target`; every action that needs to route by
-/// origin goes through it instead of taking apart the flat focus
-/// index itself.
+/// for a remote one. Local-vs-remote dispatch reads `entry.host` off the
+/// focused `SessionEntry` (resolved via `AppState::entry_at`); every action
+/// that routes by origin reads the entry instead of taking apart the flat
+/// focus index itself.
 fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) -> bool {
     let Some(target) = state.focus_target() else {
         return false;
     };
-    match state.session_target(target) {
-        Some(SessionTargetRef::Local(row)) => {
-            fx.switch_session(row.name.clone());
+    match state.entry_at(target) {
+        Some(entry) if entry.is_local() => {
+            fx.switch_session(entry.name.clone());
             true
         }
-        // Synthetic placeholder rows (loading, unreachable, or the
+        // These arms are only reached for non-local entries (the `is_local`
+        // arm above caught locals), and a non-local entry always has
+        // `host = Some` — locals are the only entries built as `host: None`.
+        // Synthetic placeholder rows (connecting, unreachable, or the
         // "no sessions" marker) have no real session to switch to. Skip
         // silently so a click doesn't fire a doomed remote switch.
-        Some(SessionTargetRef::Remote(row)) if row.is_attachable_session() => {
+        Some(entry) if entry.is_attachable() => {
             fx.switch_remote(RemoteSwitchRequest {
-                host: row.host.clone(),
-                name: row.name.clone(),
+                host: entry.host.clone().expect("non-local entry has a host"),
+                name: entry.name.clone(),
             });
             true
         }
-        Some(SessionTargetRef::Remote(row)) => {
-            fx.show_remote_placeholder(row.host.clone());
+        Some(entry) => {
+            fx.show_remote_placeholder(entry.host.clone().expect("non-local entry has a host"));
             false
         }
         None => false,
@@ -199,8 +202,8 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // placeholder row, a host's last live session, or the last local
             // session. Compute the verdict, then drop the borrow before
             // mutating the overlay.
-            let allowed = match state.session_target(target) {
-                Some(tgt) => state.can_kill(&tgt),
+            let allowed = match state.entry_at(target) {
+                Some(entry) => state.can_kill(entry),
                 None => false,
             };
             if allowed {
@@ -216,22 +219,26 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // greys the menu's "Kill" also gates the actual kill, so a stale
             // or forced confirm can't fire on a placeholder, a host's last
             // session, or the last local session.
-            let allowed = match state.session_target(target) {
-                Some(tgt) => state.can_kill(&tgt),
+            let allowed = match state.entry_at(target) {
+                Some(entry) => state.can_kill(entry),
                 None => false,
             };
             if !allowed {
                 return fx;
             }
-            match state.session_target(target) {
-                Some(SessionTargetRef::Local(_)) => {
-                    let Some(row) = state.sessions.get(state.focused) else {
-                        return fx;
-                    };
-                    let name = row.name.clone();
-                    let killing_current = row.is_current;
+            let Some(entry) = state.entry_at(target) else {
+                return fx;
+            };
+            match entry.host.clone() {
+                None => {
+                    let name = entry.name.clone();
+                    let killing_current = entry.is_current();
+                    // Locals occupy the front of `entries`; the cursor is on
+                    // a local row here (host == None), so its neighbors are
+                    // also local. Clamp the neighbor search to the local block.
+                    let local_count = state.local_count();
 
-                    let next_focused = if state.focused + 1 < state.sessions.len() {
+                    let next_focused = if state.focused + 1 < local_count {
                         state.focused
                     } else {
                         state.focused.saturating_sub(1)
@@ -240,26 +247,22 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     // Pre-switch off the doomed session only when it's the
                     // one deck is attached to. Killing a *non-current* row
                     // must leave the main view (local or remote) where it is
-                    // — see KillRequest.switch_to. The neighbor and the
-                    // kill guard (`can_kill`) both read `sessions` now, so
-                    // they pick from the same list (was: guard over
-                    // `sessions`, pre-switch over `filtered` — safe only
-                    // while the two coincided, which they always did).
+                    // — see KillRequest.switch_to.
                     let switch_to = if killing_current {
-                        let alt_idx = if state.focused + 1 < state.sessions.len() {
+                        let alt_idx = if state.focused + 1 < local_count {
                             Some(state.focused + 1)
                         } else if state.focused > 0 {
                             Some(state.focused - 1)
                         } else {
                             None
                         };
-                        alt_idx.map(|i| state.sessions[i].name.clone())
+                        alt_idx.and_then(|i| state.entries.get(i)).map(|e| e.name.clone())
                     } else {
                         None
                     };
 
                     state.session_order.retain(|n| n != &name);
-                    state.focused = next_focused.min(state.sessions.len().saturating_sub(1));
+                    state.focused = next_focused.min(local_count.saturating_sub(1));
 
                     fx.kill_session(KillRequest {
                         name,
@@ -268,9 +271,8 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     });
                     fx.refresh_sessions();
                 }
-                Some(SessionTargetRef::Remote(row)) => {
-                    let name = row.name.clone();
-                    let host = row.host.clone();
+                Some(host) => {
+                    let name = entry.name.clone();
                     fx.kill_session(KillRequest {
                         name,
                         host: Some(host),
@@ -280,7 +282,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     });
                     fx.refresh_sessions();
                 }
-                None => {}
             }
         }
         Action::CancelKill => {
@@ -292,7 +293,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // to disk) and clear any session rows for it so the sidebar
             // updates before the next refresh round lands.
             state.config_remotes.retain(|r| r.host != host);
-            state.remote_sessions.retain(|s| s.host != host);
+            state.entries.retain(|e| e.host.as_deref() != Some(host.as_str()));
             // Clamp the Projects cursor against the Projects row space.
             state.clamp_projects_focus();
             state.clamp_agent_focus();
@@ -304,40 +305,36 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if state.agents_tab_active() {
                 return fx;
             }
-            let local_count = state.sessions.len();
             // Remote row: reorder only within the same host's contiguous
             // block (hosts can't interleave). Swap with the adjacent row in
             // `direction` if it's the same host and a real session; persist
-            // that host's new order to its tmux server over ssh.
-            if state.focused >= local_count {
-                let idx = state.focused - local_count;
-                let len = state.remote_sessions.len();
-                let Some(row) = state.remote_sessions.get(idx) else {
-                    return fx;
-                };
-                if !row.is_attachable_session() {
+            // that host's new order to its tmux server over ssh. The flat
+            // `focused` index is a direct index into `entries`.
+            let idx = state.focused;
+            let len = state.entries.len();
+            let Some(entry) = state.entries.get(idx) else {
+                return fx;
+            };
+            if let Some(host) = entry.host.clone() {
+                if !entry.is_attachable() {
                     return fx;
                 }
-                let host = row.host.clone();
                 let neighbor = idx as i32 + direction;
                 if neighbor < 0 || neighbor as usize >= len {
                     return fx;
                 }
                 let neighbor = neighbor as usize;
-                let n = &state.remote_sessions[neighbor];
-                if n.host != host || !n.is_attachable_session() {
+                let n = &state.entries[neighbor];
+                if n.host.as_deref() != Some(host.as_str()) || !n.is_attachable() {
                     return fx;
                 }
-                state.remote_sessions.swap(idx, neighbor);
-                state.focused = local_count + neighbor;
+                state.entries.swap(idx, neighbor);
+                state.focused = neighbor;
                 fx.save_remote_session_order(host);
                 return fx;
             }
 
-            let Some(row) = state.sessions.get(state.focused) else {
-                return fx;
-            };
-            let name = row.name.clone();
+            let name = entry.name.clone();
             if let Some(pos) = state.session_order.iter().position(|n| n == &name) {
                 let new_pos = (pos as i32 + direction)
                     .clamp(0, state.session_order.len() as i32 - 1)
@@ -346,8 +343,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     state.session_order.swap(pos, new_pos);
                     state.apply_order();
                     state.clamp_projects_focus();
-                    if let Some(new_focused) =
-                        state.sessions.iter().position(|s| s.name == name)
+                    if let Some(new_focused) = state
+                        .entries
+                        .iter()
+                        .position(|e| e.is_local() && e.name == name)
                     {
                         state.focused = new_focused;
                     }
@@ -364,11 +363,15 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             let Some(target) = state.focus_target() else {
                 return fx;
             };
-            let (name, host) = match state.session_target(target) {
-                Some(SessionTargetRef::Local(row)) => (row.name.clone(), None),
-                Some(SessionTargetRef::Remote(row)) => (row.name.clone(), Some(row.host.clone())),
-                None => return fx,
+            let Some(entry) = state.entry_at(target) else {
+                return fx;
             };
+            // Don't rename a synthetic placeholder row (no real session).
+            if !entry.is_attachable() {
+                return fx;
+            }
+            let name = entry.name.clone();
+            let host = entry.host.clone();
             state.overlay.renaming = Some(RenameState::new(name.clone(), name, host));
         }
         Action::RenameInputKey(key) => {
@@ -379,12 +382,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::RenameConfirm => {
             if let Some(r) = state.overlay.renaming.take() {
                 let new_name = textarea_line(&r.input).trim().to_string();
-                // Skip no-op and reserved placeholder names (the latter
-                // would make a real session look like a synthetic row).
-                if !new_name.is_empty()
-                    && new_name != r.original_name
-                    && !crate::state::is_reserved_session_name(&new_name)
-                {
+                // Skip no-op renames. With the unified store, "(no sessions)"
+                // is no longer a reserved sentinel — a real session may carry
+                // any name.
+                if !new_name.is_empty() && new_name != r.original_name {
                     fx.rename_session(RenameRequest {
                         old_name: r.original_name,
                         new_name,
@@ -930,10 +931,10 @@ fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffect {
             // subsequent keyboard actions (or menu confirmations)
             // operate on it.
             state.focused = target.0;
-            let kind = match state.session_target(target) {
-                Some(ref tgt) => MenuKind::Session {
+            let kind = match state.entry_at(target) {
+                Some(entry) => MenuKind::Session {
                     focus: target,
-                    disabled: session_menu_disabled(tgt, &state.remote_sessions),
+                    disabled: session_menu_disabled(entry, &state.entries),
                 },
                 // Index points outside any row — treat as a global
                 // right-click. Shouldn't happen since mouse hit-test
@@ -1378,10 +1379,9 @@ fn apply_pf_task_result(
             fx.save_config();
         }
         OpKind::Master(_) if !ok => {
-            for row in state.remote_sessions.iter_mut() {
-                if row.host == host {
-                    row.unreachable = true;
-                    row.loading = false;
+            for entry in state.entries.iter_mut() {
+                if entry.host.as_deref() == Some(host) {
+                    entry.kind = crate::state::SessionKind::Unreachable;
                 }
             }
         }

@@ -99,7 +99,7 @@ fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Sess
         &["tmux", "list-sessions", "-F", SESSION_LIST_FORMAT_SSH],
     ) {
         // No window-activity probe here, unlike the local path: nothing
-        // reads remote activity (`RemoteSessionRow` renders no idle badge),
+        // reads remote activity (remote `SessionEntry`s carry idle = None),
         // so the extra `list-windows -a` ssh roundtrip per host per refresh
         // tick would be pure waste. Rows parse with `activity = 0`.
         Ok(raw) => Some(parse_sessions(&raw, &HashMap::new())),

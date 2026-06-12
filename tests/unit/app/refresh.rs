@@ -1,24 +1,35 @@
 use super::{hosts_needing_respawn, mark_connecting_rows};
-use crate::state::{RemoteSessionRow, REMOTE_NO_SESSIONS_LABEL};
+use crate::state::{SessionEntry, SessionKind};
 
-fn row(host: &str, unreachable: bool, loading: bool) -> RemoteSessionRow {
-    RemoteSessionRow {
-        host: host.to_string(),
+fn kind_for(unreachable: bool, loading: bool) -> SessionKind {
+    if unreachable {
+        SessionKind::Unreachable
+    } else if loading {
+        SessionKind::Connecting
+    } else {
+        SessionKind::Live {
+            is_current: false,
+            idle_seconds: None,
+        }
+    }
+}
+
+fn row(host: &str, unreachable: bool, loading: bool) -> SessionEntry {
+    SessionEntry {
+        host: Some(host.to_string()),
         name: "s".to_string(),
         dir: "/tmp".to_string(),
-        unreachable,
-        loading,
+        kind: kind_for(unreachable, loading),
     }
 }
 
 /// The synthetic row for a reachable host with no tmux server up.
-fn no_sessions_row(host: &str) -> RemoteSessionRow {
-    RemoteSessionRow {
-        host: host.to_string(),
-        name: REMOTE_NO_SESSIONS_LABEL.to_string(),
+fn no_sessions_row(host: &str) -> SessionEntry {
+    SessionEntry {
+        host: Some(host.to_string()),
+        name: String::new(),
         dir: String::new(),
-        unreachable: false,
-        loading: false,
+        kind: SessionKind::NoSessions,
     }
 }
 
@@ -70,7 +81,7 @@ fn no_sessions_row_is_never_marked_connecting() {
     // "no sessions" placeholder must not flip to the connecting state.
     let mut rows = vec![no_sessions_row("empty")];
     mark_connecting_rows(&mut rows, |_| true);
-    assert!(!rows[0].loading);
+    assert_eq!(rows[0].kind, SessionKind::NoSessions);
 }
 
 #[test]
@@ -78,15 +89,23 @@ fn mark_connecting_rows_reflects_pty_liveness() {
     // The divider should stay "connecting" while the PTY reconnects, and
     // only show "connected" once the pane is actually live.
     let mut rows = vec![
-        row("conn", false, false), // PTY still connecting -> loading (yellow)
-        row("up", false, false),   // PTY connected -> stays not-loading (green)
+        row("conn", false, false), // PTY still connecting -> Connecting (yellow)
+        row("up", false, false),   // PTY connected -> stays Live (green)
         row("down", true, false),  // unreachable -> untouched (red)
     ];
     mark_connecting_rows(&mut rows, |h| h == "conn");
-    assert!(rows[0].loading, "connecting host should show as loading");
-    assert!(!rows[1].loading, "connected host should stay not-loading");
+    assert_eq!(
+        rows[0].kind,
+        SessionKind::Connecting,
+        "connecting host should show as connecting"
+    );
     assert!(
-        rows[2].unreachable && !rows[2].loading,
+        matches!(rows[1].kind, SessionKind::Live { .. }),
+        "connected host should stay live"
+    );
+    assert_eq!(
+        rows[2].kind,
+        SessionKind::Unreachable,
         "unreachable row untouched"
     );
 }

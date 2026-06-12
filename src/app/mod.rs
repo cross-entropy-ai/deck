@@ -200,14 +200,13 @@ impl App {
         // `@host` group with a "(connecting...)" row from the very
         // first frame — no waiting for the slow ssh+tmux roundtrip on
         // startup. The first remote refresh update overwrites these.
-        state.remote_sessions = remotes
+        state.entries = remotes
             .iter()
-            .map(|host| crate::state::RemoteSessionRow {
-                host: host.clone(),
+            .map(|host| crate::state::SessionEntry {
+                host: Some(host.clone()),
                 name: String::new(),
                 dir: String::new(),
-                unreachable: false,
-                loading: true,
+                kind: crate::state::SessionKind::Connecting,
             })
             .collect();
 

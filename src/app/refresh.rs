@@ -1,5 +1,5 @@
 use crate::refresh::{RefreshRequest, RefreshUpdate, RemoteSnapshotRow, SnapshotRow};
-use crate::state::{RemoteSessionRow, SessionRow};
+use crate::state::{SessionEntry, SessionKind};
 
 use super::App;
 
@@ -89,7 +89,7 @@ impl App {
         // emits ≥1 row per host it queried, so a configured host absent from
         // this map simply wasn't in this round's query list — its list was
         // captured before the host was added.
-        let mut fresh_by_host: std::collections::HashMap<String, Vec<RemoteSessionRow>> =
+        let mut fresh_by_host: std::collections::HashMap<String, Vec<SessionEntry>> =
             std::collections::HashMap::new();
         for r in rows {
             if !configured.contains(r.host.as_str()) {
@@ -98,28 +98,31 @@ impl App {
             fresh_by_host
                 .entry(r.host.clone())
                 .or_default()
-                .push(RemoteSessionRow {
-                    host: r.host,
+                .push(SessionEntry {
+                    host: Some(r.host),
                     name: r.name,
                     dir: r.dir,
-                    unreachable: r.unreachable,
-                    loading: false,
+                    kind: r.kind,
                 });
         }
 
-        // Prior rows, kept so an un-queried configured host retains its
-        // current row (e.g. a just-added host's optimistic "(connecting…)"
+        // Prior remote rows, kept so an un-queried configured host retains
+        // its current row (e.g. a just-added host's optimistic "(connecting…)"
         // placeholder) instead of blinking out until a snapshot covering it
-        // lands.
-        let mut prev_by_host: std::collections::HashMap<String, Vec<RemoteSessionRow>> =
+        // lands. The local block (host == None) is preserved untouched.
+        let mut prev_by_host: std::collections::HashMap<String, Vec<SessionEntry>> =
             std::collections::HashMap::new();
-        for row in std::mem::take(&mut self.state.remote_sessions) {
-            prev_by_host.entry(row.host.clone()).or_default().push(row);
+        let mut local: Vec<SessionEntry> = Vec::new();
+        for entry in std::mem::take(&mut self.state.entries) {
+            match entry.host.clone() {
+                None => local.push(entry),
+                Some(host) => prev_by_host.entry(host).or_default().push(entry),
+            }
         }
 
         // Rebuild in config order: this round's rows when it queried the host,
-        // else the host's previous rows.
-        self.state.remote_sessions = self
+        // else the host's previous rows. Local rows stay first.
+        let remote_block = self
             .state
             .config_remotes
             .iter()
@@ -128,8 +131,8 @@ impl App {
                     .remove(&r.host)
                     .or_else(|| prev_by_host.remove(&r.host))
             })
-            .flatten()
-            .collect();
+            .flatten();
+        self.state.entries = local.into_iter().chain(remote_block).collect();
         // Focus may have been parked on a placeholder row that just
         // disappeared (e.g. host went from 1 loading placeholder to
         // 3 real sessions, or down to 0). Clamp inside the new range.
@@ -141,7 +144,7 @@ impl App {
         // sessions silently no-ops until restart, since the PTY is
         // otherwise only spawned at startup. `Connecting` hosts are skipped
         // so an in-flight spawn isn't duplicated.
-        let to_respawn = hosts_needing_respawn(&self.state.remote_sessions, |host| {
+        let to_respawn = hosts_needing_respawn(&self.state.entries, |host| {
             self.remote.is_connected_or_connecting(host)
         });
         for host in to_respawn {
@@ -157,7 +160,7 @@ impl App {
         // connecting too — switches to it silently no-op, so it must not read
         // as a usable "Connected" (green) host. The always-present reconnect
         // button on the divider is then the obvious recovery.
-        mark_connecting_rows(&mut self.state.remote_sessions, |host| {
+        mark_connecting_rows(&mut self.state.entries, |host| {
             self.remote.is_connecting(host) || self.remote.is_marker_stuck(host)
         });
 
@@ -201,15 +204,22 @@ impl App {
             self.state.session_order = ranked.into_iter().map(|r| r.name.clone()).collect();
         }
 
-        self.state.sessions = rows
+        // Rebuild only the local block (host == None); the remote block
+        // (host == Some) is owned by `apply_remote` and preserved here.
+        let remote_block: Vec<SessionEntry> = std::mem::take(&mut self.state.entries)
             .into_iter()
-            .map(|r| SessionRow {
-                is_current: r.name == current,
-                name: r.name,
-                dir: r.dir,
-                idle_seconds: r.idle_seconds,
-            })
+            .filter(|e| !e.is_local())
             .collect();
+        let local_block = rows.into_iter().map(|r| SessionEntry {
+            host: None,
+            kind: SessionKind::Live {
+                is_current: r.name == current,
+                idle_seconds: Some(r.idle_seconds),
+            },
+            name: r.name,
+            dir: r.dir,
+        });
+        self.state.entries = local_block.chain(remote_block).collect();
 
         self.state.sync_order();
         self.state.apply_order();
@@ -223,18 +233,10 @@ impl App {
             // the local section.
             let user_on_local = match self.state.focus_target() {
                 None => true,
-                Some(t) => matches!(
-                    self.state.session_target(t),
-                    Some(crate::state::SessionTargetRef::Local(_)) | None
-                ),
+                Some(t) => self.state.entry_at(t).is_none_or(|e| e.is_local()),
             };
             if user_on_local {
-                if let Some(pos) = self
-                    .state
-                    .sessions
-                    .iter()
-                    .position(|s| s.is_current)
-                {
+                if let Some(pos) = self.state.entries.iter().position(|e| e.is_current()) {
                     self.state.focused = pos;
                 }
             }
@@ -251,7 +253,7 @@ impl App {
         // empty state. A few-ms race remains — if the last session is killed
         // between this snapshot and `respawn_pty`'s own re-check, it recreates
         // one rather than staying empty; harmless and self-corrects next tick.
-        if !self.local_terminal.alive && !self.state.sessions.is_empty() {
+        if !self.local_terminal.alive && self.state.local_count() > 0 {
             let _ = self.respawn_pty();
         }
     }
@@ -261,32 +263,37 @@ impl App {
 /// PTY connection isn't live (`is_live` returns false) — i.e. the attach
 /// PTY dropped and needs rebuilding. Unreachable and still-loading rows
 /// are skipped; the result is deduplicated by host.
-fn hosts_needing_respawn(rows: &[RemoteSessionRow], is_live: impl Fn(&str) -> bool) -> Vec<String> {
+fn hosts_needing_respawn(entries: &[SessionEntry], is_live: impl Fn(&str) -> bool) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for row in rows {
-        // Only real sessions are attachable. A reachable host with no
+    for entry in entries {
+        // Only real remote sessions are attachable. A reachable host with no
         // tmux server ("(no sessions)") has nothing to attach to —
         // respawning its PTY just flaps it forever on "connecting…".
-        if !row.is_attachable_session() {
+        let Some(host) = entry.host.as_deref() else {
+            continue;
+        };
+        if !entry.is_attachable() {
             continue;
         }
-        if !is_live(&row.host) && !out.iter().any(|h| h == &row.host) {
-            out.push(row.host.clone());
+        if !is_live(host) && !out.iter().any(|h| h == host) {
+            out.push(host.to_string());
         }
     }
     out
 }
 
-/// Mark reachable rows as connecting (`loading = true`) while their host's
-/// attach PTY is still connecting (`is_connecting` is true), so the divider
-/// reflects real PTY liveness instead of flipping to "connected" the moment
-/// the probe succeeds. Unreachable rows are left as-is.
-fn mark_connecting_rows(rows: &mut [RemoteSessionRow], is_connecting: impl Fn(&str) -> bool) {
-    for row in rows {
-        // Only real sessions track PTY liveness. Synthetic placeholders
-        // (unreachable / "no sessions") have no PTY to be connecting.
-        if row.is_attachable_session() && is_connecting(&row.host) {
-            row.loading = true;
+/// Mark reachable remote rows as `Connecting` while their host's attach PTY
+/// is still connecting (`is_connecting` is true), so the divider reflects
+/// real PTY liveness instead of flipping to "connected" the moment the probe
+/// succeeds. Unreachable / no-session placeholders are left as-is.
+fn mark_connecting_rows(entries: &mut [SessionEntry], is_connecting: impl Fn(&str) -> bool) {
+    for entry in entries {
+        // Only real remote sessions track PTY liveness. Synthetic
+        // placeholders (unreachable / "no sessions") have no PTY to connect.
+        if let Some(host) = entry.host.as_deref() {
+            if entry.is_attachable() && is_connecting(host) {
+                entry.kind = SessionKind::Connecting;
+            }
         }
     }
 }

@@ -13,8 +13,6 @@ fn session_name_format_error(name: &str) -> Option<&'static str> {
         "" => Some("name required"),
         n if n.contains('.') => Some("name cannot contain '.'"),
         n if n.contains(':') => Some("name cannot contain ':'"),
-        // Placeholder labels would make a real session look synthetic.
-        n if crate::state::is_reserved_session_name(n) => Some("name is reserved"),
         _ => None,
     }
 }
@@ -77,27 +75,30 @@ impl App {
         match host {
             None => {
                 // Starting dir: focused session's dir if any, else $HOME.
+                // Starting dir: focused local row's dir if the cursor is on
+                // one, else $HOME. Remote focus falls through to $HOME.
                 let start_dir = self
                     .state
-                    .sessions
+                    .entries
                     .get(self.state.focused)
-                    .map(|s| s.dir.clone())
+                    .filter(|e| e.is_local())
+                    .map(|e| e.dir.clone())
                     .unwrap_or_else(|| {
                         crate::config::home_dir().to_string_lossy().into_owned()
                     });
                 let existing_names: Vec<String> =
-                    self.state.sessions.iter().map(|s| s.name.clone()).collect();
+                    self.state.local_entries().map(|e| e.name.clone()).collect();
                 NewSessionTarget {
                     host: None,
+                    existing_count: existing_names.len(),
                     start_dir,
-                    existing_count: self.state.sessions.len(),
                     existing_names,
                 }
             }
             Some(host) => {
                 let existing_names: Vec<String> =
-                    crate::state::attachable_on_host(&self.state.remote_sessions, host)
-                        .map(|r| r.name.clone())
+                    crate::state::attachable_on_host(&self.state.entries, Some(host))
+                        .map(|e| e.name.clone())
                         .collect();
                 NewSessionTarget {
                     host: Some(host.to_string()),
@@ -164,8 +165,8 @@ impl App {
         // the browsed path (it can't be stat'd locally — tmux fails
         // loudly if it's bad), and let the remote shell expand `~`.
         if let Some(host) = remote_host {
-            let existing = crate::state::attachable_on_host(&self.state.remote_sessions, &host)
-                .map(|r| r.name.as_str());
+            let existing = crate::state::attachable_on_host(&self.state.entries, Some(&host))
+                .map(|e| e.name.as_str());
             let err = validate_unique_session_name(&name, existing);
             if let Some(err) = err {
                 if let Some(ns) = self.state.overlay.new_session.as_mut() {
@@ -186,7 +187,9 @@ impl App {
         }
 
         // Validate name (local).
-        let existing = self.state.sessions.iter().map(|s| s.name.as_str());
+        let existing_names: Vec<String> =
+            self.state.local_entries().map(|e| e.name.clone()).collect();
+        let existing = existing_names.iter().map(String::as_str);
         if let Some(err) = validate_unique_session_name(&name, existing) {
             if let Some(ns) = self.state.overlay.new_session.as_mut() {
                 ns.error = Some(err.to_string());

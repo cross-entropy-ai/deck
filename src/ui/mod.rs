@@ -13,7 +13,7 @@ pub mod theme;
 pub mod widgets;
 
 use crate::keybindings::Keybindings;
-use crate::state::{RemoteSessionRow, SessionRow};
+use crate::state::{SessionEntry, SessionKind};
 
 pub use add_remote::draw_add_remote;
 pub use menu::draw_context_menu;
@@ -83,46 +83,40 @@ pub trait SidebarSession {
     }
 }
 
-impl SidebarSession for SessionRow {
+// One impl for the unified store. Origin comes from `host` (None = local,
+// Some = remote), activity from the `Live` kind's idle data (None when the
+// backend doesn't collect it — remote today), and loading/unreachable from
+// the placeholder kinds. The renderer never asks "is this remote?".
+impl SidebarSession for SessionEntry {
     fn origin(&self) -> SessionOrigin<'_> {
-        SessionOrigin::Local
+        match &self.host {
+            None => SessionOrigin::Local,
+            Some(host) => SessionOrigin::Remote { host },
+        }
     }
     fn name(&self) -> &str {
-        &self.name
+        // The placeholder display strings live here, derived from `kind`,
+        // not stored as magic session names. `Connecting` is special-cased
+        // by the renderer via `loading()` ("(connecting…)"), so its name is
+        // irrelevant; `Unreachable` / `NoSessions` paint their label.
+        match self.kind {
+            SessionKind::Unreachable => crate::state::UNREACHABLE_LABEL,
+            SessionKind::NoSessions => crate::state::NO_SESSIONS_LABEL,
+            SessionKind::Live { .. } | SessionKind::Connecting => &self.name,
+        }
     }
     fn dir(&self) -> &str {
         &self.dir
     }
     fn activity(&self) -> Option<SessionActivity> {
-        Some(SessionActivity {
-            idle_seconds: self.idle_seconds,
-        })
-    }
-}
-
-impl SidebarSession for RemoteSessionRow {
-    fn origin(&self) -> SessionOrigin<'_> {
-        SessionOrigin::Remote { host: &self.host }
-    }
-    fn name(&self) -> &str {
-        &self.name
-    }
-    fn dir(&self) -> &str {
-        &self.dir
-    }
-    // Remote refresh doesn't collect activity yet. Returning None
-    // (rather than fake Idle/0/false) means the renderer paints a
-    // neutral placeholder; once the refresh worker gathers real status
-    // we just return Some(...) here and the indicator/idle badge light
-    // up uniformly with local rows.
-    fn activity(&self) -> Option<SessionActivity> {
-        None
+        self.idle_seconds()
+            .map(|idle_seconds| SessionActivity { idle_seconds })
     }
     fn loading(&self) -> bool {
-        self.loading
+        matches!(self.kind, SessionKind::Connecting)
     }
     fn unreachable(&self) -> bool {
-        self.unreachable
+        matches!(self.kind, SessionKind::Unreachable)
     }
 }
 

@@ -2,30 +2,53 @@ use super::{
     apply_action, Action, MenuAction, NewSessionAction, PfAction, SettingsAction, SummaryAction,
 };
 use crate::state::{
-    AppState, FocusMode, LayoutMode, MainView, RemoteSessionRow, RenameState, SessionRow, ViewMode,
-    REMOTE_NO_SESSIONS_LABEL,
+    AppState, FocusMode, LayoutMode, MainView, RenameState, SessionEntry, SessionKind, ViewMode,
+    NO_SESSIONS_LABEL,
 };
 
-fn make_session(name: &str, idle: u64) -> SessionRow {
-    SessionRow {
+fn make_session(name: &str, idle: u64) -> SessionEntry {
+    SessionEntry {
+        host: None,
         name: name.to_string(),
         dir: format!("/tmp/{}", name),
-        is_current: false,
-        idle_seconds: idle,
+        kind: SessionKind::Live {
+            is_current: false,
+            idle_seconds: Some(idle),
+        },
+    }
+}
+
+/// Mark the entry at flat index `i` as the current local session.
+fn set_current(state: &mut AppState, i: usize) {
+    if let Some(e) = state.entries.get_mut(i) {
+        if let SessionKind::Live { is_current, .. } = &mut e.kind {
+            *is_current = true;
+        }
     }
 }
 
 fn make_test_state(n: usize) -> AppState {
     let mut state = AppState::new(120, 40);
-    state.sessions = (0..n)
+    state.entries = (0..n)
         .map(|i| make_session(&format!("sess-{}", i), 0))
         .collect();
-    if !state.sessions.is_empty() {
-        state.sessions[0].is_current = true;
-    }
-    state.session_order = state.sessions.iter().map(|s| s.name.clone()).collect();
+    set_current(&mut state, 0);
+    state.session_order = state.entries.iter().map(|s| s.name.clone()).collect();
     state.clamp_projects_focus();
     state
+}
+
+/// Append remote rows after the local block, preserving the unified store's
+/// "locals first, then remotes" flat order.
+fn set_remote(state: &mut AppState, rows: Vec<SessionEntry>) {
+    state.entries.retain(|e| e.is_local());
+    state.entries.extend(rows);
+}
+
+/// The remote rows of `entries` (host == Some), in order — the slice the
+/// old `remote_sessions` field exposed.
+fn remote_entries(state: &AppState) -> Vec<&SessionEntry> {
+    state.entries.iter().filter(|e| !e.is_local()).collect()
 }
 
 #[test]
@@ -67,14 +90,8 @@ fn focus_prev_stops_at_zero() {
 #[test]
 fn switch_project_on_remote_no_sessions_shows_placeholder() {
     let mut state = make_test_state(1);
-    state.remote_sessions.push(RemoteSessionRow {
-        host: "remote-a".into(),
-        name: REMOTE_NO_SESSIONS_LABEL.into(),
-        dir: String::new(),
-        unreachable: false,
-        loading: false,
-    });
-    state.focused = state.sessions.len();
+    state.entries.push(remote_row("remote-a", NO_SESSIONS_LABEL));
+    state.focused = state.local_count();
 
     let fx = apply_action(&mut state, Action::SwitchProject);
 
@@ -86,14 +103,8 @@ fn switch_project_on_remote_no_sessions_shows_placeholder() {
 #[test]
 fn sidebar_click_remote_no_sessions_does_not_refresh() {
     let mut state = make_test_state(1);
-    state.remote_sessions.push(RemoteSessionRow {
-        host: "remote-a".into(),
-        name: REMOTE_NO_SESSIONS_LABEL.into(),
-        dir: String::new(),
-        unreachable: false,
-        loading: false,
-    });
-    let target = state.sessions.len();
+    state.entries.push(remote_row("remote-a", NO_SESSIONS_LABEL));
+    let target = state.local_count();
 
     let mut fx = crate::state::SideEffect::default();
     fx.merge(apply_action(&mut state, Action::FocusIndex(target)));
@@ -165,10 +176,8 @@ fn kill_keyboard_blocked_on_remote_placeholder() {
     // Pressing `x` on a "(no sessions)" placeholder must not open the
     // confirm prompt — confirming would ssh `kill-session` a placeholder.
     let mut state = make_test_state(1);
-    state
-        .remote_sessions
-        .push(remote_row("remote-a", REMOTE_NO_SESSIONS_LABEL));
-    state.focused = state.sessions.len();
+    state.entries.push(remote_row("remote-a", NO_SESSIONS_LABEL));
+    state.focused = state.local_count();
     let fx = apply_action(&mut state, Action::KillSession);
     assert!(!state.overlay.confirm_kill);
     assert!(fx.first_kill_session().is_none());
@@ -178,8 +187,8 @@ fn kill_keyboard_blocked_on_remote_placeholder() {
 fn kill_keyboard_blocked_on_last_remote_session() {
     // The host's only live session: killing it would tear down its server.
     let mut state = make_test_state(1);
-    state.remote_sessions.push(remote_row("remote-a", "solo"));
-    state.focused = state.sessions.len();
+    state.entries.push(remote_row("remote-a", "solo"));
+    state.focused = state.local_count();
     apply_action(&mut state, Action::KillSession);
     assert!(!state.overlay.confirm_kill);
 }
@@ -189,9 +198,9 @@ fn kill_keyboard_allowed_on_remote_session_with_sibling() {
     // A host with more than one session can have one killed — make sure the
     // last-session guard doesn't over-block siblings.
     let mut state = make_test_state(1);
-    state.remote_sessions.push(remote_row("remote-a", "first"));
-    state.remote_sessions.push(remote_row("remote-a", "second"));
-    state.focused = state.sessions.len();
+    state.entries.push(remote_row("remote-a", "first"));
+    state.entries.push(remote_row("remote-a", "second"));
+    state.focused = state.local_count();
     apply_action(&mut state, Action::KillSession);
     assert!(state.overlay.confirm_kill);
 }
@@ -200,10 +209,8 @@ fn kill_keyboard_allowed_on_remote_session_with_sibling() {
 fn confirm_kill_blocked_on_remote_placeholder() {
     // Even a forced/stale confirm can't fire on a placeholder row.
     let mut state = make_test_state(1);
-    state
-        .remote_sessions
-        .push(remote_row("remote-a", REMOTE_NO_SESSIONS_LABEL));
-    state.focused = state.sessions.len();
+    state.entries.push(remote_row("remote-a", NO_SESSIONS_LABEL));
+    state.focused = state.local_count();
     state.overlay.confirm_kill = true;
     let fx = apply_action(&mut state, Action::ConfirmKill);
     assert!(fx.first_kill_session().is_none());
@@ -462,12 +469,32 @@ fn reorder_session_moves_up() {
     let mut state = make_test_state(3);
     state.focused = 1;
     let fx = apply_action(&mut state, Action::ReorderSession(-1));
-    assert_eq!(state.sessions[0].name, "sess-1");
-    assert_eq!(state.sessions[1].name, "sess-0");
+    assert_eq!(state.entries[0].name, "sess-1");
+    assert_eq!(state.entries[1].name, "sess-0");
     assert_eq!(state.focused, 0);
     // The new arrangement is persisted to tmux (@deck_order) so it
     // survives a restart.
     assert!(fx.has_save_session_order());
+}
+
+#[test]
+fn reorder_local_session_leaves_remotes_pinned_after_in_order() {
+    // Regression for the unified store: a local reorder must not perturb the
+    // remote block, which stays after all locals in its own order.
+    let mut state = make_test_state(3);
+    set_remote(&mut state, vec![remote_row("h", "ra"), remote_row("h", "rb")]);
+    state.focused = 1;
+    apply_action(&mut state, Action::ReorderSession(-1));
+    assert_eq!(state.entries[0].name, "sess-1");
+    assert_eq!(state.entries[1].name, "sess-0");
+    assert!(state.entries[..3].iter().all(|e| e.is_local()));
+    assert_eq!(
+        remote_entries(&state)
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["ra", "rb"],
+    );
 }
 
 #[test]
@@ -476,33 +503,50 @@ fn reorder_session_at_boundary_is_noop() {
     state.focused = 0;
     // Already at the top — moving up changes nothing and persists nothing.
     let fx = apply_action(&mut state, Action::ReorderSession(-1));
-    assert_eq!(state.sessions[0].name, "sess-0");
+    assert_eq!(state.entries[0].name, "sess-0");
     assert!(!fx.has_save_session_order());
 }
 
-fn remote_row(host: &str, name: &str) -> crate::state::RemoteSessionRow {
-    crate::state::RemoteSessionRow {
-        host: host.to_string(),
-        name: name.to_string(),
+fn remote_row(host: &str, name: &str) -> SessionEntry {
+    // A name matching the "(no sessions)" label builds the NoSessions
+    // placeholder (the call sites used to pass the magic label as a name);
+    // any other name is a real Live remote session.
+    let kind = if name == NO_SESSIONS_LABEL {
+        SessionKind::NoSessions
+    } else {
+        SessionKind::Live {
+            is_current: false,
+            idle_seconds: None,
+        }
+    };
+    SessionEntry {
+        host: Some(host.to_string()),
+        name: if matches!(kind, SessionKind::NoSessions) {
+            String::new()
+        } else {
+            name.to_string()
+        },
         dir: "/".to_string(),
-        unreachable: false,
-        loading: false,
+        kind,
     }
 }
 
 #[test]
 fn reorder_remote_session_swaps_within_host_group() {
     let mut state = make_test_state(2); // local sess-0, sess-1 (flat 0..1)
-    state.remote_sessions = vec![
-        remote_row("h", "a"),
-        remote_row("h", "b"),
-        remote_row("h2", "c"),
-    ];
+    set_remote(
+        &mut state,
+        vec![
+            remote_row("h", "a"),
+            remote_row("h", "b"),
+            remote_row("h2", "c"),
+        ],
+    );
     // Focus the first remote row (flat index = local_count + 0 = 2).
     state.focused = 2;
     let fx = apply_action(&mut state, Action::ReorderSession(1)); // move "a" down
-    assert_eq!(state.remote_sessions[0].name, "b");
-    assert_eq!(state.remote_sessions[1].name, "a");
+    assert_eq!(remote_entries(&state)[0].name, "b");
+    assert_eq!(remote_entries(&state)[1].name, "a");
     assert_eq!(state.focused, 3, "focus follows the moved row");
     assert_eq!(fx.first_save_remote_session_order(), Some("h"));
     // Local order is untouched.
@@ -512,17 +556,20 @@ fn reorder_remote_session_swaps_within_host_group() {
 #[test]
 fn reorder_remote_session_stops_at_host_boundary() {
     let mut state = make_test_state(2);
-    state.remote_sessions = vec![
-        remote_row("h", "a"),
-        remote_row("h", "b"),
-        remote_row("h2", "c"),
-    ];
+    set_remote(
+        &mut state,
+        vec![
+            remote_row("h", "a"),
+            remote_row("h", "b"),
+            remote_row("h2", "c"),
+        ],
+    );
     // Focus "b" — the last row of host h (flat 3). Moving it down would
     // cross into host h2's group, so it's a no-op.
     state.focused = 3;
     let fx = apply_action(&mut state, Action::ReorderSession(1));
-    assert_eq!(state.remote_sessions[1].name, "b");
-    assert_eq!(state.remote_sessions[2].name, "c");
+    assert_eq!(remote_entries(&state)[1].name, "b");
+    assert_eq!(remote_entries(&state)[2].name, "c");
     assert!(fx.first_save_remote_session_order().is_none());
 }
 
@@ -988,14 +1035,12 @@ fn pf_task_result_persists_forward_when_overlay_closed() {
 
 #[test]
 fn pf_task_result_marks_host_unreachable_on_master_failure() {
-    use crate::state::RemoteSessionRow;
     let mut state = make_test_state(0);
-    state.remote_sessions = vec![RemoteSessionRow {
-        host: "h1".into(),
+    state.entries = vec![SessionEntry {
+        host: Some("h1".into()),
         name: "session-a".into(),
         dir: "/tmp".into(),
-        unreachable: false,
-        loading: true,
+        kind: SessionKind::Connecting,
     }];
 
     crate::action::apply_action(
@@ -1008,12 +1053,12 @@ fn pf_task_result_marks_host_unreachable_on_master_failure() {
         }),
     );
 
-    let row = &state.remote_sessions[0];
-    assert!(
-        row.unreachable,
+    let row = &state.entries[0];
+    assert_eq!(
+        row.kind,
+        SessionKind::Unreachable,
         "host should be flagged unreachable after master failure"
     );
-    assert!(!row.loading, "loading should clear after master failure");
 }
 
 fn open_form_with_focus(
@@ -1167,7 +1212,6 @@ fn pf_add_input_blocks_whitespace_in_host_fields() {
 
 #[test]
 fn remove_remote_from_list_drops_host_and_signals_stop() {
-    use crate::state::RemoteSessionRow;
     let mut state = make_test_state(0);
     state.config_remotes = vec![
         crate::config::RemoteConfig {
@@ -1179,29 +1223,14 @@ fn remove_remote_from_list_drops_host_and_signals_stop() {
             forwards: vec![],
         },
     ];
-    state.remote_sessions = vec![
-        RemoteSessionRow {
-            host: "h1".into(),
-            name: "a".into(),
-            dir: "/".into(),
-            unreachable: false,
-            loading: false,
-        },
-        RemoteSessionRow {
-            host: "h2".into(),
-            name: "b".into(),
-            dir: "/".into(),
-            unreachable: false,
-            loading: false,
-        },
-    ];
+    state.entries = vec![remote_row("h1", "a"), remote_row("h2", "b")];
 
     let fx = crate::action::apply_action(&mut state, Action::RemoveRemoteFromList("h1".into()));
 
     assert_eq!(state.config_remotes.len(), 1);
     assert_eq!(state.config_remotes[0].host, "h2");
-    assert_eq!(state.remote_sessions.len(), 1);
-    assert_eq!(state.remote_sessions[0].host, "h2");
+    assert_eq!(remote_entries(&state).len(), 1);
+    assert_eq!(remote_entries(&state)[0].host.as_deref(), Some("h2"));
     assert!(fx.has_save_config());
     assert!(fx.has_refresh_sessions());
     assert_eq!(fx.first_remove_remote_host(), Some("h1"));
@@ -1249,20 +1278,19 @@ fn session_menu_has_no_switch_or_remove() {
 
 #[test]
 fn placeholder_remote_menu_disables_rename_and_kill() {
-    use crate::state::{
-        session_menu_disabled, MenuItem, RemoteSessionRow, SessionTargetRef,
-        REMOTE_NO_SESSIONS_LABEL, REMOTE_UNREACHABLE_LABEL,
-    };
-    for label in [REMOTE_NO_SESSIONS_LABEL, REMOTE_UNREACHABLE_LABEL] {
-        let row = RemoteSessionRow {
-            host: "h".into(),
-            name: label.into(),
+    use crate::state::{session_menu_disabled, MenuItem, SessionKind, UNREACHABLE_LABEL};
+    let cases = [
+        ("(no sessions)", SessionKind::NoSessions),
+        (UNREACHABLE_LABEL, SessionKind::Unreachable),
+    ];
+    for (label, kind) in cases {
+        let row = SessionEntry {
+            host: Some("h".into()),
+            name: String::new(),
             dir: String::new(),
-            unreachable: label == REMOTE_UNREACHABLE_LABEL,
-            loading: false,
+            kind,
         };
-        let disabled =
-            session_menu_disabled(&SessionTargetRef::Remote(&row), std::slice::from_ref(&row));
+        let disabled = session_menu_disabled(&row, std::slice::from_ref(&row));
         assert!(
             disabled.contains(&MenuItem::Rename),
             "{label}: Rename disabled"
@@ -1271,39 +1299,44 @@ fn placeholder_remote_menu_disables_rename_and_kill() {
     }
 }
 
-fn remote(host: &str, name: &str) -> crate::state::RemoteSessionRow {
-    crate::state::RemoteSessionRow {
-        host: host.into(),
+fn remote(host: &str, name: &str) -> SessionEntry {
+    SessionEntry {
+        host: Some(host.into()),
         name: name.into(),
         dir: "/srv".into(),
-        unreachable: false,
-        loading: false,
+        kind: SessionKind::Live {
+            is_current: false,
+            idle_seconds: None,
+        },
     }
 }
 
 #[test]
 fn remote_session_with_siblings_disables_nothing() {
-    use crate::state::{session_menu_disabled, SessionRow, SessionTargetRef};
+    use crate::state::session_menu_disabled;
     // Host "h" has two live sessions, so killing either is fine.
     let sessions = vec![remote("h", "work"), remote("h", "other")];
-    assert!(session_menu_disabled(&SessionTargetRef::Remote(&sessions[0]), &sessions).is_empty());
+    assert!(session_menu_disabled(&sessions[0], &sessions).is_empty());
 
-    let local = SessionRow {
+    let local = SessionEntry {
+        host: None,
         name: "s".into(),
         dir: "/".into(),
-        is_current: false,
-        idle_seconds: 0,
+        kind: SessionKind::Live {
+            is_current: false,
+            idle_seconds: Some(0),
+        },
     };
-    assert!(session_menu_disabled(&SessionTargetRef::Local(&local), &sessions).is_empty());
+    assert!(session_menu_disabled(&local, &sessions).is_empty());
 }
 
 #[test]
 fn last_remote_session_disables_kill_only() {
-    use crate::state::{session_menu_disabled, MenuItem, SessionTargetRef};
+    use crate::state::{session_menu_disabled, MenuItem};
     // "solo" is the only session on its host; a session on a *different*
     // host doesn't count toward it.
     let sessions = vec![remote("h", "solo"), remote("other", "x")];
-    let disabled = session_menu_disabled(&SessionTargetRef::Remote(&sessions[0]), &sessions);
+    let disabled = session_menu_disabled(&sessions[0], &sessions);
     assert!(
         disabled.contains(&MenuItem::Kill),
         "Kill disabled for last session"
@@ -1336,11 +1369,9 @@ fn focus_next_skips_collapsed_remote_group() {
     // "h2" (flat 4). Collapse "h"; from local row 1, FocusNext must jump
     // straight to the h2 row (flat 4), skipping the hidden h rows.
     let mut state = make_test_state(2);
-    state.remote_sessions = vec![
-        remote_row("h", "a"),
+    set_remote(&mut state, vec![remote_row("h", "a"),
         remote_row("h", "b"),
-        remote_row("h2", "c"),
-    ];
+        remote_row("h2", "c"),]);
     state.collapsed_sections.insert(Some("h".to_string()));
     state.focused = 1;
     apply_action(&mut state, Action::FocusNext);
@@ -1355,11 +1386,9 @@ fn toggle_section_collapse_leaves_focus_put() {
     // highlight is simply not drawn while hidden and returns on expand; j/k
     // step out to a visible row from there.
     let mut state = make_test_state(2);
-    state.remote_sessions = vec![
-        remote_row("h", "a"),
+    set_remote(&mut state, vec![remote_row("h", "a"),
         remote_row("h", "b"),
-        remote_row("h2", "c"),
-    ];
+        remote_row("h2", "c"),]);
     state.focused = 2;
     let fx = apply_action(&mut state, Action::ToggleSection(Some("h".to_string())));
     assert!(state.collapsed_sections.contains(&Some("h".to_string())));

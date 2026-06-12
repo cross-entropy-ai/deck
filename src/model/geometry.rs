@@ -192,8 +192,8 @@ pub enum SidebarItemData {
     /// A session row at the given flat index — matches the
     /// `FocusTarget` numbering: local rows first, then remotes. The
     /// renderer pairs this index with a `&[&dyn SidebarSession]` slice
-    /// built in render order; storage routing happens via
-    /// `AppState::session_target` in the action layer.
+    /// built in render order; it is a direct index into `AppState::entries`,
+    /// which the action layer reads via `AppState::entry_at`.
     Session { session_idx: usize },
     /// A focusable agent row in the Agents tab. `row_idx` indexes into
     /// `AppState::agent_rows()` (local agents first, then remote hosts in

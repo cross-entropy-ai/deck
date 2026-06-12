@@ -161,92 +161,117 @@ pub fn frame_rate_limit_label(fps: u16) -> &'static str {
 
 // --- Session data ---
 
+/// One row in the unified sidebar session store. Local and remote sessions
+/// share this single shape, keyed by `host` the deck way (`None` = the local
+/// tmux server, `Some(host)` = a remote one over ssh) — applying the repo's
+/// "one data type, key by `Option<String>` host" rule to what was its oldest
+/// exception (two parallel `SessionRow` + `RemoteSessionRow` stores stitched
+/// by flat-index arithmetic). `kind` carries activity for real sessions and
+/// replaces the old `loading`/`unreachable` flags and the magic placeholder
+/// names — see [`SessionKind`].
 #[derive(Debug, Clone)]
-pub struct SessionRow {
+pub struct SessionEntry {
+    /// `None` = local tmux server; `Some(host)` = a remote host over ssh.
+    pub host: Option<String>,
     pub name: String,
     pub dir: String,
-    pub is_current: bool,
-    pub idle_seconds: u64,
+    pub kind: SessionKind,
 }
 
-/// One tmux session living on a remote host. Modeled separately from
-/// `SessionRow` so the existing local-only invariants (session_order,
-/// notification ack maps, validate_session_name, kill/rename dispatch)
-/// don't have to grow an `origin` discriminator on every touchpoint.
-#[derive(Debug, Clone)]
-pub struct RemoteSessionRow {
-    pub host: String,
-    pub name: String,
-    pub dir: String,
-    /// True if reaching this host failed (timeout, auth error, etc.).
-    /// The row is still rendered but greyed out and the name column
-    /// shows a brief reason.
-    pub unreachable: bool,
-    /// True for the synthetic placeholder rows seeded at app startup,
-    /// before the first remote refresh round completes. Renders as a
-    /// muted "(connecting...)" so the user sees the group section
-    /// appear immediately even if the ssh+tmux query takes a few
-    /// seconds. Cleared (false) when a real refresh update lands.
-    pub loading: bool,
+/// What a [`SessionEntry`] represents. A `Live` row is a real attachable
+/// tmux session; the other variants are the synthetic status placeholders
+/// the sidebar shows for a remote group (one row per host) before/while a
+/// real session list is available. These replace the old
+/// `loading`/`unreachable` booleans *and* the `"(no sessions)"` /
+/// `"(unreachable)"` magic session names — so a real session literally named
+/// `(no sessions)` is no longer mistaken for a placeholder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionKind {
+    /// A real tmux session deck can attach to. `is_current` is tracked for
+    /// local sessions only (remote `is_current` was never tracked, so remote
+    /// `Live` rows carry `false`). `idle_seconds` is `None` when the backend
+    /// doesn't collect activity yet (remote today) — the renderer paints a
+    /// neutral placeholder rather than a misleading idle badge.
+    Live {
+        is_current: bool,
+        idle_seconds: Option<u64>,
+    },
+    /// Synthetic placeholder: the host's ssh+tmux query hasn't returned yet
+    /// (was `RemoteSessionRow.loading`). Renders muted "(connecting...)".
+    Connecting,
+    /// Synthetic placeholder: deck couldn't reach the host over ssh (was
+    /// `RemoteSessionRow.unreachable`). Renders greyed, "(unreachable)".
+    Unreachable,
+    /// Synthetic placeholder: the host responded but its tmux server isn't
+    /// up, so it has nothing to attach to (was the `"(no sessions)"` magic
+    /// name). Renders "(no sessions)".
+    NoSessions,
 }
 
-/// Synthetic row name for a reachable host whose tmux server isn't up
-/// (so it has no sessions to attach to). Distinct from `unreachable`:
-/// the host responded, it just has nothing running.
-pub const REMOTE_NO_SESSIONS_LABEL: &str = "(no sessions)";
-/// Synthetic row name for a host deck couldn't reach over ssh.
-pub const REMOTE_UNREACHABLE_LABEL: &str = "(unreachable)";
+/// Display label for the synthetic "(no sessions)" placeholder.
+pub const NO_SESSIONS_LABEL: &str = "(no sessions)";
+/// Display label for the synthetic "(unreachable)" placeholder.
+pub const UNREACHABLE_LABEL: &str = "(unreachable)";
 
-/// Whether `name` collides with a synthetic placeholder-row label. A real
-/// session so named would be mistaken for a placeholder (e.g. treated as
-/// non-attachable by `is_attachable_session`), so these are reserved and
-/// rejected when creating or renaming.
-pub fn is_reserved_session_name(name: &str) -> bool {
-    name == REMOTE_NO_SESSIONS_LABEL || name == REMOTE_UNREACHABLE_LABEL
-}
+impl SessionEntry {
+    /// Whether deck can attach a PTY to this entry — i.e. it is a real
+    /// (`Live`) session, not a synthetic Connecting/Unreachable/NoSessions
+    /// placeholder. The attach/respawn machinery must skip placeholders;
+    /// otherwise it spins forever trying to `tmux attach` a host with
+    /// nothing to attach to, leaving the row stuck on "connecting…".
+    pub fn is_attachable(&self) -> bool {
+        matches!(self.kind, SessionKind::Live { .. })
+    }
 
-impl RemoteSessionRow {
-    /// Whether deck can attach a PTY to this row. Synthetic status
-    /// placeholders — still loading, unreachable, or the "no sessions"
-    /// marker for a reachable but server-less host — are not real tmux
-    /// sessions. The attach/respawn machinery must skip them; otherwise
-    /// it spins forever trying to `tmux attach` a host with nothing to
-    /// attach to, leaving the row stuck on "connecting…".
-    pub fn is_attachable_session(&self) -> bool {
-        !self.loading && !self.unreachable && self.name != REMOTE_NO_SESSIONS_LABEL
+    /// True for the local tmux server (`host == None`).
+    pub fn is_local(&self) -> bool {
+        self.host.is_none()
+    }
+
+    /// Whether this `Live` row is the current (attached) session. Always
+    /// false for placeholders and for remote rows (remote `is_current`
+    /// isn't tracked).
+    pub fn is_current(&self) -> bool {
+        matches!(
+            self.kind,
+            SessionKind::Live {
+                is_current: true,
+                ..
+            }
+        )
+    }
+
+    /// Idle seconds when the backend collects activity for this entry,
+    /// else `None` (placeholders, or backends — remote today — that don't
+    /// gather it).
+    pub fn idle_seconds(&self) -> Option<u64> {
+        match self.kind {
+            SessionKind::Live { idle_seconds, .. } => idle_seconds,
+            _ => None,
+        }
     }
 }
 
-/// The attachable (real) sessions on `host`, in display order. The one
-/// filter behind the last-session-on-host kill policy and the per-host
-/// name/order collectors, so the call sites can't drift.
+/// The attachable (`Live`) sessions on `host` (`None` = local), in display
+/// order. The one filter behind the last-session-on-host kill policy and the
+/// per-host name/order collectors, so the call sites can't drift.
 pub fn attachable_on_host<'a>(
-    rows: &'a [RemoteSessionRow],
-    host: &'a str,
-) -> impl Iterator<Item = &'a RemoteSessionRow> {
-    rows.iter()
-        .filter(move |r| r.host == host && r.is_attachable_session())
+    entries: &'a [SessionEntry],
+    host: Option<&'a str>,
+) -> impl Iterator<Item = &'a SessionEntry> {
+    entries
+        .iter()
+        .filter(move |e| e.host.as_deref() == host && e.is_attachable())
 }
 
 /// Identifies a focused sidebar row by its flat index.
 ///
-/// The flat index walks the visible row list in render order: local
-/// rows first (`0..state.sessions.len()`), then remote rows
-/// (`sessions.len()..sessions.len() + remote_sessions.len()`).
-/// `AppState::session_target` decodes this back into the underlying
-/// storage for action dispatch.
+/// The flat index walks the visible row list in render order, which is
+/// exactly the order of `state.entries` (local entries first, then each
+/// remote host's rows). `AppState::entry_at` decodes this back into the
+/// entry for action dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FocusTarget(pub usize);
-
-/// A resolved reference into one of the two backing stores. The
-/// renderer doesn't see this — it consumes the unified `SidebarSession`
-/// trait — but reducers/action layer use it to keep the local vs
-/// remote dispatch in exactly one place (`AppState::session_target`).
-#[derive(Debug)]
-pub enum SessionTargetRef<'a> {
-    Local(&'a SessionRow),
-    Remote(&'a RemoteSessionRow),
-}
 
 /// Connection state of a remote host, derived from its rows' reachability.
 /// Drives the color of the divider's reconnect button.
@@ -261,13 +286,11 @@ pub enum HostStatus {
 /// share one status, so any row of the group represents it. Shared between
 /// the divider header and `-R` forward-health derivation so both read the
 /// host's state the same way.
-fn host_status_of(r: &RemoteSessionRow) -> HostStatus {
-    if r.unreachable {
-        HostStatus::Unreachable
-    } else if r.loading {
-        HostStatus::Connecting
-    } else {
-        HostStatus::Connected
+fn host_status_of(e: &SessionEntry) -> HostStatus {
+    match e.kind {
+        SessionKind::Unreachable => HostStatus::Unreachable,
+        SessionKind::Connecting => HostStatus::Connecting,
+        SessionKind::Live { .. } | SessionKind::NoSessions => HostStatus::Connected,
     }
 }
 
@@ -415,14 +438,21 @@ impl Prefs {
 
 pub struct AppState {
     // Session data
-    pub sessions: Vec<SessionRow>,
+    /// The single unified session store: local entries first (`host ==
+    /// None`), then each remote host's rows in config order — exactly the
+    /// sidebar render/flat order. Replaces the old parallel `sessions` +
+    /// `remote_sessions` stores; the `FocusTarget` flat index is a direct
+    /// index into this vec, and per-row dispatch reads `entry.host` /
+    /// `entry.kind` instead of decoding `idx - local_count`.
+    pub entries: Vec<SessionEntry>,
     pub focused: usize,
+    /// Name of the current (attached) *local* session. Remote current-
+    /// session isn't tracked (a deliberate local-only invariant carried
+    /// over from the two-store model).
     pub current_session: String,
+    /// Manual display order of *local* sessions, keyed by name. Remote
+    /// reorder persists per-host to each remote tmux server instead.
     pub session_order: Vec<String>,
-    /// Tmux sessions discovered on configured remote hosts. Rendered
-    /// in the sidebar below local sessions. Focus into them goes via
-    /// `FocusTarget` flat index after the local sessions (`sessions.len()`).
-    pub remote_sessions: Vec<RemoteSessionRow>,
 
     // UI state
     pub main_view: MainView,
@@ -534,11 +564,10 @@ impl AppState {
     /// (Self::apply_config); tests set the fields they care about directly.
     pub fn new(term_width: u16, term_height: u16) -> Self {
         Self {
-            sessions: Vec::new(),
+            entries: Vec::new(),
             focused: 0,
             current_session: String::new(),
             session_order: Vec::new(),
-            remote_sessions: Vec::new(),
             main_view: MainView::Terminal,
             focus_mode: FocusMode::Main,
             prefs: Prefs {
@@ -833,14 +862,11 @@ impl AppState {
         // Build labels in the same flat order the tab renderer walks —
         // local rows first, then remotes as `host:session` — so a hit
         // maps straight to a `FocusTarget` flat index.
-        let mut labels: Vec<String> =
-            Vec::with_capacity(self.sessions.len() + self.remote_sessions.len());
-        for s in &self.sessions {
-            labels.push(tab_label(None, &s.name));
-        }
-        for r in &self.remote_sessions {
-            labels.push(tab_label(Some(&r.host), &r.name));
-        }
+        let labels: Vec<String> = self
+            .entries
+            .iter()
+            .map(|e| tab_label(e.host.as_deref(), &e.name))
+            .collect();
         let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
         let ranges = tab_col_ranges(&label_refs);
         let local_col = col.saturating_sub(b);
@@ -852,14 +878,37 @@ impl AppState {
         None
     }
 
+    /// The entry at flat focus index `idx`, or `None` if out of range. The
+    /// `FocusTarget` numbering is a direct index into `entries` (local rows
+    /// first, then remotes), so this is the single decode the reducers /
+    /// action layer use for per-row dispatch — they read `entry.host` /
+    /// `entry.kind` instead of taking apart the index.
+    pub fn entry_at(&self, target: FocusTarget) -> Option<&SessionEntry> {
+        self.entries.get(target.0)
+    }
+
+    /// Local entries (`host == None`), in order. The local-only invariants
+    /// (`session_order`, `current_session`, the last-local-session kill
+    /// guard) operate over these.
+    pub fn local_entries(&self) -> impl Iterator<Item = &SessionEntry> {
+        self.entries.iter().filter(|e| e.is_local())
+    }
+
+    /// Number of local entries (`host == None`). Local rows occupy the
+    /// front of `entries`, so this is also the flat index where the first
+    /// remote row begins.
+    pub fn local_count(&self) -> usize {
+        self.local_entries().count()
+    }
+
     /// Total number of focusable rows in the active sidebar tab. Projects:
-    /// local sessions (after filtering) followed by remote sessions.
-    /// Agents: the flattened agent list.
+    /// every session entry (local rows then remote rows). Agents: the
+    /// flattened agent list.
     pub fn focusable_count(&self) -> usize {
         if self.agents_tab_active() {
             self.agent_rows().len()
         } else {
-            self.sessions.len() + self.remote_sessions.len()
+            self.entries.len()
         }
     }
 
@@ -871,24 +920,18 @@ impl AppState {
     /// the cursor *and* switches). Mirrors the `FocusTarget` numbering:
     /// local rows first, then remotes.
     pub fn focusable_index_for(&self, host: Option<&str>, session: &str) -> Option<usize> {
-        match host {
-            None => self.sessions.iter().position(|s| s.name == session),
-            Some(h) => self
-                .remote_sessions
-                .iter()
-                .position(|r| r.host == h && r.name == session)
-                .map(|p| self.sessions.len() + p),
-        }
+        self.entries
+            .iter()
+            .position(|e| e.host.as_deref() == host && e.name == session)
     }
 
     /// Optimistically mark a host's rows as reconnecting so the sidebar
     /// shows "(connecting...)" the instant the user hits the divider's
     /// reconnect button, before the refresh round returns.
     pub fn mark_host_reconnecting(&mut self, host: &str) {
-        for row in &mut self.remote_sessions {
-            if row.host == host {
-                row.loading = true;
-                row.unreachable = false;
+        for e in &mut self.entries {
+            if e.host.as_deref() == Some(host) {
+                e.kind = SessionKind::Connecting;
             }
         }
     }
@@ -955,33 +998,35 @@ impl AppState {
 
         // Local group: an `@local` divider over the local rows, matching
         // the remote `@host` dividers. Flat index for a local row equals
-        // its position in `sessions` (headers aren't rows). Keep the
+        // its position in `entries` (headers aren't rows). Keep the
         // divider even when local has no sessions so the user can still
         // open the local section menu and see the empty-state row.
+        let local_count = self.local_count();
         if show_headers {
             group_headers.push((header_count, None));
             header_count += 1;
             layout.push_header(SidebarItemData::LocalHeader, 1);
         }
-        for pos in 0..self.sessions.len() {
+        for pos in 0..local_count {
             layout.push_row(SidebarItemData::Session { session_idx: pos }, card_h);
         }
-        if show_headers && self.sessions.is_empty() && !is_collapsed(&None) {
+        if show_headers && local_count == 0 && !is_collapsed(&None) {
             layout.push_header(SidebarItemData::LocalEmpty, card_h);
             header_count += 1;
         }
 
-        // Remote groups: detect host transitions in render order
-        // (which matches focus order — `remote_sessions` is already
-        // grouped by host because the refresh worker emits hosts in
-        // config order, one block at a time). Flat index for a remote
-        // row is sessions.len() + remote_idx. Each group gets an
-        // `@host` divider above and an agent-count footer below.
-        let local_count = self.sessions.len();
+        // Remote groups: detect host transitions in render order (which
+        // matches focus order — `entries` is grouped by host because the
+        // refresh worker emits hosts in config order, one block at a time,
+        // after the local rows). Flat index for any row is its position in
+        // `entries`. Each group gets an `@host` divider above.
         let mut host_idx: usize = 0;
         let mut prev_host: Option<&str> = None;
-        for (remote_idx, r) in self.remote_sessions.iter().enumerate() {
-            let new_host = Some(r.host.as_str()) != prev_host;
+        for (idx, e) in self.entries.iter().enumerate() {
+            let Some(host) = e.host.as_deref() else {
+                continue; // local rows already pushed above
+            };
+            let new_host = Some(host) != prev_host;
             if new_host {
                 if prev_host.is_some() {
                     host_idx += 1;
@@ -989,30 +1034,25 @@ impl AppState {
                 if show_headers {
                     // A host's rows are contiguous and share a status; this
                     // row is the first of the group, so it represents it.
-                    let status = host_status_of(r);
-                    group_headers.push((header_count, Some(r.host.clone())));
+                    let status = host_status_of(e);
+                    group_headers.push((header_count, Some(host.to_string())));
                     header_count += 1;
                     layout.push_header(
                         SidebarItemData::Header {
-                            host: r.host.clone(),
+                            host: host.to_string(),
                             host_idx,
                             status,
-                            pf: self.host_pf_badge(&r.host),
+                            pf: self.host_pf_badge(host),
                         },
                         1,
                     );
                 }
-                prev_host = Some(r.host.as_str());
+                prev_host = Some(host);
             }
             // Match the local card height so groups visually align
             // (3 rows in Expanded, 1 in Compact). The renderer pads
             // the bottom of each row with blank lines to fill the card.
-            layout.push_row(
-                SidebarItemData::Session {
-                    session_idx: local_count + remote_idx,
-                },
-                card_h,
-            );
+            layout.push_row(SidebarItemData::Session { session_idx: idx }, card_h);
         }
 
         // Flip each group header's collapsed flag so the widget hides its
@@ -1031,9 +1071,11 @@ impl AppState {
     fn remote_hosts_in_order(&self) -> Vec<String> {
         let mut seen: HashSet<&str> = HashSet::new();
         let mut hosts = Vec::new();
-        for r in &self.remote_sessions {
-            if seen.insert(r.host.as_str()) {
-                hosts.push(r.host.clone());
+        for e in &self.entries {
+            if let Some(host) = e.host.as_deref() {
+                if seen.insert(host) {
+                    hosts.push(host.to_string());
+                }
             }
         }
         hosts
@@ -1260,9 +1302,9 @@ impl AppState {
     /// The connection status shown on a host's divider, derived from its
     /// remote rows. `None` until the host has any row (pre-refresh).
     pub fn host_conn_status(&self, host: &str) -> Option<HostStatus> {
-        self.remote_sessions
+        self.entries
             .iter()
-            .find(|r| r.host == host)
+            .find(|e| e.host.as_deref() == Some(host))
             .map(host_status_of)
     }
 
@@ -1296,50 +1338,24 @@ impl AppState {
         }
     }
 
-    /// Resolve a focus target back to the backing row in either local
-    /// or remote storage. This is the *only* place the rest of the app
-    /// needs to do local-vs-remote dispatch — reducers and refresh
-    /// match on the returned `SessionTargetRef` instead of taking apart
-    /// the flat index themselves.
-    pub fn session_target(&self, target: FocusTarget) -> Option<SessionTargetRef<'_>> {
-        let idx = target.0;
-        let local_count = self.sessions.len();
-        if idx < local_count {
-            self.sessions.get(idx).map(SessionTargetRef::Local)
-        } else {
-            self.remote_sessions
-                .get(idx - local_count)
-                .map(SessionTargetRef::Remote)
-        }
-    }
-
     /// Focused remote placeholder row, if any. These rows occupy normal
     /// focus slots so users can land on a host with no attachable session,
     /// but the main pane must render an explicit status instead of a stale
     /// terminal screen.
-    pub fn focused_remote_placeholder(&self) -> Option<&RemoteSessionRow> {
+    pub fn focused_remote_placeholder(&self) -> Option<&SessionEntry> {
         if self.agents_tab_active() {
             return None;
         }
-        match self.session_target(self.focus_target()?)? {
-            SessionTargetRef::Remote(row) if !row.is_attachable_session() => Some(row),
-            SessionTargetRef::Local(_) | SessionTargetRef::Remote(_) => None,
-        }
+        let entry = self.entry_at(self.focus_target()?)?;
+        (!entry.is_local() && !entry.is_attachable()).then_some(entry)
     }
 
     /// Section key of the group the flat focus index `idx` lives in:
-    /// `None` for a local row (`idx < sessions.len()`), `Some(host)` for a
-    /// remote one. Used by the section-toggle keybinding and focus-skip
-    /// logic. For an out-of-range index this falls back to `None`.
+    /// `None` for a local row, `Some(host)` for a remote one. Used by the
+    /// section-toggle keybinding and focus-skip logic. For an out-of-range
+    /// index this falls back to `None`.
     pub fn section_key_of_focus(&self, idx: usize) -> Option<String> {
-        let local_count = self.sessions.len();
-        if idx < local_count {
-            None
-        } else {
-            self.remote_sessions
-                .get(idx - local_count)
-                .map(|r| r.host.clone())
-        }
+        self.entries.get(idx).and_then(|e| e.host.clone())
     }
 
     /// Whether the row at flat focus index `idx` sits in a collapsed group
@@ -1385,10 +1401,9 @@ impl AppState {
     /// session name, or `None` when no kill is pending or focus has no
     /// valid target. The renderer gates the overlay on this being `Some`.
     ///
-    /// Resolves through `session_target` so a focused *remote* row reports
-    /// its name too — a raw `sessions[focused]` lookup only covers local
-    /// rows, leaving remote kills with no name so the overlay never drew
-    /// (issue #41).
+    /// Resolves through `entry_at` so a focused *remote* row reports its
+    /// name too — the unified store treats local and remote rows the same
+    /// here (issue #41).
     /// The highest-priority full-input modal currently open, or `None` when
     /// the sidebar/PTY is free to take input directly.
     ///
@@ -1448,10 +1463,7 @@ impl AppState {
         if !self.overlay.confirm_kill {
             return None;
         }
-        match self.session_target(self.focus_target()?)? {
-            SessionTargetRef::Local(row) => Some(row.name.clone()),
-            SessionTargetRef::Remote(row) => Some(row.name.clone()),
-        }
+        Some(self.entry_at(self.focus_target()?)?.name.clone())
     }
 
     /// Why the focused kill `target` can't be killed, or `None` if it can.
@@ -1464,27 +1476,25 @@ impl AppState {
     ///  - a host's last live session would tear that host's tmux server
     ///    down;
     ///  - the last local session would leave deck attached to nothing.
-    pub fn kill_blocked_reason(&self, target: &SessionTargetRef<'_>) -> Option<&'static str> {
-        match target {
-            SessionTargetRef::Remote(row) if !row.is_attachable_session() => {
-                Some("no session to kill")
-            }
-            SessionTargetRef::Remote(row)
-                if attachable_on_host(&self.remote_sessions, &row.host)
+    pub fn kill_blocked_reason(&self, entry: &SessionEntry) -> Option<&'static str> {
+        match &entry.host {
+            Some(_) if !entry.is_attachable() => Some("no session to kill"),
+            Some(host)
+                if attachable_on_host(&self.entries, Some(host))
                     .nth(1)
                     .is_none() =>
             {
                 Some("last session on host")
             }
-            SessionTargetRef::Local(_) if self.sessions.len() <= 1 => Some("last local session"),
-            SessionTargetRef::Local(_) | SessionTargetRef::Remote(_) => None,
+            None if self.local_count() <= 1 => Some("last local session"),
+            _ => None,
         }
     }
 
-    /// Whether the focused kill `target` may be killed. See
+    /// Whether the focused kill `entry` may be killed. See
     /// [`AppState::kill_blocked_reason`].
-    pub fn can_kill(&self, target: &SessionTargetRef<'_>) -> bool {
-        self.kill_blocked_reason(target).is_none()
+    pub fn can_kill(&self, entry: &SessionEntry) -> bool {
+        self.kill_blocked_reason(entry).is_none()
     }
 
     /// Map a screen position to a context menu item index.
@@ -1512,7 +1522,7 @@ impl AppState {
     /// the tab-aware `focusable_count`, which would use the agent count when
     /// the Agents tab is active and corrupt the Projects cursor).
     pub fn clamp_projects_focus(&mut self) {
-        let total = self.sessions.len() + self.remote_sessions.len();
+        let total = self.entries.len();
         if total > 0 && self.focused >= total {
             self.focused = total - 1;
         }
@@ -1570,7 +1580,7 @@ impl AppState {
     }
 
     pub fn sync_order(&mut self) {
-        let names: Vec<String> = self.sessions.iter().map(|s| s.name.clone()).collect();
+        let names: Vec<String> = self.local_entries().map(|e| e.name.clone()).collect();
         self.session_order.retain(|n| names.contains(n));
         for name in &names {
             if !self.session_order.contains(name) {
@@ -1579,13 +1589,28 @@ impl AppState {
         }
     }
 
+    /// Reorder the local entries (the `host == None` prefix of `entries`) to
+    /// match `session_order`. Remote entries follow the local block in
+    /// `entries`, so sorting only the local prefix keeps the unified store's
+    /// "local first, then remotes (in config order)" invariant intact.
     pub fn apply_order(&mut self) {
         let order = &self.session_order;
-        self.sessions.sort_by_key(|s| {
+        let rank = |e: &SessionEntry| -> usize {
             order
                 .iter()
-                .position(|n| n == &s.name)
+                .position(|n| n == &e.name)
                 .unwrap_or(usize::MAX)
+        };
+        // Stable sort with remote rows pinned after locals by giving them a
+        // monotonically-increasing rank above any local one; their relative
+        // order (config order) is preserved by the stable sort.
+        let local_count = self.local_count();
+        self.entries.sort_by_key(|e| {
+            if e.is_local() {
+                (0usize, rank(e))
+            } else {
+                (1usize, local_count)
+            }
         });
     }
 

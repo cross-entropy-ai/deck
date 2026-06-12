@@ -20,16 +20,18 @@ impl App {
         self.respawn_remote_host(host);
         // Avoid duplicating a placeholder if one is already there
         // (e.g. add → remove → add in quick succession).
-        if !self.state.remote_sessions.iter().any(|s| s.host == host) {
-            self.state
-                .remote_sessions
-                .push(crate::state::RemoteSessionRow {
-                    host: host.to_string(),
-                    name: String::new(),
-                    dir: String::new(),
-                    unreachable: false,
-                    loading: true,
-                });
+        if !self
+            .state
+            .entries
+            .iter()
+            .any(|e| e.host.as_deref() == Some(host))
+        {
+            self.state.entries.push(crate::state::SessionEntry {
+                host: Some(host.to_string()),
+                name: String::new(),
+                dir: String::new(),
+                kind: crate::state::SessionKind::Connecting,
+            });
         }
     }
 
@@ -167,8 +169,8 @@ impl App {
             .map(|r| r.host.as_str())
             .collect();
         self.state
-            .remote_sessions
-            .retain(|s| kept.contains(s.host.as_str()));
+            .entries
+            .retain(|e| e.host.as_deref().is_none_or(|h| kept.contains(h)));
 
         self.resize_pty();
         if theme_changed {

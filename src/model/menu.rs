@@ -1,7 +1,7 @@
 //! Sidebar context menus: the `MenuItem` enum, the per-context item lists,
 //! and the `ContextMenu` overlay state with its enabled/disabled logic.
 
-use crate::state::{attachable_on_host, FocusTarget, RemoteSessionRow, SessionTargetRef};
+use crate::state::{attachable_on_host, FocusTarget, SessionEntry};
 
 // One list for local and remote rows. "Switch" is dropped — the focus
 // already triggers the switch, so the menu item was redundant. On a remote
@@ -140,17 +140,15 @@ impl MenuKind {
 /// - Everything else (a local session, or a remote host with more than
 ///   one session) has every item enabled.
 pub fn session_menu_disabled(
-    target: &SessionTargetRef<'_>,
-    remote_sessions: &[RemoteSessionRow],
+    entry: &SessionEntry,
+    entries: &[SessionEntry],
 ) -> &'static [MenuItem] {
-    match target {
-        SessionTargetRef::Remote(row) if !row.is_attachable_session() => PLACEHOLDER_DISABLED_ITEMS,
-        SessionTargetRef::Remote(row)
-            if attachable_on_host(remote_sessions, &row.host).nth(1).is_none() =>
-        {
+    match &entry.host {
+        Some(_) if !entry.is_attachable() => PLACEHOLDER_DISABLED_ITEMS,
+        Some(host) if attachable_on_host(entries, Some(host)).nth(1).is_none() => {
             LAST_REMOTE_SESSION_DISABLED
         }
-        SessionTargetRef::Local(_) | SessionTargetRef::Remote(_) => &[],
+        _ => &[],
     }
 }
 

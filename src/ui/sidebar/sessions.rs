@@ -421,7 +421,7 @@ pub(super) fn draw_sessions(
             SidebarItemData::LocalEmpty => {
                 lines.push(pad_line(
                     vec![Span::styled(
-                        format!("  {}", crate::state::REMOTE_NO_SESSIONS_LABEL),
+                        format!("  {}", crate::state::NO_SESSIONS_LABEL),
                         Style::default().fg(ctx.theme.muted).bg(ctx.theme.bg),
                     )],
                     ctx.theme.bg,
