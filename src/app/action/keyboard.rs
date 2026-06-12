@@ -5,7 +5,9 @@ use crate::state::{
     AppState, FocusMode, MainView, Modal, PfField, PortForwardOverlay, SessionTargetRef,
 };
 
-use super::Action;
+use super::{
+    Action, AddRemoteAction, MenuAction, NewSessionAction, PfAction, SettingsAction, SummaryAction,
+};
 
 pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     // One modal source of truth (`active_modal`), consulted before the
@@ -64,8 +66,8 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
         Command::KillSession => Action::KillSession,
         Command::ReorderUp => Action::ReorderSession(-1),
         Command::ReorderDown => Action::ReorderSession(1),
-        Command::OpenSettings => Action::OpenSettings,
-        Command::OpenThemePicker => Action::OpenThemePicker,
+        Command::OpenSettings => Action::Settings(SettingsAction::Open),
+        Command::OpenThemePicker => Action::Settings(SettingsAction::OpenThemePicker),
         Command::ToggleBorders => Action::ToggleBorders,
         Command::ToggleLayout => Action::ToggleLayout,
         Command::ToggleViewMode => Action::ToggleViewMode,
@@ -86,11 +88,13 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
 fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action {
     match modal {
         Modal::SummaryPopup => match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => Action::CloseSummaryPopup,
-            KeyCode::Char('j') | KeyCode::Down => Action::ScrollSummaryPopup(1),
-            KeyCode::Char('k') | KeyCode::Up => Action::ScrollSummaryPopup(-1),
-            KeyCode::PageDown | KeyCode::Char(' ') => Action::ScrollSummaryPopup(10),
-            KeyCode::PageUp => Action::ScrollSummaryPopup(-10),
+            KeyCode::Esc | KeyCode::Char('q') => Action::Summary(SummaryAction::ClosePopup),
+            KeyCode::Char('j') | KeyCode::Down => Action::Summary(SummaryAction::ScrollPopup(1)),
+            KeyCode::Char('k') | KeyCode::Up => Action::Summary(SummaryAction::ScrollPopup(-1)),
+            KeyCode::PageDown | KeyCode::Char(' ') => {
+                Action::Summary(SummaryAction::ScrollPopup(10))
+            }
+            KeyCode::PageUp => Action::Summary(SummaryAction::ScrollPopup(-10)),
             _ => Action::None,
         },
         Modal::NewSession => new_session_key_to_action(key, state),
@@ -101,10 +105,10 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
             _ => Action::RenameInputKey(*key),
         },
         Modal::ContextMenu => match key.code {
-            KeyCode::Char('j') | KeyCode::Down => Action::MenuNext,
-            KeyCode::Char('k') | KeyCode::Up => Action::MenuPrev,
-            KeyCode::Enter => Action::MenuConfirm,
-            _ => Action::MenuDismiss,
+            KeyCode::Char('j') | KeyCode::Down => Action::Menu(MenuAction::Next),
+            KeyCode::Char('k') | KeyCode::Up => Action::Menu(MenuAction::Prev),
+            KeyCode::Enter => Action::Menu(MenuAction::Confirm),
+            _ => Action::Menu(MenuAction::Dismiss),
         },
         // `active_modal` only reports PortForward when the overlay is set.
         Modal::PortForward => match state.overlay.port_forward.as_ref() {
@@ -115,9 +119,9 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
         Modal::KeybindingsView => keybindings_view_key_to_action(key),
         Modal::ExcludeEditor => exclude_editor_key_to_action(key, state),
         Modal::SummaryLang => match key.code {
-            KeyCode::Enter => Action::SummaryLanguageConfirm,
-            KeyCode::Esc => Action::SummaryLanguageCancel,
-            _ => Action::SummaryLanguageInputKey(*key),
+            KeyCode::Enter => Action::Summary(SummaryAction::LanguageConfirm),
+            KeyCode::Esc => Action::Summary(SummaryAction::LanguageCancel),
+            _ => Action::Summary(SummaryAction::LanguageInputKey(*key)),
         },
         Modal::Help => Action::DismissHelp,
         Modal::ConfirmKill => {
@@ -159,7 +163,7 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         if !state.agents_tab_active() {
             if let Some(target) = state.focus_target() {
                 if let Some(SessionTargetRef::Remote(r)) = state.session_target(target) {
-                    return Action::OpenPortForward(r.host.clone());
+                    return Action::Pf(PfAction::Open(r.host.clone()));
                 }
             }
         }
@@ -173,11 +177,11 @@ fn settings_key_to_action(key: &KeyEvent) -> Action {
     // Adjust/toggle/open is left/right only — Enter and Space deliberately
     // do nothing, so a stray Enter never flips a setting or opens an editor.
     match key.code {
-        KeyCode::Esc => Action::CloseSettings,
-        KeyCode::Char('j') | KeyCode::Down => Action::SettingsNext,
-        KeyCode::Char('k') | KeyCode::Up => Action::SettingsPrev,
-        KeyCode::Char('h') | KeyCode::Left => Action::SettingsAdjustPrev,
-        KeyCode::Char('l') | KeyCode::Right => Action::SettingsAdjust,
+        KeyCode::Esc => Action::Settings(SettingsAction::Close),
+        KeyCode::Char('j') | KeyCode::Down => Action::Settings(SettingsAction::Next),
+        KeyCode::Char('k') | KeyCode::Up => Action::Settings(SettingsAction::Prev),
+        KeyCode::Char('h') | KeyCode::Left => Action::Settings(SettingsAction::AdjustPrev),
+        KeyCode::Char('l') | KeyCode::Right => Action::Settings(SettingsAction::Adjust),
         _ => Action::None,
     }
 }
@@ -191,39 +195,39 @@ fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 
     if adding {
         return match key.code {
-            KeyCode::Esc => Action::ExcludeEditorCancelAdd,
-            KeyCode::Enter => Action::ExcludeEditorConfirm,
-            _ => Action::ExcludeEditorInputKey(*key),
+            KeyCode::Esc => Action::Settings(SettingsAction::ExcludeCancelAdd),
+            KeyCode::Enter => Action::Settings(SettingsAction::ExcludeConfirm),
+            _ => Action::Settings(SettingsAction::ExcludeInputKey(*key)),
         };
     }
 
     match key.code {
-        KeyCode::Esc => Action::CloseExcludeEditor,
-        KeyCode::Char('j') | KeyCode::Down => Action::ExcludeEditorNext,
-        KeyCode::Char('k') | KeyCode::Up => Action::ExcludeEditorPrev,
-        KeyCode::Char('a') => Action::ExcludeEditorStartAdd,
-        KeyCode::Char('d') | KeyCode::Char('x') => Action::ExcludeEditorDelete,
+        KeyCode::Esc => Action::Settings(SettingsAction::ExcludeClose),
+        KeyCode::Char('j') | KeyCode::Down => Action::Settings(SettingsAction::ExcludeNext),
+        KeyCode::Char('k') | KeyCode::Up => Action::Settings(SettingsAction::ExcludePrev),
+        KeyCode::Char('a') => Action::Settings(SettingsAction::ExcludeStartAdd),
+        KeyCode::Char('d') | KeyCode::Char('x') => Action::Settings(SettingsAction::ExcludeDelete),
         _ => Action::None,
     }
 }
 
 fn keybindings_view_key_to_action(key: &KeyEvent) -> Action {
     match key.code {
-        KeyCode::Esc => Action::CloseKeybindingsView,
-        KeyCode::Char('j') | KeyCode::Down => Action::KeybindingsViewScrollDown,
-        KeyCode::Char('k') | KeyCode::Up => Action::KeybindingsViewScrollUp,
+        KeyCode::Esc => Action::Settings(SettingsAction::CloseKeybindingsView),
+        KeyCode::Char('j') | KeyCode::Down => Action::Settings(SettingsAction::KeybindingsScrollDown),
+        KeyCode::Char('k') | KeyCode::Up => Action::Settings(SettingsAction::KeybindingsScrollUp),
         _ => Action::None,
     }
 }
 
 fn theme_picker_key_to_action(key: &KeyEvent) -> Action {
     match key.code {
-        KeyCode::Esc => Action::CloseThemePicker,
-        KeyCode::Char('j') | KeyCode::Down => Action::ThemePickerNext,
-        KeyCode::Char('k') | KeyCode::Up => Action::ThemePickerPrev,
-        KeyCode::Char('h') | KeyCode::Left => Action::ThemePickerPrev,
-        KeyCode::Char('l') | KeyCode::Right => Action::ThemePickerNext,
-        KeyCode::Enter | KeyCode::Char(' ') => Action::ConfirmThemePicker,
+        KeyCode::Esc => Action::Settings(SettingsAction::CloseThemePicker),
+        KeyCode::Char('j') | KeyCode::Down => Action::Settings(SettingsAction::ThemePickerNext),
+        KeyCode::Char('k') | KeyCode::Up => Action::Settings(SettingsAction::ThemePickerPrev),
+        KeyCode::Char('h') | KeyCode::Left => Action::Settings(SettingsAction::ThemePickerPrev),
+        KeyCode::Char('l') | KeyCode::Right => Action::Settings(SettingsAction::ThemePickerNext),
+        KeyCode::Enter | KeyCode::Char(' ') => Action::Settings(SettingsAction::ConfirmThemePicker),
         _ => Action::None,
     }
 }
@@ -232,29 +236,29 @@ fn pf_key(key: &KeyEvent, overlay: &PortForwardOverlay) -> Action {
     use KeyCode::*;
     if let Some(form) = overlay.add_form.as_ref() {
         match key.code {
-            Esc => Action::PfAddCancel,
-            Enter => Action::PfAddSubmit,
-            Tab | Down => Action::PfAddFieldNext,
-            BackTab | Up => Action::PfAddFieldPrev,
+            Esc => Action::Pf(PfAction::AddCancel),
+            Enter => Action::Pf(PfAction::AddSubmit),
+            Tab | Down => Action::Pf(PfAction::AddFieldNext),
+            BackTab | Up => Action::Pf(PfAction::AddFieldPrev),
             // On the Mode row, Left/Right cycle modes. Elsewhere they
             // fall through to the textarea for cursor movement.
-            Left if matches!(form.focus, PfField::Mode) => Action::PfAddModeLeft,
-            Right if matches!(form.focus, PfField::Mode) => Action::PfAddModeRight,
+            Left if matches!(form.focus, PfField::Mode) => Action::Pf(PfAction::AddModeLeft),
+            Right if matches!(form.focus, PfField::Mode) => Action::Pf(PfAction::AddModeRight),
             _ => {
                 if matches!(form.focus, PfField::Mode) {
                     Action::None
                 } else {
-                    Action::PfAddInputKey(*key)
+                    Action::Pf(PfAction::AddInputKey(*key))
                 }
             }
         }
     } else {
         match key.code {
-            Esc => Action::PfClose,
-            Char('a') => Action::PfAddOpen,
-            Char('d') => Action::PfDelete,
-            Up | Char('k') => Action::PfFocusUp,
-            Down | Char('j') => Action::PfFocusDown,
+            Esc => Action::Pf(PfAction::Close),
+            Char('a') => Action::Pf(PfAction::AddOpen),
+            Char('d') => Action::Pf(PfAction::Delete),
+            Up | Char('k') => Action::Pf(PfAction::FocusUp),
+            Down | Char('j') => Action::Pf(PfAction::FocusDown),
             _ => Action::None,
         }
     }
@@ -262,11 +266,11 @@ fn pf_key(key: &KeyEvent, overlay: &PortForwardOverlay) -> Action {
 
 fn add_remote_key_to_action(key: &KeyEvent) -> Action {
     match key.code {
-        KeyCode::Esc => Action::AddRemoteClose,
-        KeyCode::Enter => Action::AddRemoteConfirm,
-        KeyCode::Up => Action::AddRemotePrev,
-        KeyCode::Down => Action::AddRemoteNext,
-        _ => Action::AddRemoteInputKey(*key),
+        KeyCode::Esc => Action::AddRemote(AddRemoteAction::Close),
+        KeyCode::Enter => Action::AddRemote(AddRemoteAction::Confirm),
+        KeyCode::Up => Action::AddRemote(AddRemoteAction::Prev),
+        KeyCode::Down => Action::AddRemote(AddRemoteAction::Next),
+        _ => Action::AddRemote(AddRemoteAction::InputKey(*key)),
     }
 }
 
@@ -286,29 +290,29 @@ fn new_session_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 
 fn name_field_key_to_action(key: &KeyEvent) -> Action {
     match key.code {
-        KeyCode::Esc => Action::CloseNewSessionPicker,
-        KeyCode::Enter => Action::NewSessionConfirm,
-        KeyCode::Tab => Action::NewSessionSwitchFocus,
-        _ => Action::NewSessionInputKey(*key),
+        KeyCode::Esc => Action::NewSession(NewSessionAction::Close),
+        KeyCode::Enter => Action::NewSession(NewSessionAction::Confirm),
+        KeyCode::Tab => Action::NewSession(NewSessionAction::SwitchFocus),
+        _ => Action::NewSession(NewSessionAction::InputKey(*key)),
     }
 }
 
 fn dir_field_key_to_action(key: &KeyEvent) -> Action {
     use crossterm::event::KeyModifiers;
     match key.code {
-        KeyCode::Esc => Action::CloseNewSessionPicker,
-        KeyCode::Enter => Action::NewSessionConfirm,
-        KeyCode::Tab => Action::NewSessionSwitchFocus,
-        KeyCode::Up => Action::NewSessionPrev,
-        KeyCode::Down => Action::NewSessionNext,
-        KeyCode::Left => Action::NewSessionDirUp,
-        KeyCode::Right => Action::NewSessionDirEnter,
+        KeyCode::Esc => Action::NewSession(NewSessionAction::Close),
+        KeyCode::Enter => Action::NewSession(NewSessionAction::Confirm),
+        KeyCode::Tab => Action::NewSession(NewSessionAction::SwitchFocus),
+        KeyCode::Up => Action::NewSession(NewSessionAction::Prev),
+        KeyCode::Down => Action::NewSession(NewSessionAction::Next),
+        KeyCode::Left => Action::NewSession(NewSessionAction::DirUp),
+        KeyCode::Right => Action::NewSession(NewSessionAction::DirEnter),
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            Action::NewSessionClear
+            Action::NewSession(NewSessionAction::Clear)
         }
         KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            Action::NewSessionDeleteSegment
+            Action::NewSession(NewSessionAction::DeleteSegment)
         }
-        _ => Action::NewSessionInputKey(*key),
+        _ => Action::NewSession(NewSessionAction::InputKey(*key)),
     }
 }

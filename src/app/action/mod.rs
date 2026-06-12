@@ -39,108 +39,21 @@ pub enum Action {
     SelectTab(crate::state::SidebarTab),
     /// Toggle between the Projects and Agents sidebar tabs (keybinding).
     ToggleSidebarTab,
-    /// Kick the Agents-tab summary generation (Generate button click).
-    GenerateSummary,
-    /// Scroll the Agents-tab summary text by a row delta (wheel over card).
-    ScrollSummary(i32),
-    /// Open the summary "big view" popup (popup button click).
-    OpenSummaryPopup,
-    /// Close the summary popup (Esc / click outside).
-    CloseSummaryPopup,
-    /// Scroll the summary popup text by a row delta.
-    ScrollSummaryPopup(i32),
-    /// Begin dragging the summary card's bottom edge to resize it.
-    StartSummaryDrag,
-    /// Set the summary card body height (rows) mid-drag.
-    ResizeSummary(u16),
-    /// Finish the summary resize drag and persist the new height.
-    StopSummaryDrag,
-    /// Open the generated-summary language editor (settings input box).
-    OpenSummaryLanguageEditor,
-    /// Forward a key to the language editor's input field.
-    SummaryLanguageInputKey(crossterm::event::KeyEvent),
-    /// Confirm the typed language and persist it.
-    SummaryLanguageConfirm,
-    /// Discard the language edit.
-    SummaryLanguageCancel,
     ToggleViewMode,
-    CycleFrameRateLimit(i32),
-    /// Cycle the Agents-tab probe interval (settings, left/right).
-    CycleAgentsProbeInterval(i32),
     /// Collapse/expand a sidebar group (Expanded view only). `None` is the
     /// `@local` group; `Some(host)` is a remote `@host` group. Fired by a
     /// divider click or the section-toggle keybinding.
     ToggleSection(Option<String>),
-    OpenSettings,
-    CloseSettings,
-    SettingsNext,
-    SettingsPrev,
-    SettingsAdjust,
-    SettingsAdjustPrev,
-    OpenThemePicker,
-    CloseThemePicker,
-    ThemePickerNext,
-    ThemePickerPrev,
-    ConfirmThemePicker,
 
-    OpenKeybindingsView,
-    CloseKeybindingsView,
-    KeybindingsViewScrollUp,
-    KeybindingsViewScrollDown,
-
-    ToggleUpdateCheck,
     TriggerUpgrade,
     AbortUpgrade,
     ReloadConfig,
-
-    OpenExcludeEditor,
-    CloseExcludeEditor,
-    ExcludeEditorNext,
-    ExcludeEditorPrev,
-    ExcludeEditorStartAdd,
-    ExcludeEditorDelete,
-    ExcludeEditorInputKey(crossterm::event::KeyEvent),
-    ExcludeEditorConfirm,
-    ExcludeEditorCancelAdd,
-
-    CloseNewSessionPicker,
-    NewSessionInputKey(crossterm::event::KeyEvent),
-    NewSessionConfirm,
-    NewSessionPrev,
-    NewSessionNext,
-    NewSessionClear,
-    NewSessionDeleteSegment,
-    NewSessionSwitchFocus,
-    NewSessionDirUp,
-    NewSessionDirEnter,
 
     ToggleHelp,
     DismissHelp,
 
     SetFocusMain,
     ToggleFocus,
-
-    OpenSessionMenu {
-        target: crate::state::FocusTarget,
-        x: u16,
-        y: u16,
-    },
-    OpenGlobalMenu {
-        x: u16,
-        y: u16,
-    },
-    /// Open the `@local` divider's `[…]` menu (local "New session";
-    /// Port Forward / Remove from list greyed out).
-    OpenLocalDividerMenu {
-        x: u16,
-        y: u16,
-    },
-    MenuNext,
-    MenuPrev,
-    MenuConfirm,
-    MenuDismiss,
-    MenuHover(usize),
-    MenuClickItem(usize),
 
     SidebarClickSession(usize),
     NumberKeyJump(usize),
@@ -161,50 +74,171 @@ pub enum Action {
     ActivatePlugin(usize),
     DeactivatePlugin,
 
+    ReconnectHost {
+        host: String,
+    },
+
     Quit,
 
-    // Port-forward overlay (per-host)
-    OpenHostDividerMenu {
+    /// Settings page and its sub-overlays (theme picker, keybindings view,
+    /// exclude editor).
+    Settings(SettingsAction),
+    /// Agents-tab summary card, popup, and language editor.
+    Summary(SummaryAction),
+    /// New-session picker (local and remote).
+    NewSession(NewSessionAction),
+    /// Sidebar context menus (session / global / divider) and their navigation.
+    Menu(MenuAction),
+    /// Per-host port-forward overlay and its add form.
+    Pf(PfAction),
+    /// Add-remote-host picker.
+    AddRemote(AddRemoteAction),
+
+    None,
+}
+
+#[derive(Debug)]
+pub enum SettingsAction {
+    Open,
+    Close,
+    Next,
+    Prev,
+    Adjust,
+    AdjustPrev,
+    OpenThemePicker,
+    CloseThemePicker,
+    ThemePickerNext,
+    ThemePickerPrev,
+    ConfirmThemePicker,
+
+    OpenKeybindingsView,
+    CloseKeybindingsView,
+    KeybindingsScrollUp,
+    KeybindingsScrollDown,
+
+    ToggleUpdateCheck,
+    CycleFrameRateLimit(i32),
+    /// Cycle the Agents-tab probe interval (settings, left/right).
+    CycleAgentsProbeInterval(i32),
+
+    ExcludeOpen,
+    ExcludeClose,
+    ExcludeNext,
+    ExcludePrev,
+    ExcludeStartAdd,
+    ExcludeDelete,
+    ExcludeInputKey(crossterm::event::KeyEvent),
+    ExcludeConfirm,
+    ExcludeCancelAdd,
+}
+
+#[derive(Debug)]
+pub enum SummaryAction {
+    /// Kick the Agents-tab summary generation (Generate button click).
+    Generate,
+    /// Scroll the Agents-tab summary text by a row delta (wheel over card).
+    Scroll(i32),
+    /// Open the summary "big view" popup (popup button click).
+    OpenPopup,
+    /// Close the summary popup (Esc / click outside).
+    ClosePopup,
+    /// Scroll the summary popup text by a row delta.
+    ScrollPopup(i32),
+    /// Begin dragging the summary card's bottom edge to resize it.
+    StartDrag,
+    /// Set the summary card body height (rows) mid-drag.
+    Resize(u16),
+    /// Finish the summary resize drag and persist the new height.
+    StopDrag,
+    /// Open the generated-summary language editor (settings input box).
+    OpenLanguageEditor,
+    /// Forward a key to the language editor's input field.
+    LanguageInputKey(crossterm::event::KeyEvent),
+    /// Confirm the typed language and persist it.
+    LanguageConfirm,
+    /// Discard the language edit.
+    LanguageCancel,
+}
+
+#[derive(Debug)]
+pub enum NewSessionAction {
+    Close,
+    InputKey(crossterm::event::KeyEvent),
+    Confirm,
+    Prev,
+    Next,
+    Clear,
+    DeleteSegment,
+    SwitchFocus,
+    DirUp,
+    DirEnter,
+}
+
+#[derive(Debug)]
+pub enum MenuAction {
+    OpenSession {
+        target: crate::state::FocusTarget,
+        x: u16,
+        y: u16,
+    },
+    OpenGlobal {
+        x: u16,
+        y: u16,
+    },
+    /// Open the `@local` divider's `[…]` menu (local "New session";
+    /// Port Forward / Remove from list greyed out).
+    OpenLocalDivider {
+        x: u16,
+        y: u16,
+    },
+    OpenHostDivider {
         host: String,
         x: u16,
         y: u16,
     },
-    ReconnectHost {
-        host: String,
-    },
-    OpenPortForward(String),
-    PfClose,
-    PfFocusUp,
-    PfFocusDown,
-    PfDelete,
-    PfAddOpen,
-    PfAddCancel,
-    PfAddSubmit,
-    PfAddFieldNext,
-    PfAddFieldPrev,
-    PfAddModeLeft,
-    PfAddModeRight,
+    Next,
+    Prev,
+    Confirm,
+    Dismiss,
+    Hover(usize),
+    ClickItem(usize),
+}
+
+#[derive(Debug)]
+pub enum PfAction {
+    Open(String),
+    Close,
+    FocusUp,
+    FocusDown,
+    Delete,
+    AddOpen,
+    AddCancel,
+    AddSubmit,
+    AddFieldNext,
+    AddFieldPrev,
+    AddModeLeft,
+    AddModeRight,
     /// Forward a raw key event to the focused textarea (insert/delete/
     /// arrow within a field). Modal keys (Tab/Enter/Esc/Up/Down/etc.)
     /// are mapped to their own actions before reaching this variant.
-    PfAddInputKey(crossterm::event::KeyEvent),
-    PfTaskResult {
+    AddInputKey(crossterm::event::KeyEvent),
+    TaskResult {
         host: String,
         op: crate::app::port_forward_task::OpKind,
         ok: bool,
         message: String,
     },
-
-    AddRemoteInputKey(crossterm::event::KeyEvent),
-    AddRemoteNext,
-    AddRemotePrev,
-    AddRemoteConfirm,
-    AddRemoteClose,
-
-    PfProbeResult {
+    ProbeResult {
         key: crate::state::ForwardKey,
         health: crate::state::ForwardHealth,
     },
+}
 
-    None,
+#[derive(Debug)]
+pub enum AddRemoteAction {
+    InputKey(crossterm::event::KeyEvent),
+    Next,
+    Prev,
+    Confirm,
+    Close,
 }

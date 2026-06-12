@@ -1,4 +1,6 @@
-use super::{apply_action, Action};
+use super::{
+    apply_action, Action, MenuAction, NewSessionAction, PfAction, SettingsAction,
+};
 use crate::state::{
     AppState, FocusMode, LayoutMode, MainView, RemoteSessionRow, RenameState, SessionRow, ViewMode,
     REMOTE_NO_SESSIONS_LABEL,
@@ -241,7 +243,7 @@ fn toggle_borders_signals_resize_and_save() {
 fn open_settings_switches_main_pane_to_settings() {
     let mut state = make_test_state(1);
     state.focus_mode = FocusMode::Sidebar;
-    apply_action(&mut state, Action::OpenSettings);
+    apply_action(&mut state, Action::Settings(SettingsAction::Open));
     assert_eq!(state.main_view, MainView::Settings);
     assert_eq!(state.focus_mode, FocusMode::Main);
 }
@@ -251,7 +253,7 @@ fn settings_adjust_theme_opens_picker() {
     let mut state = make_test_state(1);
     state.theme_index = 0;
     state.settings.selected = 0;
-    let fx = apply_action(&mut state, Action::SettingsAdjust);
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(state.settings.theme_picker_open);
     assert_eq!(state.settings.theme_picker_selected, 0);
     assert!(!fx.has_save_config());
@@ -262,7 +264,7 @@ fn open_theme_picker_from_sidebar_bypasses_settings() {
     let mut state = make_test_state(1);
     state.focus_mode = FocusMode::Sidebar;
     state.main_view = MainView::Terminal;
-    apply_action(&mut state, Action::OpenThemePicker);
+    apply_action(&mut state, Action::Settings(SettingsAction::OpenThemePicker));
     assert!(state.settings.theme_picker_open);
     // The picker overlays the current view rather than entering the
     // settings page, so neither the view nor the focus changes.
@@ -276,7 +278,7 @@ fn confirm_theme_picker_selects_theme_and_saves() {
     state.theme_index = 0;
     state.settings.theme_picker_open = true;
     state.settings.theme_picker_selected = 3;
-    let fx = apply_action(&mut state, Action::ConfirmThemePicker);
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::ConfirmThemePicker));
     assert!(!state.settings.theme_picker_open);
     assert!(!fx.has_save_config());
 }
@@ -287,7 +289,7 @@ fn theme_picker_next_previews_theme_immediately() {
     state.theme_index = 0;
     state.settings.theme_picker_open = true;
     state.settings.theme_picker_selected = 0;
-    let fx = apply_action(&mut state, Action::ThemePickerNext);
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::ThemePickerNext));
     assert_eq!(state.settings.theme_picker_selected, 1);
     assert_eq!(state.theme_index, 1);
     assert!(fx.has_save_config());
@@ -297,7 +299,7 @@ fn theme_picker_next_previews_theme_immediately() {
 fn settings_adjust_layout_resizes_and_saves() {
     let mut state = make_test_state(1);
     state.settings.selected = 2;
-    let fx = apply_action(&mut state, Action::SettingsAdjust);
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_eq!(state.layout_mode, LayoutMode::Vertical);
     assert!(fx.has_resize_pty());
     assert!(fx.has_save_config());
@@ -308,7 +310,7 @@ fn settings_adjust_borders_resizes_and_saves() {
     let mut state = make_test_state(1);
     let initial = state.show_borders;
     state.settings.selected = 3;
-    let fx = apply_action(&mut state, Action::SettingsAdjust);
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_ne!(state.show_borders, initial);
     assert!(fx.has_resize_pty());
     assert!(fx.has_save_config());
@@ -327,7 +329,7 @@ fn toggle_focus() {
 #[test]
 fn toggle_focus_to_sidebar_closes_settings() {
     let mut state = make_test_state(1);
-    apply_action(&mut state, Action::OpenSettings);
+    apply_action(&mut state, Action::Settings(SettingsAction::Open));
     state.settings.theme_picker_open = true;
     assert_eq!(state.main_view, MainView::Settings);
 
@@ -366,7 +368,7 @@ fn dismiss_help() {
 #[test]
 fn open_local_divider_menu_greys_remote_items_and_starts_on_new_session() {
     let mut state = make_test_state(1);
-    apply_action(&mut state, Action::OpenLocalDividerMenu { x: 5, y: 5 });
+    apply_action(&mut state, Action::Menu(MenuAction::OpenLocalDivider { x: 5, y: 5 }));
     let menu = state.overlay.context_menu.as_ref().expect("menu open");
     assert!(matches!(menu.kind, crate::state::MenuKind::LocalDivider));
     // Highlight starts on the first enabled item, never a greyed one.
@@ -378,8 +380,8 @@ fn open_local_divider_menu_greys_remote_items_and_starts_on_new_session() {
 #[test]
 fn local_divider_new_session_opens_local_picker() {
     let mut state = make_test_state(1);
-    apply_action(&mut state, Action::OpenLocalDividerMenu { x: 0, y: 0 });
-    let fx = apply_action(&mut state, Action::MenuConfirm);
+    apply_action(&mut state, Action::Menu(MenuAction::OpenLocalDivider { x: 0, y: 0 }));
+    let fx = apply_action(&mut state, Action::Menu(MenuAction::Confirm));
     // "New session" on @local routes to the local picker, not a remote one.
     assert!(fx.has_open_new_session_picker());
     assert!(fx.first_open_remote_new_session_picker().is_none());
@@ -392,22 +394,22 @@ fn open_and_navigate_context_menu() {
     let mut state = make_test_state(3);
     apply_action(
         &mut state,
-        Action::OpenSessionMenu {
+        Action::Menu(MenuAction::OpenSession {
             target: crate::state::FocusTarget(1),
             x: 10,
             y: 5,
-        },
+        }),
     );
     assert!(state.overlay.context_menu.is_some());
     assert_eq!(state.focused, 1);
 
-    apply_action(&mut state, Action::MenuNext);
+    apply_action(&mut state, Action::Menu(MenuAction::Next));
     assert_eq!(state.overlay.context_menu.as_ref().unwrap().selected, 1);
 
-    apply_action(&mut state, Action::MenuPrev);
+    apply_action(&mut state, Action::Menu(MenuAction::Prev));
     assert_eq!(state.overlay.context_menu.as_ref().unwrap().selected, 0);
 
-    apply_action(&mut state, Action::MenuDismiss);
+    apply_action(&mut state, Action::Menu(MenuAction::Dismiss));
     assert!(state.overlay.context_menu.is_none());
 }
 
@@ -514,9 +516,9 @@ fn open_close_exclude_editor() {
     let mut state = make_test_state(1);
     state.main_view = MainView::Settings;
     state.settings.selected = 4;
-    apply_action(&mut state, Action::OpenExcludeEditor);
+    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
     assert!(state.overlay.exclude_editor.is_some());
-    apply_action(&mut state, Action::CloseExcludeEditor);
+    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeClose));
     assert!(state.overlay.exclude_editor.is_none());
 }
 
@@ -525,18 +527,18 @@ fn exclude_editor_add_pattern() {
     use crossterm::event::KeyCode;
     let mut state = make_test_state(1);
     state.exclude_patterns = vec!["_*".to_string()];
-    apply_action(&mut state, Action::OpenExcludeEditor);
-    apply_action(&mut state, Action::ExcludeEditorStartAdd);
+    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
+    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeStartAdd));
     assert!(state.overlay.exclude_editor.as_ref().unwrap().adding);
     apply_action(
         &mut state,
-        Action::ExcludeEditorInputKey(key(KeyCode::Char('t'))),
+        Action::Settings(SettingsAction::ExcludeInputKey(key(KeyCode::Char('t')))),
     );
     apply_action(
         &mut state,
-        Action::ExcludeEditorInputKey(key(KeyCode::Char('*'))),
+        Action::Settings(SettingsAction::ExcludeInputKey(key(KeyCode::Char('*')))),
     );
-    let fx = apply_action(&mut state, Action::ExcludeEditorConfirm);
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::ExcludeConfirm));
     assert_eq!(state.exclude_patterns, vec!["_*", "t*"]);
     assert!(fx.has_save_config());
     assert!(fx.has_refresh_sessions());
@@ -547,9 +549,9 @@ fn exclude_editor_add_pattern() {
 fn exclude_editor_delete_pattern() {
     let mut state = make_test_state(1);
     state.exclude_patterns = vec!["_*".to_string(), "scratch*".to_string()];
-    apply_action(&mut state, Action::OpenExcludeEditor);
+    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
     state.overlay.exclude_editor.as_mut().unwrap().selected = 0;
-    let fx = apply_action(&mut state, Action::ExcludeEditorDelete);
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::ExcludeDelete));
     assert_eq!(state.exclude_patterns, vec!["scratch*"]);
     assert!(fx.has_save_config());
     assert!(fx.has_refresh_sessions());
@@ -560,15 +562,15 @@ fn exclude_editor_invalid_regex_shows_error() {
     use crossterm::event::KeyCode;
     let mut state = make_test_state(1);
     state.exclude_patterns = vec![];
-    apply_action(&mut state, Action::OpenExcludeEditor);
-    apply_action(&mut state, Action::ExcludeEditorStartAdd);
+    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
+    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeStartAdd));
     for ch in "/[invalid/".chars() {
         apply_action(
             &mut state,
-            Action::ExcludeEditorInputKey(key(KeyCode::Char(ch))),
+            Action::Settings(SettingsAction::ExcludeInputKey(key(KeyCode::Char(ch)))),
         );
     }
-    apply_action(&mut state, Action::ExcludeEditorConfirm);
+    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeConfirm));
     let editor = state.overlay.exclude_editor.as_ref().unwrap();
     assert!(editor.adding);
     assert!(editor.error.is_some());
@@ -591,7 +593,7 @@ fn toggle_view_mode_flips_and_saves() {
 fn settings_adjust_view_mode_toggles() {
     let mut state = make_test_state(1);
     state.settings.selected = 4;
-    let fx = apply_action(&mut state, Action::SettingsAdjust);
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_eq!(state.view_mode, ViewMode::Compact);
     assert!(fx.has_save_config());
 }
@@ -601,7 +603,7 @@ fn settings_adjust_frame_rate_cycles_and_saves() {
     let mut state = make_test_state(1);
     state.frame_rate_limit = 5;
     state.settings.selected = 5;
-    let fx = apply_action(&mut state, Action::SettingsAdjust);
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_eq!(state.frame_rate_limit, 10);
     assert!(fx.has_save_config());
 }
@@ -611,7 +613,7 @@ fn settings_adjust_prev_frame_rate_cycles_backwards() {
     let mut state = make_test_state(1);
     state.frame_rate_limit = 5;
     state.settings.selected = 5;
-    let fx = apply_action(&mut state, Action::SettingsAdjustPrev);
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::AdjustPrev));
     assert_eq!(state.frame_rate_limit, 2);
     assert!(fx.has_save_config());
 }
@@ -621,10 +623,10 @@ fn frame_rate_cycle_wraps_in_both_directions() {
     let mut state = make_test_state(1);
     state.frame_rate_limit = 2;
     state.settings.selected = 5;
-    apply_action(&mut state, Action::SettingsAdjustPrev);
+    apply_action(&mut state, Action::Settings(SettingsAction::AdjustPrev));
     assert_eq!(state.frame_rate_limit, 30);
 
-    apply_action(&mut state, Action::SettingsAdjust);
+    apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_eq!(state.frame_rate_limit, 2);
 }
 
@@ -632,7 +634,7 @@ fn frame_rate_cycle_wraps_in_both_directions() {
 fn settings_adjust_exclude_opens_editor_after_frame_rate_row() {
     let mut state = make_test_state(1);
     state.settings.selected = 6;
-    let fx = apply_action(&mut state, Action::SettingsAdjust);
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(state.overlay.exclude_editor.is_some());
     assert!(!fx.has_save_config());
 }
@@ -641,7 +643,7 @@ fn settings_adjust_exclude_opens_editor_after_frame_rate_row() {
 fn settings_adjust_keybindings_opens_view_after_exclude_row() {
     let mut state = make_test_state(1);
     state.settings.selected = 7;
-    let fx = apply_action(&mut state, Action::SettingsAdjust);
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(state.settings.keybindings_view_open);
     assert!(!fx.has_save_config());
 }
@@ -754,7 +756,7 @@ fn new_session_input_inserts_at_cursor() {
     let mut state = picker_state_with("~/foo/", vec!["bar".into(), "baz".into()]);
     let fx = apply_action(
         &mut state,
-        Action::NewSessionInputKey(key(KeyCode::Char('b'))),
+        Action::NewSession(NewSessionAction::InputKey(key(KeyCode::Char('b')))),
     );
     let ns = state.overlay.new_session.as_ref().unwrap();
     assert_eq!(ns.input_str(), "~/foo/b");
@@ -768,7 +770,7 @@ fn new_session_input_crossing_slash_sets_reread() {
     let mut state = picker_state_with("~/foo", vec!["foo".into()]);
     let fx = apply_action(
         &mut state,
-        Action::NewSessionInputKey(key(KeyCode::Char('/'))),
+        Action::NewSession(NewSessionAction::InputKey(key(KeyCode::Char('/')))),
     );
     assert_eq!(ns_input_str(&state), "~/foo/");
     assert!(fx.has_reread_new_session_entries());
@@ -776,19 +778,19 @@ fn new_session_input_crossing_slash_sets_reread() {
 
 // `new_session_backspace_at_trailing_slash_goes_up` was deleted with
 // the schema delta. The "up a level" behavior now lives in
-// `Action::NewSessionDirUp` (added in Task 12) and will be tested there.
+// `Action::NewSession(NewSessionAction::DirUp)` (added in Task 12) and will be tested there.
 
 // `new_session_tab_descends_into_selected_entry` was deleted with the
-// keyboard split: Tab now toggles focus (Action::NewSessionSwitchFocus).
+// keyboard split: Tab now toggles focus (Action::NewSession(NewSessionAction::SwitchFocus)).
 // The "descend into selected entry" behavior moves to
-// `Action::NewSessionDirEnter` (added in Task 12) and will be tested there.
+// `Action::NewSession(NewSessionAction::DirEnter)` (added in Task 12) and will be tested there.
 
 #[test]
 fn new_session_next_clamped_to_filtered_len() {
     let mut state = picker_state_with("~/", vec!["a".into(), "b".into()]);
-    apply_action(&mut state, Action::NewSessionNext);
-    apply_action(&mut state, Action::NewSessionNext);
-    apply_action(&mut state, Action::NewSessionNext); // tries to overrun
+    apply_action(&mut state, Action::NewSession(NewSessionAction::Next));
+    apply_action(&mut state, Action::NewSession(NewSessionAction::Next));
+    apply_action(&mut state, Action::NewSession(NewSessionAction::Next)); // tries to overrun
     let ns = state.overlay.new_session.as_ref().unwrap();
     assert_eq!(ns.selected, 1);
 }
@@ -796,7 +798,7 @@ fn new_session_next_clamped_to_filtered_len() {
 #[test]
 fn new_session_delete_segment_goes_back_to_slash() {
     let mut state = picker_state_with("~/foo/bar", vec![]);
-    let fx = apply_action(&mut state, Action::NewSessionDeleteSegment);
+    let fx = apply_action(&mut state, Action::NewSession(NewSessionAction::DeleteSegment));
     assert_eq!(ns_input_str(&state), "~/foo/");
     assert!(fx.has_reread_new_session_entries());
 }
@@ -807,13 +809,13 @@ fn new_session_switch_focus_toggles_field() {
     // picker_state_with sets focus to Dir; switch to Name first
     state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
 
-    apply_action(&mut state, Action::NewSessionSwitchFocus);
+    apply_action(&mut state, Action::NewSession(NewSessionAction::SwitchFocus));
     assert_eq!(
         state.overlay.new_session.as_ref().unwrap().focus,
         crate::new_session::PickerFocus::Dir
     );
 
-    apply_action(&mut state, Action::NewSessionSwitchFocus);
+    apply_action(&mut state, Action::NewSession(NewSessionAction::SwitchFocus));
     assert_eq!(
         state.overlay.new_session.as_ref().unwrap().focus,
         crate::new_session::PickerFocus::Name
@@ -828,7 +830,7 @@ fn new_session_input_routes_to_name_when_focused_on_name() {
 
     apply_action(
         &mut state,
-        Action::NewSessionInputKey(key(KeyCode::Char('x'))),
+        Action::NewSession(NewSessionAction::InputKey(key(KeyCode::Char('x')))),
     );
     assert_eq!(ns_name_str(&state), "x");
     assert_eq!(ns_input_str(&state), "~/foo/"); // dir untouched
@@ -837,7 +839,7 @@ fn new_session_input_routes_to_name_when_focused_on_name() {
 #[test]
 fn new_session_dir_up_drops_segment() {
     let mut state = picker_state_with("~/foo/bar/", vec![]);
-    let fx = apply_action(&mut state, Action::NewSessionDirUp);
+    let fx = apply_action(&mut state, Action::NewSession(NewSessionAction::DirUp));
     assert_eq!(ns_input_str(&state), "~/foo/");
     assert!(fx.has_reread_new_session_entries());
 }
@@ -845,7 +847,7 @@ fn new_session_dir_up_drops_segment() {
 #[test]
 fn new_session_dir_enter_descends_into_selected() {
     let mut state = picker_state_with("~/foo/", vec!["bar".into(), "baz".into()]);
-    let fx = apply_action(&mut state, Action::NewSessionDirEnter);
+    let fx = apply_action(&mut state, Action::NewSession(NewSessionAction::DirEnter));
     assert_eq!(ns_input_str(&state), "~/foo/bar/");
     assert!(fx.has_reread_new_session_entries());
 }
@@ -855,11 +857,11 @@ fn open_host_divider_menu_uses_host_kind() {
     let mut state = make_test_state(1);
     crate::action::apply_action(
         &mut state,
-        Action::OpenHostDividerMenu {
+        Action::Menu(MenuAction::OpenHostDivider {
             host: "h1".into(),
             x: 10,
             y: 5,
-        },
+        }),
     );
     let menu = state.overlay.context_menu.as_ref().expect("menu opened");
     match &menu.kind {
@@ -871,7 +873,7 @@ fn open_host_divider_menu_uses_host_kind() {
 #[test]
 fn open_port_forward_clears_menu_and_opens_overlay() {
     let mut state = make_test_state(1);
-    crate::action::apply_action(&mut state, Action::OpenPortForward("h1".into()));
+    crate::action::apply_action(&mut state, Action::Pf(PfAction::Open("h1".into())));
     assert!(state.overlay.context_menu.is_none());
     let o = state.overlay.port_forward.as_ref().expect("overlay open");
     assert_eq!(o.host, "h1");
@@ -887,7 +889,7 @@ fn pf_add_open_creates_default_form() {
         add_form: None,
         status: None,
     });
-    crate::action::apply_action(&mut state, Action::PfAddOpen);
+    crate::action::apply_action(&mut state, Action::Pf(PfAction::AddOpen));
     let o = state.overlay.port_forward.as_ref().unwrap();
     let f = o.add_form.as_ref().unwrap();
     assert_eq!(f.mode, crate::config::ForwardMode::Local);
@@ -913,12 +915,12 @@ fn pf_task_result_persists_forward_when_overlay_closed() {
 
     crate::action::apply_action(
         &mut state,
-        Action::PfTaskResult {
+        Action::Pf(PfAction::TaskResult {
             host: "h1".into(),
             op: crate::app::port_forward_task::OpKind::Forward("h1".into(), spec.clone()),
             ok: true,
             message: String::new(),
-        },
+        }),
     );
 
     let remote = state
@@ -944,12 +946,12 @@ fn pf_task_result_marks_host_unreachable_on_master_failure() {
 
     crate::action::apply_action(
         &mut state,
-        Action::PfTaskResult {
+        Action::Pf(PfAction::TaskResult {
             host: "h1".into(),
             op: crate::app::port_forward_task::OpKind::Master("h1".into()),
             ok: false,
             message: "connection refused".into(),
-        },
+        }),
     );
 
     let row = &state.remote_sessions[0];
@@ -1009,7 +1011,7 @@ fn pf_add_input_key_appends_to_focused_textarea() {
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "");
     for c in ['8', '0', '8', '0'] {
-        crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char(c))));
+        crate::action::apply_action(&mut state, Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))));
     }
     let f = state
         .overlay
@@ -1028,7 +1030,7 @@ fn pf_add_input_drops_non_digits_in_port_fields() {
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "");
     for c in ['8', 'a', '0', '.', '8', '0'] {
-        crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char(c))));
+        crate::action::apply_action(&mut state, Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))));
     }
     let f = state
         .overlay
@@ -1047,7 +1049,7 @@ fn pf_add_input_allows_non_digits_in_host_fields() {
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::TargetHost, "");
     for c in ['h', '-', '1', '.', 'x'] {
-        crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char(c))));
+        crate::action::apply_action(&mut state, Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))));
     }
     let f = state
         .overlay
@@ -1066,7 +1068,7 @@ fn pf_add_input_rejects_out_of_range_ports() {
     let mut state = make_test_state(0);
     // "6553" is fine, but appending '6' would yield "65536" > u16::MAX.
     open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "6553");
-    crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char('6'))));
+    crate::action::apply_action(&mut state, Action::Pf(PfAction::AddInputKey(key(KeyCode::Char('6')))));
     let f = state
         .overlay
         .port_forward
@@ -1078,7 +1080,7 @@ fn pf_add_input_rejects_out_of_range_ports() {
     assert_eq!(f.field_text(crate::state::PfField::ListenPort), "6553");
 
     // "65535" should be acceptable.
-    crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char('5'))));
+    crate::action::apply_action(&mut state, Action::Pf(PfAction::AddInputKey(key(KeyCode::Char('5')))));
     let f = state
         .overlay
         .port_forward
@@ -1096,7 +1098,7 @@ fn pf_add_input_blocks_whitespace_in_host_fields() {
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::TargetHost, "");
     for c in ['1', ' ', '2', '\t', '7'] {
-        crate::action::apply_action(&mut state, Action::PfAddInputKey(key(KeyCode::Char(c))));
+        crate::action::apply_action(&mut state, Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))));
     }
     let f = state
         .overlay
@@ -1262,7 +1264,7 @@ fn last_remote_session_disables_kill_only() {
 fn pf_add_field_next_changes_focus() {
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "8");
-    crate::action::apply_action(&mut state, Action::PfAddFieldNext);
+    crate::action::apply_action(&mut state, Action::Pf(PfAction::AddFieldNext));
     let f = state
         .overlay
         .port_forward

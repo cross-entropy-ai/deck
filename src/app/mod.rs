@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use crossterm::event::{self, Event, KeyEventKind};
 use ratatui::DefaultTerminal;
 
-use crate::action::Action;
+use crate::action::{Action, PfAction};
 use crate::config::{Config, KeyBindingValue};
 use crate::keybindings::Keybindings;
 use crate::pty::Pty;
@@ -775,18 +775,18 @@ impl App {
             while let Ok(r) = self.port_forward_rx.try_recv() {
                 match r.kind {
                     crate::app::port_forward_task::OpKind::Probe(key, health) => {
-                        self.dispatch(Action::PfProbeResult { key, health });
+                        self.dispatch(Action::Pf(PfAction::ProbeResult { key, health }));
                         needs_render = true;
                         force_render = true;
                     }
                     kind => {
                         let host = kind.host().to_string();
-                        self.dispatch(Action::PfTaskResult {
+                        self.dispatch(Action::Pf(PfAction::TaskResult {
                             host,
                             op: kind,
                             ok: r.ok,
                             message: r.message,
-                        });
+                        }));
                         needs_render = true;
                         force_render = true;
                     }

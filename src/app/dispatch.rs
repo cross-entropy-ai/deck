@@ -1,4 +1,4 @@
-use crate::action::{self, Action};
+use crate::action::{self, Action, MenuAction, NewSessionAction, PfAction, SummaryAction};
 use crate::config::Config;
 use crate::keybindings::{self, Keybindings};
 use crate::session::local::LocalControl;
@@ -101,7 +101,7 @@ impl App {
                 self.switch_to_agent_pane(target);
                 false
             }
-            Action::GenerateSummary => {
+            Action::Summary(SummaryAction::Generate) => {
                 self.start_summary_generation();
                 false
             }
@@ -111,13 +111,16 @@ impl App {
                 self.settle_focus_after_switch();
                 fx.has_quit()
             }
-            Action::MenuClickItem(idx) => {
+            Action::Menu(MenuAction::ClickItem(idx)) => {
                 let mut fx = SideEffect::default();
                 fx.merge(action::apply_action(
                     &mut self.state,
-                    Action::MenuHover(idx),
+                    Action::Menu(MenuAction::Hover(idx)),
                 ));
-                fx.merge(action::apply_action(&mut self.state, Action::MenuConfirm));
+                fx.merge(action::apply_action(
+                    &mut self.state,
+                    Action::Menu(MenuAction::Confirm),
+                ));
                 self.execute_side_effects(&fx);
                 if self.warning_state.is_some() {
                     self.state.focus_mode = FocusMode::Sidebar;
@@ -220,15 +223,15 @@ impl App {
                 self.request_refresh();
                 false
             }
-            Action::PfAddSubmit => {
+            Action::Pf(PfAction::AddSubmit) => {
                 self.pf_add_submit();
                 false
             }
-            Action::PfDelete => {
+            Action::Pf(PfAction::Delete) => {
                 self.pf_delete_selected();
                 false
             }
-            Action::NewSessionConfirm => {
+            Action::NewSession(NewSessionAction::Confirm) => {
                 if let Some(req) = self.confirm_new_session() {
                     let mut fx = crate::state::SideEffect::default();
                     fx.create_session(req);

@@ -2,7 +2,7 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 use crate::state::{AppState, DividerButton, FocusTarget, HitKind, LayoutMode, MainView, Modal};
 
-use super::Action;
+use super::{Action, MenuAction, PfAction, SettingsAction, SummaryAction};
 
 pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     // Single resolver for every rect-based button/region the sidebar
@@ -29,11 +29,13 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         // modal up, so a modal hides them (bug #7).
         match hit {
             Some(HitKind::Tab(tab)) => return Action::SelectTab(tab),
-            Some(HitKind::SummaryButton) => return Action::GenerateSummary,
-            Some(HitKind::SummaryPopup) => return Action::OpenSummaryPopup,
+            Some(HitKind::SummaryButton) => return Action::Summary(SummaryAction::Generate),
+            Some(HitKind::SummaryPopup) => return Action::Summary(SummaryAction::OpenPopup),
             // The footer "menu" button opens the global context menu, anchored
             // at the button (the menu renderer clamps it on-screen).
-            Some(HitKind::Menu(r)) => return Action::OpenGlobalMenu { x: r.x, y: r.y },
+            Some(HitKind::Menu(r)) => {
+                return Action::Menu(MenuAction::OpenGlobal { x: r.x, y: r.y })
+            }
             _ => {}
         }
     }
@@ -64,13 +66,13 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         MouseEventKind::Down(MouseButton::Left)
             if state.summary_resize_at(mouse.column, mouse.row) =>
         {
-            return Action::StartSummaryDrag;
+            return Action::Summary(SummaryAction::StartDrag);
         }
         MouseEventKind::Drag(MouseButton::Left) if state.dragging_summary => {
-            return Action::ResizeSummary(state.summary_height_for_drag(mouse.row));
+            return Action::Summary(SummaryAction::Resize(state.summary_height_for_drag(mouse.row)));
         }
         MouseEventKind::Up(MouseButton::Left) if state.dragging_summary => {
-            return Action::StopSummaryDrag;
+            return Action::Summary(SummaryAction::StopDrag);
         }
         MouseEventKind::Down(MouseButton::Left) if on_separator => {
             return Action::StartDrag;
@@ -104,8 +106,8 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
                     && state.summary_card_at(mouse.column, mouse.row)
                 {
                     return match mouse.kind {
-                        MouseEventKind::ScrollUp => Action::ScrollSummary(-1),
-                        _ => Action::ScrollSummary(1),
+                        MouseEventKind::ScrollUp => Action::Summary(SummaryAction::Scroll(-1)),
+                        _ => Action::Summary(SummaryAction::Scroll(1)),
                     };
                 }
                 return match mouse.kind {
@@ -119,7 +121,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
 
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) && in_sidebar {
         if state.main_view == MainView::Settings {
-            return Action::CloseSettings;
+            return Action::Settings(SettingsAction::Close);
         }
         // Check divider […] button hit regions before falling through to
         // session-row dispatch so a click on the button isn't mistaken for
@@ -133,16 +135,16 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
                     DividerButton::Reconnect => Action::ReconnectHost {
                         host: dh.host.clone(),
                     },
-                    DividerButton::More => Action::OpenHostDividerMenu {
+                    DividerButton::More => Action::Menu(MenuAction::OpenHostDivider {
                         host: dh.host.clone(),
                         x: dh.rect.x,
                         y: dh.rect.y + 1, // open just below the button
-                    },
-                    DividerButton::PfBadge => Action::OpenPortForward(dh.host.clone()),
-                    DividerButton::LocalMore => Action::OpenLocalDividerMenu {
+                    }),
+                    DividerButton::PfBadge => Action::Pf(PfAction::Open(dh.host.clone())),
+                    DividerButton::LocalMore => Action::Menu(MenuAction::OpenLocalDivider {
                         x: dh.rect.x,
                         y: dh.rect.y + 1, // open just below the button
-                    },
+                    }),
                 };
             }
             Some(HitKind::Agent(i)) => {
@@ -189,16 +191,16 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
                 .map(FocusTarget),
         };
         return if let Some(target) = target {
-            Action::OpenSessionMenu {
+            Action::Menu(MenuAction::OpenSession {
                 target,
                 x: mouse.column,
                 y: mouse.row,
-            }
+            })
         } else {
-            Action::OpenGlobalMenu {
+            Action::Menu(MenuAction::OpenGlobal {
                 x: mouse.column,
                 y: mouse.row,
-            }
+            })
         };
     }
 
@@ -257,9 +259,9 @@ fn modal_mouse_to_action(
             // The big-view popup owns input: wheel scrolls it, any click
             // dismisses it, everything else is inert.
             match mouse.kind {
-                MouseEventKind::ScrollUp => Action::ScrollSummaryPopup(-1),
-                MouseEventKind::ScrollDown => Action::ScrollSummaryPopup(1),
-                MouseEventKind::Down(_) => Action::CloseSummaryPopup,
+                MouseEventKind::ScrollUp => Action::Summary(SummaryAction::ScrollPopup(-1)),
+                MouseEventKind::ScrollDown => Action::Summary(SummaryAction::ScrollPopup(1)),
+                MouseEventKind::Down(_) => Action::Summary(SummaryAction::ClosePopup),
                 _ => Action::None,
             }
         }
@@ -273,14 +275,16 @@ fn modal_mouse_to_action(
                     match state.menu_item_at(mouse.column, mouse.row) {
                         // Clicking a greyed item does nothing and keeps the
                         // menu open; clicking outside any item dismisses it.
-                        Some(idx) if menu.is_enabled(idx) => Action::MenuClickItem(idx),
+                        Some(idx) if menu.is_enabled(idx) => {
+                            Action::Menu(MenuAction::ClickItem(idx))
+                        }
                         Some(_) => Action::None,
-                        None => Action::MenuDismiss,
+                        None => Action::Menu(MenuAction::Dismiss),
                     }
                 }
-                MouseEventKind::Down(MouseButton::Right) => Action::MenuDismiss,
+                MouseEventKind::Down(MouseButton::Right) => Action::Menu(MenuAction::Dismiss),
                 MouseEventKind::Moved => match state.menu_item_at(mouse.column, mouse.row) {
-                    Some(idx) if menu.is_enabled(idx) => Action::MenuHover(idx),
+                    Some(idx) if menu.is_enabled(idx) => Action::Menu(MenuAction::Hover(idx)),
                     _ => Action::None,
                 },
                 _ => Action::None,

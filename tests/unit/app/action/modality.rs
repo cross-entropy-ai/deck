@@ -7,7 +7,7 @@
 //! input boxes are the ones this test pins down (they used to leak global
 //! keys and clicks behind the overlay).
 
-use super::{key_to_action, mouse_to_action, Action};
+use super::{key_to_action, mouse_to_action, Action, MenuAction};
 use crate::state::{
     AppState, ContextMenu, ExcludeEditorState, FocusMode, MainView, MenuKind, Modal, RenameState,
     SessionRow,
@@ -100,8 +100,8 @@ fn is_forbidden(a: &Action) -> bool {
     matches!(
         a,
         Action::SidebarClickSession(_)
-            | Action::OpenSessionMenu { .. }
-            | Action::OpenGlobalMenu { .. }
+            | Action::Menu(MenuAction::OpenSession { .. })
+            | Action::Menu(MenuAction::OpenGlobal { .. })
             | Action::SwitchToAgentPane(_)
             | Action::ToggleSection(_)
             | Action::SwitchProject

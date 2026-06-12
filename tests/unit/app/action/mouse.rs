@@ -1,4 +1,4 @@
-use super::{mouse_to_action, Action};
+use super::{mouse_to_action, Action, SummaryAction};
 use crate::state::{AgentHit, AgentTarget, AppState};
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -50,7 +50,7 @@ fn wheel_over_agent_row_inside_card_scrolls_summary() {
     // (4, 5) is inside both the agent rect and the card rect.
     let action = mouse_to_action(&ev(MouseEventKind::ScrollUp, 4, 5), &state);
     assert!(
-        matches!(action, Action::ScrollSummary(-1)),
+        matches!(action, Action::Summary(SummaryAction::Scroll(-1))),
         "wheel over an agent row that overlaps the card must scroll the summary, got {action:?}"
     );
 }

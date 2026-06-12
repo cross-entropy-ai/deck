@@ -41,7 +41,7 @@ pub enum Op {
 }
 
 /// Identifier for what the result is reporting on. Mirrored on
-/// `Action::PfTaskResult` so the reducer can pick the right place to
+/// `PfAction::TaskResult` so the reducer can pick the right place to
 /// surface the message.
 #[derive(Debug, Clone)]
 pub enum OpKind {
