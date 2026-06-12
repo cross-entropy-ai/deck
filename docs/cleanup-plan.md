@@ -222,10 +222,11 @@
     client switches invisibly behind Settings (`dispatch.rs:365-386`
     never resets `main_view`). *(sidebar click now closes settings —
     commit bda58b7; main_view resets to Terminal on switch)*
-22. [ ] **SessionExecutor leaks one parked worker+sender per removed host**
+22. [x] **SessionExecutor leaks one parked worker+sender per removed host**
     (`executor.rs:106-117`, never pruned); if `thread::spawn` fails the
     dead sender is cached and all future ops for that key vanish.
-    *(`senders` map still uses `or_insert_with`, never pruned)*
+    *(fixed in Phase 5: `SessionExecutor::remove(host)` is called on
+    offboard, and a sender is cached only after its worker thread spawns)*
 23. [ ] **Remote refresh robustness:** a degraded host can hold the
     single-flight gate ~20s (4 sequential 5s ssh calls; comment claims
     5s, `infra/refresh.rs:236`); if the detached thread fails to spawn,
@@ -369,19 +370,22 @@
   long-running port-forward task keep bespoke shapes the generic harness
   doesn't model; focus one-shots (N workers → one shared drain) stay
   ad-hoc. #23/#24 remain open.)*
-- [ ] **D17. Per-frame waste**: `render.rs:36-57` defensively clones
+- [~] **D17. Per-frame waste**: `render.rs:36-57` defensively clones
   context-menu/new-session/add-remote/pf/warning/summary text each
   frame; `agent_rows()` clones every `DetectedAgent` per call and is
   called per frame *and* per keystroke (`focusable_count`); `current_layout`
   is rebuilt per mouse event. Cache/borrow once the model split (Phase 5)
-  makes ownership clear.
-- [ ] **D18. `AppState.filtered` is vestigial**: exclusion happens in the
+  makes ownership clear. *(Phase 5: `AgentRow` now borrows instead of
+  cloning, and `focusable_count` uses a cheap `agent_count` length path;
+  the render loop already computes layout/agent_rows once per frame. The
+  defensive overlay-text clones in `render.rs` are left as-is.)*
+- [x] **D18. `AppState.filtered` is vestigial**: exclusion happens in the
   refresh worker (`infra/refresh.rs:187`); `recompute_filter` is the
   identity permutation (`state.rs:2162`). All `sessions[filtered[i]]`
   double-indexing is dead complexity — and the kill guard checks
   `sessions.len()` while `switch_to` picks from `filtered`, safe only
-  while they coincide. Delete it (Phase 5). *(`filtered` still present
-  and indexed — state.rs:1063)*
+  while they coincide. Delete it (Phase 5). *(done in Phase 5: `filtered`
+  removed, entries indexed directly, kill-guard asymmetry fixed)*
 
 ---
 
@@ -524,7 +528,7 @@ Plan, in order:
 4. [x] Split `dispatch.rs` along its existing seams: `remote_conn.rs`
    (moves into the manager), `new_session_flow.rs`, `reload.rs`.
 
-### Phase 5 — Split the model; unify the session list (kills D17/D18) — [ ] NOT STARTED
+### Phase 5 — Split the model; unify the session list (kills D17/D18) — [x] DONE
 
 Problem: `state.rs` is 2,234 lines holding ~10 concerns; `AppState` has
 ~45 pub fields; `Effect` (app vocabulary) lives in the model; local and
@@ -533,16 +537,17 @@ index arithmetic in six places; `filtered` is vestigial; model imports
 `ui::layout` (layering inversion).
 
 Plan, in order:
-1. [ ] Mechanical file split, no behavior change: `model/effects.rs`
+1. [x] Mechanical file split, no behavior change: `model/effects.rs`
    (Effect, SideEffect, request DTOs + test macros), `model/menu.rs`,
    `model/forwards.rs`, `model/summary.rs` (one `SummaryCard` struct
-   absorbing the 12 loose summary fields), `model/overlay.rs`,
+   absorbing the loose summary fields), `model/overlay.rs`,
    `model/geometry.rs` (sidebar layout building + hit decode; the
    shared constants move *down* here so `ui` depends on model, never
    the reverse). `state.rs` keeps `AppState` + focus/filter/order.
-2. [ ] Delete `filtered` (D18); replace `sessions[filtered[i]]` with direct
+   *(SummaryCard landed in 5.2; the rest in 5.1; model no longer imports ui)*
+2. [x] Delete `filtered` (D18); replace `sessions[filtered[i]]` with direct
    indexing and fix the kill-guard asymmetry while there.
-3. [ ] Unify the stores: one `Vec<SessionEntry>` where
+3. [x] Unify the stores: one `Vec<SessionEntry>` where
    `SessionEntry { host: Option<String>, name, dir, kind }` and
    `kind ∈ {Live{is_current, idle}, Connecting, Unreachable, NoSessions}`
    replaces `SessionRow` + `RemoteSessionRow` + reserved-name sentinels
@@ -551,11 +556,16 @@ Plan, in order:
    reducer's `idx - local_count` arithmetic all collapse to "look at
    the entry". This is the repo's own stated rule applied to its oldest
    exception, and the single biggest simplification available.
-4. [ ] Newtype the host key (`HostKey` wrapping `Option<Arc<str>>` or an
+   *(done + dedicated review; behavior-preserving for local & remote)*
+4. [~] Newtype the host key (`HostKey` wrapping `Option<Arc<str>>` or an
    interned id) used by `agents`, `collapsed_sections`, `remote_conns`,
    executor senders, `ForwardKey` — kills per-lookup `Option<String>`
-   clones; then cache `agent_rows`/layout per frame (D17).
-5. [ ] Prune the executor's sender map on offboard (bug #22).
+   clones; then cache `agent_rows`/layout per frame (D17). *(HostKey
+   landed for `agents`/`collapsed_sections`/executor senders with an
+   allocation-free `Borrow` lookup; `remote_conns`/`ForwardKey` and the
+   Effect/dispatch DTOs deliberately stay `Option<String>` — converting
+   them is churn at unrelated layers. D17 borrow-not-clone done.)*
+5. [x] Prune the executor's sender map on offboard (bug #22).
 
 ### Phase 6 — UI consolidation — [~] PARTIAL
 
