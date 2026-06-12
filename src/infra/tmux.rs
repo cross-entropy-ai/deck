@@ -222,11 +222,20 @@ pub enum PaneFocus {
 /// signals the highlight must be withheld (see [`PaneFocus`]).
 pub fn focus_local_pane(client_tty: &str, session: &str, pane_id: &str) -> PaneFocus {
     // `select-window`/`select-pane` are session state, not client state, so
-    // they move every client attached to the session. Only select the exact
-    // window/pane when our client is the sole one on the session; otherwise
-    // switch just our own client (client-scoped) and leave the session's
-    // current window/pane untouched, so we don't yank a co-attached client.
-    let exact = !other_client_on_session(client_tty, session);
+    // they move every client attached to the session. The co-client guard
+    // below normally avoids selecting a window when another client shares the
+    // session — so switching deck to *another* session doesn't reorganize it
+    // for someone else.
+    //
+    // But that guard must NOT apply when we're moving between windows of the
+    // session our client is ALREADY on: `switch-client -t <same session>` is a
+    // no-op, so without `select-window` deck couldn't switch windows at all
+    // (e.g. two agents in `default:1` and `default:2`). tmux shows every client
+    // on a session the same active window, so there's no per-client way to do
+    // this — selecting the window is the only option, and it intentionally
+    // carries any co-client along.
+    let same_session = client_current_session(client_tty).as_deref() == Some(session);
+    let exact = same_session || !other_client_on_session(client_tty, session);
     let mut args: Vec<String> = Vec::new();
     if exact {
         args.extend([
@@ -257,6 +266,19 @@ pub fn focus_local_pane(client_tty: &str, session: &str, pane_id: &str) -> PaneF
     } else {
         PaneFocus::SessionOnly
     }
+}
+
+/// The session our own client (`client_tty`) is currently attached to, or
+/// `None` if unknown. Lets `focus_local_pane` tell a within-session window
+/// switch (where `select-window` is the only way to move) apart from a
+/// cross-session switch (where the co-client guard still applies).
+fn client_current_session(client_tty: &str) -> Option<String> {
+    if client_tty.is_empty() {
+        return None;
+    }
+    let raw = tmux(&["display-message", "-t", client_tty, "-p", "#{client_session}"])?;
+    let session = raw.trim();
+    (!session.is_empty()).then(|| session.to_string())
 }
 
 /// Whether a tmux client *other than* `client_tty` is attached to
