@@ -6,6 +6,7 @@ use ratatui::Frame;
 
 use crate::keybindings::{Command, Keybindings};
 use crate::theme::Theme;
+use crate::ui::form::field_row;
 use crate::ui::widgets::{
     centered_rect, list_item_line, popup_frame, scroll_window, style_textarea, PopupStyle,
     TextAreaColors,
@@ -338,10 +339,14 @@ fn draw_summary_language_editor(
     ])
     .split(inner);
 
-    let cols = Layout::horizontal([Constraint::Length(1), Constraint::Min(0)]).split(rows[0]);
-    let mut ta = input.clone();
-    style_textarea(
-        &mut ta,
+    // A 1-wide empty label over the popup's `theme.bg` fill leaves that
+    // leading cell unchanged while indenting the field by one column.
+    field_row(
+        frame.buffer_mut(),
+        rows[0],
+        " ",
+        Style::default().bg(theme.bg),
+        input,
         true,
         TextAreaColors {
             fg: theme.accent,
@@ -350,7 +355,6 @@ fn draw_summary_language_editor(
             cursor_bg: theme.accent,
         },
     );
-    ta.render(cols[1], frame.buffer_mut());
 
     Paragraph::new(Line::from(Span::styled(
         " e.g. English, 中文 — blank for default · Enter save / Esc cancel",

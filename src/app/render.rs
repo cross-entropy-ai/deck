@@ -481,7 +481,7 @@ impl App {
             if let Some(overlay) = port_forward_overlay {
                 let pf_area = frame.area();
                 crate::ui::overlays::port_forward::draw_port_forward(
-                    frame.buffer_mut(),
+                    frame,
                     pf_area,
                     overlay,
                     &self.state.config_remotes,

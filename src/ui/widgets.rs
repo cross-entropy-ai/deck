@@ -120,6 +120,54 @@ pub fn scrollbar_cells(rows: usize, total: usize, scroll: usize) -> Vec<Option<&
         .collect()
 }
 
+/// Paint one scrollable markdown window into per-row span lists.
+///
+/// Wraps `text` to `content_w` columns, windows the lines around `scroll`
+/// for `rows` rows, and renders each row's runs (`**bold**` etc.) over `bg`,
+/// padding short/empty lines out to `content_w` and appending the matching
+/// scrollbar glyph (track/thumb in `theme.dim`). Returns one span list per
+/// row (length `rows`) plus the clamped `max_scroll`, so callers just wrap
+/// each row with their own indent/`pad_line` and clamp scroll input. Shared
+/// by the inline Summary card and the big Summary popup so their windowing,
+/// padding, and scrollbar can't diverge.
+pub(super) fn markdown_window(
+    text: &str,
+    rows: usize,
+    scroll: usize,
+    content_w: usize,
+    theme: &Theme,
+    bg: Color,
+) -> (Vec<Vec<Span<'static>>>, usize) {
+    use super::text::{md_line_spans, md_line_width, wrap_markdown};
+
+    let wrapped = wrap_markdown(text, content_w.max(1));
+    let total = wrapped.len();
+    let max_scroll = total.saturating_sub(rows);
+    let scroll = scroll.min(max_scroll);
+    let bar = scrollbar_cells(rows, total, scroll);
+    let base = Style::default().fg(theme.text).bg(bg);
+
+    let out = (0..rows)
+        .map(|i| {
+            let (mut spans, line_w) = match wrapped.get(scroll + i) {
+                Some(runs) => (md_line_spans(runs, theme, base), md_line_width(runs)),
+                None => (Vec::new(), 0),
+            };
+            if line_w < content_w {
+                spans.push(Span::styled(
+                    " ".repeat(content_w - line_w),
+                    Style::default().bg(bg),
+                ));
+            }
+            if let Some(glyph) = bar.get(i).copied().flatten() {
+                spans.push(Span::styled(glyph, Style::default().fg(theme.dim).bg(bg)));
+            }
+            spans
+        })
+        .collect();
+    (out, max_scroll)
+}
+
 /// Compute the first visible index so that `selected` stays in view.
 pub fn scroll_window(selected: usize, total: usize, window: usize) -> usize {
     if total <= window || selected < window {
@@ -163,4 +211,63 @@ pub fn draw_picker_list(
         .render(rows[pos], buf);
     }
     window
+}
+
+#[cfg(test)]
+mod tests {
+    use super::markdown_window;
+    use crate::theme::THEMES;
+
+    fn row_text(spans: &[ratatui::text::Span]) -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn markdown_window_pads_rows_and_appends_scrollbar() {
+        let theme = &THEMES[0];
+        // Five wrapped words at width 5 give 5 lines; window to 3 rows so
+        // the content overflows and a scrollbar must appear on every row.
+        let text = "aaaa bbbb cccc dddd eeee";
+        let content_w = 5;
+        let rows = 3;
+        let (out, max_scroll) = markdown_window(text, rows, 0, content_w, theme, theme.bg);
+
+        assert_eq!(out.len(), rows, "one span list per row");
+        // 5 wrapped lines, 3-row window -> 2 lines of slack.
+        assert_eq!(max_scroll, 2);
+
+        for spans in &out {
+            let text = row_text(spans);
+            // Content padded to `content_w`, plus the 1-col scrollbar glyph.
+            let last = spans.last().expect("scrollbar glyph");
+            assert!(
+                last.content == "█" || last.content == "░",
+                "row ends with a scrollbar cell, got {:?}",
+                last.content
+            );
+            assert_eq!(text.chars().count(), content_w + 1);
+        }
+    }
+
+    #[test]
+    fn markdown_window_scroll_offsets_the_window() {
+        let theme = &THEMES[0];
+        let text = "aaaa bbbb cccc";
+        let (top, _) = markdown_window(text, 1, 0, 5, theme, theme.bg);
+        let (mid, _) = markdown_window(text, 1, 1, 5, theme, theme.bg);
+        assert!(row_text(&top[0]).starts_with("aaaa"));
+        assert!(row_text(&mid[0]).starts_with("bbbb"));
+    }
+
+    #[test]
+    fn markdown_window_no_scrollbar_when_content_fits() {
+        let theme = &THEMES[0];
+        // One short line into a 3-row window: no overflow, so no glyph and
+        // each row is padded to exactly `content_w`.
+        let (out, max_scroll) = markdown_window("hi", 3, 0, 8, theme, theme.bg);
+        assert_eq!(max_scroll, 0);
+        for spans in &out {
+            assert_eq!(row_text(spans).chars().count(), 8);
+        }
+    }
 }

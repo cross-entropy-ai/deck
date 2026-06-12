@@ -3,15 +3,13 @@
 //! from the card's popup button; scrolled with the wheel or keys.
 
 use ratatui::layout::Rect;
-use ratatui::style::Style;
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::theme::Theme;
 
-use super::text::{md_line_spans, md_line_width, wrap_markdown};
-use super::widgets::{centered_rect, popup_frame, scrollbar_cells, PopupStyle};
+use super::widgets::{centered_rect, markdown_window, popup_frame, PopupStyle};
 
 /// Draw the summary popup over `area` and return the max scroll offset for
 /// the current text/size, so the caller can clamp scroll input.
@@ -40,40 +38,9 @@ pub fn draw_summary_popup(
 
     let rows = inner.height as usize;
     let content_w = (inner.width as usize).saturating_sub(1).max(1); // 1 col bar
-    let wrapped = wrap_markdown(text, content_w);
-    let total = wrapped.len();
-    let max_scroll = total.saturating_sub(rows);
-    let scroll = scroll.min(max_scroll);
-    let bar = scrollbar_cells(rows, total, scroll);
-    let base = Style::default().fg(theme.text).bg(theme.surface);
-
-    let mut lines: Vec<Line> = Vec::with_capacity(rows);
-    for i in 0..rows {
-        let mut spans = match wrapped.get(scroll + i) {
-            Some(runs) => {
-                let line_w = md_line_width(runs);
-                let mut spans = md_line_spans(runs, theme, base);
-                if line_w < content_w {
-                    spans.push(Span::styled(
-                        " ".repeat(content_w - line_w),
-                        Style::default().bg(theme.surface),
-                    ));
-                }
-                spans
-            }
-            None => vec![Span::styled(
-                " ".repeat(content_w),
-                Style::default().bg(theme.surface),
-            )],
-        };
-        if let Some(glyph) = bar.get(i).copied().flatten() {
-            spans.push(Span::styled(
-                glyph,
-                Style::default().fg(theme.dim).bg(theme.surface),
-            ));
-        }
-        lines.push(Line::from(spans));
-    }
+    let (row_spans, max_scroll) =
+        markdown_window(text, rows, scroll, content_w, theme, theme.surface);
+    let lines: Vec<Line> = row_spans.into_iter().map(Line::from).collect();
 
     frame.render_widget(Paragraph::new(lines), inner);
     max_scroll

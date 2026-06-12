@@ -10,7 +10,8 @@ use ratatui_textarea::TextArea;
 use crate::keybindings::{Command, Keybindings};
 use crate::state::KillConfirmHits;
 use crate::theme::Theme;
-use crate::ui::widgets::{style_textarea, TextAreaColors};
+use crate::ui::form::field_row;
+use crate::ui::widgets::TextAreaColors;
 
 use super::text::format_keys_for;
 
@@ -217,13 +218,15 @@ pub(super) fn draw_rename_input(
     .style(Style::default().bg(theme.bg))
     .render(rows[1], frame.buffer_mut());
 
-    // Render the textarea into the field row, indented by 2.
-    let field_area = rows[3];
-    let cols = Layout::horizontal([Constraint::Length(2), Constraint::Min(0)]).split(field_area);
-
-    let mut ta = textarea.clone();
-    style_textarea(
-        &mut ta,
+    // Render the textarea into the field row, indented by 2 (an empty
+    // 2-wide label over the sidebar's `theme.bg` fill leaves those cells
+    // unchanged).
+    field_row(
+        frame.buffer_mut(),
+        rows[3],
+        "  ",
+        Style::default().bg(theme.bg),
+        textarea,
         true,
         TextAreaColors {
             fg: theme.accent,
@@ -232,7 +235,6 @@ pub(super) fn draw_rename_input(
             cursor_bg: theme.accent,
         },
     );
-    ta.render(cols[1], frame.buffer_mut());
 
     Paragraph::new(Line::from(Span::styled(
         "  Enter confirm / Esc cancel",

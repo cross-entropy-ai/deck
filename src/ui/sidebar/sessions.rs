@@ -17,10 +17,9 @@ pub(super) const SUMMARY_SPINNER: [&str; 10] =
     ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 use super::super::text::{
-    format_idle_badge, idle_color, md_line_spans, md_line_width, pad_line, shorten_dir, truncate,
-    wrap_markdown,
+    format_idle_badge, idle_color, pad_line, shorten_dir, truncate, wrap_markdown,
 };
-use super::super::widgets::scrollbar_cells;
+use super::super::widgets::markdown_window;
 use super::super::{SessionOrigin, SidebarSession};
 use super::SidebarRenderCtx;
 
@@ -329,35 +328,20 @@ pub(super) fn draw_sessions(
                         // is the drag-set body rows (card height minus chrome).
                         let rows = (item.height as usize).saturating_sub(3);
                         let content_w = width.saturating_sub(3); // 2 indent + 1 bar
-                        let wrapped = wrap_markdown(text, content_w.max(1));
-                        let total = wrapped.len();
-                        summary.max_scroll = total.saturating_sub(rows);
-                        let scroll = props.summary_scroll.min(summary.max_scroll);
-                        let bar = scrollbar_cells(rows, total, scroll);
-                        let base = Style::default().fg(ctx.theme.text).bg(ctx.theme.bg);
-                        for i in 0..rows {
-                            let mut spans =
+                        let (row_spans, max_scroll) = markdown_window(
+                            text,
+                            rows,
+                            props.summary_scroll,
+                            content_w,
+                            ctx.theme,
+                            ctx.theme.bg,
+                        );
+                        summary.max_scroll = max_scroll;
+                        for spans in row_spans {
+                            let mut row =
                                 vec![Span::styled("  ", Style::default().bg(ctx.theme.bg))];
-                            let line_w = match wrapped.get(scroll + i) {
-                                Some(runs) => {
-                                    spans.extend(md_line_spans(runs, ctx.theme, base));
-                                    md_line_width(runs)
-                                }
-                                None => 0,
-                            };
-                            if line_w < content_w {
-                                spans.push(Span::styled(
-                                    " ".repeat(content_w - line_w),
-                                    Style::default().bg(ctx.theme.bg),
-                                ));
-                            }
-                            if let Some(glyph) = bar.get(i).copied().flatten() {
-                                spans.push(Span::styled(
-                                    glyph,
-                                    Style::default().fg(ctx.theme.dim).bg(ctx.theme.bg),
-                                ));
-                            }
-                            lines.push(pad_line(spans, ctx.theme.bg, width));
+                            row.extend(spans);
+                            lines.push(pad_line(row, ctx.theme.bg, width));
                         }
                     }
                     SummaryState::Error(msg) => {

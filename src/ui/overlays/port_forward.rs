@@ -3,6 +3,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget, Wrap};
+use ratatui::Frame;
 use ratatui_textarea::TextArea;
 
 use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
@@ -15,13 +16,14 @@ use std::collections::HashMap;
 const OVERLAY_WIDTH: u16 = 64;
 
 pub fn draw_port_forward(
-    buf: &mut Buffer,
+    frame: &mut Frame,
     area: Rect,
     overlay: &PortForwardOverlay,
     remotes: &[RemoteConfig],
     health: &HashMap<ForwardKey, ForwardHealth>,
     theme: &Theme,
 ) {
+    let buf = frame.buffer_mut();
     let forwards: &[ForwardSpec] = remotes
         .iter()
         .find(|r| r.host == overlay.host)

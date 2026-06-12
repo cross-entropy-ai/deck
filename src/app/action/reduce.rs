@@ -709,24 +709,15 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
                     let pattern = editor.input_str().trim().to_string();
                     if pattern.is_empty() {
                         editor.adding = false;
-                    } else if let Some(inner) =
-                        pattern.strip_prefix('/').and_then(|s| s.strip_suffix('/'))
+                    } else if let Some(e) = pattern
+                        .strip_prefix('/')
+                        .and_then(|s| s.strip_suffix('/'))
+                        .and_then(|inner| regex::Regex::new(inner).err())
                     {
-                        match regex::Regex::new(inner) {
-                            Ok(_) => {
-                                state.prefs.exclude_patterns.push(pattern);
-                                editor.adding = false;
-                                editor.reset_input();
-                                editor.error = None;
-                                editor.selected = state.prefs.exclude_patterns.len().saturating_sub(1);
-                                fx.save_config();
-                                fx.refresh_sessions();
-                            }
-                            Err(e) => {
-                                editor.error = Some(format!("Invalid regex: {}", e));
-                            }
-                        }
+                        // A malformed `/regex/` pattern: report and keep editing.
+                        editor.error = Some(format!("Invalid regex: {}", e));
                     } else {
+                        // Accept the pattern (plain glob or a valid `/regex/`).
                         state.prefs.exclude_patterns.push(pattern);
                         editor.adding = false;
                         editor.reset_input();

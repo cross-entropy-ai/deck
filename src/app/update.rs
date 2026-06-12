@@ -61,10 +61,7 @@ impl App {
                     // path already set `last_update_request`, so this fires only
                     // on a genuine enable.
                     if self.last_update_request.is_none() {
-                        if let Some(ref checker) = self.update_checker {
-                            checker.request(UpdateRequest::Check);
-                        }
-                        self.last_update_request = Some(Instant::now());
+                        self.request_update_check_now();
                     }
                 }
             }
@@ -105,14 +102,20 @@ impl App {
         }
 
         if let Some(last) = self.last_update_request {
-            if last.elapsed() >= UPDATE_CHECK_INTERVAL {
-                if let Some(ref checker) = self.update_checker {
-                    checker.request(UpdateRequest::Check);
-                    self.last_update_request = Some(Instant::now());
-                }
+            if last.elapsed() >= UPDATE_CHECK_INTERVAL && self.update_checker.is_some() {
+                self.request_update_check_now();
             }
         }
         changed
+    }
+
+    /// Ask the running checker for a fresh check and stamp the request time,
+    /// so the interval gate restarts. No-op if the checker isn't spawned.
+    fn request_update_check_now(&mut self) {
+        if let Some(ref checker) = self.update_checker {
+            checker.request(UpdateRequest::Check);
+            self.last_update_request = Some(Instant::now());
+        }
     }
 }
 
