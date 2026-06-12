@@ -132,7 +132,7 @@
     remote view back to local. **Fix:** fill `switch_to` only when the
     killed session is current. *(commit c434310)*
 
-11. [ ] **A single failed marker confirmation leaves a host permanently
+11. [x] **A single failed marker confirmation leaves a host permanently
     un-switchable, silently.** `MarkerReady` is sent at most once
     (`remote_spawn.rs:173-179`); if `wait_for_client_marker` misses its
     ~2s window (slow shell startup, cold connection), `marker_ready`
@@ -140,17 +140,22 @@
     and never fires, with no retry and no UI signal
     (`app/mod.rs:503-523`, `dispatch.rs:490-496`).
     **Fix:** retry marker confirmation with backoff and/or surface a
-    "stuck connecting — reconnect?" state on the divider. *(no marker
-    retry/backoff yet; `marker_ready` is now per-conn but still one-shot)*
+    "stuck connecting — reconnect?" state on the divider. *(fixed in Phase
+    4: `RemoteConnManager` re-arms `wait_for_client_marker` with bounded
+    backoff, then surfaces a recoverable stuck state on the reconnect
+    divider — `marker_retry_decision` is pure-tested)*
 
-12. [ ] **Summary generation has no timeout and no cancel.**
+12. [x] **Summary generation has no timeout and no cancel.**
     `run_claude` blocks on `wait_with_output()` (`summary.rs:276`); a
     hung `claude` pins `SummaryState::Generating` forever and the
     Generate button is gated off while Generating (`dispatch.rs:562`).
     Also leaks a zombie on stdin-write failure (no kill/wait on the
     EPIPE path). **Fix:** timeout (kill + error state) + an Esc/cancel
     action; reuse the batched pane capture (see dup #D12) to cut ssh
-    hops. *(still `wait_with_output`, no timeout/cancel)*
+    hops. *(fixed in Phase 4: 90s timeout + Esc cancel via the Worker
+    harness; the child runs in its own process group and is
+    killed+reaped — including subprocesses — on cancel/timeout/EPIPE. The
+    D12 batched-capture dedup is still open.)*
 
 ### P2: races, leaks, papercuts
 
@@ -196,21 +201,23 @@
     not a `width - w` right-edge assumption)*
 18. [x] **`resize_pty` never resizes the upgrade pane** (`app/pty.rs:29-55`)
     — stale size until the upgrade exits. *(commit 8c58420)*
-19. [ ] **Disabling update-check can freeze the UI ~5s**: dropping
+19. [x] **Disabling update-check can freeze the UI ~5s**: dropping
     `UpdateChecker` joins a worker that may be mid-HTTP
     (`infra/update.rs:71-78`); because of bug #8 that in-flight window
-    exists at every startup. *(bug #8 fixed, but `Drop for UpdateChecker`
-    still `join()`s on the UI thread — update.rs:72-75)*
-20. [ ] **Host remove→re-add races.** `offboard_remote_host` doesn't clear
+    exists at every startup. *(fixed in Phase 4: `UpdateChecker` rides the
+    `Worker` harness, whose drop signals cancel and detaches — it never
+    `join()`s on the UI thread)*
+20. [x] **Host remove→re-add races.** `offboard_remote_host` doesn't clear
     `pending_remote_switch` / `remote_switch_verify`; a stale in-flight
     spawn can overwrite the fresh `RemoteConn` (last-write-wins,
     `app/mod.rs:466-481`) while the re-add's prelude `rm -f`s the
     marker glob — surviving connection can hold a dead marker.
     Fix shape: per-host spawn generation + full cleanup in offboard
     (Phase 4's `RemoteConnManager` is the home for this).
-    *(some connection-generation guarding added in `mod.rs`, but
-    `offboard_remote_host` still doesn't clear `pending_remote_switch` /
-    `remote_switch_verify` — dispatch.rs:426)*
+    *(fixed in Phase 4: `RemoteConnManager` gives each host a spawn
+    generation stamped onto events — stale ones are dropped — and
+    `offboard` clears the host's pending switch + switch-verify by
+    construction)*
 21. [x] **Switching sessions doesn't leave the Settings page** — the tmux
     client switches invisibly behind Settings (`dispatch.rs:365-386`
     never resets `main_view`). *(sidebar click now closes settings —
@@ -314,10 +321,11 @@
   to return the same list. Collapse; becomes an enum in Phase 2.
   *(done: `REMOTE_SESSION_MENU_ITEMS` removed earlier, and Phase 2
   converted the lists to a `MenuItem` enum keyed by variant)*
-- [ ] **D7. Dead-host cleanup vs `offboard_remote_host`** duplicate the
+- [x] **D7. Dead-host cleanup vs `offboard_remote_host`** duplicate the
   detach choreography (`app/mod.rs:551-584` vs `dispatch.rs:443-463`);
   one `detach_host_view(host)` — also the natural home for the missing
-  `pending_remote_switch` cleanup (bug #20). *(no `detach_host_view`)*
+  `pending_remote_switch` cleanup (bug #20). *(done in Phase 4: one
+  `detach_host_view`, called by both the dead-host reap and offboard)*
 - [ ] **D8. `RemoteConn` placeholder literal ×3** (`mod.rs:277,493`,
   `dispatch.rs:405`) → `RemoteConn::connecting()/failed()`. *(an
   `is_live` helper was added, but no `connecting()`/`failed()` constructors)*
@@ -351,12 +359,16 @@
   `list_item_line`, `scroll_window`, `popup_frame`, `centered_rect`,
   `style_textarea`; remaining dups — field_row reuse, PTY offset math,
   checker spawn — open)*
-- [ ] **D16. Seven hand-rolled worker patterns** (refresh, update checker,
+- [~] **D16. Seven hand-rolled worker patterns** (refresh, update checker,
   port-forward, executor, remote spawner, focus one-shots, summary
   one-shot) — each with different lifecycle/timeout/drop semantics;
   bugs #12/#19/#23/#24 are all instances of the missing policy. Phase 4.
-  *(no shared `Worker<Req,Res>` harness; the `Worker<R>` in
-  `port_forward_task.rs` is port-forward-specific)*
+  *(Phase 4 added the shared `Worker<Req,Res>` harness (`infra/worker.rs`)
+  and migrated the two workers where the bugs lived — update checker (#19)
+  and summary (#12). The keyed-FIFO executor, single-flight refresh, and
+  long-running port-forward task keep bespoke shapes the generic harness
+  doesn't model; focus one-shots (N workers → one shared drain) stay
+  ad-hoc. #23/#24 remain open.)*
 - [ ] **D17. Per-frame waste**: `render.rs:36-57` defensively clones
   context-menu/new-session/add-remote/pf/warning/summary text each
   frame; `agent_rows()` clones every `DetectedAgent` per call and is
@@ -473,7 +485,12 @@ Plan:
 - [x] Generalize `step_clamped` and replace the clamped cursor loops (D5).
   *(the wrapping cyclers already shared `cycle_option`)*
 
-### Phase 4 — Decompose `App` (old plan's Phase 4; fixes #19/#20/#22 class) — [ ] NOT STARTED
+### Phase 4 — Decompose `App` (old plan's Phase 4; fixes #19/#20/#22 class) — [x] DONE
+
+> Done except #22 (executor sender prune — the executor was left bespoke;
+> that prune is Phase 5) and the D16 long-tail (refresh/executor/
+> port-forward workers kept bespoke). The four steps' structural goals and
+> bugs #11/#12/#19/#20 + D7 all landed.
 
 Problem: `App` has ~25 fields mixing six orchestration concerns;
 `dispatch.rs` is 1,440 lines; the remote-connection state machine
@@ -482,7 +499,7 @@ drains, `dispatch.rs` gating, and `remote_spawn.rs`, with invariants
 living in comments. Seven worker patterns each hand-roll lifecycle.
 
 Plan, in order:
-1. [ ] **`RemoteConnManager`** owning `remote_conns`, `remote_spawner`,
+1. [x] **`RemoteConnManager`** owning `remote_conns`, `remote_spawner`,
    `pending_remote_switch`, `remote_switch_verify`, `active_remote`,
    marker gating, onboard/offboard/respawn, and the shared
    `detach_host_view` (D7). Give spawns a per-host generation id so
@@ -490,18 +507,21 @@ Plan, in order:
    offboard clear pending state by construction. Marker retry (bug #11)
    lands here. Most of its logic becomes pure functions over the conn
    map → unit-testable without ssh.
-2. [ ] **`Worker<Req, Res>` harness** (one struct: spawn, `try_recv` drain,
+2. [~] **`Worker<Req, Res>` harness** (one struct: spawn, `try_recv` drain,
    drop policy, optional timeout) replacing the seven hand-rolled
    thread+channel pairs (D16). Summary gets timeout+cancel (bug #12);
    update checker stops joining on the UI thread (bug #19); one-shot
-   focus threads stop being ad-hoc.
-3. [ ] **Run-loop pumps**: extract each drain block of `run()` into
+   focus threads stop being ad-hoc. *(harness landed; summary (#12) +
+   update checker (#19) migrated. Executor/refresh/port-forward kept
+   bespoke — semantics the generic harness doesn't model; focus one-shots
+   stayed ad-hoc. Noted for a later pass.)*
+3. [x] **Run-loop pumps**: extract each drain block of `run()` into
    `pump_local_pty() -> Redraw`, `pump_remote_events() -> Redraw`, …
    where `Redraw` is `No | Soft | Force` and merges; the loop body
    becomes ~20 readable lines and the `needs_render`/`force_render`
    bookkeeping exists once. A tiny `Ticker` struct covers the four
    periodic timers (refresh, config poll, update, blink/spinner).
-4. [ ] Split `dispatch.rs` along its existing seams: `remote_conn.rs`
+4. [x] Split `dispatch.rs` along its existing seams: `remote_conn.rs`
    (moves into the manager), `new_session_flow.rs`, `reload.rs`.
 
 ### Phase 5 — Split the model; unify the session list (kills D17/D18) — [ ] NOT STARTED
