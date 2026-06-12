@@ -19,7 +19,11 @@ impl App {
             .to_config(
                 self.raw_keybindings.clone(),
                 self.state.config_remotes.clone(),
-                self.state.collapsed_sections.iter().cloned().collect(),
+                self.state
+                    .collapsed_sections
+                    .iter()
+                    .map(|k| k.host().map(str::to_string))
+                    .collect(),
             )
             .save();
         // We just wrote the file; adopt its new mtime so the config watcher

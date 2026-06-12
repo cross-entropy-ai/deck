@@ -26,6 +26,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use super::SessionControl;
+use crate::host_key::{HostKey, HostQuery};
 
 /// What to run on a worker. Built on the UI thread; the backend that runs
 /// it is captured separately at submit time.
@@ -75,7 +76,7 @@ struct Job {
 /// the UI thread drains. Workers are spawned lazily on first use for a key
 /// and live until the executor is dropped (their `recv` then ends).
 pub struct SessionExecutor {
-    senders: HashMap<Option<String>, Sender<Job>>,
+    senders: HashMap<HostKey, Sender<Job>>,
     outcome_tx: Sender<SessionOutcome>,
     outcome_rx: Receiver<SessionOutcome>,
 }
@@ -101,19 +102,22 @@ impl SessionExecutor {
         backend: Box<dyn SessionControl + Send>,
         op: SessionOp,
     ) {
-        let key = host.clone();
         // Spawn the worker lazily, but only cache its sender once the thread
         // actually started: a failed `thread::spawn` must not park a dead
         // sender in the map (that would silently swallow every later op for
         // this key — bug #22). On spawn failure the op is dropped, exactly
         // as a dead worker's channel-send error would be; the next refresh
         // tick reconciles.
-        let tx = match self.senders.get(&key) {
+        //
+        // The common path (worker already exists) hits the map through the
+        // borrowed `HostQuery` so it doesn't allocate; only first-use for a
+        // key builds an owning `HostKey`.
+        let tx = match self.senders.get(HostQuery::from_host(host.as_deref())) {
             Some(tx) => tx,
             None => {
                 let outcome_tx = self.outcome_tx.clone();
                 let (tx, rx) = mpsc::channel::<Job>();
-                let name = match &key {
+                let name = match &host {
                     None => "deck-session-local".to_string(),
                     Some(h) => format!("deck-session-{h}"),
                 };
@@ -124,7 +128,9 @@ impl SessionExecutor {
                 {
                     return;
                 }
-                self.senders.entry(key).or_insert(tx)
+                self.senders
+                    .entry(HostKey::from_host(host.as_deref()))
+                    .or_insert(tx)
             }
         };
         let _ = tx.send(Job { backend, op, host });
@@ -137,7 +143,7 @@ impl SessionExecutor {
     /// their lane (and thus their per-backend FIFO ordering) untouched; a
     /// later op for a reaped key simply re-spawns a fresh worker.
     pub fn remove(&mut self, key: &Option<String>) {
-        self.senders.remove(key);
+        self.senders.remove(HostQuery::from_host(key.as_deref()));
     }
 
     /// Non-blocking drain of one completed outcome, if any.
@@ -246,7 +252,7 @@ mod tests {
             },
         );
         assert!(
-            exec.senders.contains_key(&host),
+            exec.senders.contains_key(HostQuery::from_host(host.as_deref())),
             "submit should cache the host's FIFO sender"
         );
 
@@ -254,7 +260,7 @@ mod tests {
         // recv ends (sender dropped).
         exec.remove(&host);
         assert!(
-            !exec.senders.contains_key(&host),
+            !exec.senders.contains_key(HostQuery::from_host(host.as_deref())),
             "remove should prune the offboarded host's sender"
         );
 
@@ -268,7 +274,7 @@ mod tests {
         );
         exec.remove(&host);
         assert!(
-            exec.senders.contains_key(&None),
+            exec.senders.contains_key(HostQuery::from_host(None)),
             "removing one host must not disturb another lane"
         );
     }

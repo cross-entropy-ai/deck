@@ -10,8 +10,8 @@ pub(crate) use infra::{
     summary, terminal_guard, tmux, update, worker,
 };
 pub(crate) use model::{
-    add_remote, config, effects, forwards, geometry, keybindings, menu, new_session, overlay, state,
-    summary as summary_card,
+    add_remote, config, effects, forwards, geometry, host_key, keybindings, menu, new_session,
+    overlay, state, summary as summary_card,
 };
 pub(crate) use ui::{bridge, theme};
 

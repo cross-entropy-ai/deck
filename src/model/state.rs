@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::PluginConfig;
 use crate::forwards::rollup_color;
 use crate::geometry::{card_height, context_menu_rect, tab_col_ranges, tab_label};
+use crate::host_key::{HostKey, HostQuery};
 use crate::keybindings::Keybindings;
 use crate::update::{UpdateCheckMode, UpdateStatus};
 
@@ -528,14 +529,14 @@ pub struct AppState {
     /// section up by key — they never branch on local vs remote. Each
     /// value lists the located agents (count + session/window/pane).
     /// See `crate::agent`.
-    pub agents: HashMap<Option<String>, Vec<crate::agent::DetectedAgent>>,
+    pub agents: HashMap<HostKey, Vec<crate::agent::DetectedAgent>>,
 
-    /// Sidebar groups the user has collapsed (Expanded view only). `None`
-    /// is the `@local` group; `Some(host)` is a remote `@host` group. A
-    /// collapsed group renders as just its divider — its session rows are
-    /// hidden by the layout. Persisted to config (`collapsed_sections`)
-    /// and restored at startup.
-    pub collapsed_sections: HashSet<Option<String>>,
+    /// Sidebar groups the user has collapsed (Expanded view only).
+    /// `HostKey::local()` is the `@local` group; `HostKey::remote(host)`
+    /// is a remote `@host` group. A collapsed group renders as just its
+    /// divider — its session rows are hidden by the layout. Persisted to
+    /// config (`collapsed_sections`) and restored at startup.
+    pub collapsed_sections: HashSet<HostKey>,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -906,7 +907,7 @@ impl AppState {
     /// flattened agent list.
     pub fn focusable_count(&self) -> usize {
         if self.agents_tab_active() {
-            self.agent_rows().len()
+            self.agent_count()
         } else {
             self.entries.len()
         }
@@ -941,7 +942,7 @@ impl AppState {
     /// this without caring whether the section is local or remote.
     pub fn section_agents(&self, host: Option<&str>) -> Option<&[crate::agent::DetectedAgent]> {
         self.agents
-            .get(&host.map(str::to_string))
+            .get(HostQuery::from_host(host))
             .map(Vec::as_slice)
     }
 
@@ -959,11 +960,11 @@ impl AppState {
     ) {
         for host in covered_hosts {
             if !fresh.contains_key(&host) {
-                self.agents.remove(&Some(host));
+                self.agents.remove(HostQuery::from_host(Some(&host)));
             }
         }
         for (host, list) in fresh {
-            self.agents.insert(Some(host), list);
+            self.agents.insert(HostKey::remote(&host), list);
         }
         let configured: std::collections::HashSet<&str> = self
             .config_remotes
@@ -971,7 +972,7 @@ impl AppState {
             .map(|r| r.host.as_str())
             .collect();
         self.agents
-            .retain(|k, _| k.as_deref().is_none_or(|h| configured.contains(h)));
+            .retain(|k, _| k.host().is_none_or(|h| configured.contains(h)));
     }
 
     /// Build the unified sidebar layout: a flat list of header /
@@ -993,8 +994,9 @@ impl AppState {
         // below so the divider sits alone; its rows are hidden by the widget.
         layout.set_collapsible(true);
         let mut header_count: usize = 0;
-        let mut group_headers: Vec<(usize, Option<String>)> = Vec::new();
-        let is_collapsed = |key: &Option<String>| self.collapsed_sections.contains(key);
+        let mut group_headers: Vec<(usize, HostKey)> = Vec::new();
+        let is_collapsed =
+            |host: Option<&str>| self.collapsed_sections.contains(HostQuery::from_host(host));
 
         // Local group: an `@local` divider over the local rows, matching
         // the remote `@host` dividers. Flat index for a local row equals
@@ -1003,14 +1005,14 @@ impl AppState {
         // open the local section menu and see the empty-state row.
         let local_count = self.local_count();
         if show_headers {
-            group_headers.push((header_count, None));
+            group_headers.push((header_count, HostKey::local()));
             header_count += 1;
             layout.push_header(SidebarItemData::LocalHeader, 1);
         }
         for pos in 0..local_count {
             layout.push_row(SidebarItemData::Session { session_idx: pos }, card_h);
         }
-        if show_headers && local_count == 0 && !is_collapsed(&None) {
+        if show_headers && local_count == 0 && !is_collapsed(None) {
             layout.push_header(SidebarItemData::LocalEmpty, card_h);
             header_count += 1;
         }
@@ -1035,7 +1037,7 @@ impl AppState {
                     // A host's rows are contiguous and share a status; this
                     // row is the first of the group, so it represents it.
                     let status = host_status_of(e);
-                    group_headers.push((header_count, Some(host.to_string())));
+                    group_headers.push((header_count, HostKey::remote(host)));
                     header_count += 1;
                     layout.push_header(
                         SidebarItemData::Header {
@@ -1069,43 +1071,60 @@ impl AppState {
     /// one contiguous block each). Shared by `agent_rows` and
     /// `agents_layout` so both walk sections identically.
     fn remote_hosts_in_order(&self) -> Vec<String> {
+        self.remote_hosts_in_order_ref()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Borrowing twin of [`remote_hosts_in_order`](Self::remote_hosts_in_order):
+    /// yields each distinct remote host as `&str` in first-appearance order,
+    /// without the per-host `String` clone. Hot callers (`agent_rows`,
+    /// `agent_count`) that only read the host name take this path (D17).
+    fn remote_hosts_in_order_ref(&self) -> impl Iterator<Item = &str> {
         let mut seen: HashSet<&str> = HashSet::new();
-        let mut hosts = Vec::new();
-        for e in &self.entries {
-            if let Some(host) = e.host.as_deref() {
-                if seen.insert(host) {
-                    hosts.push(host.to_string());
-                }
-            }
-        }
-        hosts
+        self.entries
+            .iter()
+            .filter_map(|e| e.host.as_deref())
+            .filter(move |host| seen.insert(host))
     }
 
     /// The flat list of detected agents for the Agents tab, in display
     /// order: local agents first, then each remote host's agents in
     /// section order. `Agent { row_idx }` items and the renderer index
     /// into this, so its order is the Agents-tab `FocusTarget` numbering.
-    pub fn agent_rows(&self) -> Vec<AgentRow> {
+    pub fn agent_rows(&self) -> Vec<AgentRow<'_>> {
         let mut rows = Vec::new();
         if let Some(list) = self.section_agents(None) {
             for agent in list {
-                rows.push(AgentRow {
-                    host: None,
-                    agent: agent.clone(),
-                });
+                rows.push(AgentRow { host: None, agent });
             }
         }
-        for host in self.remote_hosts_in_order() {
-            if let Some(list) = self.section_agents(Some(&host)) {
+        // Borrow each host key straight out of `agents` so the rows can
+        // hold `&str` without cloning the host name per row.
+        for host in self.remote_hosts_in_order_ref() {
+            if let Some(list) = self.section_agents(Some(host)) {
                 for agent in list {
                     rows.push(AgentRow {
-                        host: Some(host.clone()),
-                        agent: agent.clone(),
+                        host: Some(host),
+                        agent,
                     });
                 }
             }
         }
         rows
+    }
+
+    /// Number of focusable agent rows, without building (or cloning into)
+    /// the `agent_rows()` vec. `focusable_count` runs per keystroke and
+    /// only ever wanted the length, so it takes this path (D17).
+    pub fn agent_count(&self) -> usize {
+        let local = self.section_agents(None).map_or(0, <[_]>::len);
+        let remote: usize = self
+            .remote_hosts_in_order_ref()
+            .filter_map(|host| self.section_agents(Some(host)))
+            .map(<[_]>::len)
+            .sum();
+        local + remote
     }
 
     /// Flat focusable index of the agent row matching `target`, or `None`
@@ -1115,7 +1134,7 @@ impl AppState {
     pub fn agent_row_index_for(&self, target: &AgentTarget) -> Option<usize> {
         self.agent_rows()
             .iter()
-            .position(|row| row.host == target.host && row.agent.pane_id == target.pane_id)
+            .position(|row| row.host == target.host.as_deref() && row.agent.pane_id == target.pane_id)
     }
 
     /// Row height the Summary card reserves: title + blank + a
@@ -1369,7 +1388,7 @@ impl AppState {
         idx < self.focusable_count()
             && self
                 .collapsed_sections
-                .contains(&self.section_key_of_focus(idx))
+                .contains(HostQuery::from_host(self.section_key_of_focus(idx).as_deref()))
     }
 
     /// Decode the active tab's cursor into a focus target. Returns `None`
@@ -1391,9 +1410,9 @@ impl AppState {
         }
         let row = self.agent_rows().into_iter().nth(self.agent_focused)?;
         Some(AgentTarget {
-            host: row.host,
-            session: row.agent.session,
-            pane_id: row.agent.pane_id,
+            host: row.host.map(str::to_string),
+            session: row.agent.session.clone(),
+            pane_id: row.agent.pane_id.clone(),
         })
     }
 
@@ -1531,7 +1550,7 @@ impl AppState {
     /// Keep the Agents-tab cursor inside the current agent list after the
     /// detected agents change (agents come and go between refresh rounds).
     pub fn clamp_agent_focus(&mut self) {
-        let total = self.agent_rows().len();
+        let total = self.agent_count();
         if total == 0 {
             self.agent_focused = 0;
         } else if self.agent_focused >= total {
@@ -1547,7 +1566,7 @@ impl AppState {
         self.agent_rows()
             .into_iter()
             .nth(self.agent_focused)
-            .map(|row| (row.host, row.agent.pane_id))
+            .map(|row| (row.host.map(str::to_string), row.agent.pane_id.clone()))
     }
 
     /// Re-point the Agents-tab cursor at the agent identified by `key` (its
@@ -1565,7 +1584,7 @@ impl AppState {
         if let Some((host, pane_id)) = key {
             if let Some(idx) = rows
                 .iter()
-                .position(|row| row.host == host && row.agent.pane_id == pane_id)
+                .position(|row| row.host == host.as_deref() && row.agent.pane_id == pane_id)
             {
                 self.agent_focused = idx;
                 return;

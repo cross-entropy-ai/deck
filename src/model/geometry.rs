@@ -227,10 +227,16 @@ pub type SidebarLayout = ratatui_sectioned_list::SectionedList<SidebarItemData>;
 /// renderer and the `Agent { row_idx }` layout items both index into the
 /// `Vec` this produces (`AppState::agent_rows`), so they can't disagree
 /// about which agent a row points at.
-#[derive(Debug, Clone)]
-pub struct AgentRow {
-    pub host: Option<String>,
-    pub agent: crate::agent::DetectedAgent,
+///
+/// Borrows its `host`/`agent` straight out of `AppState.agents` rather
+/// than cloning: `agent_rows()` runs per frame *and* per keystroke, so a
+/// per-row `DetectedAgent` clone there was pure waste (D17). The `Vec`
+/// the produced rows live in is short-lived (one frame / one call), so a
+/// borrow is always available.
+#[derive(Debug, Clone, Copy)]
+pub struct AgentRow<'a> {
+    pub host: Option<&'a str>,
+    pub agent: &'a crate::agent::DetectedAgent,
 }
 
 /// Which button on a divider a `DividerHit` targets.

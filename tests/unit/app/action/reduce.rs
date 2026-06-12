@@ -1372,7 +1372,7 @@ fn focus_next_skips_collapsed_remote_group() {
     set_remote(&mut state, vec![remote_row("h", "a"),
         remote_row("h", "b"),
         remote_row("h2", "c"),]);
-    state.collapsed_sections.insert(Some("h".to_string()));
+    state.collapsed_sections.insert(crate::host_key::HostKey::remote("h"));
     state.focused = 1;
     apply_action(&mut state, Action::FocusNext);
     assert_eq!(state.focused, 4, "focus skips the collapsed h group");
@@ -1391,7 +1391,7 @@ fn toggle_section_collapse_leaves_focus_put() {
         remote_row("h2", "c"),]);
     state.focused = 2;
     let fx = apply_action(&mut state, Action::ToggleSection(Some("h".to_string())));
-    assert!(state.collapsed_sections.contains(&Some("h".to_string())));
+    assert!(state.collapsed_sections.contains(crate::host_key::HostQuery::from_host(Some("h"))));
     assert_eq!(state.focused, 2, "collapse leaves the selection put");
     assert!(fx.has_save_config(), "collapse persists to config");
 }
@@ -1399,9 +1399,9 @@ fn toggle_section_collapse_leaves_focus_put() {
 #[test]
 fn toggle_section_expands_back() {
     let mut state = make_test_state(2);
-    state.collapsed_sections.insert(None);
+    state.collapsed_sections.insert(crate::host_key::HostKey::local());
     let fx = apply_action(&mut state, Action::ToggleSection(None));
-    assert!(!state.collapsed_sections.contains(&None));
+    assert!(!state.collapsed_sections.contains(crate::host_key::HostQuery::from_host(None)));
     assert!(fx.has_save_config());
 }
 
@@ -1438,7 +1438,7 @@ mod agents_tab {
     #[test]
     fn entering_agents_syncs_right_pane_to_focused_agent() {
         let mut state = make_test_state(3);
-        state.agents.insert(None, vec![agent("a", "%1"), agent("b", "%2")]);
+        state.agents.insert(crate::host_key::HostKey::local(), vec![agent("a", "%1"), agent("b", "%2")]);
         // Opening the tab switches the right pane to the focused agent so
         // the panel highlight and the active pane agree immediately.
         let fx = apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
@@ -1452,7 +1452,7 @@ mod agents_tab {
     #[test]
     fn entering_agents_restores_cursor_onto_active_agent() {
         let mut state = make_test_state(3);
-        state.agents.insert(None, vec![agent("a", "%1"), agent("b", "%2")]);
+        state.agents.insert(crate::host_key::HostKey::local(), vec![agent("a", "%1"), agent("b", "%2")]);
         // An agent was active from a prior switch; returning to the tab
         // puts the cursor back on it rather than resetting to row 0.
         state.active_agent = Some(crate::state::AgentTarget {
@@ -1536,7 +1536,7 @@ mod agents_tab {
     #[test]
     fn cursor_is_per_tab() {
         let mut state = make_test_state(3);
-        state.agents.insert(None, vec![agent("a", "%1"), agent("b", "%2")]);
+        state.agents.insert(crate::host_key::HostKey::local(), vec![agent("a", "%1"), agent("b", "%2")]);
         state.focused = 2; // Projects cursor
 
         apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
@@ -1550,7 +1550,7 @@ mod agents_tab {
     #[test]
     fn navigate_on_agents_follows_cursor() {
         let mut state = make_test_state(3);
-        state.agents.insert(None, vec![agent("a", "%1"), agent("b", "%2")]);
+        state.agents.insert(crate::host_key::HostKey::local(), vec![agent("a", "%1"), agent("b", "%2")]);
         apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
         // Moving the cursor switches the right pane to follow it, the same
         // way the Projects tab does — so the highlight stays consistent.
@@ -1565,7 +1565,7 @@ mod agents_tab {
     #[test]
     fn enter_on_agents_switches_to_pane() {
         let mut state = make_test_state(3);
-        state.agents.insert(None, vec![agent("a", "%1"), agent("b", "%2")]);
+        state.agents.insert(crate::host_key::HostKey::local(), vec![agent("a", "%1"), agent("b", "%2")]);
         apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
         apply_action(&mut state, Action::FocusNext); // cursor -> row 1 (%2)
         let fx = apply_action(&mut state, Action::SwitchProject);
@@ -1578,7 +1578,7 @@ mod agents_tab {
     #[test]
     fn kill_is_suppressed_on_agents() {
         let mut state = make_test_state(3);
-        state.agents.insert(None, vec![agent("a", "%1")]);
+        state.agents.insert(crate::host_key::HostKey::local(), vec![agent("a", "%1")]);
         apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
         apply_action(&mut state, Action::KillSession);
         assert!(!state.overlay.confirm_kill, "no kill prompt on the Agents tab");

@@ -51,7 +51,7 @@ pub struct SidebarProps<'a> {
     pub show_borders: bool,
     pub sidebar_tab: SidebarTab,
     /// Flattened agent list for the Agents tab (see `AppState::agent_rows`).
-    pub agent_rows: &'a [AgentRow],
+    pub agent_rows: &'a [AgentRow<'a>],
     /// State of the Agents-tab Summary card.
     pub summary: &'a crate::state::SummaryState,
     /// Precomputed "Xm ago" age of the Ready summary, `None` otherwise.

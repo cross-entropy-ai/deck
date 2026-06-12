@@ -3,6 +3,7 @@ pub mod config;
 pub mod effects;
 pub mod forwards;
 pub mod geometry;
+pub mod host_key;
 pub mod keybindings;
 pub mod menu;
 pub mod new_session;

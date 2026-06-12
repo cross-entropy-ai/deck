@@ -166,7 +166,11 @@ impl App {
         state.apply_config(&cfg, theme_index, keybindings);
         // Seeded once at startup only — a later reload must not stomp the
         // user's live collapse state (see `apply_config`).
-        state.collapsed_sections = cfg.collapsed_sections.iter().cloned().collect();
+        state.collapsed_sections = cfg
+            .collapsed_sections
+            .iter()
+            .map(|h| crate::host_key::HostKey::from(h.clone()))
+            .collect();
 
         // The TUI owns the alternate screen, so a startup eprintln! would be
         // wiped invisibly. Surface keybinding warnings in the reload strip

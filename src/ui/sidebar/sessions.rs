@@ -32,7 +32,7 @@ pub(super) struct SessionsProps<'a> {
     pub active_agent: Option<&'a AgentTarget>,
     /// Flattened agent list for the Agents tab; `Agent { row_idx }` items
     /// index into this. Empty on the Projects tab.
-    pub agent_rows: &'a [AgentRow],
+    pub agent_rows: &'a [AgentRow<'a>],
     /// State of the Agents-tab Summary card.
     pub summary: &'a SummaryState,
     /// Precomputed "Xm ago" age of the Ready summary, `None` otherwise.
@@ -135,7 +135,7 @@ pub(super) fn draw_sessions(
                 // "you are here" = the pane deck last switched to.
                 let here = props
                     .active_agent
-                    .is_some_and(|t| t.host == row.host && t.pane_id == a.pane_id);
+                    .is_some_and(|t| t.host.as_deref() == row.host && t.pane_id == a.pane_id);
                 let name_fg = if is_focused {
                     ctx.theme.text
                 } else if here {
@@ -178,7 +178,7 @@ pub(super) fn draw_sessions(
                 if let Some(y) = visible.viewport_y_for_item_line(0) {
                     agent_hits.push(AgentHit {
                         target: AgentTarget {
-                            host: row.host.clone(),
+                            host: row.host.map(str::to_string),
                             session: a.session.clone(),
                             pane_id: a.pane_id.clone(),
                         },

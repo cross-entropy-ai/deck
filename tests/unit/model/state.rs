@@ -99,14 +99,14 @@ fn agent_rows_ordered_local_then_hosts() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
-    state.agents.insert(None, vec![detected("local", "%1")]);
+    state.agents.insert(crate::host_key::HostKey::local(), vec![detected("local", "%1")]);
     state
         .agents
-        .insert(Some("h1".into()), vec![detected("h1s", "%2")]);
+        .insert(crate::host_key::HostKey::remote("h1"), vec![detected("h1s", "%2")]);
 
     // Agent rows appear in section order: local (`None`) then each host.
-    let hosts: Vec<Option<String>> = state.agent_rows().iter().map(|r| r.host.clone()).collect();
-    assert_eq!(hosts, vec![None, Some("h1".to_string())]);
+    let hosts: Vec<Option<&str>> = state.agent_rows().iter().map(|r| r.host).collect();
+    assert_eq!(hosts, vec![None, Some("h1")]);
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn agent_cursor_tracks_its_agent_when_the_list_changes() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
     state.agents.insert(
-        None,
+        crate::host_key::HostKey::local(),
         vec![
             detected("a", "%1"),
             detected("b", "%2"),
@@ -131,7 +131,7 @@ fn agent_cursor_tracks_its_agent_when_the_list_changes() {
     let key = state.focused_agent_key();
     state
         .agents
-        .insert(None, vec![detected("b", "%2"), detected("c", "%3")]);
+        .insert(crate::host_key::HostKey::local(), vec![detected("b", "%2"), detected("c", "%3")]);
     state.reanchor_agent_focus(key);
 
     assert_eq!(state.agent_focused, 0, "cursor follows b to its new index");
@@ -143,14 +143,14 @@ fn agent_cursor_clamps_when_focused_agent_disappears() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
     state.agents.insert(
-        None,
+        crate::host_key::HostKey::local(),
         vec![detected("a", "%1"), detected("b", "%2"), detected("c", "%3")],
     );
     state.agent_focused = 2; // cursor on "c"
 
     let key = state.focused_agent_key();
     // "c" is gone; only "a" remains.
-    state.agents.insert(None, vec![detected("a", "%1")]);
+    state.agents.insert(crate::host_key::HostKey::local(), vec![detected("a", "%1")]);
     state.reanchor_agent_focus(key);
 
     assert_eq!(state.agent_focused, 0, "clamps into range when the agent is gone");
@@ -162,10 +162,10 @@ fn agents_layout_groups_agents_under_host_dividers() {
     state.prefs.sidebar_tab = SidebarTab::Agents;
     set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
-    state.agents.insert(None, vec![detected("local", "%1")]);
+    state.agents.insert(crate::host_key::HostKey::local(), vec![detected("local", "%1")]);
     state
         .agents
-        .insert(Some("h1".into()), vec![detected("h1s", "%2")]);
+        .insert(crate::host_key::HostKey::remote("h1"), vec![detected("h1s", "%2")]);
 
     let layout = state.agents_layout();
     // Two focusable Agent rows, indexed 0 and 1 in agent_rows order.
@@ -230,7 +230,7 @@ fn agents_layout_shows_placeholder_for_empty_section() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
     // Local probed but empty -> "no agents"; never probed -> "detecting".
-    state.agents.insert(None, vec![]);
+    state.agents.insert(crate::host_key::HostKey::local(), vec![]);
     let layout = state.agents_layout();
     let placeholders: Vec<bool> = layout
         .items()
@@ -269,13 +269,13 @@ fn apply_remote_agents_drops_stale_on_failed_probe() {
         },
     ];
     // Prior round: local + both hosts had detected agents.
-    state.agents.insert(None, vec![detected("local", "%1")]);
+    state.agents.insert(crate::host_key::HostKey::local(), vec![detected("local", "%1")]);
     state
         .agents
-        .insert(Some("h1".into()), vec![detected("h1old", "%10")]);
+        .insert(crate::host_key::HostKey::remote("h1"), vec![detected("h1old", "%10")]);
     state
         .agents
-        .insert(Some("h2".into()), vec![detected("h2old", "%20")]);
+        .insert(crate::host_key::HostKey::remote("h2"), vec![detected("h2old", "%20")]);
 
     // This round queried both hosts; only h1's probe succeeded.
     let covered: std::collections::HashSet<String> =
@@ -285,12 +285,15 @@ fn apply_remote_agents_drops_stale_on_failed_probe() {
     state.apply_remote_agents(covered, fresh);
 
     // h1 updated, h2 (failed probe) cleared, local untouched.
-    assert_eq!(state.agents[&Some("h1".to_string())][0].pane_id, "%11");
+    assert_eq!(
+        state.agents[crate::host_key::HostQuery::from_host(Some("h1"))][0].pane_id,
+        "%11"
+    );
     assert!(
-        !state.agents.contains_key(&Some("h2".to_string())),
+        !state.agents.contains_key(crate::host_key::HostQuery::from_host(Some("h2"))),
         "stale agents on a failed-probe host must be dropped"
     );
-    assert!(state.agents.contains_key(&None), "local entry untouched");
+    assert!(state.agents.contains_key(crate::host_key::HostQuery::from_host(None)), "local entry untouched");
 }
 
 #[test]
@@ -299,9 +302,9 @@ fn apply_remote_agents_prunes_unconfigured_hosts() {
     // No remotes configured; a leftover host entry should be pruned.
     state
         .agents
-        .insert(Some("ghost".into()), vec![detected("s", "%1")]);
+        .insert(crate::host_key::HostKey::remote("ghost"), vec![detected("s", "%1")]);
     state.apply_remote_agents(Default::default(), Default::default());
-    assert!(!state.agents.contains_key(&Some("ghost".to_string())));
+    assert!(!state.agents.contains_key(crate::host_key::HostQuery::from_host(Some("ghost"))));
 }
 
 #[test]
@@ -713,7 +716,7 @@ fn confirm_kill_name_none_when_not_pending() {
 #[test]
 fn collapsed_local_group_hides_rows() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.collapsed_sections.insert(None);
+    state.collapsed_sections.insert(crate::host_key::HostKey::local());
     let layout = state.sidebar_layout(ViewMode::Expanded);
 
     assert!(layout.is_collapsible());
@@ -735,7 +738,7 @@ fn focus_skips_collapsed_remote_group() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
-    state.collapsed_sections.insert(None);
+    state.collapsed_sections.insert(crate::host_key::HostKey::local());
 
     // Local rows are hidden, the remote row is not.
     assert!(state.is_focus_collapsed(0));

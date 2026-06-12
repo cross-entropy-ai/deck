@@ -424,7 +424,7 @@ impl App {
             .agent_rows()
             .iter()
             .map(|row| crate::summary::AgentPane {
-                host: row.host.clone(),
+                host: row.host.map(str::to_string),
                 id: row.agent.location(),
                 pane_id: row.agent.pane_id.clone(),
             })
@@ -560,7 +560,7 @@ impl App {
         let still_detected = self
             .state
             .agents
-            .get(&target.host)
+            .get(crate::host_key::HostQuery::from_host(Some(host)))
             .is_some_and(|list| list.iter().any(|a| a.pane_id == target.pane_id));
         connected && still_detected
     }
