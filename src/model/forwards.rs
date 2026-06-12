@@ -44,36 +44,6 @@ impl ForwardKey {
     }
 }
 
-/// Per-host port-forward badge shown on the sidebar divider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PfBadge {
-    pub count: usize,
-    pub color: PfBadgeColor,
-}
-
-/// Rolled-up health color for a host's forwards.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PfBadgeColor {
-    /// All forwards Up → green.
-    Healthy,
-    /// At least one Down → pink.
-    Degraded,
-    /// At least one Probing, none Down → yellow.
-    Probing,
-}
-
-/// Roll a host's per-forward healths into one badge color. `Down` dominates,
-/// then `Probing`, else `Healthy` (all `Up`).
-pub fn rollup_color(healths: &[ForwardHealth]) -> PfBadgeColor {
-    if healths.contains(&ForwardHealth::Down) {
-        PfBadgeColor::Degraded
-    } else if healths.contains(&ForwardHealth::Probing) {
-        PfBadgeColor::Probing
-    } else {
-        PfBadgeColor::Healthy
-    }
-}
-
 // --- Port forward overlay ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

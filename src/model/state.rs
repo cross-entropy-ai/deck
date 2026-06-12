@@ -2,12 +2,14 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use ratatui::layout::Position;
+use ratatui_sectioned_list::widget::BasicItem;
 use ratatui_sectioned_list::ItemKind;
 use serde::{Deserialize, Serialize};
 
 use crate::config::PluginConfig;
-use crate::forwards::rollup_color;
-use crate::geometry::{card_height, context_menu_rect, tab_col_ranges, tab_label};
+use crate::geometry::{
+    context_menu_rect, format_idle_badge, host_accent, shorten_dir, tab_col_ranges, tab_label,
+};
 use crate::host_key::{HostKey, HostQuery};
 use crate::keybindings::Keybindings;
 use crate::update::{UpdateCheckMode, UpdateStatus};
@@ -19,11 +21,11 @@ pub use crate::effects::{
     CreateSessionRequest, Effect, KillRequest, RemoteSwitchRequest, RenameRequest, SideEffect,
 };
 pub use crate::forwards::{
-    ForwardHealth, ForwardKey, PfAddForm, PfBadge, PfBadgeColor, PfField, PortForwardOverlay,
+    ForwardHealth, ForwardKey, PfAddForm, PfField, PortForwardOverlay,
 };
 pub use crate::geometry::{
-    AgentHit, AgentRow, AgentTarget, DividerButton, DividerHit, HitKind, HitRegions,
-    KillConfirmHits, SidebarItemData, SidebarLayout, SummaryHits, TabRects,
+    AgentHit, AgentRow, AgentTarget, BuiltLayout, DividerButton, DividerHit, HitKind, HitRegions,
+    KillConfirmHits, SectionMeta, SidebarLayout, SummaryHits, TabRects,
 };
 pub use crate::menu::{session_menu_disabled, ContextMenu, MenuItem, MenuKind};
 pub use crate::overlay::{ExcludeEditorState, Modal, OverlayState, RenameState, WarningState};
@@ -242,15 +244,6 @@ impl SessionEntry {
         )
     }
 
-    /// Idle seconds when the backend collects activity for this entry,
-    /// else `None` (placeholders, or backends — remote today — that don't
-    /// gather it).
-    pub fn idle_seconds(&self) -> Option<u64> {
-        match self.kind {
-            SessionKind::Live { idle_seconds, .. } => idle_seconds,
-            _ => None,
-        }
-    }
 }
 
 /// The attachable (`Live`) sessions on `host` (`None` = local), in display
@@ -784,7 +777,7 @@ impl AppState {
     /// the row falls in the header banner, the footer, or outside the
     /// sidebar. Shared by the row and divider hit-testers so they agree
     /// on geometry and the scroll offset the renderer applied.
-    fn session_row_hit(&self, row: u16) -> Option<(SidebarLayout, u16, u16, u16)> {
+    fn session_row_hit(&self, row: u16) -> Option<(BuiltLayout, u16, u16, u16)> {
         let b = if self.prefs.show_borders { 1u16 } else { 0 };
         let sidebar_h = match self.prefs.layout_mode {
             LayoutMode::Horizontal => self.term_height,
@@ -797,32 +790,45 @@ impl AppState {
         if row < sessions_top || row >= sessions_bottom {
             return None;
         }
-        let visible_height = sessions_bottom - sessions_top;
-        let layout = self.current_layout(self.prefs.view_mode);
-        let scroll = layout.scroll_offset(self.focus_target().map(|f| f.0), visible_height);
-        let viewport_y = row - sessions_top;
-        Some((layout, viewport_y, scroll, visible_height))
+        // The list viewport sits below the Summary card on the Agents tab,
+        // which is rendered above it (not part of the sectioned list).
+        let summary_h = if self.agents_tab_active() {
+            self.summary_card_height()
+        } else {
+            0
+        };
+        let list_top = sessions_top + summary_h;
+        if row < list_top || row >= sessions_bottom {
+            return None;
+        }
+        let visible_height = sessions_bottom - list_top;
+        let built = self.current_layout(self.prefs.view_mode);
+        let scroll = built
+            .layout
+            .scroll_offset(self.focus_target().map(|f| f.0), visible_height);
+        let viewport_y = row - list_top;
+        Some((built, viewport_y, scroll, visible_height))
     }
 
     /// Map a screen row to a sidebar focus target. Walks the unified
     /// layout (local cards + remote groups + headers) so variable-
     /// height rows hit-test correctly.
     pub fn focus_at_row(&self, row: u16) -> Option<FocusTarget> {
-        let (layout, viewport_y, scroll, _) = self.session_row_hit(row)?;
-        layout.row_at_y(viewport_y, scroll).map(FocusTarget)
+        let (built, viewport_y, scroll, _) = self.session_row_hit(row)?;
+        built.layout.row_at_y(viewport_y, scroll).map(FocusTarget)
     }
 
     /// Whether `row` falls on a group divider header (`@local` / `@host`).
     /// Used to swallow right-clicks on dividers — their actions live on
     /// the divider's own `[…]` button, not a context menu.
     pub fn is_divider_at_row(&self, row: u16) -> bool {
-        let Some((layout, viewport_y, scroll, visible_height)) = self.session_row_hit(row) else {
+        let Some((built, viewport_y, scroll, visible_height)) = self.session_row_hit(row) else {
             return false;
         };
-        // Bind the result before the block ends so the `VisibleIter`
-        // (which borrows `layout`) drops before `layout` does — its Drop
-        // impl in ratatui-sectioned-list 0.1.1 otherwise outlives the borrow.
-        let hit = layout.visible_items(scroll, visible_height).any(|v| {
+        // Bind before the block ends so the `VisibleIter` (which borrows the
+        // layout) drops before `built` does — its Drop impl otherwise
+        // outlives the borrow.
+        let hit = built.layout.visible_items(scroll, visible_height).any(|v| {
             v.item.kind == ItemKind::Header
                 && viewport_y >= v.viewport_y
                 && viewport_y < v.viewport_y + v.visible_height
@@ -832,25 +838,19 @@ impl AppState {
 
     /// Map a screen row on a group divider to that group's section key
     /// (`None` = `@local`, `Some(host)` = a remote `@host`). Returns
-    /// `None` when the row isn't on a group divider, or lands on an
-    /// agent-count footer (which isn't a collapse target). Used by the
+    /// `None` when the row isn't on a real group divider (e.g. a no-agents
+    /// placeholder header, which isn't a collapse target). Used by the
     /// mouse layer to toggle a group when its divider is clicked.
     pub fn divider_section_key_at(&self, row: u16) -> Option<Option<String>> {
-        let (layout, viewport_y, scroll, _) = self.session_row_hit(row)?;
-        // header_at_y returns the 0-based header section index; resolve it
-        // back to its item to read the SidebarItemData. AgentCount footers
-        // are headers too, so we explicitly reject them.
-        let section_idx = layout.header_at_y(viewport_y, scroll)?;
-        let item = layout
-            .items()
-            .iter()
-            .filter(|it| it.kind == ItemKind::Header)
-            .nth(section_idx)?;
-        match &item.data {
-            SidebarItemData::LocalHeader => Some(None),
-            SidebarItemData::Header { host, .. } => Some(Some(host.clone())),
-            // AgentCount (or anything else) isn't a collapse target.
-            _ => None,
+        let (built, viewport_y, scroll, _) = self.session_row_hit(row)?;
+        // header_at_y returns the 0-based header section index, which is a
+        // direct index into `sections`. Only real dividers toggle collapse.
+        let section_idx = built.layout.header_at_y(viewport_y, scroll)?;
+        let meta = built.sections.get(section_idx)?;
+        if meta.divider {
+            Some(meta.host.clone())
+        } else {
+            None
         }
     }
 
@@ -979,52 +979,113 @@ impl AppState {
     /// session items in render order. Renderers and the mouse
     /// hit-tester share this so they can't disagree about which row
     /// lives where.
-    pub fn sidebar_layout(&self, view_mode: ViewMode) -> SidebarLayout {
-        let card_h = card_height(view_mode) as u16;
+    /// The active theme, resolved from the saved index. The layout builders
+    /// bake divider accents and row marker colors into their `BasicItem`s, so
+    /// they read the theme here rather than taking it as a parameter (the
+    /// hit-test call sites build the same layout and don't carry a theme).
+    pub fn active_theme(&self) -> &'static crate::theme::Theme {
+        &crate::theme::THEMES[self.prefs.theme_index]
+    }
+
+    /// `BasicItem` for one session row. Expanded carries the name plus dim
+    /// `dir` / idle lines (height 3, matching the old card); Compact is a
+    /// single `origin:name` line.
+    fn session_item(&self, e: &SessionEntry, view_mode: ViewMode) -> BasicItem {
+        let loading = matches!(e.kind, SessionKind::Connecting);
+        let name = if loading {
+            "(connecting…)".to_string()
+        } else {
+            match e.kind {
+                SessionKind::Unreachable => UNREACHABLE_LABEL.to_string(),
+                SessionKind::NoSessions => NO_SESSIONS_LABEL.to_string(),
+                _ => e.name.clone(),
+            }
+        };
+        match view_mode {
+            ViewMode::Compact => {
+                let prefix = e.host.as_deref().unwrap_or("local");
+                BasicItem::new(format!("{prefix}:{name}"))
+            }
+            ViewMode::Expanded => {
+                let dir = if loading || e.dir.is_empty() {
+                    String::new()
+                } else {
+                    shorten_dir(&e.dir)
+                };
+                let idle = match e.kind {
+                    SessionKind::Live {
+                        idle_seconds: Some(s),
+                        ..
+                    } => format_idle_badge(s)
+                        .map(|t| format!("idle {t}"))
+                        .unwrap_or_default(),
+                    _ => String::new(),
+                };
+                // Always two secondary lines (even when blank) so every
+                // Expanded row is a uniform 3 rows tall.
+                BasicItem::new(name).line(dir).line(idle)
+            }
+        }
+    }
+
+    /// `@local` divider: accent fill + a single `[…]` menu button.
+    fn local_divider(&self) -> BasicItem {
+        BasicItem::new("@local")
+            .separator("─")
+            .color(self.active_theme().accent)
+            .button("…")
+    }
+
+    /// `@host` divider: per-host accent fill + `[⟳]` reconnect and `[…]`
+    /// menu buttons.
+    fn remote_divider(&self, host: &str, host_idx: usize) -> BasicItem {
+        BasicItem::new(format!("@{host}"))
+            .separator("─")
+            .color(host_accent(self.active_theme(), host_idx))
+            .button("⟳")
+            .button("…")
+    }
+
+    /// Build the unified Projects-tab layout: a flat `BasicItem` list of
+    /// `@local` / `@host` dividers (Expanded only) interleaved with session
+    /// rows, plus the per-divider [`SectionMeta`] the hit-tester resolves
+    /// clicks against. Renderer and hit-tester share this so they can't
+    /// disagree about which row lives where.
+    pub fn sidebar_layout(&self, view_mode: ViewMode) -> BuiltLayout {
         let mut layout = SidebarLayout::new();
-        // Group dividers (`@local`, `@host`) are an Expanded-view
-        // adornment; Compact rows already carry an origin prefix.
+        let mut sections: Vec<SectionMeta> = Vec::new();
+        // Group dividers (`@local`, `@host`) are an Expanded-view adornment;
+        // Compact rows already carry an origin prefix.
         let show_headers = matches!(view_mode, ViewMode::Expanded);
 
-        // Collapse is an Expanded-view feature. `section_idx` counts every
-        // pushed header (group dividers *and* agent footers) in push order,
-        // matching the crate's section numbering. We track only the GROUP
-        // headers' (section_idx, key) so we can flip their collapsed flag
-        // after the list is built. A collapsed group's footer is skipped
-        // below so the divider sits alone; its rows are hidden by the widget.
-        layout.set_collapsible(true);
-        let mut header_count: usize = 0;
+        // Collapse is an Expanded-view feature. Track each group header's
+        // (section_idx, key) so we can flip its collapsed flag after the list
+        // is built; section_idx counts every pushed header in push order,
+        // matching the crate's section numbering (and `sections`).
+        layout.set_collapsible(show_headers);
         let mut group_headers: Vec<(usize, HostKey)> = Vec::new();
-        let is_collapsed =
-            |host: Option<&str>| self.collapsed_sections.contains(HostQuery::from_host(host));
 
-        // Local group: an `@local` divider over the local rows, matching
-        // the remote `@host` dividers. Flat index for a local row equals
-        // its position in `entries` (headers aren't rows). Keep the
-        // divider even when local has no sessions so the user can still
-        // open the local section menu and see the empty-state row.
         let local_count = self.local_count();
         if show_headers {
-            group_headers.push((header_count, HostKey::local()));
-            header_count += 1;
-            layout.push_header(SidebarItemData::LocalHeader, 1);
+            group_headers.push((sections.len(), HostKey::local()));
+            layout.push_header_auto(self.local_divider());
+            sections.push(SectionMeta {
+                host: None,
+                buttons: vec![DividerButton::LocalMore],
+                divider: true,
+            });
         }
         for pos in 0..local_count {
-            layout.push_row(SidebarItemData::Session { session_idx: pos }, card_h);
-        }
-        if show_headers && local_count == 0 && !is_collapsed(None) {
-            layout.push_header(SidebarItemData::LocalEmpty, card_h);
-            header_count += 1;
+            layout.push_row_auto(self.session_item(&self.entries[pos], view_mode));
         }
 
         // Remote groups: detect host transitions in render order (which
-        // matches focus order — `entries` is grouped by host because the
-        // refresh worker emits hosts in config order, one block at a time,
-        // after the local rows). Flat index for any row is its position in
-        // `entries`. Each group gets an `@host` divider above.
+        // matches focus order — `entries` is grouped by host). Flat row index
+        // is the row's position in `entries`. Each group gets an `@host`
+        // divider above.
         let mut host_idx: usize = 0;
         let mut prev_host: Option<&str> = None;
-        for (idx, e) in self.entries.iter().enumerate() {
+        for e in self.entries.iter() {
             let Some(host) = e.host.as_deref() else {
                 continue; // local rows already pushed above
             };
@@ -1034,27 +1095,17 @@ impl AppState {
                     host_idx += 1;
                 }
                 if show_headers {
-                    // A host's rows are contiguous and share a status; this
-                    // row is the first of the group, so it represents it.
-                    let status = host_status_of(e);
-                    group_headers.push((header_count, HostKey::remote(host)));
-                    header_count += 1;
-                    layout.push_header(
-                        SidebarItemData::Header {
-                            host: host.to_string(),
-                            host_idx,
-                            status,
-                            pf: self.host_pf_badge(host),
-                        },
-                        1,
-                    );
+                    group_headers.push((sections.len(), HostKey::remote(host)));
+                    layout.push_header_auto(self.remote_divider(host, host_idx));
+                    sections.push(SectionMeta {
+                        host: Some(host.to_string()),
+                        buttons: vec![DividerButton::Reconnect, DividerButton::More],
+                        divider: true,
+                    });
                 }
                 prev_host = Some(host);
             }
-            // Match the local card height so groups visually align
-            // (3 rows in Expanded, 1 in Compact). The renderer pads
-            // the bottom of each row with blank lines to fill the card.
-            layout.push_row(SidebarItemData::Session { session_idx: idx }, card_h);
+            layout.push_row_auto(self.session_item(e, view_mode));
         }
 
         // Flip each group header's collapsed flag so the widget hides its
@@ -1063,7 +1114,7 @@ impl AppState {
             layout.set_collapsed(section_idx, self.collapsed_sections.contains(&key));
         }
 
-        layout
+        BuiltLayout { layout, sections }
     }
 
     /// Distinct remote hosts in the order their rows first appear in
@@ -1216,95 +1267,109 @@ impl AppState {
     /// focusable rows beneath it, or a non-focusable placeholder when a
     /// section has no agents. `row_idx` on each `Agent` item matches the
     /// `agent_rows()` position so focus/scroll/hit-test stay in sync.
-    pub fn agents_layout(&self) -> SidebarLayout {
+    pub fn agents_layout(&self) -> BuiltLayout {
         let mut layout = SidebarLayout::new();
+        let mut sections: Vec<SectionMeta> = Vec::new();
         // No collapse on the Agents tab — sections are informational and
-        // always expanded, so the focus index maps straight to a row.
+        // always expanded, so the focus index maps straight to a row. The
+        // Summary card is no longer in the list: it renders as a separate
+        // widget pinned above, so the list is pure `BasicItem`.
         layout.set_collapsible(false);
-        let mut row_idx = 0usize;
 
-        let mut push_section = |layout: &mut SidebarLayout, host: Option<&str>| {
-            match self.section_agents(host) {
-                Some(list) if !list.is_empty() => {
-                    for _ in list {
-                        layout.push_row(SidebarItemData::Agent { row_idx }, 1);
-                        row_idx += 1;
+        // Push a divider header for `host`, then either its agent rows or a
+        // single inert placeholder header (no agents / still detecting).
+        let push_section =
+            |layout: &mut SidebarLayout, sections: &mut Vec<SectionMeta>, header: BasicItem, meta: SectionMeta, host: Option<&str>, first: bool| {
+                if first {
+                    layout.push_header_auto(header);
+                } else {
+                    // A 1-row top margin sets each remote section off from
+                    // what's above; local stays flush at the top.
+                    layout.push_header_margin(header, 1);
+                }
+                sections.push(meta);
+                match self.section_agents(host) {
+                    Some(list) if !list.is_empty() => {
+                        for agent in list {
+                            // A status glyph prefix, plus a filled marker on
+                            // the agent deck is currently focused on (the
+                            // "you are here" pane), so switching shows where
+                            // you landed even without per-row coloring.
+                            let here = self.active_agent.as_ref().is_some_and(|t| {
+                                t.host.as_deref() == host && t.pane_id == agent.pane_id
+                            });
+                            let dot = match agent.status {
+                                crate::agent::AgentStatus::Working => "●",
+                                crate::agent::AgentStatus::Idle => "○",
+                                crate::agent::AgentStatus::Waiting => "◐",
+                                crate::agent::AgentStatus::Unknown => "·",
+                            };
+                            let lead = if here { "▶" } else { " " };
+                            // No accent color: like session rows, focus shows
+                            // only via the highlight background bar. The status
+                            // glyph + ▶ marker carry the per-row state.
+                            layout.push_row_auto(BasicItem::new(format!(
+                                "{lead} {dot} {}",
+                                agent.location()
+                            )));
+                        }
+                    }
+                    other => {
+                        let label = if other.is_some() {
+                            "  no agents"
+                        } else {
+                            "  detecting…"
+                        };
+                        layout.push_header_auto(BasicItem::new(label));
+                        sections.push(SectionMeta {
+                            host: host.map(str::to_string),
+                            buttons: Vec::new(),
+                            divider: false,
+                        });
                     }
                 }
-                Some(_) => {
-                    layout.push_header(
-                        SidebarItemData::AgentsPlaceholder { detecting: false },
-                        1,
-                    );
-                }
-                None => {
-                    layout.push_header(SidebarItemData::AgentsPlaceholder { detecting: true }, 1);
-                }
-            }
-        };
+            };
 
-        // The Summary card is pinned at the very top, above `@local`.
-        layout.push_header(SidebarItemData::SummaryCard, self.summary_card_height());
-
-        layout.push_header(SidebarItemData::LocalHeader, 1);
-        push_section(&mut layout, None);
+        push_section(
+            &mut layout,
+            &mut sections,
+            self.local_divider(),
+            SectionMeta {
+                host: None,
+                buttons: vec![DividerButton::LocalMore],
+                divider: true,
+            },
+            None,
+            true,
+        );
 
         for (host_idx, host) in self.remote_hosts_in_order().into_iter().enumerate() {
-            // A blank row sets each remote section off from what's above.
-            // Local stays flush at the top (no leading gap).
-            layout.push_header(SidebarItemData::Spacer, 1);
-            let status = self.host_conn_status(&host).unwrap_or(HostStatus::Connecting);
-            layout.push_header(
-                SidebarItemData::Header {
-                    host: host.clone(),
-                    host_idx,
-                    status,
-                    pf: self.host_pf_badge(&host),
+            push_section(
+                &mut layout,
+                &mut sections,
+                self.remote_divider(&host, host_idx),
+                SectionMeta {
+                    host: Some(host.clone()),
+                    buttons: vec![DividerButton::Reconnect, DividerButton::More],
+                    divider: true,
                 },
-                1,
+                Some(&host),
+                false,
             );
-            push_section(&mut layout, Some(&host));
         }
 
-        layout
+        BuiltLayout { layout, sections }
     }
 
     /// The layout for the active sidebar tab. Projects → the session
     /// list; Agents → the agent list. Callers (renderer, hit-testers,
     /// scroll) use this so they all see the same rows for the active tab.
-    pub fn current_layout(&self, view_mode: ViewMode) -> SidebarLayout {
+    pub fn current_layout(&self, view_mode: ViewMode) -> BuiltLayout {
         if self.agents_tab_active() {
             self.agents_layout()
         } else {
             self.sidebar_layout(view_mode)
         }
-    }
-
-    /// The port-forward badge for a host's divider, or `None` when the host has
-    /// no forwards. Color rolls up the per-forward health; count is the number
-    /// of configured forwards.
-    pub fn host_pf_badge(&self, host: &str) -> Option<PfBadge> {
-        let forwards = self
-            .config_remotes
-            .iter()
-            .find(|r| r.host == host)
-            .map(|r| r.forwards.as_slice())?;
-        if forwards.is_empty() {
-            return None;
-        }
-        let healths: Vec<ForwardHealth> = forwards
-            .iter()
-            .map(|f| {
-                self.forward_health
-                    .get(&ForwardKey::from_spec(host, f))
-                    .copied()
-                    .unwrap_or(ForwardHealth::Probing)
-            })
-            .collect();
-        Some(PfBadge {
-            count: forwards.len(),
-            color: rollup_color(&healths),
-        })
     }
 
     /// Drop health entries whose forward no longer exists in config (after a

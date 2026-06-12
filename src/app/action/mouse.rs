@@ -2,7 +2,7 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 use crate::state::{AppState, DividerButton, FocusTarget, HitKind, LayoutMode, MainView, Modal};
 
-use super::{Action, MenuAction, PfAction, SettingsAction, SummaryAction};
+use super::{Action, MenuAction, SettingsAction, SummaryAction};
 
 pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     // Single resolver for every rect-based button/region the sidebar
@@ -140,7 +140,6 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
                         x: dh.rect.x,
                         y: dh.rect.y + 1, // open just below the button
                     }),
-                    DividerButton::PfBadge => Action::Pf(PfAction::Open(dh.host.clone())),
                     DividerButton::LocalMore => Action::Menu(MenuAction::OpenLocalDivider {
                         x: dh.rect.x,
                         y: dh.rect.y + 1, // open just below the button

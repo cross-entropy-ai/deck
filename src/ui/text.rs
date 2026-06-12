@@ -225,50 +225,11 @@ pub(super) fn format_keys_for(keybindings: &Keybindings, cmd: Command) -> String
 // (the leaf shared by the renderer and the hit-tester); re-exported here
 // so the `ui::text` call sites and tests keep their `super::truncate` path.
 pub(super) use crate::geometry::truncate;
-
-pub(super) fn shorten_dir(dir: &str) -> String {
-    // Resolved once: this runs per visible session card per frame, and
-    // `env::var` takes the process-global env lock + allocates each call.
-    static HOME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    let home = HOME.get_or_init(|| std::env::var("HOME").unwrap_or_default());
-    if !home.is_empty() && dir.starts_with(home) {
-        format!("~{}", &dir[home.len()..])
-    } else {
-        dir.to_string()
-    }
-}
-
-pub(super) fn format_idle_badge(seconds: u64) -> Option<String> {
-    if seconds < 60 {
-        return None;
-    }
-    if seconds < 3600 {
-        return Some(format!("{}m", seconds / 60));
-    }
-    if seconds < 86_400 {
-        return Some(format!("{}h", seconds / 3600));
-    }
-    Some(format!("{}d", seconds / 86_400))
-}
-
-pub(super) fn idle_color(
-    theme: &Theme,
-    idle_seconds: u64,
-    emphasized: bool,
-) -> ratatui::style::Color {
-    if !emphasized {
-        return theme.muted;
-    }
-    if idle_seconds < 3 {
-        theme.green
-    } else if idle_seconds < 60 {
-        theme.subtle
-    } else if idle_seconds < 3600 {
-        theme.muted
-    } else {
-        theme.dim
-    }
-}
+// Pure string helper moved down into `model` (geometry) so the sidebar
+// layout builder can format rows without depending on `ui`; re-exported
+// here for the `ui::text` unit test.
+#[cfg(test)]
+pub(super) use crate::geometry::format_idle_badge;
 
 #[cfg(test)]
 #[path = "../../tests/unit/ui/text.rs"]

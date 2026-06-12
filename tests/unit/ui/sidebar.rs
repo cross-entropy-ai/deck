@@ -14,126 +14,6 @@ fn plugin_block_rows_counts_title_and_separator() {
 }
 
 #[test]
-fn reconnect_glyph_color_follows_status() {
-    use crate::state::HostStatus;
-    let theme = &crate::theme::THEMES[0];
-    let accent = theme.teal;
-    for (status, expected) in [
-        (HostStatus::Connected, theme.teal), // unified with the divider accent
-        (HostStatus::Connecting, theme.yellow),
-        (HostStatus::Unreachable, theme.pink),
-    ] {
-        let mut lines = Vec::new();
-        super::render_group_header(&mut lines, "@h", accent, status, 40, theme, None, false);
-        let glyph = lines[0]
-            .spans
-            .iter()
-            .find(|s| s.content.as_ref() == "[\u{27f3}]")
-            .expect("reconnect glyph span present");
-        assert_eq!(glyph.style.fg, Some(expected), "status {status:?}");
-    }
-}
-
-#[test]
-fn pf_badge_does_not_shift_right_aligned_buttons() {
-    use crate::state::{HostStatus, PfBadge, PfBadgeColor};
-    let theme = &crate::theme::THEMES[0];
-
-    let mut without = Vec::new();
-    let hits_no = super::render_group_header(
-        &mut without,
-        "@h",
-        theme.teal,
-        HostStatus::Connected,
-        60,
-        theme,
-        None,
-        false,
-    );
-
-    let mut with = Vec::new();
-    let hits_yes = super::render_group_header(
-        &mut with,
-        "@h",
-        theme.teal,
-        HostStatus::Connected,
-        60,
-        theme,
-        Some(PfBadge {
-            count: 2,
-            color: PfBadgeColor::Healthy,
-        }),
-        false,
-    );
-
-    // The badge eats into the dash run, so the buttons stay put.
-    assert_eq!(
-        hits_yes.reconnect.start, hits_no.reconnect.start,
-        "reconnect button must not move"
-    );
-    assert_eq!(
-        hits_yes.more.start, hits_no.more.start,
-        "more button must not move"
-    );
-
-    // No forwards => no badge hit; with forwards => a clickable badge region.
-    assert!(
-        hits_no.badge.is_none(),
-        "badge hit must be absent with no forwards"
-    );
-    let badge = hits_yes.badge.expect("badge hit region must be present");
-
-    // And the badge text is actually rendered, within the reported hit range.
-    let rendered: String = with[0].spans.iter().map(|s| s.content.as_ref()).collect();
-    assert!(
-        rendered.contains("\u{21c4}2"),
-        "badge text missing: {rendered:?}"
-    );
-    assert!(
-        badge.end <= hits_yes.reconnect.start,
-        "badge must sit left of the buttons"
-    );
-}
-
-#[test]
-fn pf_badge_suppressed_at_narrow_width_keeps_buttons_on_screen() {
-    use crate::state::{HostStatus, PfBadge, PfBadgeColor};
-    let theme = &crate::theme::THEMES[0];
-    let width = 14; // too narrow to fit a badge + dash run
-    let mut lines = Vec::new();
-    let hits = super::render_group_header(
-        &mut lines,
-        "@h",
-        theme.teal,
-        HostStatus::Connected,
-        width,
-        theme,
-        Some(PfBadge {
-            count: 12,
-            color: PfBadgeColor::Degraded,
-        }),
-        false,
-    );
-    // Both button ranges must stay within the line width.
-    assert!(
-        hits.more.end <= width,
-        "more button end {} exceeds width {}",
-        hits.more.end,
-        width
-    );
-    // Badge must be suppressed: no hit region and no ⇄ glyph at this width.
-    assert!(
-        hits.badge.is_none(),
-        "badge hit must be absent at narrow width"
-    );
-    let rendered: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
-    assert!(
-        !rendered.contains('\u{21c4}'),
-        "badge should be hidden at narrow width: {rendered:?}"
-    );
-}
-
-#[test]
 fn confirm_kill_renders_clickable_in_tabs_mode() {
     // Regression: in vertical/tabs mode draw_sidebar returned before the
     // confirm-kill branch, so the prompt never drew and kill_confirm_hits
@@ -144,7 +24,7 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
     use ratatui::{backend::TestBackend, Terminal};
 
     let theme = &crate::theme::THEMES[0];
-    let layout = SidebarLayout::new();
+    let built = BuiltLayout::default();
     let keybindings = Keybindings::default();
     let sessions: Vec<&dyn SidebarSession> = Vec::new();
 
@@ -160,7 +40,7 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
                 SidebarProps {
                     sessions: &sessions,
                     local_count: 0,
-                    layout: &layout,
+                    built: &built,
                     focus_target: None,
                     sidebar_active: true,
                     theme,
@@ -174,13 +54,12 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
                     summary_age: None,
                     spinner_idx: 0,
                     summary_scroll: 0,
+                    summary_card_height: 0,
                     tabs_mode: true,
-                    view_mode: ViewMode::Expanded,
                     plugins: &[],
                     blink_on: false,
                     keybindings: &keybindings,
                     update_available: None,
-                    active_agent: None,
                 },
             );
             kill_hits = hits.kill;
@@ -228,7 +107,7 @@ fn render_hits(
     plugins: &[PluginView<'_>],
 ) -> HitRegions {
     let theme = &crate::theme::THEMES[0];
-    let layout = SidebarLayout::new();
+    let built = BuiltLayout::default();
     let keybindings = Keybindings::default();
     let sessions: Vec<&dyn SidebarSession> = Vec::new();
     let update = UpdateStatus {
@@ -250,7 +129,7 @@ fn render_hits(
                 SidebarProps {
                     sessions: &sessions,
                     local_count: 0,
-                    layout: &layout,
+                    built: &built,
                     focus_target: None,
                     sidebar_active: true,
                     theme,
@@ -264,18 +143,119 @@ fn render_hits(
                     summary_age: None,
                     spinner_idx: 0,
                     summary_scroll: 0,
+                    summary_card_height: 0,
                     tabs_mode: false,
-                    view_mode: ViewMode::Expanded,
                     plugins,
                     blink_on: false,
                     keybindings: &keybindings,
                     update_available: has_update.then_some(&update),
-                    active_agent: None,
                 },
             );
         })
         .unwrap();
     captured
+}
+
+#[test]
+fn agents_tab_publishes_clickable_agent_rows() {
+    use crate::state::{AppState, SidebarTab};
+    let theme = &crate::theme::THEMES[0];
+    let keybindings = Keybindings::default();
+
+    let mk = |pane_id: &str| crate::agent::DetectedAgent {
+        kind: crate::agent::AgentKind::Claude,
+        session: "sess".to_string(),
+        window: "1".to_string(),
+        pane: "0".to_string(),
+        pane_id: pane_id.to_string(),
+        status: crate::agent::AgentStatus::Idle,
+    };
+
+    let mut state = AppState::new(80, 24);
+    state.prefs.sidebar_tab = SidebarTab::Agents;
+    // Two local agents and one remote, so the click→pane mapping has to
+    // survive dividers/margins between sections (the "specific pane" path).
+    state.entries.push(crate::state::SessionEntry {
+        host: Some("h1".to_string()),
+        name: "s".to_string(),
+        dir: String::new(),
+        kind: crate::state::SessionKind::Live {
+            is_current: false,
+            idle_seconds: None,
+        },
+    });
+    state.clamp_projects_focus();
+    state
+        .agents
+        .insert(crate::host_key::HostKey::local(), vec![mk("%7"), mk("%8")]);
+    state
+        .agents
+        .insert(crate::host_key::HostKey::remote("h1"), vec![mk("%9")]);
+    let built = state.agents_layout();
+    let agent_rows = state.agent_rows();
+    let sessions: Vec<&dyn SidebarSession> = Vec::new();
+
+    let backend = TestBackend::new(40, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut captured = HitRegions::default();
+    terminal
+        .draw(|frame| {
+            captured = super::draw_sidebar(
+                frame,
+                frame.area(),
+                SidebarProps {
+                    sessions: &sessions,
+                    local_count: 0,
+                    built: &built,
+                    focus_target: state.focus_target(),
+                    sidebar_active: true,
+                    theme,
+                    show_help: false,
+                    confirm_kill: None,
+                    rename_input: None,
+                    show_borders: true,
+                    sidebar_tab: SidebarTab::Agents,
+                    agent_rows: &agent_rows,
+                    summary: &SummaryState::Idle,
+                    summary_age: None,
+                    spinner_idx: 0,
+                    summary_scroll: 0,
+                    summary_card_height: state.summary_card_height(),
+                    tabs_mode: false,
+                    plugins: &[],
+                    blink_on: false,
+                    keybindings: &keybindings,
+                    update_available: None,
+                },
+            );
+        })
+        .unwrap();
+
+    // Each agent row publishes a hit, in agent_rows order, with its pane.
+    let panes: Vec<&str> = captured
+        .agents
+        .iter()
+        .map(|h| h.target.pane_id.as_str())
+        .collect();
+    assert_eq!(panes, vec!["%7", "%8", "%9"], "rows map to their agents");
+
+    // End-to-end: clicking the LAST agent row (across the host divider)
+    // yields a switch to *that* agent's pane, not a neighbor's.
+    state.hit_regions = captured;
+    let last = state.hit_regions.agents.last().unwrap().rect;
+    let click = crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: last.x,
+        row: last.y,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    };
+    match crate::action::mouse_to_action(&click, &state) {
+        crate::action::Action::SwitchToAgentPane(t) => {
+            assert_eq!(t.pane_id, "%9");
+            assert_eq!(t.host.as_deref(), Some("h1"));
+        }
+        other => panic!("expected SwitchToAgentPane, got {other:?}"),
+    }
 }
 
 /// The content area `draw_sidebar` lays out within for a horizontal

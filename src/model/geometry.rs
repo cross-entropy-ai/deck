@@ -12,13 +12,14 @@
 //! automatically keeps click-target math in sync.
 
 use ratatui::layout::{Position, Rect};
+use ratatui::style::Color;
 use unicode_width::UnicodeWidthStr;
 
 use unicode_width::UnicodeWidthChar;
 
-use crate::forwards::PfBadge;
 use crate::menu::MenuItem;
-use crate::state::{SidebarTab, ViewMode};
+use crate::state::SidebarTab;
+use crate::theme::Theme;
 
 /// Truncate `s` to at most `max_width` display columns, appending an
 /// ellipsis when it overflows. A pure string helper kept here (in the
@@ -134,14 +135,43 @@ pub const fn plugin_block_rows(count: usize) -> u16 {
     }
 }
 
-pub fn card_height(view_mode: ViewMode) -> usize {
-    match view_mode {
-        // Expanded: name+indicator line, idle+dir line, gutter.
-        ViewMode::Expanded => 3,
-        // Compact: single line. Name is prefixed with origin
-        // (`local:` or `<host>:`) instead of a separate dir line.
-        ViewMode::Compact => 1,
+/// Accent color for a remote host's divider, cycled by the host's order
+/// among distinct remote hosts. Shared by the layout builder (which bakes it
+/// into the `BasicItem` header) so dividers keep their per-host tint.
+pub fn host_accent(theme: &Theme, host_idx: usize) -> Color {
+    let tints = [theme.teal, theme.pink, theme.yellow, theme.accent];
+    tints[host_idx % tints.len()]
+}
+
+/// Collapse `$HOME` to `~` in a directory path. Pure; lives in the leaf
+/// geometry module so the sidebar layout builder (in `model`) can format
+/// session rows without reaching up into `ui`. `ui::text` re-exports it.
+pub fn shorten_dir(dir: &str) -> String {
+    // Resolved once: this runs per visible session row, and `env::var` takes
+    // the process-global env lock + allocates each call.
+    static HOME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let home = HOME.get_or_init(|| std::env::var("HOME").unwrap_or_default());
+    if !home.is_empty() && dir.starts_with(home) {
+        format!("~{}", &dir[home.len()..])
+    } else {
+        dir.to_string()
     }
+}
+
+/// Short idle-age badge (`3m` / `2h` / `1d`), or `None` under a minute.
+/// Pure; co-located with [`shorten_dir`] for the same reason. `ui::text`
+/// re-exports it.
+pub fn format_idle_badge(seconds: u64) -> Option<String> {
+    if seconds < 60 {
+        return None;
+    }
+    if seconds < 3600 {
+        return Some(format!("{}m", seconds / 60));
+    }
+    if seconds < 86_400 {
+        return Some(format!("{}h", seconds / 3600));
+    }
+    Some(format!("{}d", seconds / 86_400))
 }
 
 fn tab_width(index: usize, name: &str) -> u16 {
@@ -180,57 +210,55 @@ pub fn context_menu_width(items: &[MenuItem]) -> u16 {
 
 // --- Sidebar item / hit-region types ---
 
-/// Per-item data carried in the sidebar's `SectionedList`. Headers and
-/// session rows live in the same flat list so the renderer, scroll
-/// logic, and mouse hit-test all walk the same items in lockstep.
+/// Sidebar layout — a `SectionedList` of the crate's `BasicItem` preset.
+/// Headers carry an `@local` / `@host` divider (separator fill, accent
+/// color, `[⟳]`/`[…]` buttons); rows carry a session/agent title plus dim
+/// secondary lines. Geometry, focus-driven scroll, and mouse hit-testing
+/// are shared across the renderer (`SectionedListWidget::basic`) and the
+/// action layer via this one type.
+pub type SidebarLayout =
+    ratatui_sectioned_list::SectionedList<ratatui_sectioned_list::widget::BasicItem>;
+
+/// Metadata for one header in a [`SidebarLayout`], in push order — parallel
+/// to the crate's section numbering, so a `header_at_y` index resolves
+/// straight back to the host it divides and the buttons drawn on it.
+///
+/// `BasicItem` headers carry only text/buttons, not identity, so this
+/// side-table is what lets the hit-tester map a divider click to a host
+/// (collapse / reconnect / menu) the way the old `SidebarItemData::Header`
+/// did.
 #[derive(Debug, Clone)]
-pub enum SidebarItemData {
-    /// The `@local` group divider, shown above the local session rows in
-    /// Expanded view. Carries no data — the renderer draws a fixed label
-    /// and a single `[…]` menu button.
-    LocalHeader,
-    /// Remote host name, plus the 0-based index of the host among
-    /// distinct remote hosts in render order — used to cycle the
-    /// divider accent color. The renderer formats the `@host` label and
-    /// reuses the bare host for the divider's click target.
-    Header {
-        host: String,
-        host_idx: usize,
-        status: crate::state::HostStatus,
-        pf: Option<PfBadge>,
-    },
-    /// A session row at the given flat index — matches the
-    /// `FocusTarget` numbering: local rows first, then remotes. The
-    /// renderer pairs this index with a `&[&dyn SidebarSession]` slice
-    /// built in render order; it is a direct index into `AppState::entries`,
-    /// which the action layer reads via `AppState::entry_at`.
-    Session { session_idx: usize },
-    /// A focusable agent row in the Agents tab. `row_idx` indexes into
-    /// `AppState::agent_rows()` (local agents first, then remote hosts in
-    /// section order), matching the `FocusTarget` numbering for that tab
-    /// so a click/keyboard move maps straight back to the agent.
-    Agent { row_idx: usize },
-    /// Non-selectable placeholder under a section divider in the Agents
-    /// tab when that section has no agents. `detecting` = the section
-    /// hasn't been probed yet (shows "detecting…" vs "no agents").
-    AgentsPlaceholder { detecting: bool },
-    /// Non-selectable blank row. Used in the Agents tab to set off each
-    /// remote `@host` section with a leading gap.
-    Spacer,
-    /// The "Summary" card pinned at the top of the Agents tab: a title,
-    /// then a "Generate Summary" button / animated placeholder / the
-    /// generated text depending on `AppState::summary`.
-    SummaryCard,
-    /// Non-selectable placeholder under `@local` when the local tmux server
-    /// has no sessions. Kept out of `FocusTarget` numbering so remote flat
-    /// indices still start at `filtered.len()`.
-    LocalEmpty,
+pub struct SectionMeta {
+    /// Host this divider heads (`None` = `@local`). `None` for a
+    /// non-divider placeholder header too — read `divider` to tell them apart.
+    pub host: Option<String>,
+    /// Buttons on this divider, left→right, matching the `BasicItem`
+    /// `.button()` order. Empty for placeholder headers (empty-local /
+    /// no-agents / detecting).
+    pub buttons: Vec<DividerButton>,
+    /// Whether the bar is a real, clickable group divider (toggles collapse,
+    /// carries buttons). `false` for placeholder rows that occupy a header
+    /// slot but aren't interactive.
+    pub divider: bool,
 }
 
-/// Sidebar layout — built on top of `ratatui_sectioned_list::SectionedList`
-/// so geometry, focus-driven scroll, and mouse hit-testing are shared
-/// across the renderer and the action layer.
-pub type SidebarLayout = ratatui_sectioned_list::SectionedList<SidebarItemData>;
+/// A built sidebar layout plus the per-header metadata the hit-tester needs
+/// to resolve divider clicks back to a host. Returned together so the two
+/// can never drift: they're produced in the same pass.
+#[derive(Debug, Clone)]
+pub struct BuiltLayout {
+    pub layout: SidebarLayout,
+    pub sections: Vec<SectionMeta>,
+}
+
+impl Default for BuiltLayout {
+    fn default() -> Self {
+        Self {
+            layout: SidebarLayout::new(),
+            sections: Vec::new(),
+        }
+    }
+}
 
 /// One focusable agent row in the Agents tab, in display order: local
 /// agents first, then each remote host's agents in section order. The
@@ -256,8 +284,6 @@ pub enum DividerButton {
     Reconnect,
     /// `[…]` — open the host-divider menu.
     More,
-    /// `⇄N` — the port-forward liveness badge; opens the port-forward overlay.
-    PfBadge,
     /// `[…]` on the `@local` divider — opens the local-divider menu. Carries
     /// no host (the `DividerHit.host` is unused for this kind).
     LocalMore,

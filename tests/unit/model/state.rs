@@ -75,26 +75,6 @@ fn mark_host_reconnecting_ignores_other_hosts() {
 }
 
 #[test]
-fn sidebar_header_status_reflects_host_reachability() {
-    let cases = [
-        (remote_row("h1", true, false), HostStatus::Unreachable),
-        (remote_row("h1", false, true), HostStatus::Connecting),
-        (remote_row("h1", false, false), HostStatus::Connected),
-    ];
-    for (row, expected) in cases {
-        let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-        set_remote(&mut state, vec![row]);
-        state.clamp_projects_focus();
-        let layout = state.sidebar_layout(ViewMode::Expanded);
-        let status = layout.items().iter().find_map(|item| match &item.data {
-            SidebarItemData::Header { status, .. } => Some(*status),
-            _ => None,
-        });
-        assert_eq!(status, Some(expected));
-    }
-}
-
-#[test]
 fn agent_rows_ordered_local_then_hosts() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     set_remote(&mut state, vec![remote_row("h1", false, false)]);
@@ -167,35 +147,11 @@ fn agents_layout_groups_agents_under_host_dividers() {
         .agents
         .insert(crate::host_key::HostKey::remote("h1"), vec![detected("h1s", "%2")]);
 
-    let layout = state.agents_layout();
-    // Two focusable Agent rows, indexed 0 and 1 in agent_rows order.
-    let agent_idxs: Vec<usize> = layout
-        .items()
-        .iter()
-        .filter_map(|i| match &i.data {
-            SidebarItemData::Agent { row_idx } => Some(*row_idx),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(agent_idxs, vec![0, 1]);
+    let built = state.agents_layout();
+    // Two focusable agent rows (local agent, then h1's), in agent_rows order.
+    assert_eq!(built.layout.row_count(), 2);
     // Focusable count on the Agents tab is the agent count, not sessions.
     assert_eq!(state.focusable_count(), 2);
-}
-
-#[test]
-fn agents_layout_pins_summary_card_at_top() {
-    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.prefs.sidebar_tab = SidebarTab::Agents;
-    let layout = state.agents_layout();
-    // First item is the Summary card; it sits above the @local divider.
-    let first = &layout.items()[0].data;
-    assert!(matches!(first, SidebarItemData::SummaryCard));
-    let local_pos = layout
-        .items()
-        .iter()
-        .position(|i| matches!(i.data, SidebarItemData::LocalHeader))
-        .unwrap();
-    assert!(local_pos > 0);
 }
 
 #[test]
@@ -229,18 +185,20 @@ fn scroll_summary_clamps_to_max() {
 fn agents_layout_shows_placeholder_for_empty_section() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
-    // Local probed but empty -> "no agents"; never probed -> "detecting".
+    // Local probed but empty -> "no agents" placeholder header (an inert
+    // header, not a focusable row).
     state.agents.insert(crate::host_key::HostKey::local(), vec![]);
-    let layout = state.agents_layout();
-    let placeholders: Vec<bool> = layout
-        .items()
-        .iter()
-        .filter_map(|i| match &i.data {
-            SidebarItemData::AgentsPlaceholder { detecting } => Some(*detecting),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(placeholders, vec![false]);
+    let built = state.agents_layout();
+    assert!(
+        built
+            .layout
+            .items()
+            .iter()
+            .any(|i| i.data.title.trim() == "no agents"),
+        "empty probed section shows a no-agents placeholder",
+    );
+    // The local section has no agents, so no focusable rows for it.
+    assert_eq!(built.layout.row_count(), 0);
 }
 
 fn detected(session: &str, pane_id: &str) -> crate::agent::DetectedAgent {
@@ -310,25 +268,24 @@ fn apply_remote_agents_prunes_unconfigured_hosts() {
 #[test]
 fn sidebar_layout_adds_local_header_in_expanded() {
     let state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    let layout = state.sidebar_layout(ViewMode::Expanded);
+    let built = state.sidebar_layout(ViewMode::Expanded);
 
-    let local_headers = layout
+    let local_headers = built
+        .layout
         .items()
         .iter()
-        .filter(|i| matches!(i.data, SidebarItemData::LocalHeader))
+        .filter(|i| i.data.title == "@local")
         .count();
     assert_eq!(local_headers, 1, "one @local divider above the local rows");
 
-    // The header is not a row, so local flat indices stay 0..N.
-    let session_idxs: Vec<usize> = layout
-        .items()
-        .iter()
-        .filter_map(|i| match &i.data {
-            SidebarItemData::Session { session_idx } => Some(*session_idx),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(session_idxs, vec![0, 1]);
+    // The header is not a row, so the two local sessions are rows 0..2.
+    assert_eq!(built.layout.row_count(), 2);
+    // The `@local` section carries the local-divider menu button.
+    assert_eq!(
+        built.sections.first().map(|s| s.host.clone()),
+        Some(None),
+        "first section is @local",
+    );
 }
 
 #[test]
@@ -336,34 +293,34 @@ fn sidebar_layout_omits_local_header_in_compact() {
     let state = make_state(LayoutMode::Horizontal, false, 80, 24);
     let compact = state.sidebar_layout(ViewMode::Compact);
     assert!(
-        !compact
+        compact.sections.is_empty(),
+        "compact view carries no group dividers",
+    );
+    assert!(
+        compact
+            .layout
             .items()
             .iter()
-            .any(|i| matches!(i.data, SidebarItemData::LocalHeader)),
-        "compact view carries no group dividers",
+            .all(|i| i.kind == ratatui_sectioned_list::ItemKind::Row),
+        "compact view is rows only, no headers",
     );
 }
 
 #[test]
-fn sidebar_layout_keeps_local_header_and_placeholder_when_empty() {
+fn sidebar_layout_keeps_local_divider_when_empty() {
     let mut empty = make_state(LayoutMode::Horizontal, false, 80, 24);
     empty.entries.retain(|e| !e.is_local());
     empty.clamp_projects_focus();
-    let layout = empty.sidebar_layout(ViewMode::Expanded);
+    let built = empty.sidebar_layout(ViewMode::Expanded);
     assert!(
-        layout
+        built
+            .layout
             .items()
             .iter()
-            .any(|i| matches!(i.data, SidebarItemData::LocalHeader)),
+            .any(|i| i.data.title == "@local"),
         "@local divider remains when there are no local sessions",
     );
-    assert!(
-        layout
-            .items()
-            .iter()
-            .any(|i| matches!(i.data, SidebarItemData::LocalEmpty)),
-        "empty local group shows a no-sessions placeholder",
-    );
+    assert_eq!(built.layout.row_count(), 0, "no local session rows");
 }
 
 #[test]
@@ -639,31 +596,6 @@ fn validate_bind_addr_passthrough() {
 }
 
 #[test]
-fn rollup_down_dominates() {
-    use crate::forwards::{rollup_color, ForwardHealth, PfBadgeColor};
-    let healths = [
-        ForwardHealth::Up,
-        ForwardHealth::Down,
-        ForwardHealth::Probing,
-    ];
-    assert_eq!(rollup_color(&healths), PfBadgeColor::Degraded);
-}
-
-#[test]
-fn rollup_probing_when_no_down() {
-    use crate::forwards::{rollup_color, ForwardHealth, PfBadgeColor};
-    let healths = [ForwardHealth::Up, ForwardHealth::Probing];
-    assert_eq!(rollup_color(&healths), PfBadgeColor::Probing);
-}
-
-#[test]
-fn rollup_healthy_when_all_up() {
-    use crate::forwards::{rollup_color, ForwardHealth, PfBadgeColor};
-    let healths = [ForwardHealth::Up, ForwardHealth::Up];
-    assert_eq!(rollup_color(&healths), PfBadgeColor::Healthy);
-}
-
-#[test]
 fn forward_key_from_spec_uses_mode_bind_and_listen() {
     use crate::config::{ForwardMode, ForwardSpec};
     use crate::state::ForwardKey;
@@ -717,19 +649,19 @@ fn confirm_kill_name_none_when_not_pending() {
 fn collapsed_local_group_hides_rows() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.collapsed_sections.insert(crate::host_key::HostKey::local());
-    let layout = state.sidebar_layout(ViewMode::Expanded);
+    let built = state.sidebar_layout(ViewMode::Expanded);
 
-    assert!(layout.is_collapsible());
+    assert!(built.layout.is_collapsible());
     // The local header is collapsed; its rows (idx 0,1) are hidden.
-    assert!(layout.is_row_hidden(0));
-    assert!(layout.is_row_hidden(1));
+    assert!(built.layout.is_row_hidden(0));
+    assert!(built.layout.is_row_hidden(1));
 }
 
 #[test]
 fn expanded_local_group_shows_rows() {
     let state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    let layout = state.sidebar_layout(ViewMode::Expanded);
-    assert!(!layout.is_row_hidden(0));
+    let built = state.sidebar_layout(ViewMode::Expanded);
+    assert!(!built.layout.is_row_hidden(0));
 }
 
 #[test]

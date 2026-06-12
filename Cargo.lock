@@ -1776,9 +1776,12 @@ dependencies = [
 
 [[package]]
 name = "ratatui-sectioned-list"
-version = "0.1.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62e2ad29393450c0c396d6c306e0d3c5c38eb4151ca137d65b9d40daf25e0331"
+checksum = "75eb60a0f88bc19377876abc359e7564bbf8783b25d9d2bac03d3be848198d84"
+dependencies = [
+ "ratatui",
+]
 
 [[package]]
 name = "ratatui-termwiz"

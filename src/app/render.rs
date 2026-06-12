@@ -196,13 +196,14 @@ impl App {
             let layout = self.state.current_layout(view_mode);
             let agent_rows = self.state.agent_rows();
             let focus_target = self.state.focus_target();
+            let summary_card_height = self.state.summary_card_height();
             captured_hits = ui::draw_sidebar(
                 frame,
                 sidebar_area,
                 ui::SidebarProps {
                     sessions: &sessions_dyn,
                     local_count,
-                    layout: &layout,
+                    built: &layout,
                     focus_target,
                     sidebar_active,
                     theme,
@@ -216,13 +217,12 @@ impl App {
                     summary_age: summary_age.as_deref(),
                     spinner_idx,
                     summary_scroll: self.state.summary.scroll,
+                    summary_card_height,
                     tabs_mode: layout_mode == LayoutMode::Vertical,
-                    view_mode,
                     plugins: &plugin_views,
                     blink_on,
                     keybindings: &self.state.keybindings,
                     update_available,
-                    active_agent: self.state.active_agent.as_ref(),
                 },
             );
 

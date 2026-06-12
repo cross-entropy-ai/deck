@@ -4,8 +4,7 @@ use ratatui::Frame;
 use crate::keybindings::Keybindings;
 use crate::geometry::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
 use crate::state::{
-    AgentRow, AgentTarget, FocusTarget, HitRegions, KillConfirmHits, SidebarLayout, SidebarTab,
-    SummaryHits, ViewMode,
+    AgentRow, BuiltLayout, FocusTarget, HitRegions, KillConfirmHits, SidebarTab, SummaryHits,
 };
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
@@ -23,11 +22,8 @@ mod tabs;
 use container::draw_sidebar_container;
 use footer::{draw_footer, FooterHits, FooterProps};
 use header::draw_header;
-use sessions::{draw_sessions, SessionsProps};
+use sessions::{draw_sessions, draw_summary_card, SessionsProps, SummaryCardProps};
 use tabs::{draw_sidebar_tabs, TabsProps};
-
-#[cfg(test)]
-use sessions::render_group_header;
 
 /// Inputs needed to draw the sidebar. Grouping these into one props
 /// object keeps the public API readable as the sidebar gains display
@@ -41,7 +37,7 @@ use sessions::render_group_header;
 pub struct SidebarProps<'a> {
     pub sessions: &'a [&'a dyn SidebarSession],
     pub local_count: usize,
-    pub layout: &'a SidebarLayout,
+    pub built: &'a BuiltLayout,
     pub focus_target: Option<FocusTarget>,
     pub sidebar_active: bool,
     pub theme: &'a Theme,
@@ -60,14 +56,13 @@ pub struct SidebarProps<'a> {
     pub spinner_idx: usize,
     /// Scroll offset into the Ready summary text.
     pub summary_scroll: usize,
+    /// Height of the Summary card strip pinned above the Agents-tab list.
+    pub summary_card_height: u16,
     pub tabs_mode: bool,
-    pub view_mode: ViewMode,
     pub plugins: &'a [PluginView<'a>],
     pub blink_on: bool,
     pub keybindings: &'a Keybindings,
     pub update_available: Option<&'a UpdateStatus>,
-    /// The agent deck switched to, highlighted in its footer line.
-    pub active_agent: Option<&'a AgentTarget>,
 }
 
 #[derive(Clone, Copy)]
@@ -208,6 +203,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
         props.sidebar_tab,
         props.theme,
     );
+    let agents_tab = matches!(props.sidebar_tab, SidebarTab::Agents);
     let mut kill_hits: Option<KillConfirmHits> = None;
     let (divider_hits, agent_hits, summary_hits) = if props.show_help {
         draw_help(frame, sessions_area, props.theme, props.keybindings);
@@ -219,23 +215,59 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
         draw_rename_input(frame, sessions_area, props.theme, textarea);
         (Vec::new(), Vec::new(), SummaryHits::default())
     } else {
-        draw_sessions(
+        // On the Agents tab the Summary card is pinned at the top, above the
+        // list (it's no longer a list item). Carve it off the top of the
+        // session area; the remaining rows hold the sectioned list. The
+        // hit-tester (`session_row_hit`) reserves the same strip.
+        let (summary_strip, list_area) = if agents_tab {
+            let h = props.summary_card_height.min(sessions_area.height);
+            (
+                Rect {
+                    height: h,
+                    ..sessions_area
+                },
+                Rect {
+                    y: sessions_area.y + h,
+                    height: sessions_area.height - h,
+                    ..sessions_area
+                },
+            )
+        } else {
+            (
+                Rect {
+                    height: 0,
+                    ..sessions_area
+                },
+                sessions_area,
+            )
+        };
+        let summary_hits = if agents_tab && summary_strip.height > 0 {
+            draw_summary_card(
+                frame,
+                summary_strip,
+                &ctx,
+                SummaryCardProps {
+                    summary: props.summary,
+                    summary_age: props.summary_age,
+                    spinner_idx: props.spinner_idx,
+                    summary_scroll: props.summary_scroll,
+                },
+            )
+        } else {
+            SummaryHits::default()
+        };
+        let (divider_hits, agent_hits) = draw_sessions(
             frame,
-            sessions_area,
+            list_area,
             &ctx,
             SessionsProps {
-                sessions: props.sessions,
-                layout: props.layout,
+                built: props.built,
                 focus_target: props.focus_target,
-                view_mode: props.view_mode,
-                active_agent: props.active_agent,
+                agents_tab,
                 agent_rows: props.agent_rows,
-                summary: props.summary,
-                summary_age: props.summary_age,
-                spinner_idx: props.spinner_idx,
-                summary_scroll: props.summary_scroll,
             },
-        )
+        );
+        (divider_hits, agent_hits, summary_hits)
     };
     let FooterHits {
         upgrade: banner_bounds,
