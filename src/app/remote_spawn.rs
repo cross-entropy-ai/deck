@@ -52,9 +52,17 @@ pub(super) enum RemoteSpawnEvent {
         /// stored on the `RemoteConn` so switch/focus read *this*
         /// connection's marker.
         marker_id: u64,
+        /// Spawn generation captured when this spawn was kicked off. A
+        /// later offboard (or a fresh respawn) bumps the host's generation;
+        /// the manager drops any event whose `generation` no longer matches
+        /// the host's current one, so a stale in-flight spawn started before
+        /// a host was removed-then-re-added can't clobber the fresh
+        /// connection (bug #20).
+        generation: u64,
     },
     Failed {
         host: String,
+        generation: u64,
     },
     /// The connection's client-tty marker has been confirmed written on
     /// the host (out of band — see `remote_tmux::wait_for_client_marker`).
@@ -64,6 +72,7 @@ pub(super) enum RemoteSpawnEvent {
     MarkerReady {
         host: String,
         marker_id: u64,
+        generation: u64,
     },
 }
 
@@ -72,8 +81,19 @@ impl RemoteSpawnEvent {
     pub(super) fn host(&self) -> &str {
         match self {
             RemoteSpawnEvent::Spawned { host, .. }
-            | RemoteSpawnEvent::Failed { host }
+            | RemoteSpawnEvent::Failed { host, .. }
             | RemoteSpawnEvent::MarkerReady { host, .. } => host,
+        }
+    }
+
+    /// The spawn generation this event was stamped with — see the
+    /// `Spawned.generation` doc and `RemoteConnManager` for how it gates
+    /// stale events.
+    pub(super) fn generation(&self) -> u64 {
+        match self {
+            RemoteSpawnEvent::Spawned { generation, .. }
+            | RemoteSpawnEvent::Failed { generation, .. }
+            | RemoteSpawnEvent::MarkerReady { generation, .. } => *generation,
         }
     }
 }
@@ -92,17 +112,44 @@ pub(super) struct RemoteSpawner {
 }
 
 impl RemoteSpawner {
-    pub fn start(hosts: &[String], size: PtySize) -> Self {
+    pub fn start(hosts: &[(String, u64)], size: PtySize) -> Self {
         let (tx, rx) = mpsc::channel();
-        for host in hosts {
-            spawn_one(host.clone(), tx.clone(), size);
+        for (host, generation) in hosts {
+            spawn_one(host.clone(), *generation, tx.clone(), size);
         }
         Self { rx, tx, size }
     }
 
-    /// Spawn a PTY for a host added after startup (hot-reload path).
-    pub fn spawn(&self, host: &str) {
-        spawn_one(host.to_string(), self.tx.clone(), self.size);
+    /// Spawn a PTY for a host (startup, hot-reload, reconnect, or
+    /// auto-recovery). `generation` is the host's current spawn generation,
+    /// stamped onto every event this spawn emits so the manager can reject
+    /// it once the host has moved on (offboard / a newer spawn).
+    pub fn spawn(&self, host: &str, generation: u64) {
+        spawn_one(host.to_string(), generation, self.tx.clone(), self.size);
+    }
+
+    /// Re-attempt *only* the client-tty marker confirmation for an
+    /// already-live connection, without respawning its PTY. Used by the
+    /// bounded marker-retry (bug #11): if `Connected` but `marker_ready`
+    /// never arrived (the original `wait_for_client_marker` lost the race on
+    /// a cold shell), this kicks a fresh wait on a worker thread; a success
+    /// re-emits `MarkerReady` for the same `(host, marker_id, generation)`.
+    /// The PTY stays put, so this is cheap and idempotent — losing the race
+    /// again simply emits nothing and the caller retries on its own cadence.
+    pub fn rearm_marker(&self, host: &str, marker_id: u64, generation: u64) {
+        let host = host.to_string();
+        let tx = self.tx.clone();
+        let _ = thread::Builder::new()
+            .name(format!("deck-marker-retry-{host}"))
+            .spawn(move || {
+                if crate::remote_tmux::wait_for_client_marker(&host, marker_id) {
+                    let _ = tx.send(RemoteSpawnEvent::MarkerReady {
+                        host,
+                        marker_id,
+                        generation,
+                    });
+                }
+            });
     }
 
     pub fn try_recv(&self) -> Option<RemoteSpawnEvent> {
@@ -110,7 +157,7 @@ impl RemoteSpawner {
     }
 }
 
-fn spawn_one(host: String, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
+fn spawn_one(host: String, generation: u64, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
     let _ = thread::Builder::new()
         .name(format!("deck-pty-spawn-{host}"))
         .spawn(move || {
@@ -155,20 +202,27 @@ fn spawn_one(host: String, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
                 Err(_) => None,
             };
             let Some(pane) = spawned else {
-                let _ = tx.send(RemoteSpawnEvent::Failed { host });
+                let _ = tx.send(RemoteSpawnEvent::Failed { host, generation });
                 return;
             };
             let _ = tx.send(RemoteSpawnEvent::Spawned {
                 host: host.clone(),
                 pane,
                 marker_id,
+                generation,
             });
             // Confirm the marker actually got written before signaling
             // readiness — switch/focus stay deferred until then, and never
             // commit against an absent marker. The wait is one bounded ssh
-            // call on this same worker thread (the PTY is already live).
+            // call on this same worker thread (the PTY is already live). If
+            // it loses the race (cold/slow shell) it emits nothing; the
+            // app-side bounded marker-retry (`rearm_marker`) re-attempts it.
             if crate::remote_tmux::wait_for_client_marker(&host, marker_id) {
-                let _ = tx.send(RemoteSpawnEvent::MarkerReady { host, marker_id });
+                let _ = tx.send(RemoteSpawnEvent::MarkerReady {
+                    host,
+                    marker_id,
+                    generation,
+                });
             }
         });
 }

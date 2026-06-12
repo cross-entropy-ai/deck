@@ -5,12 +5,13 @@ mod dispatch;
 mod lifecycle;
 mod pty;
 mod refresh;
+mod remote_conn;
 mod remote_spawn;
 mod render;
 pub mod settings;
 mod update;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -60,81 +61,18 @@ impl TerminalPane {
     }
 }
 
-/// Liveness of the persistent `ssh -t host tmux attach` PTY for a
-/// configured remote host. This is distinct from whether `list_sessions`
-/// over a one-shot ssh call succeeds — those use independent SSH
-/// channels (though both ride the same ControlMaster).
-#[derive(Debug, Clone)]
-pub(super) enum RemoteConnStatus {
-    /// The spawn thread hasn't reported back yet.
-    Connecting,
-    /// The persistent PTY is alive and ready to be swapped into view.
-    Connected,
-    /// Spawn failed, or the child exited (auth denied, tmux missing,
-    /// network gone). The specific reason isn't surfaced anywhere
-    /// today; add a String payload back when a consumer reads it.
-    Failed,
-}
-
-/// One configured remote host's connection: its lifecycle `status` plus
-/// the live attach PTY (`pane`, present iff `status == Connected`).
-/// Single source of truth — the switchable pane and (via state derived
-/// from this) the sidebar both read from here, so the two can't drift.
-pub(super) struct RemoteConn {
-    pub(super) status: RemoteConnStatus,
-    pub(super) pane: Option<TerminalPane>,
-    /// Id of the client-tty marker file this connection's attach wrapper
-    /// wrote (see `remote_spawn`). Switch/focus pass it to `remote_tmux`
-    /// so they read *this* connection's marker, never a prior one's. `0`
-    /// for a placeholder with no live PTY yet.
-    pub(super) client_marker_id: u64,
-    /// Whether this connection's attach prelude has confirmed writing its
-    /// client-tty marker. `Spawned` fires the instant `ssh` starts —
-    /// before the remote `tty > marker; tmux attach` prelude runs — so for
-    /// that window the marker is absent and a marker-gated switch/focus
-    /// would silently no-op. Set only once the marker is confirmed written
-    /// out of band (the `MarkerReady` event, from
-    /// `remote_tmux::wait_for_client_marker`); switches are held until then.
-    pub(super) marker_ready: bool,
-}
-
-impl RemoteConn {
-    /// Whether this connection can serve a switch/focus right now: the
-    /// status says Connected AND the attach PTY is actually present (the
-    /// documented invariant is "pane present iff Connected"; checking both
-    /// keeps every call site honest if that ever wobbles).
-    pub(super) fn is_live(&self) -> bool {
-        matches!(self.status, RemoteConnStatus::Connected) && self.pane.is_some()
-    }
-}
+pub(super) use remote_conn::RemoteConnManager;
 
 pub struct App {
     state: AppState,
     /// The always-present local tmux PTY.
     local_terminal: TerminalPane,
-    /// One connection per configured remote host (status + attach PTY),
-    /// seeded for every host in `state.config_remotes` at startup; the
-    /// PTY itself arrives asynchronously as the spawner finishes.
-    remote_conns: HashMap<String, RemoteConn>,
-    /// Background worker that spawns `ssh tmux attach` PTYs without
-    /// blocking the UI.
-    remote_spawner: remote_spawn::RemoteSpawner,
-    /// `None` = the local terminal drives the main pane; `Some(host)`
-    /// = the remote terminal for that host does. Switched by selecting
-    /// a session in the sidebar.
-    active_remote: Option<String>,
-    /// A switch deferred until a host's attach PTY finishes (re)connecting.
-    /// Set when creating a session on a host whose PTY isn't live yet (it
-    /// had no tmux server, so there was nothing to attach to); fired from
-    /// the spawner's `Spawned` event so the user lands on the new session.
-    pending_remote_switch: Option<crate::state::RemoteSwitchRequest>,
-    /// Per-host record of the last remote `switch-client` submitted to the
-    /// executor: `(target session, marker id captured at submit)`. When the
-    /// `Switched` outcome lands we re-read the host's current marker; if it
-    /// advanced (the connection respawned while the switch sat in the FIFO),
-    /// the switch ran against a dead marker and no-op'd, so we re-fire to the
-    /// target with the current marker. Removed when its outcome is verified.
-    remote_switch_verify: HashMap<String, (String, u64)>,
+    /// The remote-connection state machine: one connection per configured
+    /// remote host (status + attach PTY), the background PTY spawner, which
+    /// host (if any) drives the main pane, the deferred-switch and
+    /// switch-verify ledgers, and the per-host spawn-generation counter.
+    /// See `app/remote_conn.rs`.
+    remote: RemoteConnManager,
     warning_state: Option<WarningState>,
     plugin_instances: Vec<Option<TerminalPane>>,
     refresh_worker: RefreshWorker,
@@ -256,21 +194,7 @@ impl App {
 
         let remotes: Vec<String> = cfg.remotes.iter().map(|r| r.host.clone()).collect();
         let pty_size = pty::pane_size(pty_rows, pty_cols);
-        let remote_spawner = remote_spawn::RemoteSpawner::start(&remotes, pty_size);
-        let remote_conns: HashMap<String, RemoteConn> = remotes
-            .iter()
-            .map(|h| {
-                (
-                    h.clone(),
-                    RemoteConn {
-                        status: RemoteConnStatus::Connecting,
-                        pane: None,
-                        client_marker_id: 0,
-                        marker_ready: false,
-                    },
-                )
-            })
-            .collect();
+        let remote = RemoteConnManager::start(&remotes, pty_size);
 
         // Seed one placeholder per remote host so the sidebar shows a
         // `@host` group with a "(connecting...)" row from the very
@@ -295,11 +219,7 @@ impl App {
         let mut app = App {
             state,
             local_terminal,
-            remote_conns,
-            remote_spawner,
-            active_remote: None,
-            pending_remote_switch: None,
-            remote_switch_verify: HashMap::new(),
+            remote,
             warning_state: None,
             plugin_instances: (0..plugin_count).map(|_| None).collect(),
             refresh_worker: RefreshWorker::spawn(),
@@ -346,10 +266,10 @@ impl App {
     /// active host's pane has been dropped (e.g. connection died and
     /// hasn't been re-spawned yet).
     pub(super) fn active_terminal(&self) -> &TerminalPane {
-        match &self.active_remote {
+        match self.remote.active() {
             Some(host) => self
-                .remote_conns
-                .get(host)
+                .remote
+                .conn(host)
                 .and_then(|c| c.pane.as_ref())
                 .unwrap_or(&self.local_terminal),
             None => &self.local_terminal,
@@ -357,20 +277,21 @@ impl App {
     }
 
     pub(super) fn active_terminal_mut(&mut self) -> &mut TerminalPane {
-        // Decide which pane to return without holding a borrow on
-        // `self.remote_conns` so we can fall back to local.
+        // Decide which pane to return without holding a borrow on the conn
+        // map so we can fall back to local.
         let key = self
-            .active_remote
-            .as_ref()
+            .remote
+            .active()
             .filter(|h| {
-                self.remote_conns
-                    .get(h.as_str())
+                self.remote
+                    .conn(h.as_str())
                     .is_some_and(|c| c.pane.is_some())
             })
             .cloned();
         match key {
             Some(host) => self
-                .remote_conns
+                .remote
+                .conns_mut()
                 .get_mut(&host)
                 .and_then(|c| c.pane.as_mut())
                 .expect("checked above"),
@@ -401,6 +322,40 @@ impl App {
         }
     }
 
+    /// The view-side half of detaching a host, shared by the dead-host reap
+    /// and offboard (D7). The connection-state half (drop pane / clear
+    /// active / clear pending) is done by the manager (`mark_died` /
+    /// `offboard`); this runs the `AppState`-touching choreography:
+    ///
+    /// - if the host was the active pane (`detach.was_active`), force a full
+    ///   redraw so the snap back to local doesn't leave the dead host's
+    ///   frozen frame on screen;
+    /// - bump `focus_seq` so a slow in-flight `deck-focus-*` worker's late
+    ///   completion is treated as stale (a reconnect can't let it silently
+    ///   re-grab focus);
+    /// - drop the agent highlight if it belonged to this host (a gone host
+    ///   shouldn't keep a footer line marked active).
+    pub(super) fn detach_host_view(
+        &mut self,
+        host: &str,
+        detach: remote_conn::DetachOutcome,
+    ) {
+        if detach.was_active {
+            self.needs_full_redraw = true;
+        }
+        self.focus_seq += 1;
+        if self
+            .state
+            .active_agent
+            .as_ref()
+            .and_then(|t| t.host.as_deref())
+            == Some(host)
+        {
+            self.state.active_agent = None;
+            self.needs_full_redraw = true;
+        }
+    }
+
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         let mut last_refresh = Instant::now();
         let mut needs_render = true;
@@ -419,7 +374,7 @@ impl App {
             // Drain the local terminal. OSC52 (clipboard) is forwarded
             // only from the actively-viewed pane, so a background remote
             // can't silently overwrite the user's clipboard.
-            let local_is_active = self.active_remote.is_none();
+            let local_is_active = self.remote.active().is_none();
             let local_view_active =
                 local_is_active && self.state.main_view == MainView::Terminal;
             if Self::drain_pane(
@@ -431,95 +386,28 @@ impl App {
             ) {
                 needs_render = true;
             }
-            // Pull any newly-spawned remote PTYs into the map. Drop
-            // events for hosts that were removed while the spawn was
-            // in flight — otherwise the PTY would resurrect in
-            // `remote_terminals` after offboard cleaned up.
-            while let Some(ev) = self.remote_spawner.try_recv() {
-                let still_configured = self
-                    .state
-                    .config_remotes
-                    .iter()
-                    .any(|r| r.host == ev.host());
-                if !still_configured {
-                    continue;
-                }
+            // Pull any newly-spawned remote PTYs into the map. The manager
+            // gates each event by spawn generation (bug #20) — a stale
+            // in-flight `Spawned`/`Failed`/`MarkerReady` from a spawn started
+            // before the host was offboarded (or before a newer respawn) is
+            // dropped, so it can't resurrect a removed host's pane or clobber
+            // a fresh connection. A `MarkerReady` may also hand back a held
+            // switch to fire here.
+            while let Some(ev) = self.remote.try_recv() {
                 needs_render = true;
                 force_render = true;
-                match ev {
-                    remote_spawn::RemoteSpawnEvent::Spawned {
-                        host,
-                        pane,
-                        marker_id,
-                    } => {
-                        self.remote_conns.insert(
-                            host.clone(),
-                            RemoteConn {
-                                status: RemoteConnStatus::Connected,
-                                pane: Some(*pane),
-                                client_marker_id: marker_id,
-                                // Not ready until the marker write is
-                                // confirmed out of band (`MarkerReady`
-                                // below). A pending switch (create-on-empty-
-                                // host, or one requested during the connect
-                                // race) drains there, not here — switching
-                                // now would no-op against the not-yet-written
-                                // marker.
-                                marker_ready: false,
-                            },
-                        );
-                    }
-                    remote_spawn::RemoteSpawnEvent::Failed { host } => {
-                        // The deferred switch can't happen; drop it so a
-                        // later unrelated reconnect doesn't trigger it.
-                        if self
-                            .pending_remote_switch
-                            .as_ref()
-                            .is_some_and(|req| req.host == host)
-                        {
-                            self.pending_remote_switch = None;
-                        }
-                        self.remote_conns.insert(
-                            host,
-                            RemoteConn {
-                                status: RemoteConnStatus::Failed,
-                                pane: None,
-                                client_marker_id: 0,
-                                marker_ready: false,
-                            },
-                        );
-                    }
-                    remote_spawn::RemoteSpawnEvent::MarkerReady { host, marker_id } => {
-                        // The marker is confirmed written — but only honor
-                        // it for the *same* connection generation (a
-                        // reconnect mints a new id). Mark ready and fire any
-                        // switch that was held while it wasn't.
-                        let current = self
-                            .remote_conns
-                            .get_mut(&host)
-                            .filter(|c| c.client_marker_id == marker_id);
-                        if let Some(conn) = current {
-                            conn.marker_ready = true;
-                            if self
-                                .pending_remote_switch
-                                .as_ref()
-                                .is_some_and(|req| req.host == host)
-                            {
-                                let req = self.pending_remote_switch.take().unwrap();
-                                self.switch_to_remote(&req.host, &req.name);
-                            }
-                        }
-                    }
+                if let Some(fire) = self.remote.apply_spawn_event(ev) {
+                    self.switch_to_remote(&fire.host, &fire.name);
                 }
             }
             // Drain every remote terminal too, even the inactive ones.
             // tmux on the remote keeps producing output (status bar
             // ticks, idle redraws); if we stopped reading, the kernel
             // pipe buffer would fill and block the child.
-            let active_host = self.active_remote.clone();
+            let active_host = self.remote.active().cloned();
             let main_view_terminal = self.state.main_view == MainView::Terminal;
             let mut died_hosts: Vec<String> = Vec::new();
-            for (host, conn) in self.remote_conns.iter_mut() {
+            for (host, conn) in self.remote.conns_mut().iter_mut() {
                 let Some(pane) = conn.pane.as_mut() else {
                     continue;
                 };
@@ -540,36 +428,13 @@ impl App {
             for host in died_hosts {
                 needs_render = true;
                 force_render = true;
-                // Drop the dead pane so its child process is reaped;
-                // surface the loss as a Failed status so the user sees
-                // why selecting that remote no longer works. Refresh
-                // auto-recovery respawns it once the host is reachable.
-                if let Some(conn) = self.remote_conns.get_mut(&host) {
-                    conn.status = RemoteConnStatus::Failed;
-                    conn.pane = None;
-                }
-                // If the user was looking at this remote pane, snap
-                // them back to local so the screen doesn't freeze.
-                if self.active_remote.as_deref() == Some(host.as_str()) {
-                    self.active_remote = None;
-                    self.needs_full_redraw = true;
-                }
-                // Invalidate any in-flight focus to this host and drop its
-                // agent highlight: bumping `focus_seq` makes a slow
-                // `deck-focus-*` worker's late completion stale (so a
-                // reconnect can't let it silently re-grab focus), and a
-                // dead host shouldn't keep a footer line marked active.
-                self.focus_seq += 1;
-                if self
-                    .state
-                    .active_agent
-                    .as_ref()
-                    .and_then(|t| t.host.as_deref())
-                    == Some(host.as_str())
-                {
-                    self.state.active_agent = None;
-                    self.needs_full_redraw = true;
-                }
+                // Drop the dead pane so its child process is reaped and
+                // surface the loss as a Failed status; refresh auto-recovery
+                // respawns it once the host is reachable. The shared
+                // `detach_host_view` (D7) snaps the view back to local if we
+                // were watching this host and clears its agent highlight.
+                let detach = self.remote.mark_died(&host);
+                self.detach_host_view(&host, detach);
             }
             for (idx, inst) in self.plugin_instances.iter_mut().enumerate() {
                 let Some(inst) = inst.as_mut() else {
@@ -624,6 +489,16 @@ impl App {
                 self.state.main_view = MainView::Terminal;
                 self.state.focus_mode = FocusMode::Main;
                 self.state.update_available = None;
+                needs_render = true;
+                force_render = true;
+            }
+
+            // Bounded marker-confirmation retry (bug #11): a host that's
+            // Connected but never got its `MarkerReady` (cold/slow shell)
+            // gets a few backed-off re-arms, then flips to a recoverable
+            // "stuck" state the divider surfaces via its reconnect button. A
+            // newly-stuck host forces a redraw so the affordance appears.
+            if self.remote.tick_marker_retry(Instant::now()) {
                 needs_render = true;
                 force_render = true;
             }

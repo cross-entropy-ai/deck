@@ -247,7 +247,7 @@ impl App {
             // The local attach PTY is dead and it's the active view (no
             // remote selected): there are no local sessions to show, so we
             // render an empty-state placeholder instead of a stale screen.
-            let local_active_dead = self.active_remote.is_none() && !self.local_terminal.alive;
+            let local_active_dead = self.remote.active().is_none() && !self.local_terminal.alive;
             let screen = self.active_terminal().parser.screen();
             let plugin_screen = match main_view {
                 MainView::Plugin(idx) => self

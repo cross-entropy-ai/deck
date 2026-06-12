@@ -1,7 +1,7 @@
 use crate::refresh::{RefreshRequest, RefreshUpdate, RemoteSnapshotRow, SnapshotRow};
 use crate::state::{RemoteSessionRow, SessionRow};
 
-use super::{App, RemoteConnStatus};
+use super::App;
 
 impl App {
     fn build_refresh_request(&self) -> RefreshRequest {
@@ -142,12 +142,7 @@ impl App {
         // otherwise only spawned at startup. `Connecting` hosts are skipped
         // so an in-flight spawn isn't duplicated.
         let to_respawn = hosts_needing_respawn(&self.state.remote_sessions, |host| {
-            self.remote_conns.get(host).is_some_and(|c| {
-                matches!(
-                    c.status,
-                    RemoteConnStatus::Connected | RemoteConnStatus::Connecting
-                )
-            })
+            self.remote.is_connected_or_connecting(host)
         });
         for host in to_respawn {
             self.respawn_remote_host(&host);
@@ -157,11 +152,13 @@ impl App {
         // whose attach PTY is still connecting shows as connecting (yellow),
         // not connected, until the pane is actually live — re-applied every
         // refresh, not only the tick a respawn is scheduled.
+        // A host stuck mid-connect (bug #11: PTY live but its client-tty
+        // marker never confirmed and the bounded retry gave up) is shown as
+        // connecting too — switches to it silently no-op, so it must not read
+        // as a usable "Connected" (green) host. The always-present reconnect
+        // button on the divider is then the obvious recovery.
         mark_connecting_rows(&mut self.state.remote_sessions, |host| {
-            matches!(
-                self.remote_conns.get(host).map(|c| &c.status),
-                Some(RemoteConnStatus::Connecting)
-            )
+            self.remote.is_connecting(host) || self.remote.is_marker_stuck(host)
         });
 
         // -R forwards can't be probed locally; refresh their health from the

@@ -62,7 +62,7 @@ impl App {
         // switches to a remote pane later we don't want it to inherit
         // a stale size.
         self.local_terminal.resize(pty_rows, pty_cols);
-        for conn in self.remote_conns.values_mut() {
+        for conn in self.remote.conns_mut().values_mut() {
             if let Some(pane) = conn.pane.as_mut() {
                 pane.resize(pty_rows, pty_cols);
             }

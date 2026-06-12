@@ -263,11 +263,7 @@ impl App {
         match host {
             None => Box::new(LocalControl::new(self.local_terminal.pty.slave_tty.clone())),
             Some(h) => {
-                let marker_id = self
-                    .remote_conns
-                    .get(h)
-                    .map(|c| c.client_marker_id)
-                    .unwrap_or(0);
+                let marker_id = self.remote.marker_id(h);
                 Box::new(RemoteControl::new(h.to_string(), marker_id))
             }
         }
@@ -361,7 +357,7 @@ impl App {
         );
         // Selecting a local session implies returning to the local
         // view if we were watching a remote one.
-        self.active_remote = None;
+        self.remote.clear_active();
         self.supersede_agent_focus();
         // No full redraw here: switching only re-points the existing
         // tmux client at another session, so ratatui's per-cell diff
@@ -378,26 +374,12 @@ impl App {
     /// stays unswitchable until deck restarts. Shared by initial onboard,
     /// the reconnect button, and refresh-driven auto-recovery.
     pub(super) fn respawn_remote_host(&mut self, host: &str) {
-        // Don't stack spawns: if one is already in flight (Connecting), let
-        // it finish. A second spawn could race — a stale `Failed` from the
-        // older attempt could later clobber the newer attempt's live pane,
-        // leaving the host unswitchable.
-        if matches!(
-            self.remote_conns.get(host).map(|c| &c.status),
-            Some(crate::app::RemoteConnStatus::Connecting)
-        ) {
-            return;
-        }
-        self.remote_conns.insert(
-            host.to_string(),
-            crate::app::RemoteConn {
-                status: crate::app::RemoteConnStatus::Connecting,
-                pane: None,
-                client_marker_id: 0,
-                marker_ready: false,
-            },
-        );
-        self.remote_spawner.spawn(host);
+        // The manager refuses to stack on an in-flight spawn (`Connecting`)
+        // — a second spawn could race and let a stale `Failed` from the
+        // older attempt clobber the newer pane — and bumps the host's spawn
+        // generation so the new spawn's events can be told apart from any
+        // still in flight (bug #20).
+        self.remote.respawn(host);
     }
 
     /// Seed per-host runtime state for a newly-added host (UI add or
@@ -421,31 +403,16 @@ impl App {
         }
     }
 
-    /// Tear down per-host runtime state for a removed host. Drops the
-    /// PTY (`remote_terminals`), clears the connection status entry,
-    /// and resets `active_remote` if it was pointing at this host so
-    /// the main pane falls back to local instead of hanging on a
-    /// dangling reference.
+    /// Tear down per-host runtime state for a removed host. The manager
+    /// drops the connection (PTY reaped), clears the host's pending switch
+    /// and switch-verify entry by construction (bug #20 — offboard is the
+    /// sole host-removal path), and bumps its spawn generation so a stale
+    /// in-flight spawn event can't resurrect it after a re-add. The shared
+    /// `detach_host_view` (D7) then runs the view-side choreography (snap to
+    /// local if active, drop agent highlight, supersede focus).
     fn offboard_remote_host(&mut self, host: &str) {
-        self.remote_conns.remove(host);
-        if self.active_remote.as_deref() == Some(host) {
-            self.active_remote = None;
-            self.needs_full_redraw = true;
-        }
-        // Drop the agent highlight if it belonged to the removed host, and
-        // supersede any in-flight focus to it, so we don't keep marking an
-        // agent active on a host that's gone.
-        if self
-            .state
-            .active_agent
-            .as_ref()
-            .and_then(|t| t.host.as_deref())
-            == Some(host)
-        {
-            self.state.active_agent = None;
-            self.needs_full_redraw = true;
-        }
-        self.focus_seq += 1;
+        let detach = self.remote.offboard(host);
+        self.detach_host_view(host, detach);
     }
 
     /// Switch the main view to a session on a remote host.
@@ -460,8 +427,7 @@ impl App {
     /// (the reconnect button and refresh auto-recovery), so switching
     /// starts working again once the pane reconnects.
     pub(super) fn switch_to_remote(&mut self, host: &str, name: &str) {
-        let conn = self.remote_conns.get(host);
-        if !conn.is_some_and(super::RemoteConn::is_live) {
+        if !self.remote.is_live(host) {
             return;
         }
         // The marker-gated `switch_client` no-ops until the attach prelude
@@ -469,21 +435,19 @@ impl App {
         // Committing `active_remote` then would lie: the UI would show the
         // host switched while its tmux client stayed put, with no retry. So
         // hold the switch as pending and let the readiness drain (first PTY
-        // output) fire it once the marker exists.
-        if !conn.is_some_and(|c| c.marker_ready) {
-            self.pending_remote_switch = Some(crate::state::RemoteSwitchRequest {
-                host: host.to_string(),
-                name: name.to_string(),
-            });
+        // output, or the bounded marker-retry) fire it once the marker
+        // exists.
+        let marker_id = self.remote.live_marker_id(host);
+        let Some(marker_id) = marker_id else {
+            self.remote.set_pending_switch(host, name);
             return;
-        }
+        };
         // Run the actual `switch-client` on the executor's per-host FIFO
         // worker instead of an ad-hoc thread. The call costs ~10–30 ms even
         // over a warm ControlMaster — enough to stall j/k scrolling inline —
         // and the per-host FIFO also keeps it ordered behind any rename/kill
         // we just queued for this host. `control()` reads this connection's
         // marker id; the readiness gate above guarantees it's written.
-        let marker_id = conn.map(|c| c.client_marker_id).unwrap_or(0);
         self.submit_session(
             Some(host.to_string()),
             crate::session::executor::SessionOp::Switch {
@@ -493,13 +457,12 @@ impl App {
         // Record what we submitted so the `Switched` outcome can confirm it
         // ran against the live marker and re-fire if the connection
         // respawned (new marker) while the op waited in the FIFO.
-        self.remote_switch_verify
-            .insert(host.to_string(), (name.to_string(), marker_id));
+        self.remote.record_switch_submit(host, name, marker_id);
 
         // `active_remote` is host-level and correct to commit now (we *are*
         // viewing this host); the within-host session lands when the switch
         // runs, and `verify_remote_switch` heals it if the marker went stale.
-        self.active_remote = Some(host.to_string());
+        self.remote.set_active(host);
         self.supersede_agent_focus();
         // No full redraw on switch — see `switch_client`. We flip
         // `active_remote` and let the diff repaint from the target
@@ -507,27 +470,15 @@ impl App {
     }
 
     /// Confirm a remote `switch-client` submitted to the executor actually
-    /// targeted the live client, run when its `Switched` outcome drains. If
-    /// the user has since navigated away from this host, the switch is moot.
-    /// If the host's marker advanced since submit, the connection respawned
-    /// while the op sat in the FIFO and the switch no-op'd against a dead
-    /// marker — re-fire to the intended session (which re-reads the current
-    /// marker, or holds via `pending_remote_switch` if the new connection
-    /// isn't ready yet).
+    /// targeted the live client, run when its `Switched` outcome drains. The
+    /// manager decides whether a re-fire is needed (host still active and
+    /// marker advanced since submit → the connection respawned while the op
+    /// sat in the FIFO and it no-op'd against a dead marker); if so we
+    /// re-fire to the intended session (which re-reads the current marker,
+    /// or holds via the pending switch if the new connection isn't ready).
     fn verify_remote_switch(&mut self, host: &str) {
-        let Some((name, submitted_marker)) = self.remote_switch_verify.remove(host) else {
-            return;
-        };
-        if self.active_remote.as_deref() != Some(host) {
-            return;
-        }
-        let current_marker = self
-            .remote_conns
-            .get(host)
-            .map(|c| c.client_marker_id)
-            .unwrap_or(0);
-        if current_marker != submitted_marker {
-            self.switch_to_remote(host, &name);
+        if let Some(fire) = self.remote.verify_switch(host) {
+            self.switch_to_remote(&fire.host, &fire.name);
         }
     }
 
@@ -607,10 +558,7 @@ impl App {
         let Some(host) = target.host.clone() else {
             return;
         };
-        let marker_id = self
-            .remote_conns
-            .get(&host)
-            .and_then(|c| (c.is_live() && c.marker_ready).then_some(c.client_marker_id));
+        let marker_id = self.remote.live_marker_id(&host);
         let Some(marker_id) = marker_id else {
             return;
         };
@@ -650,8 +598,8 @@ impl App {
             .target
             .host
             .as_deref()
-            .and_then(|h| self.remote_conns.get(h))
-            .is_some_and(|c| c.client_marker_id == outcome.marker_id);
+            .map(|h| self.remote.marker_id(h) == outcome.marker_id)
+            .unwrap_or(false);
         if !same_generation {
             return;
         }
@@ -672,10 +620,7 @@ impl App {
         let Some(host) = target.host.as_deref() else {
             return true; // local targets are committed inline, not here
         };
-        let connected = self
-            .remote_conns
-            .get(host)
-            .is_some_and(super::RemoteConn::is_live);
+        let connected = self.remote.is_live(host);
         let still_detected = self
             .state
             .agents
@@ -715,7 +660,10 @@ impl App {
         if let Some(idx) = self.state.agent_row_index_for(&target) {
             self.state.agent_focused = idx;
         }
-        self.active_remote = target.host.clone();
+        match target.host.as_deref() {
+            Some(h) => self.remote.set_active(h),
+            None => self.remote.clear_active(),
+        }
         self.state.active_agent = exact.then_some(target);
         self.state.focus_mode = FocusMode::Main;
         // No full redraw — like the plain switch paths, the per-cell diff
@@ -762,7 +710,7 @@ impl App {
                     {
                         continue;
                     }
-                    self.active_remote = None;
+                    self.remote.clear_active();
                     self.state.main_view = MainView::Terminal;
                     self.supersede_agent_focus();
                     self.suppress_next_periodic_refresh = true;
@@ -810,8 +758,8 @@ impl App {
                             // the remote tmux server will pick another
                             // session for it on the next attach if any
                             // remain.
-                            if self.active_remote.as_deref() == Some(host.as_str()) {
-                                self.active_remote = None;
+                            if self.remote.active_is(host) {
+                                self.remote.clear_active();
                                 self.needs_full_redraw = true;
                             }
                         }
@@ -1272,17 +1220,10 @@ impl App {
         match host {
             None => self.switch_client(name),
             Some(host) => {
-                let connected = self
-                    .remote_conns
-                    .get(&host)
-                    .is_some_and(super::RemoteConn::is_live);
-                if connected {
+                if self.remote.is_live(&host) {
                     self.switch_to_remote(&host, name);
                 } else {
-                    self.pending_remote_switch = Some(crate::state::RemoteSwitchRequest {
-                        host: host.clone(),
-                        name: name.to_string(),
-                    });
+                    self.remote.set_pending_switch(&host, name);
                     self.respawn_remote_host(&host);
                 }
             }
