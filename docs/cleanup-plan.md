@@ -171,15 +171,17 @@
     *(resolved by `apply_config`: collapse state is seeded once and
     deliberately not clobbered on reload; save writes the live value —
     state.rs:1309-1317)*
-15. [ ] **Settings page and theme picker can't scroll.** Settings renders
+15. [x] **Settings page and theme picker can't scroll.** Settings renders
     ~36 rows into a clipping Paragraph (`ui/settings.rs:20-154`) — on a
     24-row terminal the last ~3 settings (incl. the newest one) are
     invisible but still selectable; the theme picker (25 themes,
     `ui/settings.rs:281-348`) never windows, selection walks off-screen.
     Exclude editor and pf list share the no-window pattern; the
     keybindings popup does it right (`ui/settings.rs:225-232`).
-    *(`scroll_window` helper exists in `ui/widgets.rs` but only the
-    keybindings popup uses it; settings page + theme picker still don't)*
+    *(fixed in Phase 3: both the settings page and theme picker now window
+    around the selection via `scroll_window`; regression test
+    `short_terminal_keeps_selected_setting_in_view`. Exclude editor / pf
+    list still share the old pattern — minor, not addressed here.)*
 16. [x] **Tab hit-rects are never clamped to the sidebar**
     (`ui/sidebar/header.rs:54-86`): at narrow sidebar widths the Agents
     rect extends into the PTY pane, and `mouse.rs:48` checks `tab_at`
@@ -282,16 +284,18 @@
   `mouse.rs:8`, inline `mouse.rs:178`. ratatui has `Rect::contains`.
   Dissolves into Phase 1's hit registry. *(done: the hand-rolled rect
   tests collapsed into `HitRegions::hit` using `Rect::contains`)*
-- [~] **D2. Config↔state mapping ×5**: `Config` struct, `AppState::new`'s
+- [x] **D2. Config↔state mapping ×5**: `Config` struct, `AppState::new`'s
   15 params, post-seed in `App::new` (`mod.rs:256`), `reload_config`
   (`dispatch.rs:962`), `save_config` (`app/update.rs:13`). Already
-  produced bug #14. Dissolves in Phase 3. *(`apply_config` now unifies
-  the App::new + reload mapping; `save_config`/`to_config` still separate)*
-- [ ] **D3. Settings rows ×3**: entries vec (`ui/settings.rs:36-102`),
+  produced bug #14. Dissolves in Phase 3. *(done: the 17 persisted prefs
+  live in a `Prefs` unit; `Prefs::from_config`/`to_config` are the only
+  two mapping sites — `apply_config` and `save_config` call them)*
+- [x] **D3. Settings rows ×3**: entries vec (`ui/settings.rs:36-102`),
   positional match `0..=9` (`reduce.rs:488`), `SETTINGS_ITEM_COUNT`
   (`state.rs:135`). Adding the 10th setting (working tree) touched ~12
-  sites across 5 layers. Dissolves in Phase 3. *(still three sources;
-  `SETTINGS_ITEM_COUNT = 11` + positional match at reduce.rs:490)*
+  sites across 5 layers. Dissolves in Phase 3. *(done: one
+  `SETTING_ROWS` descriptor table in `app/settings.rs` drives renderer +
+  reducer; `SETTINGS_ITEM_COUNT` and the positional match are gone)*
 - [ ] **D4. Picker overlays ×3**: `NewSessionState` / `AddRemoteState` /
   `ExcludeEditorState` share input+items+filtered+selected+error and a
   duplicated refilter-clamp; their draw fns are line-for-line the same
@@ -301,7 +305,9 @@
   AddRemotePrev/Next, ExcludeEditorNext/Prev, PfFocusUp/Down,
   SettingsNext/Prev, ThemePickerNext/Prev, `cycle_frame_rate_limit`,
   `cycle_agents_probe_interval`, `cycle_field`/`set_mode`. Two helpers
-  (`step_clamped`, `step_wrapped`) cover all. *(no helpers added)*
+  (`step_clamped`, `step_wrapped`) cover all. *(done: clamped steps share
+  `step_clamped`; the wrapping cyclers already shared `cycle_option`, so
+  no separate `step_wrapped` was needed)*
 - [x] **D6. Identical menu constants**: `SESSION_MENU_ITEMS` ==
   `REMOTE_SESSION_MENU_ITEMS` == `PLACEHOLDER_DISABLED_ITEMS`
   (`state.rs:31-39`), and `session_menu_items()` branches local/remote
@@ -443,30 +449,29 @@ Plan:
   mappers must both refuse to produce session-switching actions
   (`tests/unit/app/action/modality.rs`).
 
-### Phase 3 — Settings as data (fixes the #14/#15 class, kills D2/D3) — [~] PARTIAL
+### Phase 3 — Settings as data (fixes the #14/#15 class, kills D2/D3) — [x] DONE
 
 Problem: a new setting touches ~12 sites in 5 layers; config↔state
 mapping is enumerated five times; the settings page can't scroll.
 
 Plan:
-- [~] Split `Config` into the persisted-preferences subset (`Prefs`) and
+- [x] Split `Config` into the persisted-preferences subset (`Prefs`) and
   runtime-only data; `AppState` holds `prefs: Prefs` *as a unit* instead
-  of ~15 exploded fields. `apply_config(&Config)` and `to_config()` live
-  next to the `Config` type and are the only mapping sites (App::new,
-  reload, save all call them). Bug #14 becomes impossible. *(`apply_config`
-  landed and made bug #14 impossible, but there is no `Prefs` unit and no
-  `to_config`; `AppState` still holds the exploded fields)*
-- [ ] A static descriptor table drives the settings page:
+  of ~15 exploded fields. `Prefs::from_config`/`to_config` are the only
+  mapping sites (App::new, reload, save all route through them). Bug #14
+  stays impossible (`collapsed_sections` is kept out of `Prefs` and
+  seeded once). *(round-trip identity test in `tests/unit/model/state.rs`)*
+- [x] A static descriptor table drives the settings page:
   `SettingRow { label, help, value: fn(&AppState)->String,
   adjust: fn(direction)->Action }`. Renderer iterates it; reducer
   indexes it; `SETTINGS_ITEM_COUNT` and the `0..=9` match are deleted.
   Stale help text can't survive because help lives beside behavior.
-  *(still positional; `SETTINGS_ITEM_COUNT` lives on)*
-- [ ] Give the settings page and theme picker the same `scroll_window`
-  treatment the keybindings popup already has (fixes #15). *(`scroll_window`
-  helper exists but settings/theme-picker don't use it yet)*
-- [ ] Generalize `step_clamped`/`step_wrapped` and replace the nine cursor
-  loops (D5).
+  *(`SETTING_ROWS` in `app/settings.rs`; `help` is `fn(&AppState)->String`
+  since some help is value-dependent)*
+- [x] Give the settings page and theme picker the same `scroll_window`
+  treatment the keybindings popup already has (fixes #15).
+- [x] Generalize `step_clamped` and replace the clamped cursor loops (D5).
+  *(the wrapping cyclers already shared `cycle_option`)*
 
 ### Phase 4 — Decompose `App` (old plan's Phase 4; fixes #19/#20/#22 class) — [ ] NOT STARTED
 
