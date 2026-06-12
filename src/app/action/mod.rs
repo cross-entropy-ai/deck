@@ -6,6 +6,10 @@ pub use keyboard::key_to_action;
 pub use mouse::mouse_to_action;
 pub use reduce::apply_action;
 
+#[cfg(test)]
+#[path = "../../../tests/unit/app/action/modality.rs"]
+mod modality_tests;
+
 #[derive(Debug)]
 pub enum Action {
     FocusNext,

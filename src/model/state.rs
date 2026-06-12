@@ -91,6 +91,32 @@ pub enum MainView {
     Upgrade,
 }
 
+/// The full-input modal overlays, in the one order both input mappers
+/// consult them. `AppState::active_modal` resolves the highest-priority
+/// active overlay; the keyboard and mouse mappers route to it *before* any
+/// global keybinding or button-rect hit test, so a modal swallows every
+/// input behind it (bug #7). The single ordering here is the source of
+/// truth — do not re-derive it in either mapper.
+///
+/// NOTE: this is *not* the update-warning popup. That is a selective gate
+/// (`App::warning_state` + `warning_blocks_action`) that blocks only a few
+/// actions, not a swallow-everything modal, and stays out of this enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Modal {
+    SummaryPopup,
+    NewSession,
+    AddRemote,
+    Rename,
+    ContextMenu,
+    PortForward,
+    ThemePicker,
+    KeybindingsView,
+    ExcludeEditor,
+    SummaryLang,
+    Help,
+    ConfirmKill,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ViewMode {
@@ -2256,6 +2282,61 @@ impl AppState {
     /// its name too — a raw `filtered[focused]` lookup only covers local
     /// rows, leaving remote kills with no name so the overlay never drew
     /// (issue #41).
+    /// The highest-priority full-input modal currently open, or `None` when
+    /// the sidebar/PTY is free to take input directly.
+    ///
+    /// The order below is the single source of truth for input routing and
+    /// **must mirror `keyboard::key_to_action`'s early-return chain exactly**
+    /// — both mappers consult this first, so the priority here decides which
+    /// overlay swallows a key or click when more than one flag is set.
+    ///
+    /// The settings sub-modals (KeybindingsView / ExcludeEditor /
+    /// SummaryLang) only count while the settings page itself owns focus
+    /// (`MainView::Settings` + `FocusMode::Main`); elsewhere their backing
+    /// fields are stale and must not gate input. Everything above them is a
+    /// standalone overlay that can be opened straight from the sidebar.
+    pub fn active_modal(&self) -> Option<Modal> {
+        if self.overlay.summary_popup {
+            return Some(Modal::SummaryPopup);
+        }
+        if self.overlay.new_session.is_some() {
+            return Some(Modal::NewSession);
+        }
+        if self.overlay.add_remote.is_some() {
+            return Some(Modal::AddRemote);
+        }
+        if self.overlay.renaming.is_some() {
+            return Some(Modal::Rename);
+        }
+        if self.overlay.context_menu.is_some() {
+            return Some(Modal::ContextMenu);
+        }
+        if self.overlay.port_forward.is_some() {
+            return Some(Modal::PortForward);
+        }
+        if self.settings.theme_picker_open {
+            return Some(Modal::ThemePicker);
+        }
+        if self.main_view == MainView::Settings && self.focus_mode == FocusMode::Main {
+            if self.settings.keybindings_view_open {
+                return Some(Modal::KeybindingsView);
+            }
+            if self.overlay.exclude_editor.is_some() {
+                return Some(Modal::ExcludeEditor);
+            }
+            if self.overlay.summary_lang_input.is_some() {
+                return Some(Modal::SummaryLang);
+            }
+        }
+        if self.overlay.show_help {
+            return Some(Modal::Help);
+        }
+        if self.overlay.confirm_kill {
+            return Some(Modal::ConfirmKill);
+        }
+        None
+    }
+
     pub fn confirm_kill_name(&self) -> Option<String> {
         if !self.overlay.confirm_kill {
             return None;

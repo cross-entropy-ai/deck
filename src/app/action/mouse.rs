@@ -1,38 +1,23 @@
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
-use crate::state::{AppState, DividerButton, FocusTarget, HitKind, LayoutMode, MainView};
+use crate::state::{AppState, DividerButton, FocusTarget, HitKind, LayoutMode, MainView, Modal};
 
 use super::Action;
 
 pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     // Single resolver for every rect-based button/region the sidebar
-    // publishes; the modal guards below decide *whether* to consult it and
-    // which hits they honor, preserving the original priority order.
+    // publishes. The modal check below decides *whether* we consult it: the
+    // button rects (banner / tabs / summary / menu) and all session-row
+    // dispatch run only when no modal is up, so they're no longer clickable
+    // through an overlay (the mouse half of bug #7).
     let hit = state.hit_regions.hit(mouse.column, mouse.row);
-    if state.overlay.confirm_kill {
-        // The kill prompt owns the sidebar while it's up: clicking a
-        // button confirms/cancels, every other click is inert — including
-        // the update banner — so nothing punches through a pending
-        // destructive confirmation.
-        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-            match hit {
-                Some(HitKind::KillYes) => return Action::ConfirmKill,
-                Some(HitKind::KillNo) => return Action::CancelKill,
-                _ => {}
-            }
-        }
-        return Action::None;
-    }
 
-    if state.overlay.summary_popup {
-        // The big-view popup owns input while up: wheel scrolls it, any
-        // click dismisses it, everything else is inert.
-        return match mouse.kind {
-            MouseEventKind::ScrollUp => Action::ScrollSummaryPopup(-1),
-            MouseEventKind::ScrollDown => Action::ScrollSummaryPopup(1),
-            MouseEventKind::Down(_) => Action::CloseSummaryPopup,
-            _ => Action::None,
-        };
+    // One modal source of truth (`active_modal`), resolved before any
+    // button-rect or session-row hit test. Most overlays swallow all mouse;
+    // confirm-kill / summary-popup / context-menu keep their own click
+    // semantics.
+    if let Some(modal) = state.active_modal() {
+        return modal_mouse_to_action(modal, mouse, state, hit);
     }
 
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) && hit == Some(HitKind::Banner) {
@@ -40,9 +25,8 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     }
 
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-        // Button rects (tabs / summary buttons / menu) are resolved before
-        // the context-menu and picker guards below — matching the original
-        // ordering (see bug #7, fixed in Phase 2, not here).
+        // Button rects (tabs / summary buttons / menu). Reached only with no
+        // modal up, so a modal hides them (bug #7).
         match hit {
             Some(HitKind::Tab(tab)) => return Action::SelectTab(tab),
             Some(HitKind::SummaryButton) => return Action::GenerateSummary,
@@ -52,39 +36,6 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             Some(HitKind::Menu(r)) => return Action::OpenGlobalMenu { x: r.x, y: r.y },
             _ => {}
         }
-    }
-
-    if let Some(menu) = state.overlay.context_menu.as_ref() {
-        return match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                match state.menu_item_at(mouse.column, mouse.row) {
-                    // Clicking a greyed item does nothing and keeps the
-                    // menu open; clicking outside any item dismisses it.
-                    Some(idx) if menu.is_enabled(idx) => Action::MenuClickItem(idx),
-                    Some(_) => Action::None,
-                    None => Action::MenuDismiss,
-                }
-            }
-            MouseEventKind::Down(MouseButton::Right) => Action::MenuDismiss,
-            MouseEventKind::Moved => match state.menu_item_at(mouse.column, mouse.row) {
-                Some(idx) if menu.is_enabled(idx) => Action::MenuHover(idx),
-                _ => Action::None,
-            },
-            _ => Action::None,
-        };
-    }
-
-    if state.overlay.new_session.is_some() {
-        // The picker is keyboard-driven; mouse events are inert while it
-        // is open so we don't fire phantom context menus or session
-        // switches behind the overlay.
-        return Action::None;
-    }
-
-    if state.overlay.port_forward.is_some() {
-        // Same rationale as new_session: the modal owns keyboard focus,
-        // so swallow mouse so clicks don't punch through to the sidebar.
-        return Action::None;
     }
 
     let (on_separator, in_sidebar) = match state.layout_mode {
@@ -275,6 +226,78 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     }
 
     Action::None
+}
+
+/// Mouse handling for the active modal. ConfirmKill, SummaryPopup and
+/// ContextMenu keep their own click semantics; every other overlay swallows
+/// all mouse so clicks/wheel can't punch through to the sidebar (bug #7 —
+/// previously only new_session and port_forward were mouse-modal).
+fn modal_mouse_to_action(
+    modal: Modal,
+    mouse: &MouseEvent,
+    state: &AppState,
+    hit: Option<HitKind>,
+) -> Action {
+    match modal {
+        Modal::ConfirmKill => {
+            // The kill prompt owns the sidebar: clicking a button
+            // confirms/cancels, every other click is inert — including the
+            // update banner — so nothing punches through a pending
+            // destructive confirmation.
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                match hit {
+                    Some(HitKind::KillYes) => return Action::ConfirmKill,
+                    Some(HitKind::KillNo) => return Action::CancelKill,
+                    _ => {}
+                }
+            }
+            Action::None
+        }
+        Modal::SummaryPopup => {
+            // The big-view popup owns input: wheel scrolls it, any click
+            // dismisses it, everything else is inert.
+            match mouse.kind {
+                MouseEventKind::ScrollUp => Action::ScrollSummaryPopup(-1),
+                MouseEventKind::ScrollDown => Action::ScrollSummaryPopup(1),
+                MouseEventKind::Down(_) => Action::CloseSummaryPopup,
+                _ => Action::None,
+            }
+        }
+        Modal::ContextMenu => {
+            // `active_modal` only reports ContextMenu when it's open.
+            let Some(menu) = state.overlay.context_menu.as_ref() else {
+                return Action::None;
+            };
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    match state.menu_item_at(mouse.column, mouse.row) {
+                        // Clicking a greyed item does nothing and keeps the
+                        // menu open; clicking outside any item dismisses it.
+                        Some(idx) if menu.is_enabled(idx) => Action::MenuClickItem(idx),
+                        Some(_) => Action::None,
+                        None => Action::MenuDismiss,
+                    }
+                }
+                MouseEventKind::Down(MouseButton::Right) => Action::MenuDismiss,
+                MouseEventKind::Moved => match state.menu_item_at(mouse.column, mouse.row) {
+                    Some(idx) if menu.is_enabled(idx) => Action::MenuHover(idx),
+                    _ => Action::None,
+                },
+                _ => Action::None,
+            }
+        }
+        // Every other overlay is keyboard-driven; swallow mouse so clicks
+        // don't fire phantom session switches or context menus behind it.
+        Modal::NewSession
+        | Modal::AddRemote
+        | Modal::Rename
+        | Modal::PortForward
+        | Modal::ThemePicker
+        | Modal::KeybindingsView
+        | Modal::ExcludeEditor
+        | Modal::SummaryLang
+        | Modal::Help => Action::None,
+    }
 }
 
 #[cfg(test)]

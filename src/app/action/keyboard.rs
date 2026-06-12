@@ -1,56 +1,20 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::keybindings::Command;
-use crate::state::{AppState, FocusMode, MainView, PfField, PortForwardOverlay, SessionTargetRef};
+use crate::state::{
+    AppState, FocusMode, MainView, Modal, PfField, PortForwardOverlay, SessionTargetRef,
+};
 
 use super::Action;
 
 pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
-    if state.overlay.summary_popup {
-        return match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => Action::CloseSummaryPopup,
-            KeyCode::Char('j') | KeyCode::Down => Action::ScrollSummaryPopup(1),
-            KeyCode::Char('k') | KeyCode::Up => Action::ScrollSummaryPopup(-1),
-            KeyCode::PageDown | KeyCode::Char(' ') => Action::ScrollSummaryPopup(10),
-            KeyCode::PageUp => Action::ScrollSummaryPopup(-10),
-            _ => Action::None,
-        };
-    }
-
-    if state.overlay.new_session.is_some() {
-        return new_session_key_to_action(key, state);
-    }
-
-    if state.overlay.add_remote.is_some() {
-        return add_remote_key_to_action(key);
-    }
-
-    if state.overlay.renaming.is_some() {
-        return match key.code {
-            KeyCode::Enter => Action::RenameConfirm,
-            KeyCode::Esc => Action::RenameCancel,
-            _ => Action::RenameInputKey(*key),
-        };
-    }
-
-    if state.overlay.context_menu.is_some() {
-        return match key.code {
-            KeyCode::Char('j') | KeyCode::Down => Action::MenuNext,
-            KeyCode::Char('k') | KeyCode::Up => Action::MenuPrev,
-            KeyCode::Enter => Action::MenuConfirm,
-            _ => Action::MenuDismiss,
-        };
-    }
-
-    if let Some(overlay) = state.overlay.port_forward.as_ref() {
-        return pf_key(key, overlay);
-    }
-
-    // The theme picker is a standalone modal: when open it captures all
-    // keys, whether it was opened from the settings page or straight from
-    // the sidebar (`t`), which bypasses the page entirely.
-    if state.settings.theme_picker_open {
-        return theme_picker_key_to_action(key);
+    // One modal source of truth (`active_modal`), consulted before the
+    // global-keybinding lookup: an open overlay captures *every* key, so a
+    // global hotkey can't fire behind help / confirm-kill / the settings
+    // input boxes (the keyboard half of bug #7). Each variant routes to its
+    // existing per-modal handler.
+    if let Some(modal) = state.active_modal() {
+        return modal_key_to_action(modal, key, state);
     }
 
     if let Some(cmd) = state.keybindings.lookup(key) {
@@ -60,19 +24,6 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     }
 
     if state.main_view == MainView::Settings && state.focus_mode == FocusMode::Main {
-        if state.settings.keybindings_view_open {
-            return keybindings_view_key_to_action(key);
-        }
-        if state.overlay.exclude_editor.is_some() {
-            return exclude_editor_key_to_action(key, state);
-        }
-        if state.overlay.summary_lang_input.is_some() {
-            return match key.code {
-                KeyCode::Enter => Action::SummaryLanguageConfirm,
-                KeyCode::Esc => Action::SummaryLanguageCancel,
-                _ => Action::SummaryLanguageInputKey(*key),
-            };
-        }
         return settings_key_to_action(key);
     }
 
@@ -128,19 +79,58 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
     }
 }
 
+/// Route a key to the per-modal handler for the active modal. The big-7
+/// overlays (SummaryPopup..ThemePicker) already captured all keys before
+/// Phase 2; help / confirm-kill / the settings input boxes did not, so they
+/// previously let a global keybinding leak through — now they don't.
+fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action {
+    match modal {
+        Modal::SummaryPopup => match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => Action::CloseSummaryPopup,
+            KeyCode::Char('j') | KeyCode::Down => Action::ScrollSummaryPopup(1),
+            KeyCode::Char('k') | KeyCode::Up => Action::ScrollSummaryPopup(-1),
+            KeyCode::PageDown | KeyCode::Char(' ') => Action::ScrollSummaryPopup(10),
+            KeyCode::PageUp => Action::ScrollSummaryPopup(-10),
+            _ => Action::None,
+        },
+        Modal::NewSession => new_session_key_to_action(key, state),
+        Modal::AddRemote => add_remote_key_to_action(key),
+        Modal::Rename => match key.code {
+            KeyCode::Enter => Action::RenameConfirm,
+            KeyCode::Esc => Action::RenameCancel,
+            _ => Action::RenameInputKey(*key),
+        },
+        Modal::ContextMenu => match key.code {
+            KeyCode::Char('j') | KeyCode::Down => Action::MenuNext,
+            KeyCode::Char('k') | KeyCode::Up => Action::MenuPrev,
+            KeyCode::Enter => Action::MenuConfirm,
+            _ => Action::MenuDismiss,
+        },
+        // `active_modal` only reports PortForward when the overlay is set.
+        Modal::PortForward => match state.overlay.port_forward.as_ref() {
+            Some(overlay) => pf_key(key, overlay),
+            None => Action::None,
+        },
+        Modal::ThemePicker => theme_picker_key_to_action(key),
+        Modal::KeybindingsView => keybindings_view_key_to_action(key),
+        Modal::ExcludeEditor => exclude_editor_key_to_action(key, state),
+        Modal::SummaryLang => match key.code {
+            KeyCode::Enter => Action::SummaryLanguageConfirm,
+            KeyCode::Esc => Action::SummaryLanguageCancel,
+            _ => Action::SummaryLanguageInputKey(*key),
+        },
+        Modal::Help => Action::DismissHelp,
+        Modal::ConfirmKill => {
+            if key.code == KeyCode::Char('y') {
+                Action::ConfirmKill
+            } else {
+                Action::CancelKill
+            }
+        }
+    }
+}
+
 fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
-    if state.overlay.show_help {
-        return Action::DismissHelp;
-    }
-
-    if state.overlay.confirm_kill {
-        return if key.code == KeyCode::Char('y') {
-            Action::ConfirmKill
-        } else {
-            Action::CancelKill
-        };
-    }
-
     if let KeyCode::Char(c @ '1'..='9') = key.code {
         if !key.modifiers.contains(KeyModifiers::ALT) {
             let idx = (c as usize) - ('1' as usize);
