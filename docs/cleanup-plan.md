@@ -92,7 +92,7 @@
    `save_config` return/record the new mtime), keep the watcher for
    external edits. *(commit 6025cbc)*
 
-7. [ ] **Five overlays are keyboard-modal but not mouse-modal.**
+7. [x] **Five overlays are keyboard-modal but not mouse-modal.**
    `mouse.rs:12-98` swallows mouse for confirm-kill / summary-popup /
    context-menu / new-session / port-forward, but not for **rename,
    add-remote, theme-picker, help, summary-language** (all modal in
@@ -101,8 +101,11 @@
    button rects (tabs/summary/banner/menu) are checked *before* the
    overlay guards, so they stay clickable through modals that do swallow
    mouse input. → Phase 2 (single modality source) is the real fix.
-   *(still unguarded for add-remote / theme-picker / summary-language in
-   `mouse.rs`)*
+   *(fixed in Phase 2: `AppState::active_modal()` is resolved first by
+   both mappers — all overlays now swallow mouse, button rects only fire
+   with no modal up, and global keys no longer fire over the previously-
+   permeable keyboard modals. The update banner is now also swallowed by
+   those overlays. Parity test in `tests/unit/app/action/modality.rs`)*
 
 8. [x] **The update-check cache is dead — a GitHub HTTPS check fires every
    startup.** `bootstrap_update_check` returns `(None, synthetic_instant)`
@@ -303,8 +306,8 @@
   `REMOTE_SESSION_MENU_ITEMS` == `PLACEHOLDER_DISABLED_ITEMS`
   (`state.rs:31-39`), and `session_menu_items()` branches local/remote
   to return the same list. Collapse; becomes an enum in Phase 2.
-  *(`REMOTE_SESSION_MENU_ITEMS` removed, `PLACEHOLDER_DISABLED_ITEMS`
-  aliases `SESSION_MENU_ITEMS`; the enum conversion stays for Phase 2)*
+  *(done: `REMOTE_SESSION_MENU_ITEMS` removed earlier, and Phase 2
+  converted the lists to a `MenuItem` enum keyed by variant)*
 - [ ] **D7. Dead-host cleanup vs `offboard_remote_host`** duplicate the
   detach choreography (`app/mod.rs:551-584` vs `dispatch.rs:443-463`);
   one `detach_host_view(host)` — also the natural home for the missing
@@ -415,27 +418,30 @@ Plan:
 Result: a new clickable element = one slot + one HitKind arm; geometry
 drift becomes a compile-time/test-time error, not a click-dead row.
 
-### Phase 2 — Input modality and typed actions (fixes the #7 class) — [ ] NOT STARTED
+### Phase 2 — Input modality and typed actions (fixes the #7 class) — [x] DONE
 
 Problem: each modal overlay needs a hand-written early-return in both
 `keyboard.rs` and `mouse.rs`; five overlays drifted mouse-side. Menus
 dispatch on `&'static str` labels; `Action` is a flat ~100-variant enum.
 
 Plan:
-- [ ] `OverlayState::active_modal() -> Option<Modal>` — one ordered enum of
-  every modal (incl. the warning popup). Both key and mouse mappers
-  resolve the modal *first* and route events to it; only `None` falls
-  through to sidebar/PTY handling. `warning_blocks_action` folds in.
-- [ ] Replace string menu items with a `MenuItem` enum carrying `label()`;
+- [x] `AppState::active_modal() -> Option<Modal>` — one ordered enum of
+  every overlay modal. Both key and mouse mappers resolve the modal
+  *first* and route events to it; only `None` falls through to
+  sidebar/PTY handling. *(the update-warning popup stays a separate
+  selective gate — `warning_blocks_action` blocks only focus/forward
+  actions, not a swallow-everything modal, so folding it in would change
+  behavior. Left as-is.)*
+- [x] Replace string menu items with a `MenuItem` enum carrying `label()`;
   `MenuKind` holds `&[MenuItem]` (kills D6; a renamed label can no
-  longer silently disable an action). *(menus still use `&'static str`
-  constants)*
-- [ ] Namespace `Action` into sub-enums (`Pf(..)`, `Settings(..)`,
+  longer silently disable an action).
+- [x] Namespace `Action` into sub-enums (`Pf(..)`, `Settings(..)`,
   `NewSession(..)`, `Summary(..)`, `Menu(..)`, `AddRemote(..)`); the
-  reducer match delegates to per-domain functions. Mechanical, big
-  readability win in `reduce.rs`/`keyboard.rs`.
-- [ ] Test: a table-driven parity test — for every modal, key and mouse
-  mappers must both refuse to produce session-switching actions.
+  reducer match delegates to per-domain functions (`reduce_pf`,
+  `reduce_settings`, …). Mechanical, big readability win.
+- [x] Test: a table-driven parity test — for every modal, key and mouse
+  mappers must both refuse to produce session-switching actions
+  (`tests/unit/app/action/modality.rs`).
 
 ### Phase 3 — Settings as data (fixes the #14/#15 class, kills D2/D3) — [~] PARTIAL
 
