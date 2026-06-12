@@ -154,9 +154,9 @@ pub(super) fn draw_sessions(
                 // Status dot before the name: red = working, green = idle,
                 // yellow = waiting for input, gray = unknown.
                 let status_color = match a.status {
-                    crate::agent::AgentStatus::Working => ctx.theme.pink,
-                    crate::agent::AgentStatus::Idle => ctx.theme.green,
-                    crate::agent::AgentStatus::Waiting => ctx.theme.yellow,
+                    crate::agent::AgentStatus::Working => ctx.theme.error,
+                    crate::agent::AgentStatus::Idle => ctx.theme.success,
+                    crate::agent::AgentStatus::Waiting => ctx.theme.warning,
                     crate::agent::AgentStatus::Unknown => ctx.theme.dim,
                 };
                 let label = a.location();
@@ -358,7 +358,7 @@ pub(super) fn draw_sessions(
                                 let text: String = runs.iter().map(|(s, _)| s.as_str()).collect();
                                 spans.push(Span::styled(
                                     text,
-                                    Style::default().fg(ctx.theme.pink).bg(ctx.theme.bg),
+                                    Style::default().fg(ctx.theme.error).bg(ctx.theme.bg),
                                 ));
                             }
                             lines.push(pad_line(spans, ctx.theme.bg, width));
@@ -607,15 +607,15 @@ pub(super) fn render_group_header(
 ) -> GroupHeaderHits {
     let badge_text = pf.map(|b| format!("\u{21c4}{}", b.count));
     let badge_fg = pf.map(|b| match b.color {
-        PfBadgeColor::Healthy => theme.green,
-        PfBadgeColor::Degraded => theme.pink,
-        PfBadgeColor::Probing => theme.yellow,
+        PfBadgeColor::Healthy => theme.success,
+        PfBadgeColor::Degraded => theme.error,
+        PfBadgeColor::Probing => theme.warning,
     });
 
     let reconnect_fg = match status {
         HostStatus::Connected => accent,
-        HostStatus::Connecting => theme.yellow,
-        HostStatus::Unreachable => theme.pink,
+        HostStatus::Connecting => theme.warning,
+        HostStatus::Unreachable => theme.error,
     };
     let (badge, actions) = render_divider_line(
         lines,

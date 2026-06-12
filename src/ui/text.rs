@@ -136,20 +136,34 @@ pub(super) fn wrap_markdown(text: &str, width: usize) -> Vec<Vec<MdRun>> {
         }};
     }
 
+    // Leading spaces on a *logical* line (the start of `text` or just after
+    // a hard `\n`) are indentation, not word separators — preserve them so
+    // nested/indented list items in summaries keep their indent. Spaces that
+    // separate words mid-line, and any space at a *wrap*-induced break, still
+    // collapse the usual way.
+    let mut at_line_start = true;
     for (c, st) in styled {
         if c == '\n' {
             flush_word!();
             lines.push(std::mem::take(&mut line));
             line_w = 0;
+            at_line_start = true;
         } else if c == ' ' {
             flush_word!();
-            if line_w > 0 && line_w < width {
+            if at_line_start {
+                // Indentation: keep it even though `line_w == 0`.
+                if line_w < width {
+                    line.push((' ', st));
+                    line_w += 1;
+                }
+            } else if line_w > 0 && line_w < width {
                 line.push((' ', st));
                 line_w += 1;
             }
         } else {
             word.push((c, st));
             word_w += cw(c);
+            at_line_start = false;
         }
     }
     flush_word!();

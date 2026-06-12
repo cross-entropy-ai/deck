@@ -3,6 +3,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Widget};
 use ratatui::Frame;
+use unicode_width::UnicodeWidthStr;
 
 use crate::keybindings::{Command, Keybindings};
 use crate::theme::Theme;
@@ -244,7 +245,7 @@ pub fn draw_theme_picker(
 ) {
     let width = theme_names
         .iter()
-        .map(|name| name.len())
+        .map(|name| UnicodeWidthStr::width(*name))
         .max()
         .unwrap_or(12)
         .min(area.width.saturating_sub(4) as usize)
@@ -368,7 +369,7 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
     let max_pattern_width = editor
         .patterns
         .iter()
-        .map(|p| p.len())
+        .map(|p| UnicodeWidthStr::width(p.as_str()))
         .max()
         .unwrap_or(0)
         .max(20);
@@ -466,7 +467,7 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
     if let Some(err) = editor.error {
         Paragraph::new(Span::styled(
             format!("  {}", err),
-            Style::default().fg(theme.pink),
+            Style::default().fg(theme.error),
         ))
         .render(rows[row_idx], frame.buffer_mut());
         row_idx += 1;

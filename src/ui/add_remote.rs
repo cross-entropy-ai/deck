@@ -96,7 +96,7 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
     if let Some(err) = &p.error {
         Paragraph::new(Span::styled(
             format!("  \u{26a0} {err}"),
-            Style::default().fg(theme.pink),
+            Style::default().fg(theme.error),
         ))
         .render(rows[i], frame.buffer_mut());
         i += 1;

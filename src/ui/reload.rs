@@ -79,8 +79,8 @@ pub fn reload_row_count(status: Option<&ReloadStatus>, width: u16) -> u16 {
 pub fn draw_reload_bar(frame: &mut Frame, area: Rect, status: &ReloadStatus, theme: &Theme) {
     let w = area.width as usize;
     let (color, body) = match status {
-        ReloadStatus::Ok => (theme.green, "applied".to_string()),
-        ReloadStatus::Err(e) => (theme.pink, e.clone()),
+        ReloadStatus::Ok => (theme.success, "applied".to_string()),
+        ReloadStatus::Err(e) => (theme.error, e.clone()),
     };
     let mut wrapped = wrapped_body_lines(&body, w);
     if wrapped.len() > RELOAD_MAX_ROWS {

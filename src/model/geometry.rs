@@ -28,8 +28,12 @@ pub fn truncate(s: &str, max_width: usize) -> String {
     if s.width() <= max_width {
         return s.to_string();
     }
-    if max_width <= 1 {
-        return ".".to_string();
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        // Only room for the ellipsis itself; no content fits beside it.
+        return "…".to_string();
     }
     let mut out = String::new();
     let mut width = 0usize;
@@ -164,8 +168,14 @@ pub fn tab_col_ranges(names: &[&str]) -> Vec<(u16, u16)> {
 }
 
 pub fn context_menu_width(items: &[MenuItem]) -> u16 {
-    let max_len = items.iter().map(|i| i.label().len()).max().unwrap_or(0);
-    (max_len as u16) + 4 // 1 border + 1 padding each side + 1 border
+    // Display width, not byte length: menu labels could carry wide chars,
+    // and a byte count would over-size the popup for CJK.
+    let max_w = items
+        .iter()
+        .map(|i| UnicodeWidthStr::width(i.label()))
+        .max()
+        .unwrap_or(0);
+    (max_w as u16) + 4 // 1 border + 1 padding each side + 1 border
 }
 
 // --- Sidebar item / hit-region types ---

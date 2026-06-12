@@ -91,8 +91,8 @@ fn draw_list(
                 .copied()
                 .unwrap_or(ForwardHealth::Probing);
             let (dot, dot_fg) = match h {
-                ForwardHealth::Up => ("\u{25cf}", theme.green),  // ●
-                ForwardHealth::Down => ("\u{2715}", theme.pink), // ✕
+                ForwardHealth::Up => ("\u{25cf}", theme.success), // ●
+                ForwardHealth::Down => ("\u{2715}", theme.error), // ✕
                 ForwardHealth::Probing => ("\u{00b7}", theme.muted), // ·
             };
             lines.push(Line::from(vec![
@@ -220,9 +220,9 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
         // the message — and every wrapped continuation line — lines up with the
         // form fields' indent instead of butting up against the frame.
         let fg = if s.starts_with("applying") {
-            theme.yellow
+            theme.warning
         } else {
-            theme.pink
+            theme.error
         };
         let inset = Rect {
             x: rows[9].x + 2,

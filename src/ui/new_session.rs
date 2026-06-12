@@ -118,7 +118,7 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
     if let Some(err) = view.error {
         Paragraph::new(Span::styled(
             format!("  ⚠ {}", err),
-            Style::default().fg(theme.pink),
+            Style::default().fg(theme.error),
         ))
         .render(rows[row_idx], frame.buffer_mut());
         row_idx += 1;

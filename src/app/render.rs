@@ -416,7 +416,7 @@ impl App {
                     match warning_state {
                         crate::state::WarningState::Proactive { text, detail } => (
                             " Heads up ",
-                            theme.yellow,
+                            theme.warning,
                             Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
                             Style::default().fg(theme.dim),
                             *text,
