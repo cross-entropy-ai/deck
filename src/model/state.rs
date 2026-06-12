@@ -26,36 +26,45 @@ const MIN_MAIN_HEIGHT: u16 = 1;
 
 // One list for local and remote rows. "Switch" is dropped — the focus
 // already triggers the switch, so the menu item was redundant. On a remote
-// row Rename/Kill map to `ssh <host> tmux <cmd>` and Move up/down reorder
+// row Rename/Kill map to `ssh <host> tmux <cmd>` and MoveUp/MoveDown reorder
 // *within the host group* (hosts can't interleave), persisted to that
 // server's `@deck_order` — same labels, different backend.
-const SESSION_MENU_ITEMS: &[&str] = &["Rename", "Kill", "Move up", "Move down"];
+const SESSION_MENU_ITEMS: &[MenuItem] = &[
+    MenuItem::Rename,
+    MenuItem::Kill,
+    MenuItem::MoveUp,
+    MenuItem::MoveDown,
+];
 // Items shown but greyed-out / unselectable when the right-clicked row
 // is a synthetic placeholder (a remote host with no sessions, or an
 // unreachable one): there's no real session to Rename/Kill/reorder —
 // i.e. every session item.
-const PLACEHOLDER_DISABLED_ITEMS: &[&str] = SESSION_MENU_ITEMS;
+const PLACEHOLDER_DISABLED_ITEMS: &[MenuItem] = SESSION_MENU_ITEMS;
 // Only Kill is greyed when the row is the last live session on a remote
 // host: killing it would tear down that host's tmux server. Rename is
 // still fine.
-const LAST_REMOTE_SESSION_DISABLED: &[&str] = &["Kill"];
-// Host divider [...] menu acts on the whole remote *group*. "Remove
-// from list" is equivalent to `deck remote remove <host>`.
-const HOST_DIVIDER_MENU_ITEMS: &[&str] = &["New session", "Port Forward", "Remove from list"];
+const LAST_REMOTE_SESSION_DISABLED: &[MenuItem] = &[MenuItem::Kill];
+// Host divider [...] menu acts on the whole remote *group*. RemoveFromList
+// is equivalent to `deck remote remove <host>`.
+const HOST_DIVIDER_MENU_ITEMS: &[MenuItem] = &[
+    MenuItem::NewSession,
+    MenuItem::PortForward,
+    MenuItem::RemoveFromList,
+];
 // The `@local` divider reuses the host divider's item list so the menu
-// reads consistently, but Port Forward and Remove from list are remote-
-// only concepts: they're shown greyed out, leaving just "New session"
+// reads consistently, but PortForward and RemoveFromList are remote-
+// only concepts: they're shown greyed out, leaving just NewSession
 // (which creates a local session).
-const LOCAL_DIVIDER_DISABLED: &[&str] = &["Port Forward", "Remove from list"];
-// Right-click on blank sidebar space. "New session" is intentionally
+const LOCAL_DIVIDER_DISABLED: &[MenuItem] = &[MenuItem::PortForward, MenuItem::RemoveFromList];
+// Right-click on blank sidebar space. NewSession is intentionally
 // absent — creating a local session lives on the `@local` divider's
 // `[…]` menu instead.
-const GLOBAL_MENU_ITEMS: &[&str] = &[
-    "Add Remote Host",
-    "Toggle layout",
-    "Toggle borders",
-    "Settings",
-    "Quit",
+const GLOBAL_MENU_ITEMS: &[MenuItem] = &[
+    MenuItem::AddRemoteHost,
+    MenuItem::ToggleLayout,
+    MenuItem::ToggleBorders,
+    MenuItem::Settings,
+    MenuItem::Quit,
 ];
 
 // --- Enums ---
@@ -186,6 +195,47 @@ pub fn frame_rate_limit_label(fps: u16) -> &'static str {
 
 // --- Context menu ---
 
+/// One entry in a sidebar context menu. Carries its own display text via
+/// [`MenuItem::label`], so the renderer, the enabled/disabled subsets, and
+/// the dispatch in `reduce.rs` all key off the variant instead of the label
+/// string — renaming an item's text can't silently detach its action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuItem {
+    Rename,
+    Kill,
+    MoveUp,
+    MoveDown,
+    AddRemoteHost,
+    ToggleLayout,
+    ToggleBorders,
+    Settings,
+    Quit,
+    NewSession,
+    PortForward,
+    RemoveFromList,
+}
+
+impl MenuItem {
+    /// The text rendered for this item. Kept byte-identical to the old
+    /// `&'static str` menu literals so the popup looks unchanged.
+    pub fn label(&self) -> &'static str {
+        match self {
+            MenuItem::Rename => "Rename",
+            MenuItem::Kill => "Kill",
+            MenuItem::MoveUp => "Move up",
+            MenuItem::MoveDown => "Move down",
+            MenuItem::AddRemoteHost => "Add Remote Host",
+            MenuItem::ToggleLayout => "Toggle layout",
+            MenuItem::ToggleBorders => "Toggle borders",
+            MenuItem::Settings => "Settings",
+            MenuItem::Quit => "Quit",
+            MenuItem::NewSession => "New session",
+            MenuItem::PortForward => "Port Forward",
+            MenuItem::RemoveFromList => "Remove from list",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum MenuKind {
     /// Right-clicked a session row. Local and remote rows share one item
@@ -195,7 +245,7 @@ pub enum MenuKind {
         /// Subset of the items shown greyed-out and not selectable (e.g.
         /// Rename/Kill on a synthetic placeholder row). Empty for a real
         /// session, where every item is actionable.
-        disabled: &'static [&'static str],
+        disabled: &'static [MenuItem],
     },
     Global,
     /// Click on the `[…]` button on a remote host divider. The items are
@@ -210,7 +260,7 @@ pub enum MenuKind {
 }
 
 impl MenuKind {
-    pub fn items(&self) -> &'static [&'static str] {
+    pub fn items(&self) -> &'static [MenuItem] {
         match self {
             MenuKind::Session { .. } => SESSION_MENU_ITEMS,
             MenuKind::Global => GLOBAL_MENU_ITEMS,
@@ -221,7 +271,7 @@ impl MenuKind {
     /// Items that are shown but greyed-out / unselectable: session menus
     /// carry a per-row set, and the `@local` divider greys the remote-only
     /// items. Other menus have every item enabled.
-    pub fn disabled(&self) -> &'static [&'static str] {
+    pub fn disabled(&self) -> &'static [MenuItem] {
         match self {
             MenuKind::Session { disabled, .. } => disabled,
             MenuKind::LocalDivider => LOCAL_DIVIDER_DISABLED,
@@ -241,7 +291,7 @@ impl MenuKind {
 pub fn session_menu_disabled(
     target: &SessionTargetRef<'_>,
     remote_sessions: &[RemoteSessionRow],
-) -> &'static [&'static str] {
+) -> &'static [MenuItem] {
     match target {
         SessionTargetRef::Remote(row) if !row.is_attachable_session() => PLACEHOLDER_DISABLED_ITEMS,
         SessionTargetRef::Remote(row)
@@ -262,11 +312,11 @@ pub struct ContextMenu {
 }
 
 impl ContextMenu {
-    pub fn items(&self) -> &'static [&'static str] {
+    pub fn items(&self) -> &'static [MenuItem] {
         self.kind.items()
     }
 
-    pub fn disabled(&self) -> &'static [&'static str] {
+    pub fn disabled(&self) -> &'static [MenuItem] {
         self.kind.disabled()
     }
 
@@ -274,7 +324,7 @@ impl ContextMenu {
     pub fn is_enabled(&self, idx: usize) -> bool {
         self.items()
             .get(idx)
-            .is_some_and(|label| !self.disabled().contains(label))
+            .is_some_and(|item| !self.disabled().contains(item))
     }
 
     /// First selectable item, used as the initial highlight so it never

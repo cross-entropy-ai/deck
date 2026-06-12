@@ -378,7 +378,7 @@ fn sidebar_footer_height_matches_renderer() {
 
 #[test]
 fn local_divider_menu_greys_remote_only_items() {
-    use crate::state::{ContextMenu, MenuKind};
+    use crate::state::{ContextMenu, MenuItem, MenuKind};
     let menu = ContextMenu {
         kind: MenuKind::LocalDivider,
         x: 0,
@@ -386,15 +386,15 @@ fn local_divider_menu_greys_remote_only_items() {
         selected: 0,
     };
     // Same item list as a host divider...
-    assert!(menu.items().contains(&"New session"));
-    assert!(menu.items().contains(&"Port Forward"));
-    assert!(menu.items().contains(&"Remove from list"));
+    assert!(menu.items().contains(&MenuItem::NewSession));
+    assert!(menu.items().contains(&MenuItem::PortForward));
+    assert!(menu.items().contains(&MenuItem::RemoveFromList));
     // ...but the remote-only ones are greyed out, leaving New session live.
-    assert!(menu.disabled().contains(&"Port Forward"));
-    assert!(menu.disabled().contains(&"Remove from list"));
-    assert!(!menu.disabled().contains(&"New session"));
+    assert!(menu.disabled().contains(&MenuItem::PortForward));
+    assert!(menu.disabled().contains(&MenuItem::RemoveFromList));
+    assert!(!menu.disabled().contains(&MenuItem::NewSession));
     // The initial highlight lands on the first enabled item.
-    assert_eq!(menu.items()[menu.first_enabled()], "New session");
+    assert_eq!(menu.items()[menu.first_enabled()], MenuItem::NewSession);
 }
 
 #[test]
@@ -486,12 +486,17 @@ fn vertical_tabs_hit_test_remote_sessions() {
 
 #[test]
 fn context_menu_navigation_skips_disabled_items() {
-    use crate::state::{ContextMenu, MenuKind};
+    use crate::state::{ContextMenu, MenuItem, MenuKind};
     // A placeholder remote menu: every session item disabled.
     let all_disabled = ContextMenu {
         kind: MenuKind::Session {
             focus: FocusTarget(0),
-            disabled: &["Rename", "Kill", "Move up", "Move down"],
+            disabled: &[
+                MenuItem::Rename,
+                MenuItem::Kill,
+                MenuItem::MoveUp,
+                MenuItem::MoveDown,
+            ],
         },
         x: 0,
         y: 0,
@@ -508,7 +513,7 @@ fn context_menu_navigation_skips_disabled_items() {
     let mixed = ContextMenu {
         kind: MenuKind::Session {
             focus: FocusTarget(0),
-            disabled: &["Kill"],
+            disabled: &[MenuItem::Kill],
         },
         x: 0,
         y: 0,

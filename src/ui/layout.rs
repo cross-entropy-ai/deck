@@ -11,7 +11,7 @@ use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
 use super::text::truncate;
-use crate::state::ViewMode;
+use crate::state::{MenuItem, ViewMode};
 
 /// Max display width of each side of a remote tab label. A remote tab
 /// reads `host:session`; capping both sides keeps the whole label within
@@ -68,7 +68,13 @@ pub fn sidebar_footer_height(banner_visible: bool, plugin_count: usize) -> u16 {
 /// On-screen rect of the context menu anchored at `(menu_x, menu_y)`,
 /// clamped inside the terminal. Shared by the renderer and mouse
 /// hit-testing so they can't disagree about where the menu actually is.
-pub fn context_menu_rect(items: &[&str], menu_x: u16, menu_y: u16, term_w: u16, term_h: u16) -> Rect {
+pub fn context_menu_rect(
+    items: &[MenuItem],
+    menu_x: u16,
+    menu_y: u16,
+    term_w: u16,
+    term_h: u16,
+) -> Rect {
     let w = context_menu_width(items);
     let h = items.len() as u16 + 2;
     let x = menu_x.min(term_w.saturating_sub(w));
@@ -122,8 +128,8 @@ pub fn tab_col_ranges(names: &[&str]) -> Vec<(u16, u16)> {
     ranges
 }
 
-pub fn context_menu_width(items: &[&str]) -> u16 {
-    let max_len = items.iter().map(|s| s.len()).max().unwrap_or(0);
+pub fn context_menu_width(items: &[MenuItem]) -> u16 {
+    let max_len = items.iter().map(|i| i.label().len()).max().unwrap_or(0);
     (max_len as u16) + 4 // 1 border + 1 padding each side + 1 border
 }
 

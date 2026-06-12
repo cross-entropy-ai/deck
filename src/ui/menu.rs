@@ -4,6 +4,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::layout::context_menu_rect;
+use crate::state::MenuItem;
 use crate::theme::Theme;
 use crate::ui::widgets::{popup_frame, PopupStyle};
 
@@ -12,8 +13,8 @@ pub fn draw_context_menu(
     menu_x: u16,
     menu_y: u16,
     selected: usize,
-    items: &[&str],
-    disabled: &[&str],
+    items: &[MenuItem],
+    disabled: &[MenuItem],
     theme: &Theme,
 ) {
     // Same rect `AppState::menu_item_at` hit-tests against.
@@ -35,7 +36,7 @@ pub fn draw_context_menu(
         .iter()
         .enumerate()
         .map(|(i, item)| {
-            let label = format!(" {:<width$}", item, width = inner_w.saturating_sub(1));
+            let label = format!(" {:<width$}", item.label(), width = inner_w.saturating_sub(1));
             if disabled.contains(item) {
                 // Greyed-out: shown for context but not selectable, so it
                 // never takes the accent highlight even at `selected`.

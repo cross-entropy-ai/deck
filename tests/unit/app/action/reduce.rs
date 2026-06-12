@@ -370,9 +370,9 @@ fn open_local_divider_menu_greys_remote_items_and_starts_on_new_session() {
     let menu = state.overlay.context_menu.as_ref().expect("menu open");
     assert!(matches!(menu.kind, crate::state::MenuKind::LocalDivider));
     // Highlight starts on the first enabled item, never a greyed one.
-    assert_eq!(menu.items()[menu.selected], "New session");
-    assert!(menu.disabled().contains(&"Port Forward"));
-    assert!(menu.disabled().contains(&"Remove from list"));
+    assert_eq!(menu.items()[menu.selected], crate::state::MenuItem::NewSession);
+    assert!(menu.disabled().contains(&crate::state::MenuItem::PortForward));
+    assert!(menu.disabled().contains(&crate::state::MenuItem::RemoveFromList));
 }
 
 #[test]
@@ -1153,25 +1153,25 @@ fn remove_remote_from_list_drops_host_and_signals_stop() {
 
 #[test]
 fn host_divider_menu_has_new_session_first_and_remove_last() {
-    use crate::state::MenuKind;
+    use crate::state::{MenuItem, MenuKind};
     let items = MenuKind::HostDivider { host: "h".into() }.items();
-    assert_eq!(items.first().copied(), Some("New session"));
-    assert!(items.contains(&"Port Forward"));
+    assert_eq!(items.first().copied(), Some(MenuItem::NewSession));
+    assert!(items.contains(&MenuItem::PortForward));
     // "Remove from list" is destructive — keep it last.
-    assert_eq!(items.last().copied(), Some("Remove from list"));
+    assert_eq!(items.last().copied(), Some(MenuItem::RemoveFromList));
 }
 
 #[test]
 fn global_menu_has_no_new_session() {
-    use crate::state::MenuKind;
+    use crate::state::{MenuItem, MenuKind};
     // Creating a local session lives on the `@local` divider now, so the
     // blank-area right-click menu no longer offers it.
-    assert!(!MenuKind::Global.items().contains(&"New session"));
+    assert!(!MenuKind::Global.items().contains(&MenuItem::NewSession));
 }
 
 #[test]
 fn session_menu_has_no_switch_or_remove() {
-    use crate::state::{FocusTarget, MenuKind};
+    use crate::state::{FocusTarget, MenuItem, MenuKind};
     // One item list serves local and remote rows. "Switch" is gone (the
     // focus already triggers the switch) and "Remove from list" lives on
     // the host-divider menu, not the per-session menu.
@@ -1179,15 +1179,23 @@ fn session_menu_has_no_switch_or_remove() {
         focus: FocusTarget(0),
         disabled: &[],
     };
-    assert!(!menu.items().contains(&"Switch"));
-    assert!(!menu.items().contains(&"Remove from list"));
+    assert_eq!(
+        menu.items(),
+        &[
+            MenuItem::Rename,
+            MenuItem::Kill,
+            MenuItem::MoveUp,
+            MenuItem::MoveDown
+        ]
+    );
+    assert!(!menu.items().contains(&MenuItem::RemoveFromList));
 }
 
 #[test]
 fn placeholder_remote_menu_disables_rename_and_kill() {
     use crate::state::{
-        session_menu_disabled, RemoteSessionRow, SessionTargetRef, REMOTE_NO_SESSIONS_LABEL,
-        REMOTE_UNREACHABLE_LABEL,
+        session_menu_disabled, MenuItem, RemoteSessionRow, SessionTargetRef,
+        REMOTE_NO_SESSIONS_LABEL, REMOTE_UNREACHABLE_LABEL,
     };
     for label in [REMOTE_NO_SESSIONS_LABEL, REMOTE_UNREACHABLE_LABEL] {
         let row = RemoteSessionRow {
@@ -1199,8 +1207,11 @@ fn placeholder_remote_menu_disables_rename_and_kill() {
         };
         let disabled =
             session_menu_disabled(&SessionTargetRef::Remote(&row), std::slice::from_ref(&row));
-        assert!(disabled.contains(&"Rename"), "{label}: Rename disabled");
-        assert!(disabled.contains(&"Kill"), "{label}: Kill disabled");
+        assert!(
+            disabled.contains(&MenuItem::Rename),
+            "{label}: Rename disabled"
+        );
+        assert!(disabled.contains(&MenuItem::Kill), "{label}: Kill disabled");
     }
 }
 
@@ -1232,13 +1243,19 @@ fn remote_session_with_siblings_disables_nothing() {
 
 #[test]
 fn last_remote_session_disables_kill_only() {
-    use crate::state::{session_menu_disabled, SessionTargetRef};
+    use crate::state::{session_menu_disabled, MenuItem, SessionTargetRef};
     // "solo" is the only session on its host; a session on a *different*
     // host doesn't count toward it.
     let sessions = vec![remote("h", "solo"), remote("other", "x")];
     let disabled = session_menu_disabled(&SessionTargetRef::Remote(&sessions[0]), &sessions);
-    assert!(disabled.contains(&"Kill"), "Kill disabled for last session");
-    assert!(!disabled.contains(&"Rename"), "Rename still allowed");
+    assert!(
+        disabled.contains(&MenuItem::Kill),
+        "Kill disabled for last session"
+    );
+    assert!(
+        !disabled.contains(&MenuItem::Rename),
+        "Rename still allowed"
+    );
 }
 
 #[test]

@@ -2,7 +2,8 @@ use crate::config::ForwardMode;
 use crate::new_session::textarea_line;
 use crate::state::{
     cycle_option, session_menu_disabled, AppState, ContextMenu, FocusMode, KillRequest,
-    LayoutMode, MainView, MenuKind, PfAddForm, PfField, PortForwardOverlay, RemoteSwitchRequest,
+    LayoutMode, MainView, MenuItem, MenuKind, PfAddForm, PfField, PortForwardOverlay,
+    RemoteSwitchRequest,
     RenameRequest, RenameState, SessionTargetRef, SideEffect, SidebarTab, ViewMode,
     SETTINGS_ITEM_COUNT,
 };
@@ -885,30 +886,30 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if !menu.is_enabled(menu.selected) {
                 return fx;
             }
-            let selected_label = menu.items().get(menu.selected).copied();
+            let selected_item = menu.items().get(menu.selected).copied();
             match menu.kind {
                 MenuKind::Session { focus, .. } => {
                     state.focused = focus.0;
-                    let inner = match selected_label {
-                        Some("Rename") => apply_action(state, Action::StartRename),
-                        Some("Kill") => apply_action(state, Action::KillSession),
-                        Some("Move up") => apply_action(state, Action::ReorderSession(-1)),
-                        Some("Move down") => apply_action(state, Action::ReorderSession(1)),
+                    let inner = match selected_item {
+                        Some(MenuItem::Rename) => apply_action(state, Action::StartRename),
+                        Some(MenuItem::Kill) => apply_action(state, Action::KillSession),
+                        Some(MenuItem::MoveUp) => apply_action(state, Action::ReorderSession(-1)),
+                        Some(MenuItem::MoveDown) => apply_action(state, Action::ReorderSession(1)),
                         _ => SideEffect::default(),
                     };
                     fx.merge(inner);
                 }
                 MenuKind::Global => {
-                    let inner = match selected_label {
-                        Some("Add Remote Host") => {
+                    let inner = match selected_item {
+                        Some(MenuItem::AddRemoteHost) => {
                             let mut inner = SideEffect::default();
                             inner.open_add_remote_picker();
                             inner
                         }
-                        Some("Toggle layout") => apply_action(state, Action::ToggleLayout),
-                        Some("Toggle borders") => apply_action(state, Action::ToggleBorders),
-                        Some("Settings") => apply_action(state, Action::OpenSettings),
-                        Some("Quit") => {
+                        Some(MenuItem::ToggleLayout) => apply_action(state, Action::ToggleLayout),
+                        Some(MenuItem::ToggleBorders) => apply_action(state, Action::ToggleBorders),
+                        Some(MenuItem::Settings) => apply_action(state, Action::OpenSettings),
+                        Some(MenuItem::Quit) => {
                             let mut inner = SideEffect::default();
                             inner.quit();
                             inner
@@ -918,16 +919,16 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     fx.merge(inner);
                 }
                 MenuKind::HostDivider { host, .. } => {
-                    let inner = match selected_label {
-                        Some("New session") => {
+                    let inner = match selected_item {
+                        Some(MenuItem::NewSession) => {
                             let mut inner = SideEffect::default();
                             inner.open_remote_new_session_picker(host.clone());
                             inner
                         }
-                        Some("Port Forward") => {
+                        Some(MenuItem::PortForward) => {
                             apply_action(state, Action::OpenPortForward(host.clone()))
                         }
-                        Some("Remove from list") => {
+                        Some(MenuItem::RemoveFromList) => {
                             apply_action(state, Action::RemoveRemoteFromList(host.clone()))
                         }
                         _ => SideEffect::default(),
@@ -935,10 +936,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     fx.merge(inner);
                 }
                 MenuKind::LocalDivider => {
-                    // Port Forward / Remove from list are greyed out and
-                    // unreachable here; only "New session" (local) fires.
-                    let inner = match selected_label {
-                        Some("New session") => {
+                    // PortForward / RemoveFromList are greyed out and
+                    // unreachable here; only NewSession (local) fires.
+                    let inner = match selected_item {
+                        Some(MenuItem::NewSession) => {
                             let mut inner = SideEffect::default();
                             inner.open_new_session_picker();
                             inner
