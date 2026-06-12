@@ -128,3 +128,39 @@ pub fn scroll_window(selected: usize, total: usize, window: usize) -> usize {
     let max_start = total - window;
     (selected + 1).saturating_sub(window).min(max_start)
 }
+
+/// Render a windowed, single-selection list into `rows`, one item per row.
+///
+/// Shared by the filter-picker overlays (new-session dir browser,
+/// add-remote host picker): the list is scrolled by `scroll_window` so
+/// `selected` stays visible, each visible item gets a `▸` marker when
+/// selected, and `content(filtered[i])` supplies the row text. `rows` must
+/// hold at least `window` slots; any beyond the rendered items are left
+/// untouched (the callers reserve them as blanks). Returns how many rows
+/// were consumed (always `window`, mirroring the callers' fixed reserve).
+pub fn draw_picker_list(
+    buf: &mut Buffer,
+    rows: &[Rect],
+    theme: &Theme,
+    filtered: &[usize],
+    selected: usize,
+    window: usize,
+    mut content: impl FnMut(usize) -> String,
+) -> usize {
+    use ratatui::widgets::Paragraph;
+    let start = scroll_window(selected, filtered.len(), window);
+    let end = (start + window).min(filtered.len());
+    for (pos, &idx) in filtered[start..end].iter().enumerate() {
+        let display = start + pos;
+        let sel = display == selected;
+        let marker = if sel { "\u{25b8}" } else { " " };
+        Paragraph::new(list_item_line(
+            theme,
+            sel,
+            format!("  {marker} "),
+            content(idx),
+        ))
+        .render(rows[pos], buf);
+    }
+    window
+}

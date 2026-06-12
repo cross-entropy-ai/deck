@@ -6,6 +6,8 @@ use std::path::PathBuf;
 
 use ratatui_textarea::{CursorMove, TextArea};
 
+use crate::picker::FilterPicker;
+
 /// Split `input` into `(parent, leaf)` where `parent` is the directory
 /// portion (including any trailing `/`) and `leaf` is the segment
 /// being typed.
@@ -83,6 +85,13 @@ pub fn expand_path(s: &str, home: &std::path::Path) -> PathBuf {
     normalized
 }
 
+/// The new-session overlay. This is a *two-field* picker — a session
+/// `name` field plus a dir-browse field — so it is not a plain
+/// filter-picker. The dir-browse half (the path input, directory listing,
+/// filtered/selected, and the overlay's single error slot) is delegated to
+/// the shared `FilterPicker` (D4); the `name` field, focus switching,
+/// `~`/segment path editing, and `remote_host` stay bespoke here because
+/// they don't fit the generic shape.
 #[derive(Debug, Clone)]
 pub struct NewSessionState {
     /// Session name input field. Pre-filled with the next free
@@ -90,19 +99,12 @@ pub struct NewSessionState {
     pub name: TextArea<'static>,
     /// Which field has keyboard focus.
     pub focus: PickerFocus,
-    /// User-visible path. `~` and `..` preserved verbatim.
-    pub input: TextArea<'static>,
-    /// All children (directories only) of the parent of `input`.
-    /// Written by dispatch after `read_dir`. The reducer never mutates
-    /// this directly.
-    pub entries: Vec<String>,
-    /// Indices into `entries` after leaf-prefix + dotfile filtering.
-    /// Recomputed by the reducer whenever `input` changes.
-    pub filtered: Vec<usize>,
-    /// Index into `filtered`. Reducer clamps to `0..filtered.len()`.
-    pub selected: usize,
-    /// Last error encountered. Cleared on the next successful mutation.
-    pub error: Option<String>,
+    /// Path input + directory listing + filtered/selected + error. The
+    /// path input is `picker.input` (`~`/`..` preserved verbatim); the
+    /// directory children (written by dispatch after `read_dir`) are
+    /// `picker.items`. `picker.error` is the overlay's single error slot,
+    /// also set by name validation.
+    pub picker: FilterPicker,
     /// `Some(host)` when the picker is creating a session on a remote
     /// host: directory entries come from `ssh <host> ls` and the session
     /// is created over ssh. `None` is the local picker.
@@ -114,11 +116,7 @@ impl Default for NewSessionState {
         Self {
             name: make_textarea(""),
             focus: PickerFocus::default(),
-            input: make_textarea(""),
-            entries: Vec::new(),
-            filtered: Vec::new(),
-            selected: 0,
-            error: None,
+            picker: FilterPicker::new(Vec::new()),
             remote_host: None,
         }
     }
@@ -130,21 +128,18 @@ impl NewSessionState {
         textarea_line(&self.name)
     }
 
-    /// First line of the `input` textarea.
+    /// First line of the path input.
     pub fn input_str(&self) -> &str {
-        textarea_line(&self.input)
+        self.picker.input_str()
     }
 
-    /// Helper: rebuild `filtered` from current `input` and `entries`,
-    /// clamp `selected` to the new range.
+    /// Rebuild the directory listing's `filtered` from the path input's
+    /// leaf segment (case-insensitive prefix + dotfile rule) and clamp the
+    /// selection. Filters on the *leaf*, not the whole input, so the
+    /// predicate is wrapped for the shared `FilterPicker::refilter`.
     pub fn refilter(&mut self) {
-        let (_parent, leaf) = split_input(self.input_str());
-        self.filtered = filter_entries(&self.entries, leaf);
-        if self.filtered.is_empty() {
-            self.selected = 0;
-        } else if self.selected >= self.filtered.len() {
-            self.selected = self.filtered.len() - 1;
-        }
+        self.picker
+            .refilter(|entries, input| filter_entries(entries, split_input(input).1));
     }
 }
 

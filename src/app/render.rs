@@ -464,11 +464,11 @@ impl App {
                 let view = ui::NewSessionView {
                     name: &ns.name,
                     focus_name: matches!(ns.focus, crate::new_session::PickerFocus::Name),
-                    input: &ns.input,
-                    entries: &ns.entries,
-                    filtered: &ns.filtered,
-                    selected: ns.selected,
-                    error: ns.error.as_deref(),
+                    input: &ns.picker.input,
+                    entries: &ns.picker.items,
+                    filtered: &ns.picker.filtered,
+                    selected: ns.picker.selected,
+                    error: ns.picker.error.as_deref(),
                     host: ns.remote_host.as_deref(),
                 };
                 ui::draw_new_session(frame, frame.area(), &view, theme);

@@ -8,7 +8,7 @@ use ratatui_textarea::TextArea;
 use crate::theme::Theme;
 use crate::ui::form::field_row;
 use crate::ui::widgets::{
-    centered_rect, list_item_line, popup_frame, scroll_window, PopupStyle, TextAreaColors,
+    centered_rect, draw_picker_list, popup_frame, PopupStyle, TextAreaColors,
 };
 
 use super::NewSessionView;
@@ -98,27 +98,17 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
         .render(rows[row_idx], frame.buffer_mut());
         row_idx += 1;
     } else {
-        let start = scroll_window(view.selected, view.filtered.len(), MAX_VISIBLE_ENTRIES);
-        let end = (start + MAX_VISIBLE_ENTRIES).min(view.filtered.len());
-        for (visible_pos, idx) in view.filtered[start..end].iter().enumerate() {
-            let display_pos = start + visible_pos;
-            let name = &view.entries[*idx];
-            let selected = display_pos == view.selected;
-            let marker = if selected { "▸" } else { " " };
-            Paragraph::new(list_item_line(
-                theme,
-                selected,
-                format!("  {marker} "),
-                format!("{name}/"),
-            ))
-            .render(rows[row_idx], frame.buffer_mut());
-            row_idx += 1;
-        }
-        // fill remaining entry slots with blank
-        let rendered = (end - start).min(visible_entries);
-        for _ in rendered..visible_entries {
-            row_idx += 1;
-        }
+        draw_picker_list(
+            frame.buffer_mut(),
+            &rows[row_idx..],
+            theme,
+            view.filtered,
+            view.selected,
+            MAX_VISIBLE_ENTRIES,
+            |idx| format!("{}/", view.entries[idx]),
+        );
+        // Reserve all entry slots (rendered + blank padding).
+        row_idx += visible_entries;
     }
 
     // blank

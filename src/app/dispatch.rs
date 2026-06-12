@@ -278,8 +278,8 @@ impl App {
                     .is_some_and(|(h, p)| h == host && p == path);
                 if still_current {
                     if let Some(ns) = self.state.overlay.new_session.as_mut() {
-                        ns.entries = entries;
-                        ns.error = error;
+                        ns.picker.items = entries;
+                        ns.picker.error = error;
                         ns.refilter();
                     }
                 }

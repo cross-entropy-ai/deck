@@ -41,14 +41,13 @@ fn open_modal(state: &mut AppState, modal: Modal) {
         Modal::SummaryPopup => state.overlay.summary_popup = true,
         Modal::NewSession => {
             use crate::new_session::{make_textarea, NewSessionState, PickerFocus};
+            use crate::picker::FilterPicker;
+            let mut picker = FilterPicker::new(vec![]);
+            picker.input = make_textarea("~/");
             state.overlay.new_session = Some(NewSessionState {
                 name: make_textarea(""),
                 focus: PickerFocus::Name,
-                input: make_textarea("~/"),
-                entries: vec![],
-                filtered: vec![],
-                selected: 0,
-                error: None,
+                picker,
                 remote_host: None,
             });
         }

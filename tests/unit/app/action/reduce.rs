@@ -817,15 +817,14 @@ fn rename_cancel_clears_overlay() {
 
 fn picker_state_with(input: &str, entries: Vec<String>) -> AppState {
     use crate::new_session::{make_textarea, NewSessionState, PickerFocus};
+    use crate::picker::FilterPicker;
     let mut state = make_test_state(0);
+    let mut picker = FilterPicker::new(entries);
+    picker.input = make_textarea(input);
     let mut ns = NewSessionState {
         name: make_textarea(""),
         focus: PickerFocus::Dir,
-        input: make_textarea(input),
-        entries,
-        filtered: vec![],
-        selected: 0,
-        error: None,
+        picker,
         remote_host: None,
     };
     ns.refilter();
@@ -861,7 +860,7 @@ fn new_session_input_inserts_at_cursor() {
     );
     let ns = state.overlay.new_session.as_ref().unwrap();
     assert_eq!(ns.input_str(), "~/foo/b");
-    assert_eq!(ns.filtered, vec![0, 1]); // both still match "b"
+    assert_eq!(ns.picker.filtered, vec![0, 1]); // both still match "b"
     assert!(!fx.has_reread_new_session_entries()); // parent didn't change
 }
 
@@ -893,7 +892,7 @@ fn new_session_next_clamped_to_filtered_len() {
     apply_action(&mut state, Action::NewSession(NewSessionAction::Next));
     apply_action(&mut state, Action::NewSession(NewSessionAction::Next)); // tries to overrun
     let ns = state.overlay.new_session.as_ref().unwrap();
-    assert_eq!(ns.selected, 1);
+    assert_eq!(ns.picker.selected, 1);
 }
 
 #[test]

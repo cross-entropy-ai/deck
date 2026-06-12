@@ -8,5 +8,6 @@ pub mod keybindings;
 pub mod menu;
 pub mod new_session;
 pub mod overlay;
+pub mod picker;
 pub mod state;
 pub mod summary;

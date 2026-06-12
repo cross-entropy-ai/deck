@@ -112,6 +112,7 @@ impl App {
 
     fn open_new_session_picker_for(&mut self, target: NewSessionTarget) {
         use crate::new_session::{auto_session_name, make_textarea, NewSessionState, PickerFocus};
+        use crate::picker::FilterPicker;
 
         let mut input_str = target.start_dir;
         if !input_str.ends_with('/') {
@@ -126,14 +127,12 @@ impl App {
         // populates `entries`. Local listing is fast, but routing it through
         // the executor keeps the picker uniform with the remote one and off
         // the UI thread.
+        let mut picker = FilterPicker::new(vec![]);
+        picker.input = make_textarea(&input_str);
         let mut ns = NewSessionState {
             name: make_textarea(&name_str),
             focus: PickerFocus::Name,
-            input: make_textarea(&input_str),
-            entries: vec![],
-            filtered: vec![],
-            selected: 0,
-            error: None,
+            picker,
             remote_host: target.host,
         };
         ns.refilter();
@@ -170,7 +169,7 @@ impl App {
             let err = validate_unique_session_name(&name, existing);
             if let Some(err) = err {
                 if let Some(ns) = self.state.overlay.new_session.as_mut() {
-                    ns.error = Some(err.to_string());
+                    ns.picker.error = Some(err.to_string());
                 }
                 return None;
             }
@@ -192,7 +191,7 @@ impl App {
         let existing = existing_names.iter().map(String::as_str);
         if let Some(err) = validate_unique_session_name(&name, existing) {
             if let Some(ns) = self.state.overlay.new_session.as_mut() {
-                ns.error = Some(err.to_string());
+                ns.picker.error = Some(err.to_string());
             }
             return None;
         }
@@ -218,13 +217,13 @@ impl App {
             }
             Ok(_) => {
                 if let Some(ns) = self.state.overlay.new_session.as_mut() {
-                    ns.error = Some("not a directory".into());
+                    ns.picker.error = Some("not a directory".into());
                 }
                 None
             }
             Err(e) => {
                 if let Some(ns) = self.state.overlay.new_session.as_mut() {
-                    ns.error = Some(match e.kind() {
+                    ns.picker.error = Some(match e.kind() {
                         std::io::ErrorKind::NotFound => "not found".into(),
                         std::io::ErrorKind::PermissionDenied => "permission denied".into(),
                         _ => "cannot stat".into(),

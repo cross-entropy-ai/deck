@@ -8,7 +8,7 @@ use crate::add_remote::AddRemoteState;
 use crate::theme::Theme;
 use crate::ui::form::field_row;
 use crate::ui::widgets::{
-    centered_rect, list_item_line, popup_frame, scroll_window, PopupStyle, TextAreaColors,
+    centered_rect, draw_picker_list, popup_frame, PopupStyle, TextAreaColors,
 };
 
 const POPUP_WIDTH: u16 = 56;
@@ -17,8 +17,9 @@ const POPUP_MIN_HEIGHT: u16 = 7;
 
 pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, theme: &Theme) {
     // Always reserve at least one list row (for the "(no hosts)" line).
-    let visible = state.filtered.len().clamp(1, MAX_VISIBLE);
-    let extra_err = if state.error.is_some() { 1 } else { 0 };
+    let p = &state.picker;
+    let visible = p.filtered.len().clamp(1, MAX_VISIBLE);
+    let extra_err = if p.error.is_some() { 1 } else { 0 };
     // borders(2) + host(1) + blank(1) + list(visible) + blank(1) + [err] + footer(1)
     let height = (2 + 1 + 1 + visible as u16 + 1 + extra_err + 1)
         .max(POPUP_MIN_HEIGHT)
@@ -44,7 +45,7 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
         constraints.push(Constraint::Length(1));
     }
     constraints.push(Constraint::Length(1)); // blank
-    if state.error.is_some() {
+    if p.error.is_some() {
         constraints.push(Constraint::Length(1));
     }
     constraints.push(Constraint::Length(1)); // footer
@@ -57,7 +58,7 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
         rows[i],
         "  host: ",
         Style::default().fg(theme.accent),
-        &state.input,
+        &p.input,
         true,
         TextAreaColors {
             fg: theme.text,
@@ -69,8 +70,8 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
     i += 1;
     i += 1; // blank
 
-    if state.filtered.is_empty() {
-        let msg = if state.hosts.is_empty() {
+    if p.filtered.is_empty() {
+        let msg = if p.items.is_empty() {
             "    (no ~/.ssh/config hosts \u{2014} type a hostname)"
         } else {
             "    (no matches \u{2014} press \u{23ce} to add typed host)"
@@ -79,28 +80,20 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
             .render(rows[i], frame.buffer_mut());
         i += 1;
     } else {
-        let start = scroll_window(state.selected, state.filtered.len(), MAX_VISIBLE);
-        let end = (start + MAX_VISIBLE).min(state.filtered.len());
-        for (pos, idx) in state.filtered[start..end].iter().enumerate() {
-            let display = start + pos;
-            let sel = display == state.selected;
-            let marker = if sel { "\u{25b8}" } else { " " };
-            Paragraph::new(list_item_line(
-                theme,
-                sel,
-                format!("  {marker} "),
-                state.hosts[*idx].as_str(),
-            ))
-            .render(rows[i], frame.buffer_mut());
-            i += 1;
-        }
-        for _ in (end - start)..visible {
-            i += 1; // pad unused list rows
-        }
+        draw_picker_list(
+            frame.buffer_mut(),
+            &rows[i..],
+            theme,
+            &p.filtered,
+            p.selected,
+            MAX_VISIBLE,
+            |idx| p.items[idx].clone(),
+        );
+        i += visible; // reserve all list rows (rendered + padding)
     }
     i += 1; // blank
 
-    if let Some(err) = &state.error {
+    if let Some(err) = &p.error {
         Paragraph::new(Span::styled(
             format!("  \u{26a0} {err}"),
             Style::default().fg(theme.pink),

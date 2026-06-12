@@ -1,60 +1,43 @@
-//! State + pure helpers for the "Add Remote Host" picker. Mirrors the
-//! new-session picker's split: this module owns the overlay state and the
-//! filtering / choice logic; rendering lives in `ui/add_remote.rs`.
+//! State + pure helpers for the "Add Remote Host" picker. A thin wrapper
+//! over the shared `FilterPicker` (D4): the candidate hosts are the
+//! picker's items, the input doubles as a live filter and a free-text
+//! hostname, and `chosen_host` adds the picker's selection-or-typed-text
+//! logic on top. Rendering lives in `ui/add_remote.rs`.
 
-use ratatui_textarea::TextArea;
-
-use crate::new_session::{make_textarea, textarea_line};
+use crate::picker::FilterPicker;
 
 #[derive(Debug, Clone)]
 pub struct AddRemoteState {
-    /// Doubles as a live filter over `hosts` and a free-text hostname.
-    pub input: TextArea<'static>,
-    /// `~/.ssh/config` candidates minus hosts already in config.remotes.
-    /// Set when the picker opens; the reducer never refills it.
-    pub hosts: Vec<String>,
-    /// Indices into `hosts` matching the input (case-insensitive substring).
-    pub filtered: Vec<usize>,
-    /// Index into `filtered`; clamped to `0..filtered.len()`.
-    pub selected: usize,
-    /// Last error (empty / already-added). Cleared on the next input edit.
-    pub error: Option<String>,
+    /// Input + `~/.ssh/config` candidates (minus hosts already in
+    /// config.remotes) + filtered/selected/error. The candidate list is
+    /// set when the picker opens; the reducer never refills it.
+    pub picker: FilterPicker,
 }
 
 impl AddRemoteState {
     /// Open over the given candidate hosts; all visible initially.
     pub fn new(hosts: Vec<String>) -> Self {
-        let filtered = (0..hosts.len()).collect();
         Self {
-            input: make_textarea(""),
-            hosts,
-            filtered,
-            selected: 0,
-            error: None,
+            picker: FilterPicker::new(hosts),
         }
     }
 
     /// First line of the input textarea.
     pub fn input_str(&self) -> &str {
-        textarea_line(&self.input)
+        self.picker.input_str()
     }
 
-    /// Rebuild `filtered` from the current input; clamp `selected`.
+    /// Rebuild the filtered list from the current input; clamp selection.
     pub fn refilter(&mut self) {
-        self.filtered = filter_hosts(&self.hosts, self.input_str());
-        if self.filtered.is_empty() {
-            self.selected = 0;
-        } else if self.selected >= self.filtered.len() {
-            self.selected = self.filtered.len() - 1;
-        }
+        self.picker.refilter(filter_hosts);
     }
 
-    /// The host to add on confirm: the highlighted candidate when the filtered
-    /// list is non-empty, otherwise the trimmed free-text input. `None` when
-    /// there is nothing to add.
+    /// The host to add on confirm: the highlighted candidate when the
+    /// filtered list is non-empty, otherwise the trimmed free-text input.
+    /// `None` when there is nothing to add.
     pub fn chosen_host(&self) -> Option<String> {
-        if let Some(&idx) = self.filtered.get(self.selected) {
-            return self.hosts.get(idx).cloned();
+        if let Some(host) = self.picker.selected_item() {
+            return Some(host.to_string());
         }
         let typed = self.input_str().trim();
         if typed.is_empty() {

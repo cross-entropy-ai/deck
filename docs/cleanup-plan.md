@@ -304,11 +304,16 @@
   sites across 5 layers. Dissolves in Phase 3. *(done: one
   `SETTING_ROWS` descriptor table in `app/settings.rs` drives renderer +
   reducer; `SETTINGS_ITEM_COUNT` and the positional match are gone)*
-- [ ] **D4. Picker overlays ×3**: `NewSessionState` / `AddRemoteState` /
+- [~] **D4. Picker overlays ×3**: `NewSessionState` / `AddRemoteState` /
   `ExcludeEditorState` share input+items+filtered+selected+error and a
   duplicated refilter-clamp; their draw fns are line-for-line the same
   shape (`ui/new_session.rs` vs `ui/add_remote.rs`). One generic
-  filter-picker (model + widget). Phase 6.
+  filter-picker (model + widget). Phase 6. *(done for the two real
+  filter-pickers: shared `FilterPicker` (`model/picker.rs`) + shared
+  `draw_picker_list` (`ui/widgets.rs`); AddRemote embeds the picker whole,
+  NewSession embeds it for the dir-browse half. ExcludeEditor was found to
+  NOT be a filter-picker — no live filter, items live in `Prefs`, has an
+  `adding` mode — and stayed bespoke.)*
 - [ ] **D5. Bounded/wrapping cursor steps ×9+**: NewSessionPrev/Next,
   AddRemotePrev/Next, ExcludeEditorNext/Prev, PfFocusUp/Down,
   SettingsNext/Prev, ThemePickerNext/Prev, `cycle_frame_rate_limit`,
@@ -569,8 +574,16 @@ Plan, in order:
 
 ### Phase 6 — UI consolidation — [~] PARTIAL
 
-- [ ] One generic **filter-picker widget** (+ shared picker state) for
-  new-session / add-remote / exclude-editor (D4).
+- [x] One generic **filter-picker widget** (+ shared picker state) for
+  new-session / add-remote / exclude-editor (D4). *(shared
+  `model::picker::FilterPicker` — input + items + filtered + selected +
+  error, with `refilter(filter_fn)` / `step` / `selected_item`. AddRemote
+  embeds it whole; NewSession embeds it for its dir-browse half and keeps
+  the name field / focus / `~`-segment editing / `remote_host` bespoke.
+  Shared `ui::widgets::draw_picker_list` collapses the add-remote and
+  new-session windowed-list loops. The exclude editor is NOT a
+  filter-picker — no live filter (its items live in `Prefs`) and an
+  `adding` sub-mode — so it stayed bespoke, as the plan allowed.)*
 - [~] Move `scrollbar_cells`, the markdown-window painter, and a padded-
   selectable-row helper into `ui/widgets.rs` (D15); use
   `form::field_row` for the rename and summary-language editors.
