@@ -200,6 +200,22 @@ pub fn cycle_option<T: Copy + PartialEq>(options: &[T], current: T, delta: i32) 
     options[(i + delta).rem_euclid(n) as usize]
 }
 
+/// Step `current` by `direction` (+1/-1) within `0..len`, clamped at both
+/// ends (no wrap). `len == 0` yields 0. Shared by the bounded list cursors
+/// (settings rows, theme picker, exclude editor, port-forward focus,
+/// new-session / add-remote pickers) so the saturating arithmetic lives once.
+pub fn step_clamped(current: usize, len: usize, direction: i32) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let last = len - 1;
+    if direction >= 0 {
+        current.saturating_add(direction as usize).min(last)
+    } else {
+        current.saturating_sub(direction.unsigned_abs() as usize)
+    }
+}
+
 pub fn normalize_frame_rate_limit(fps: u16) -> u16 {
     if FRAME_RATE_LIMIT_OPTIONS.contains(&fps) {
         fps

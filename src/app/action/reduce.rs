@@ -1,7 +1,8 @@
 use crate::config::ForwardMode;
 use crate::new_session::textarea_line;
 use crate::state::{
-    cycle_option, session_menu_disabled, AppState, ContextMenu, FocusMode, KillRequest,
+    cycle_option, session_menu_disabled, step_clamped, AppState, ContextMenu, FocusMode,
+    KillRequest,
     LayoutMode, MainView, MenuItem, MenuKind, PfAddForm, PfField, PortForwardOverlay,
     RemoteSwitchRequest,
     RenameRequest, RenameState, SessionTargetRef, SideEffect, SidebarTab, ViewMode,
@@ -554,12 +555,11 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
         }
         SettingsAction::Next => {
             state.settings.selected =
-                (state.settings.selected + 1).min(SETTING_ROWS.len() - 1);
+                step_clamped(state.settings.selected, SETTING_ROWS.len(), 1);
         }
         SettingsAction::Prev => {
-            if state.settings.selected > 0 {
-                state.settings.selected -= 1;
-            }
+            state.settings.selected =
+                step_clamped(state.settings.selected, SETTING_ROWS.len(), -1);
         }
         SettingsAction::Adjust | SettingsAction::AdjustPrev => {
             let direction = if matches!(action, SettingsAction::AdjustPrev) {
@@ -599,14 +599,17 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
         }
         SettingsAction::ThemePickerNext => {
             state.settings.theme_picker_selected =
-                (state.settings.theme_picker_selected + 1).min(THEMES.len() - 1);
+                step_clamped(state.settings.theme_picker_selected, THEMES.len(), 1);
             state.theme_index = state.settings.theme_picker_selected;
             fx.save_config();
             fx.apply_tmux_theme();
         }
         SettingsAction::ThemePickerPrev => {
+            // Side effects only fire when the cursor actually moves (unlike
+            // Next, which always re-applies) — preserve that asymmetry.
             if state.settings.theme_picker_selected > 0 {
-                state.settings.theme_picker_selected -= 1;
+                state.settings.theme_picker_selected =
+                    step_clamped(state.settings.theme_picker_selected, THEMES.len(), -1);
                 state.theme_index = state.settings.theme_picker_selected;
                 fx.save_config();
                 fx.apply_tmux_theme();
@@ -652,14 +655,16 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
         SettingsAction::ExcludeNext => {
             if let Some(ref mut editor) = state.overlay.exclude_editor {
                 if !editor.adding && !state.exclude_patterns.is_empty() {
-                    editor.selected = (editor.selected + 1).min(state.exclude_patterns.len() - 1);
+                    editor.selected =
+                        step_clamped(editor.selected, state.exclude_patterns.len(), 1);
                 }
             }
         }
         SettingsAction::ExcludePrev => {
             if let Some(ref mut editor) = state.overlay.exclude_editor {
-                if !editor.adding && editor.selected > 0 {
-                    editor.selected -= 1;
+                if !editor.adding {
+                    editor.selected =
+                        step_clamped(editor.selected, state.exclude_patterns.len(), -1);
                 }
             }
         }
@@ -868,15 +873,13 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
         }
         NewSessionAction::Prev => {
             if let Some(ns) = state.overlay.new_session.as_mut() {
-                if ns.selected > 0 {
-                    ns.selected -= 1;
-                }
+                ns.selected = step_clamped(ns.selected, ns.filtered.len(), -1);
             }
         }
         NewSessionAction::Next => {
             if let Some(ns) = state.overlay.new_session.as_mut() {
-                if !ns.filtered.is_empty() && ns.selected + 1 < ns.filtered.len() {
-                    ns.selected += 1;
+                if !ns.filtered.is_empty() {
+                    ns.selected = step_clamped(ns.selected, ns.filtered.len(), 1);
                 }
             }
         }
@@ -1095,6 +1098,8 @@ fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
         }
 
         PfAction::FocusUp => {
+            // Back-step with no upper bound to consult; `saturating_sub` is the
+            // whole story, so this stays inline rather than faking a `len`.
             if let Some(o) = state.overlay.port_forward.as_mut() {
                 o.selected = o.selected.saturating_sub(1);
             }
@@ -1104,9 +1109,7 @@ fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
             if let Some(host) = host {
                 let len = forwards_len(state, &host);
                 if let Some(o) = state.overlay.port_forward.as_mut() {
-                    if o.selected + 1 < len {
-                        o.selected += 1;
-                    }
+                    o.selected = step_clamped(o.selected, len, 1);
                 }
             }
         }
@@ -1178,15 +1181,13 @@ fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffec
         }
         AddRemoteAction::Prev => {
             if let Some(ar) = state.overlay.add_remote.as_mut() {
-                if ar.selected > 0 {
-                    ar.selected -= 1;
-                }
+                ar.selected = step_clamped(ar.selected, ar.filtered.len(), -1);
             }
         }
         AddRemoteAction::Next => {
             if let Some(ar) = state.overlay.add_remote.as_mut() {
-                if !ar.filtered.is_empty() && ar.selected + 1 < ar.filtered.len() {
-                    ar.selected += 1;
+                if !ar.filtered.is_empty() {
+                    ar.selected = step_clamped(ar.selected, ar.filtered.len(), 1);
                 }
             }
         }
