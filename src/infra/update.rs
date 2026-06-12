@@ -42,7 +42,7 @@ pub enum UpdateResult {
 
 /// Background GitHub release checker. A thin wrapper over the generic
 /// [`Worker`] service: `Check` requests run an HTTP probe and reply with an
-/// [`UpdateResult`]; `Shutdown` (or dropping the checker) ends the loop.
+/// [`UpdateResult`]; dropping the checker ends the loop.
 ///
 /// Dropping it is **non-blocking** — `Worker`'s drop signals the thread and
 /// detaches rather than `join()`ing a possibly mid-HTTP worker on the UI

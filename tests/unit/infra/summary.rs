@@ -118,3 +118,30 @@ fn prune_logs_keeps_newest_n() {
     assert!(!names.contains(&"summary-1000.md".to_string()), "drops oldest");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[cfg(unix)]
+#[test]
+fn run_command_cancel_kills_the_child_and_returns_cancelled() {
+    use std::process::Command;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    // A stub that ignores stdin and sleeps far longer than the test would
+    // tolerate, standing in for a hung `claude`.
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c").arg("sleep 30");
+
+    // Pre-cancelled: the first poll iteration must kill the child and bail
+    // — not wait out the sleep or the 90s SUMMARY_TIMEOUT.
+    let cancel = Cancel::from_flag(Arc::new(AtomicBool::new(true)));
+
+    let start = Instant::now();
+    let result = run_command(cmd, "prompt", &cancel);
+    assert_eq!(result, Err(CANCELLED_MSG.to_string()), "cancel returns the sentinel");
+    assert!(
+        start.elapsed().as_secs() < 5,
+        "cancel must be prompt, took {:?}",
+        start.elapsed()
+    );
+}

@@ -30,7 +30,8 @@
 //!   Fits the summary generation and remote-focus one-shots.
 //! - [`Worker::spawn_service`] — a request/response loop: the closure
 //!   handles each `Req` and may emit `Res` values. Fits the update
-//!   checker (Check / Shutdown requests, `UpdateResult` replies).
+//!   checker (Check requests, `UpdateResult` replies; shutdown is just the
+//!   request channel dropping when the `Worker` is dropped).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -48,6 +49,13 @@ impl Cancel {
     /// [`Worker::cancel`] was called). Cheap to poll in a hot loop.
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Relaxed)
+    }
+
+    /// Build a `Cancel` backed by a caller-owned flag, so a test can flip
+    /// the flag a job polls without standing up a full `Worker`.
+    #[cfg(test)]
+    pub(crate) fn from_flag(flag: Arc<AtomicBool>) -> Self {
+        Cancel(flag)
     }
 }
 

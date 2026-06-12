@@ -364,6 +364,15 @@ fn attr_escape(s: &str) -> String {
 /// the process may already have exited, in which case `kill` is a no-op
 /// error we ignore; `wait` then reaps whatever's left.
 fn kill_and_reap(child: &mut Child) {
+    // The child leads its own process group (set at spawn), so signal the
+    // whole group — this also kills any subprocesses it spawned (MCP
+    // servers, tools) rather than orphaning them to init. `killpg` may
+    // no-op if the group is already gone; the direct `kill` + `wait` then
+    // reaps whatever's left.
+    #[cfg(unix)]
+    unsafe {
+        libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
+    }
     let _ = child.kill();
     let _ = child.wait();
 }
@@ -386,6 +395,22 @@ pub fn run_claude(prompt: &str, model: &str, cancel: &Cancel) -> Result<String, 
     cmd.arg("-p");
     if !model.trim().is_empty() {
         cmd.arg("--model").arg(model.trim());
+    }
+    run_command(cmd, prompt, cancel)
+}
+
+/// Drive an already-configured command to completion with `prompt` on
+/// stdin, bounded by [`SUMMARY_TIMEOUT`] and `cancel`. Split out of
+/// [`run_claude`] so the kill/cancel/timeout paths can be tested against a
+/// stub binary without invoking real `claude`.
+fn run_command(mut cmd: Command, prompt: &str, cancel: &Cancel) -> Result<String, String> {
+    // Run the child in its own process group so a timeout/cancel kill
+    // reaches the subprocesses it spawns (e.g. MCP servers, tools) instead
+    // of orphaning them — `kill_and_reap` signals the whole group.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
     }
     let mut child = cmd
         .stdin(Stdio::piped())
