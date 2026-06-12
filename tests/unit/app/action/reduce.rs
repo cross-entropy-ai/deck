@@ -1,5 +1,5 @@
 use super::{
-    apply_action, Action, MenuAction, NewSessionAction, PfAction, SettingsAction,
+    apply_action, Action, MenuAction, NewSessionAction, PfAction, SettingsAction, SummaryAction,
 };
 use crate::state::{
     AppState, FocusMode, LayoutMode, MainView, RemoteSessionRow, RenameState, SessionRow, ViewMode,
@@ -1433,6 +1433,67 @@ mod agents_tab {
         });
         apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
         assert_eq!(state.agent_focused, 1);
+    }
+
+    #[test]
+    fn esc_while_generating_on_agents_tab_cancels() {
+        use crate::action::key_to_action;
+        use crate::state::{SidebarTab, SummaryState};
+        use crossterm::event::{KeyCode, KeyEvent};
+
+        let mut state = make_test_state(3);
+        state.focus_mode = crate::state::FocusMode::Sidebar;
+        state.prefs.sidebar_tab = SidebarTab::Agents;
+        state.summary = SummaryState::Generating;
+
+        let esc = KeyEvent::from(KeyCode::Esc);
+        let action = key_to_action(&esc, &state);
+        assert!(
+            matches!(action, Action::Summary(SummaryAction::Cancel)),
+            "Esc while Generating on Agents tab should map to Summary(Cancel), got {action:?}"
+        );
+    }
+
+    #[test]
+    fn esc_when_not_generating_does_not_cancel() {
+        use crate::action::key_to_action;
+        use crate::state::{SidebarTab, SummaryState};
+        use crossterm::event::{KeyCode, KeyEvent};
+
+        let mut state = make_test_state(3);
+        state.focus_mode = crate::state::FocusMode::Sidebar;
+        state.prefs.sidebar_tab = SidebarTab::Agents;
+        state.summary = SummaryState::Idle;
+
+        let esc = KeyEvent::from(KeyCode::Esc);
+        let action = key_to_action(&esc, &state);
+        assert!(
+            !matches!(action, Action::Summary(SummaryAction::Cancel)),
+            "Esc with no generation in flight must not emit Cancel, got {action:?}"
+        );
+    }
+
+    #[test]
+    fn cancel_restores_prior_summary_state() {
+        use crate::state::SummaryState;
+
+        // Generating after a previous Ready summary: cancel restores Ready.
+        let mut state = make_test_state(0);
+        let prior = SummaryState::Ready {
+            text: "old summary".into(),
+            generated_at: 123,
+        };
+        state.summary = prior.clone();
+        state.summary_before_generating = Some(prior.clone());
+        state.summary = SummaryState::Generating;
+        state.cancel_summary();
+        assert_eq!(state.summary, prior);
+
+        // Cancel is a no-op when not generating.
+        let mut idle = make_test_state(0);
+        idle.summary = SummaryState::Idle;
+        idle.cancel_summary();
+        assert_eq!(idle.summary, SummaryState::Idle);
     }
 
     #[test]

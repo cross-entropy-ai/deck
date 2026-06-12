@@ -105,6 +105,10 @@ impl App {
                 self.start_summary_generation();
                 false
             }
+            Action::Summary(SummaryAction::Cancel) => {
+                self.cancel_summary_generation();
+                false
+            }
             Action::SwitchProject => {
                 let fx = action::apply_action(&mut self.state, action);
                 self.execute_side_effects(&fx);
@@ -489,9 +493,9 @@ impl App {
     /// Kick the Agents-tab summary generation. Flips to the animated
     /// `Generating` state and spawns a worker that captures every detected
     /// agent's pane buffer, builds the prompt from the configured template,
-    /// and runs `claude -p`. The result (text or error) comes back over
-    /// `summary_tx`; the run loop drains it into `Ready`/`Error`. No-op
-    /// while a generation is already in flight.
+    /// and runs `claude -p`. The result (text or error) comes back via the
+    /// one-shot `summary_worker`; the run loop drains it into
+    /// `Ready`/`Error`. No-op while a generation is already in flight.
     fn start_summary_generation(&mut self) {
         if self.state.summary == crate::state::SummaryState::Generating {
             return;
@@ -512,15 +516,30 @@ impl App {
         let model = self.state.prefs.summary_model.clone();
         let language = self.state.prefs.summary_language.clone();
 
+        // Remember what to fall back to if the user cancels mid-flight.
+        self.state.summary_before_generating = Some(self.state.summary.clone());
         self.state.summary = crate::state::SummaryState::Generating;
         self.state.summary_scroll = 0;
-        let tx = self.summary_tx.clone();
-        std::thread::Builder::new()
-            .name("deck-summary".to_string())
-            .spawn(move || {
-                let _ = tx.send(crate::summary::generate(&agents, &template, &model, &language));
-            })
-            .ok();
+        // One-shot worker: dropping it (on cancel/regenerate) flips the
+        // `Cancel` flag, which `run_claude` polls to kill the child (#12).
+        self.summary_worker = Some(crate::worker::Worker::spawn_oneshot(
+            "deck-summary",
+            move |cancel| crate::summary::generate(&agents, &template, &model, &language, &cancel),
+        ));
+    }
+
+    /// Cancel an in-flight summary generation (Esc on the Agents tab, or a
+    /// cancel click). Dropping the worker signals its `Cancel` flag so
+    /// `run_claude` kills the `claude` child, and we restore the card to
+    /// the state it would have shown had the user never pressed Generate.
+    /// No-op unless a generation is actually running.
+    fn cancel_summary_generation(&mut self) {
+        if self.state.summary != crate::state::SummaryState::Generating {
+            return;
+        }
+        // Drop signals + detaches (never joins) — see `Worker`'s Drop.
+        self.summary_worker = None;
+        self.state.cancel_summary();
     }
 
     fn switch_to_agent_pane(&mut self, target: crate::state::AgentTarget) {

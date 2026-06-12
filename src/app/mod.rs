@@ -103,11 +103,12 @@ pub struct App {
     /// `switch_to_agent_pane` / `apply_focus_outcome`.
     focus_tx: std::sync::mpsc::Sender<FocusOutcome>,
     focus_rx: std::sync::mpsc::Receiver<FocusOutcome>,
-    /// Carries the generated Agents-tab summary back from its worker
-    /// thread: `Ok(text)` on success, `Err(reason)` on failure (no agents,
-    /// `claude` missing, non-zero exit).
-    summary_tx: std::sync::mpsc::Sender<Result<String, String>>,
-    summary_rx: std::sync::mpsc::Receiver<Result<String, String>>,
+    /// The in-flight Agents-tab summary generation, if any. A one-shot
+    /// [`Worker`](crate::worker::Worker) carrying `Ok(text)` on success or
+    /// `Err(reason)` on failure (no agents, `claude` missing, non-zero
+    /// exit, timeout, cancel). Dropping it (e.g. on cancel) signals the
+    /// job's `Cancel` flag and detaches — `run_claude` kills the child.
+    summary_worker: Option<crate::worker::Worker<(), Result<String, String>>>,
     /// Monotonic id stamped on each focus-affecting action (agent click,
     /// session switch). A remote focus worker captures the id at spawn;
     /// its outcome is committed only if no newer action has bumped this
@@ -214,7 +215,6 @@ impl App {
         let (pf_result_tx, pf_result_rx) = std::sync::mpsc::channel();
         let port_forward_tx = crate::app::port_forward_task::spawn(pf_result_tx);
         let (focus_tx, focus_rx) = std::sync::mpsc::channel();
-        let (summary_tx, summary_rx) = std::sync::mpsc::channel();
 
         let mut app = App {
             state,
@@ -234,8 +234,7 @@ impl App {
             port_forward_rx: pf_result_rx,
             focus_tx,
             focus_rx,
-            summary_tx,
-            summary_rx,
+            summary_worker: None,
             focus_seq: 0,
             own_session: tmux::own_session(),
             suppress_next_periodic_refresh: false,
@@ -678,15 +677,24 @@ impl App {
             }
 
             // The summary job finished — show its text, or the failure.
-            while let Ok(result) = self.summary_rx.try_recv() {
-                self.state.summary = match result {
-                    Ok(text) => crate::state::SummaryState::Ready {
-                        text,
-                        generated_at: crate::update::now_secs(),
-                    },
-                    Err(reason) => crate::state::SummaryState::Error(reason),
-                };
-                self.state.summary_scroll = 0;
+            // A cancelled run still reports `Err("summary cancelled")`; the
+            // reducer already moved the card off `Generating` when the user
+            // cancelled, so we ignore that specific message here rather than
+            // overwriting the restored state with an error card.
+            if let Some(result) = self.summary_worker.as_ref().and_then(|w| w.try_recv()) {
+                self.summary_worker = None;
+                let cancelled =
+                    matches!(&result, Err(e) if e == crate::summary::CANCELLED_MSG);
+                if !cancelled {
+                    self.state.summary = match result {
+                        Ok(text) => crate::state::SummaryState::Ready {
+                            text,
+                            generated_at: crate::update::now_secs(),
+                        },
+                        Err(reason) => crate::state::SummaryState::Error(reason),
+                    };
+                    self.state.summary_scroll = 0;
+                }
                 needs_render = true;
                 force_render = true;
             }

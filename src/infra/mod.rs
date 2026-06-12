@@ -15,3 +15,4 @@ pub mod terminal_guard;
 pub mod tmux;
 pub mod tmux_parse;
 pub mod update;
+pub mod worker;

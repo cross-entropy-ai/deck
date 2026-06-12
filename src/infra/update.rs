@@ -1,11 +1,11 @@
 use std::fs;
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use semver::Version;
 use serde::{Deserialize, Serialize};
+
+use crate::worker::Worker;
 
 const GITHUB_RELEASES_URL: &str =
     "https://api.github.com/repos/cross-entropy-ai/deck/releases/latest";
@@ -30,7 +30,6 @@ pub struct UpdateStatus {
 
 pub enum UpdateRequest {
     Check,
-    Shutdown,
 }
 
 pub enum UpdateResult {
@@ -41,53 +40,36 @@ pub enum UpdateResult {
     Err(String),
 }
 
+/// Background GitHub release checker. A thin wrapper over the generic
+/// [`Worker`] service: `Check` requests run an HTTP probe and reply with an
+/// [`UpdateResult`]; `Shutdown` (or dropping the checker) ends the loop.
+///
+/// Dropping it is **non-blocking** — `Worker`'s drop signals the thread and
+/// detaches rather than `join()`ing a possibly mid-HTTP worker on the UI
+/// thread (bug #19: disabling update-check used to freeze the UI for the
+/// ~5s request timeout). An in-flight request just finishes and its reply
+/// goes unread.
 pub struct UpdateChecker {
-    tx: Sender<UpdateRequest>,
-    rx: Receiver<UpdateResult>,
-    handle: Option<JoinHandle<()>>,
+    worker: Worker<UpdateRequest, UpdateResult>,
 }
 
 impl UpdateChecker {
     pub fn spawn() -> Self {
-        let (req_tx, req_rx) = mpsc::channel::<UpdateRequest>();
-        let (res_tx, res_rx) = mpsc::channel::<UpdateResult>();
-        let handle = thread::spawn(move || worker_loop(req_rx, res_tx));
-        UpdateChecker {
-            tx: req_tx,
-            rx: res_rx,
-            handle: Some(handle),
-        }
+        let worker = Worker::spawn_service("deck-update-check", |req, tx| match req {
+            // Keep the loop alive as long as the UI keeps the channel open;
+            // dropping `UpdateChecker` (its `Worker`) ends the `recv` and
+            // the thread exits — no blocking join (bug #19).
+            UpdateRequest::Check => tx.send(do_check()).is_ok(),
+        });
+        UpdateChecker { worker }
     }
 
     pub fn request(&self, req: UpdateRequest) {
-        let _ = self.tx.send(req);
+        self.worker.request(req);
     }
 
     pub fn try_recv(&self) -> Option<UpdateResult> {
-        self.rx.try_recv().ok()
-    }
-}
-
-impl Drop for UpdateChecker {
-    fn drop(&mut self) {
-        let _ = self.tx.send(UpdateRequest::Shutdown);
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
-        }
-    }
-}
-
-fn worker_loop(rx: Receiver<UpdateRequest>, tx: Sender<UpdateResult>) {
-    loop {
-        match rx.recv() {
-            Ok(UpdateRequest::Check) => {
-                let result = do_check();
-                if tx.send(result).is_err() {
-                    return;
-                }
-            }
-            Ok(UpdateRequest::Shutdown) | Err(_) => return,
-        }
+        self.worker.try_recv()
     }
 }
 

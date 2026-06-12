@@ -10,8 +10,26 @@
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use crate::worker::Cancel;
+
+/// Hard ceiling on a single `claude` summary run. A hung or wedged
+/// `claude` must not pin `SummaryState::Generating` forever (bug #12):
+/// past this the child is killed and an error is surfaced so the card
+/// shows a failure and the Generate button re-enables. Generous because a
+/// multi-pane summary on a slow model legitimately takes a while.
+pub const SUMMARY_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// How often the `claude` wait loop wakes to check the deadline and the
+/// cancel flag. Small enough that an Esc/cancel kills the child promptly.
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Sentinel error returned when a run is cancelled (vs. genuinely failed).
+/// The run loop recognizes it and leaves the (already-restored) card state
+/// alone rather than overwriting it with an `Error` card.
+pub const CANCELLED_MSG: &str = "summary cancelled";
 
 /// Bumped whenever `DEFAULT_SUMMARY_PROMPT` changes. On startup a config
 /// carrying an older version is refreshed to the new default (see
@@ -101,6 +119,7 @@ pub fn generate(
     template: &str,
     model: &str,
     language: &str,
+    cancel: &Cancel,
 ) -> Result<String, String> {
     if agents.is_empty() {
         return Err("No agents detected to summarize.".to_string());
@@ -155,7 +174,7 @@ pub fn generate(
         ));
     }
     let started = SystemTime::now();
-    let result = run_claude(&prompt, model);
+    let result = run_claude(&prompt, model, cancel);
     // Best-effort: a logging failure must not fail the generation.
     write_log(agents, model, &prompt, &result, started);
     result
@@ -341,12 +360,28 @@ fn attr_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// Kill `child` and reap it so it can't linger as a zombie. Best-effort:
+/// the process may already have exited, in which case `kill` is a no-op
+/// error we ignore; `wait` then reaps whatever's left.
+fn kill_and_reap(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 /// Run `claude -p` with `prompt` on stdin and return its trimmed stdout.
 /// Headless print mode reads the prompt from stdin (it's "useful for
 /// pipes"); stdin avoids `ARG_MAX` limits a large multi-pane prompt could
 /// hit as an argv. `model` (e.g. "haiku") is passed via `--model`; empty
 /// falls back to the user's Claude Code default.
-pub fn run_claude(prompt: &str, model: &str) -> Result<String, String> {
+///
+/// Bounded and cancellable (bug #12): instead of an unbounded
+/// `wait_with_output`, the child is polled against [`SUMMARY_TIMEOUT`] and
+/// the `cancel` flag, and **killed + reaped** on either — so a hung
+/// `claude` can't pin `Generating` forever and an Esc/cancel kills it
+/// promptly. Every error path (stdin write / EPIPE, spawn, timeout,
+/// cancel) also kills + reaps, closing the zombie leak the old EPIPE path
+/// left behind.
+pub fn run_claude(prompt: &str, model: &str, cancel: &Cancel) -> Result<String, String> {
     let mut cmd = Command::new("claude");
     cmd.arg("-p");
     if !model.trim().is_empty() {
@@ -360,16 +395,51 @@ pub fn run_claude(prompt: &str, model: &str) -> Result<String, String> {
         .map_err(|e| format!("could not launch claude: {e}"))?;
 
     // Write the prompt, then drop stdin so claude sees EOF and starts.
+    // A write failure (e.g. claude exited early → EPIPE) must still
+    // kill + reap the child, or it leaks as a zombie.
     {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "claude stdin unavailable".to_string())?;
-        stdin
-            .write_all(prompt.as_bytes())
-            .map_err(|e| format!("writing prompt to claude: {e}"))?;
+        let mut stdin = match child.stdin.take() {
+            Some(s) => s,
+            None => {
+                kill_and_reap(&mut child);
+                return Err("claude stdin unavailable".to_string());
+            }
+        };
+        if let Err(e) = stdin.write_all(prompt.as_bytes()) {
+            drop(stdin);
+            kill_and_reap(&mut child);
+            return Err(format!("writing prompt to claude: {e}"));
+        }
     }
 
+    // Poll for completion against the deadline and the cancel flag rather
+    // than blocking forever in `wait_with_output`.
+    let deadline = Instant::now() + SUMMARY_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => break,
+            Ok(None) => {
+                if cancel.is_cancelled() {
+                    kill_and_reap(&mut child);
+                    return Err(CANCELLED_MSG.to_string());
+                }
+                if Instant::now() >= deadline {
+                    kill_and_reap(&mut child);
+                    return Err(format!(
+                        "claude timed out after {}s",
+                        SUMMARY_TIMEOUT.as_secs()
+                    ));
+                }
+                std::thread::sleep(POLL_INTERVAL);
+            }
+            Err(e) => {
+                kill_and_reap(&mut child);
+                return Err(format!("waiting on claude: {e}"));
+            }
+        }
+    }
+
+    // Child has exited; collect its output and status.
     let out = child
         .wait_with_output()
         .map_err(|e| format!("waiting on claude: {e}"))?;

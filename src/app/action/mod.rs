@@ -136,6 +136,10 @@ pub enum SettingsAction {
 pub enum SummaryAction {
     /// Kick the Agents-tab summary generation (Generate button click).
     Generate,
+    /// Cancel an in-flight generation (Esc on the Agents tab while
+    /// `Generating`, or a cancel click): kills the `claude` child and
+    /// restores the prior card state. No-op when not generating.
+    Cancel,
     /// Scroll the Agents-tab summary text by a row delta (wheel over card).
     Scroll(i32),
     /// Open the summary "big view" popup (popup button click).

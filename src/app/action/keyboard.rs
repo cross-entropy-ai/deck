@@ -135,6 +135,16 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
 }
 
 fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
+    // Esc cancels an in-flight summary generation (Agents tab only — that's
+    // the only place a generation can be running). Killing the `claude`
+    // child and restoring the prior card is handled in dispatch.
+    if key.code == KeyCode::Esc
+        && state.agents_tab_active()
+        && state.summary == crate::state::SummaryState::Generating
+    {
+        return Action::Summary(SummaryAction::Cancel);
+    }
+
     if let KeyCode::Char(c @ '1'..='9') = key.code {
         if !key.modifiers.contains(KeyModifiers::ALT) {
             let idx = (c as usize) - ('1' as usize);

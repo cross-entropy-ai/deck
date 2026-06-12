@@ -744,8 +744,9 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
 fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
     let mut fx = SideEffect::default();
     match action {
-        // Kicked off in dispatch (needs App-level access).
+        // Kicked off / torn down in dispatch (needs App-level worker access).
         SummaryAction::Generate => {}
+        SummaryAction::Cancel => {}
         SummaryAction::Scroll(delta) => {
             state.last_scroll = std::time::Instant::now();
             state.scroll_summary(delta);

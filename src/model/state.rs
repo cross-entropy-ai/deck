@@ -1429,6 +1429,10 @@ pub struct AppState {
     pub agent_focused: usize,
     /// State of the Agents-tab "Summary" card (idle / generating / ready).
     pub summary: SummaryState,
+    /// The summary state captured just before flipping to `Generating`, so
+    /// cancelling (Esc on the Agents tab) restores the prior Idle / Ready /
+    /// Error card rather than leaving a half-finished `Generating`.
+    pub summary_before_generating: Option<SummaryState>,
     /// True while dragging the card's bottom edge to resize it.
     pub dragging_summary: bool,
     /// Scroll offset (in wrapped text rows) of the Ready summary's content,
@@ -1558,6 +1562,7 @@ impl AppState {
             settings: SettingsState::default(),
             agent_focused: 0,
             summary: SummaryState::Idle,
+            summary_before_generating: None,
             dragging_summary: false,
             summary_scroll: 0,
             summary_popup_scroll: 0,
@@ -2130,6 +2135,19 @@ impl AppState {
     pub fn scroll_summary(&mut self, delta: i32) {
         let max = self.hit_regions.summary.max_scroll as i32;
         self.summary_scroll = (self.summary_scroll as i32 + delta).clamp(0, max) as usize;
+    }
+
+    /// Move the summary card off `Generating` back to the state it held
+    /// before generation started (Idle / a prior Ready / Error), used when
+    /// the user cancels mid-flight. The App side drops the worker (killing
+    /// the `claude` child); this is the pure state half. No-op unless
+    /// currently generating.
+    pub fn cancel_summary(&mut self) {
+        if self.summary != SummaryState::Generating {
+            return;
+        }
+        self.summary = self.summary_before_generating.take().unwrap_or_default();
+        self.summary_scroll = 0;
     }
 
     /// Apply a scroll delta to the summary popup, clamped to its max.
