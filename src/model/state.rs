@@ -26,6 +26,12 @@ pub use crate::geometry::{
 };
 pub use crate::menu::{session_menu_disabled, ContextMenu, MenuItem, MenuKind};
 pub use crate::overlay::{ExcludeEditorState, Modal, OverlayState, RenameState, WarningState};
+// The Summary card lives in `model::summary`; re-export its types + the
+// height constants here so the pervasive `crate::state::SummaryState` /
+// `crate::state::DEFAULT_SUMMARY_HEIGHT` references keep resolving.
+pub use crate::summary_card::{
+    SummaryCard, SummaryState, DEFAULT_SUMMARY_HEIGHT, SUMMARY_MAX_HEIGHT, SUMMARY_MIN_HEIGHT,
+};
 
 // --- Constants ---
 
@@ -83,33 +89,6 @@ pub enum SidebarTab {
     Projects,
     Agents,
 }
-
-/// State of the "Summary" card at the top of the Agents tab. `Idle` shows
-/// a "Generate Summary" button; clicking it kicks an async job and flips
-/// to `Generating` (an animated placeholder); when the job finishes the
-/// generated text lands and it becomes `Ready`.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum SummaryState {
-    #[default]
-    Idle,
-    Generating,
-    Ready {
-        text: String,
-        /// Unix seconds when the text landed, for the card's "Xm ago" age and
-        /// to drive its "Re-generate" affordance.
-        generated_at: u64,
-    },
-    /// Generation failed (no agents, `claude` missing, non-zero exit); the
-    /// card shows the reason and the Generate button stays available to retry.
-    Error(String),
-}
-
-/// Default body height (text rows) of the Agents-tab Summary card. The
-/// live value is `AppState::summary_height`, drag-adjustable and persisted.
-pub const DEFAULT_SUMMARY_HEIGHT: u16 = 6;
-/// Drag-resize bounds for the summary card's body height.
-pub const SUMMARY_MIN_HEIGHT: u16 = 2;
-pub const SUMMARY_MAX_HEIGHT: u16 = 40;
 
 pub const FRAME_RATE_LIMIT_OPTIONS: [u16; 4] = [2, 5, 10, 30];
 
@@ -252,8 +231,8 @@ pub fn attachable_on_host<'a>(
 /// Identifies a focused sidebar row by its flat index.
 ///
 /// The flat index walks the visible row list in render order: local
-/// rows first (`0..state.filtered.len()`), then remote rows
-/// (`filtered.len()..filtered.len() + remote_sessions.len()`).
+/// rows first (`0..state.sessions.len()`), then remote rows
+/// (`sessions.len()..sessions.len() + remote_sessions.len()`).
 /// `AppState::session_target` decodes this back into the underlying
 /// storage for action dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -437,14 +416,12 @@ impl Prefs {
 pub struct AppState {
     // Session data
     pub sessions: Vec<SessionRow>,
-    pub filtered: Vec<usize>,
     pub focused: usize,
     pub current_session: String,
     pub session_order: Vec<String>,
     /// Tmux sessions discovered on configured remote hosts. Rendered
     /// in the sidebar below local sessions. Focus into them goes via
-    /// `FocusTarget` flat index after `filtered.len()`, not the local
-    /// `filtered` index.
+    /// `FocusTarget` flat index after the local sessions (`sessions.len()`).
     pub remote_sessions: Vec<RemoteSessionRow>,
 
     // UI state
@@ -462,20 +439,10 @@ pub struct AppState {
     /// Projects cursor) so switching tabs preserves each one's position.
     /// Indexes into `agent_rows()`.
     pub agent_focused: usize,
-    /// State of the Agents-tab "Summary" card (idle / generating / ready).
-    pub summary: SummaryState,
-    /// The summary state captured just before flipping to `Generating`, so
-    /// cancelling (Esc on the Agents tab) restores the prior Idle / Ready /
-    /// Error card rather than leaving a half-finished `Generating`.
-    pub summary_before_generating: Option<SummaryState>,
-    /// True while dragging the card's bottom edge to resize it.
-    pub dragging_summary: bool,
-    /// Scroll offset (in wrapped text rows) of the Ready summary's content,
-    /// when it overflows the card's fixed text area.
-    pub summary_scroll: usize,
-    /// Scroll offset of the summary popup's text, and its captured max.
-    pub summary_popup_scroll: usize,
-    pub summary_popup_max_scroll: usize,
+    /// The Agents-tab "Summary" card's runtime state (generation state,
+    /// scroll, drag, pre-generation snapshot). See [`SummaryCard`]. Persisted
+    /// summary settings (prompt/model/height/language) live in `prefs`.
+    pub summary: SummaryCard,
     pub dragging_separator: bool,
 
     /// Transient sidebar overlays — help, kill-confirm, rename, context
@@ -568,7 +535,6 @@ impl AppState {
     pub fn new(term_width: u16, term_height: u16) -> Self {
         Self {
             sessions: Vec::new(),
-            filtered: Vec::new(),
             focused: 0,
             current_session: String::new(),
             session_order: Vec::new(),
@@ -596,12 +562,7 @@ impl AppState {
             },
             settings: SettingsState::default(),
             agent_focused: 0,
-            summary: SummaryState::Idle,
-            summary_before_generating: None,
-            dragging_summary: false,
-            summary_scroll: 0,
-            summary_popup_scroll: 0,
-            summary_popup_max_scroll: 0,
+            summary: SummaryCard::default(),
             dragging_separator: false,
             overlay: OverlayState::default(),
             term_width,
@@ -873,9 +834,9 @@ impl AppState {
         // local rows first, then remotes as `host:session` — so a hit
         // maps straight to a `FocusTarget` flat index.
         let mut labels: Vec<String> =
-            Vec::with_capacity(self.filtered.len() + self.remote_sessions.len());
-        for &i in &self.filtered {
-            labels.push(tab_label(None, &self.sessions[i].name));
+            Vec::with_capacity(self.sessions.len() + self.remote_sessions.len());
+        for s in &self.sessions {
+            labels.push(tab_label(None, &s.name));
         }
         for r in &self.remote_sessions {
             labels.push(tab_label(Some(&r.host), &r.name));
@@ -898,7 +859,7 @@ impl AppState {
         if self.agents_tab_active() {
             self.agent_rows().len()
         } else {
-            self.filtered.len() + self.remote_sessions.len()
+            self.sessions.len() + self.remote_sessions.len()
         }
     }
 
@@ -911,15 +872,12 @@ impl AppState {
     /// local rows first, then remotes.
     pub fn focusable_index_for(&self, host: Option<&str>, session: &str) -> Option<usize> {
         match host {
-            None => self
-                .filtered
-                .iter()
-                .position(|&i| self.sessions[i].name == session),
+            None => self.sessions.iter().position(|s| s.name == session),
             Some(h) => self
                 .remote_sessions
                 .iter()
                 .position(|r| r.host == h && r.name == session)
-                .map(|p| self.filtered.len() + p),
+                .map(|p| self.sessions.len() + p),
         }
     }
 
@@ -997,18 +955,18 @@ impl AppState {
 
         // Local group: an `@local` divider over the local rows, matching
         // the remote `@host` dividers. Flat index for a local row equals
-        // its filtered_pos regardless of the header (headers aren't rows).
-        // Keep the divider even when local has no sessions so the user can
-        // still open the local section menu and see the empty-state row.
+        // its position in `sessions` (headers aren't rows). Keep the
+        // divider even when local has no sessions so the user can still
+        // open the local section menu and see the empty-state row.
         if show_headers {
             group_headers.push((header_count, None));
             header_count += 1;
             layout.push_header(SidebarItemData::LocalHeader, 1);
         }
-        for pos in 0..self.filtered.len() {
+        for pos in 0..self.sessions.len() {
             layout.push_row(SidebarItemData::Session { session_idx: pos }, card_h);
         }
-        if show_headers && self.filtered.is_empty() && !is_collapsed(&None) {
+        if show_headers && self.sessions.is_empty() && !is_collapsed(&None) {
             layout.push_header(SidebarItemData::LocalEmpty, card_h);
             header_count += 1;
         }
@@ -1017,9 +975,9 @@ impl AppState {
         // (which matches focus order — `remote_sessions` is already
         // grouped by host because the refresh worker emits hosts in
         // config order, one block at a time). Flat index for a remote
-        // row is filtered.len() + remote_idx. Each group gets an
+        // row is sessions.len() + remote_idx. Each group gets an
         // `@host` divider above and an agent-count footer below.
-        let local_count = self.filtered.len();
+        let local_count = self.sessions.len();
         let mut host_idx: usize = 0;
         let mut prev_host: Option<&str> = None;
         for (remote_idx, r) in self.remote_sessions.iter().enumerate() {
@@ -1169,7 +1127,7 @@ impl AppState {
     /// the captured max offset.
     pub fn scroll_summary(&mut self, delta: i32) {
         let max = self.hit_regions.summary.max_scroll as i32;
-        self.summary_scroll = (self.summary_scroll as i32 + delta).clamp(0, max) as usize;
+        self.summary.scroll = (self.summary.scroll as i32 + delta).clamp(0, max) as usize;
     }
 
     /// Move the summary card off `Generating` back to the state it held
@@ -1178,18 +1136,18 @@ impl AppState {
     /// the `claude` child); this is the pure state half. No-op unless
     /// currently generating.
     pub fn cancel_summary(&mut self) {
-        if self.summary != SummaryState::Generating {
+        if self.summary.state != SummaryState::Generating {
             return;
         }
-        self.summary = self.summary_before_generating.take().unwrap_or_default();
-        self.summary_scroll = 0;
+        self.summary.state = self.summary.before_generating.take().unwrap_or_default();
+        self.summary.scroll = 0;
     }
 
     /// Apply a scroll delta to the summary popup, clamped to its max.
     pub fn scroll_summary_popup(&mut self, delta: i32) {
-        let max = self.summary_popup_max_scroll as i32;
-        self.summary_popup_scroll =
-            (self.summary_popup_scroll as i32 + delta).clamp(0, max) as usize;
+        let max = self.summary.popup_max_scroll as i32;
+        self.summary.popup_scroll =
+            (self.summary.popup_scroll as i32 + delta).clamp(0, max) as usize;
     }
 
     /// Build the Agents-tab layout: an `@local` / `@host` divider per
@@ -1345,10 +1303,9 @@ impl AppState {
     /// the flat index themselves.
     pub fn session_target(&self, target: FocusTarget) -> Option<SessionTargetRef<'_>> {
         let idx = target.0;
-        let local_count = self.filtered.len();
+        let local_count = self.sessions.len();
         if idx < local_count {
-            let row_idx = *self.filtered.get(idx)?;
-            self.sessions.get(row_idx).map(SessionTargetRef::Local)
+            self.sessions.get(idx).map(SessionTargetRef::Local)
         } else {
             self.remote_sessions
                 .get(idx - local_count)
@@ -1371,11 +1328,11 @@ impl AppState {
     }
 
     /// Section key of the group the flat focus index `idx` lives in:
-    /// `None` for a local row (`idx < filtered.len()`), `Some(host)` for a
+    /// `None` for a local row (`idx < sessions.len()`), `Some(host)` for a
     /// remote one. Used by the section-toggle keybinding and focus-skip
     /// logic. For an out-of-range index this falls back to `None`.
     pub fn section_key_of_focus(&self, idx: usize) -> Option<String> {
-        let local_count = self.filtered.len();
+        let local_count = self.sessions.len();
         if idx < local_count {
             None
         } else {
@@ -1429,7 +1386,7 @@ impl AppState {
     /// valid target. The renderer gates the overlay on this being `Some`.
     ///
     /// Resolves through `session_target` so a focused *remote* row reports
-    /// its name too — a raw `filtered[focused]` lookup only covers local
+    /// its name too — a raw `sessions[focused]` lookup only covers local
     /// rows, leaving remote kills with no name so the overlay never drew
     /// (issue #41).
     /// The highest-priority full-input modal currently open, or `None` when
@@ -1546,18 +1503,16 @@ impl AppState {
         None
     }
 
-    // --- Filtering and ordering ---
+    // --- Focus clamping and ordering ---
 
-    pub fn recompute_filter(&mut self) {
-        self.filtered = (0..self.sessions.len()).collect();
-        // Clamp focused to the unified focusable range (local + remote).
-        // Without remotes this collapses to the original local-only
-        // behavior; with remotes it keeps focus inside the remote
-        // section after the local list shrinks.
-        // Clamp against the Projects row space specifically (not the
-        // tab-aware `focusable_count`, which would use the agent count
-        // when the Agents tab is active and corrupt the Projects cursor).
-        let total = self.filtered.len() + self.remote_sessions.len();
+    /// Keep the Projects-tab cursor (`focused`) inside the current row range
+    /// (local sessions followed by remote rows) after that list changes —
+    /// e.g. focus was parked on a placeholder/session row that just
+    /// disappeared. Clamps against the Projects row space specifically (not
+    /// the tab-aware `focusable_count`, which would use the agent count when
+    /// the Agents tab is active and corrupt the Projects cursor).
+    pub fn clamp_projects_focus(&mut self) {
+        let total = self.sessions.len() + self.remote_sessions.len();
         if total > 0 && self.focused >= total {
             self.focused = total - 1;
         }

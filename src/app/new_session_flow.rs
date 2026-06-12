@@ -79,9 +79,8 @@ impl App {
                 // Starting dir: focused session's dir if any, else $HOME.
                 let start_dir = self
                     .state
-                    .filtered
+                    .sessions
                     .get(self.state.focused)
-                    .and_then(|&i| self.state.sessions.get(i))
                     .map(|s| s.dir.clone())
                     .unwrap_or_else(|| {
                         crate::config::home_dir().to_string_lossy().into_owned()

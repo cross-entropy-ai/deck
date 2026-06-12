@@ -102,19 +102,42 @@ impl SessionExecutor {
         op: SessionOp,
     ) {
         let key = host.clone();
-        let outcome_tx = self.outcome_tx.clone();
-        let tx = self.senders.entry(key.clone()).or_insert_with(|| {
-            let (tx, rx) = mpsc::channel::<Job>();
-            let name = match &key {
-                None => "deck-session-local".to_string(),
-                Some(h) => format!("deck-session-{h}"),
-            };
-            let _ = thread::Builder::new()
-                .name(name)
-                .spawn(move || worker_loop(rx, outcome_tx));
-            tx
-        });
+        // Spawn the worker lazily, but only cache its sender once the thread
+        // actually started: a failed `thread::spawn` must not park a dead
+        // sender in the map (that would silently swallow every later op for
+        // this key — bug #22). On spawn failure the op is dropped, exactly
+        // as a dead worker's channel-send error would be; the next refresh
+        // tick reconciles.
+        let tx = match self.senders.get(&key) {
+            Some(tx) => tx,
+            None => {
+                let outcome_tx = self.outcome_tx.clone();
+                let (tx, rx) = mpsc::channel::<Job>();
+                let name = match &key {
+                    None => "deck-session-local".to_string(),
+                    Some(h) => format!("deck-session-{h}"),
+                };
+                if thread::Builder::new()
+                    .name(name)
+                    .spawn(move || worker_loop(rx, outcome_tx))
+                    .is_err()
+                {
+                    return;
+                }
+                self.senders.entry(key).or_insert(tx)
+            }
+        };
         let _ = tx.send(Job { backend, op, host });
+    }
+
+    /// Drop `host`'s FIFO worker lane: its sender is removed, which ends the
+    /// worker's `recv` loop and lets the parked thread exit. Called from the
+    /// host-offboard path so removing a host reaps its executor lane instead
+    /// of leaking a parked worker + sender forever (bug #22). Live hosts keep
+    /// their lane (and thus their per-backend FIFO ordering) untouched; a
+    /// later op for a reaped key simply re-spawns a fresh worker.
+    pub fn remove(&mut self, key: &Option<String>) {
+        self.senders.remove(key);
     }
 
     /// Non-blocking drain of one completed outcome, if any.
@@ -187,5 +210,66 @@ fn run(backend: Box<dyn SessionControl + Send>, op: SessionOp) -> OpOutcome {
                 error,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A no-op backend so a submit can populate the sender map without
+    /// touching tmux/ssh. Every method is a no-op (or a trivial result).
+    struct NoopBackend;
+    impl SessionControl for NoopBackend {
+        fn switch_to_session(&self, _name: &str) {}
+        fn rename(&self, _old: &str, _new: &str) {}
+        fn kill(&self, _name: &str) {}
+        fn new_session(&self, _name: &str, _dir: &str) -> bool {
+            true
+        }
+        fn persist_order(&self, _order: &[String]) {}
+        fn list_dir(&self, _path: &str) -> (Vec<String>, Option<String>) {
+            (Vec::new(), None)
+        }
+    }
+
+    #[test]
+    fn offboard_prunes_executor_sender() {
+        let mut exec = SessionExecutor::new();
+        let host = Some("web".to_string());
+        // First submit for a key spawns its worker and caches the sender.
+        exec.submit(
+            host.clone(),
+            Box::new(NoopBackend),
+            SessionOp::Switch {
+                name: "main".to_string(),
+            },
+        );
+        assert!(
+            exec.senders.contains_key(&host),
+            "submit should cache the host's FIFO sender"
+        );
+
+        // Offboard reaps the lane: the map shrinks and the parked worker's
+        // recv ends (sender dropped).
+        exec.remove(&host);
+        assert!(
+            !exec.senders.contains_key(&host),
+            "remove should prune the offboarded host's sender"
+        );
+
+        // A live host (the local None lane) is untouched by removing another.
+        exec.submit(
+            None,
+            Box::new(NoopBackend),
+            SessionOp::Switch {
+                name: "local".to_string(),
+            },
+        );
+        exec.remove(&host);
+        assert!(
+            exec.senders.contains_key(&None),
+            "removing one host must not disturb another lane"
+        );
     }
 }

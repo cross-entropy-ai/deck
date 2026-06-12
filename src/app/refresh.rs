@@ -133,7 +133,7 @@ impl App {
         // Focus may have been parked on a placeholder row that just
         // disappeared (e.g. host went from 1 loading placeholder to
         // 3 real sessions, or down to 0). Clamp inside the new range.
-        self.state.recompute_filter();
+        self.state.clamp_projects_focus();
 
         // Auto-recover the persistent PTY. A host whose attach PTY dropped
         // (status Failed, pane removed) but which is now reachable again in
@@ -213,7 +213,7 @@ impl App {
 
         self.state.sync_order();
         self.state.apply_order();
-        self.state.recompute_filter();
+        self.state.clamp_projects_focus();
 
         if self.state.current_session != current {
             // Only snap focus to the new local current-session when the
@@ -231,9 +231,9 @@ impl App {
             if user_on_local {
                 if let Some(pos) = self
                     .state
-                    .filtered
+                    .sessions
                     .iter()
-                    .position(|&i| self.state.sessions[i].is_current)
+                    .position(|s| s.is_current)
                 {
                     self.state.focused = pos;
                 }

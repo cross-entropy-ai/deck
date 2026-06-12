@@ -8,3 +8,4 @@ pub mod menu;
 pub mod new_session;
 pub mod overlay;
 pub mod state;
+pub mod summary;

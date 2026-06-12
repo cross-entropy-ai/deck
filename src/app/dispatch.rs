@@ -414,7 +414,7 @@ impl App {
     /// one-shot `summary_worker`; the run loop drains it into
     /// `Ready`/`Error`. No-op while a generation is already in flight.
     fn start_summary_generation(&mut self) {
-        if self.state.summary == crate::state::SummaryState::Generating {
+        if self.state.summary.state == crate::state::SummaryState::Generating {
             return;
         }
         // Snapshot the agent panes (host + location + `%N`) now, so the
@@ -434,9 +434,9 @@ impl App {
         let language = self.state.prefs.summary_language.clone();
 
         // Remember what to fall back to if the user cancels mid-flight.
-        self.state.summary_before_generating = Some(self.state.summary.clone());
-        self.state.summary = crate::state::SummaryState::Generating;
-        self.state.summary_scroll = 0;
+        self.state.summary.before_generating = Some(self.state.summary.state.clone());
+        self.state.summary.state = crate::state::SummaryState::Generating;
+        self.state.summary.scroll = 0;
         // One-shot worker: dropping it (on cancel/regenerate) flips the
         // `Cancel` flag, which `run_claude` polls to kill the child (#12).
         self.summary_worker = Some(crate::worker::Worker::spawn_oneshot(
@@ -451,7 +451,7 @@ impl App {
     /// the state it would have shown had the user never pressed Generate.
     /// No-op unless a generation is actually running.
     fn cancel_summary_generation(&mut self) {
-        if self.state.summary != crate::state::SummaryState::Generating {
+        if self.state.summary.state != crate::state::SummaryState::Generating {
             return;
         }
         // Drop signals + detaches (never joins) — see `Worker`'s Drop.

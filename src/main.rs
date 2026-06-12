@@ -11,6 +11,7 @@ pub(crate) use infra::{
 };
 pub(crate) use model::{
     add_remote, config, effects, forwards, geometry, keybindings, menu, new_session, overlay, state,
+    summary as summary_card,
 };
 pub(crate) use ui::{bridge, theme};
 

@@ -24,7 +24,7 @@ fn make_test_state(n: usize) -> AppState {
         state.sessions[0].is_current = true;
     }
     state.session_order = state.sessions.iter().map(|s| s.name.clone()).collect();
-    state.recompute_filter();
+    state.clamp_projects_focus();
     state
 }
 
@@ -74,7 +74,7 @@ fn switch_project_on_remote_no_sessions_shows_placeholder() {
         unreachable: false,
         loading: false,
     });
-    state.focused = state.filtered.len();
+    state.focused = state.sessions.len();
 
     let fx = apply_action(&mut state, Action::SwitchProject);
 
@@ -93,7 +93,7 @@ fn sidebar_click_remote_no_sessions_does_not_refresh() {
         unreachable: false,
         loading: false,
     });
-    let target = state.filtered.len();
+    let target = state.sessions.len();
 
     let mut fx = crate::state::SideEffect::default();
     fx.merge(apply_action(&mut state, Action::FocusIndex(target)));
@@ -168,7 +168,7 @@ fn kill_keyboard_blocked_on_remote_placeholder() {
     state
         .remote_sessions
         .push(remote_row("remote-a", REMOTE_NO_SESSIONS_LABEL));
-    state.focused = state.filtered.len();
+    state.focused = state.sessions.len();
     let fx = apply_action(&mut state, Action::KillSession);
     assert!(!state.overlay.confirm_kill);
     assert!(fx.first_kill_session().is_none());
@@ -179,7 +179,7 @@ fn kill_keyboard_blocked_on_last_remote_session() {
     // The host's only live session: killing it would tear down its server.
     let mut state = make_test_state(1);
     state.remote_sessions.push(remote_row("remote-a", "solo"));
-    state.focused = state.filtered.len();
+    state.focused = state.sessions.len();
     apply_action(&mut state, Action::KillSession);
     assert!(!state.overlay.confirm_kill);
 }
@@ -191,7 +191,7 @@ fn kill_keyboard_allowed_on_remote_session_with_sibling() {
     let mut state = make_test_state(1);
     state.remote_sessions.push(remote_row("remote-a", "first"));
     state.remote_sessions.push(remote_row("remote-a", "second"));
-    state.focused = state.filtered.len();
+    state.focused = state.sessions.len();
     apply_action(&mut state, Action::KillSession);
     assert!(state.overlay.confirm_kill);
 }
@@ -203,7 +203,7 @@ fn confirm_kill_blocked_on_remote_placeholder() {
     state
         .remote_sessions
         .push(remote_row("remote-a", REMOTE_NO_SESSIONS_LABEL));
-    state.focused = state.filtered.len();
+    state.focused = state.sessions.len();
     state.overlay.confirm_kill = true;
     let fx = apply_action(&mut state, Action::ConfirmKill);
     assert!(fx.first_kill_session().is_none());
@@ -1444,7 +1444,7 @@ mod agents_tab {
         let mut state = make_test_state(3);
         state.focus_mode = crate::state::FocusMode::Sidebar;
         state.prefs.sidebar_tab = SidebarTab::Agents;
-        state.summary = SummaryState::Generating;
+        state.summary.state = SummaryState::Generating;
 
         let esc = KeyEvent::from(KeyCode::Esc);
         let action = key_to_action(&esc, &state);
@@ -1463,7 +1463,7 @@ mod agents_tab {
         let mut state = make_test_state(3);
         state.focus_mode = crate::state::FocusMode::Sidebar;
         state.prefs.sidebar_tab = SidebarTab::Agents;
-        state.summary = SummaryState::Idle;
+        state.summary.state = SummaryState::Idle;
 
         let esc = KeyEvent::from(KeyCode::Esc);
         let action = key_to_action(&esc, &state);
@@ -1483,17 +1483,17 @@ mod agents_tab {
             text: "old summary".into(),
             generated_at: 123,
         };
-        state.summary = prior.clone();
-        state.summary_before_generating = Some(prior.clone());
-        state.summary = SummaryState::Generating;
+        state.summary.state = prior.clone();
+        state.summary.before_generating = Some(prior.clone());
+        state.summary.state = SummaryState::Generating;
         state.cancel_summary();
-        assert_eq!(state.summary, prior);
+        assert_eq!(state.summary.state, prior);
 
         // Cancel is a no-op when not generating.
         let mut idle = make_test_state(0);
-        idle.summary = SummaryState::Idle;
+        idle.summary.state = SummaryState::Idle;
         idle.cancel_summary();
-        assert_eq!(idle.summary, SummaryState::Idle);
+        assert_eq!(idle.summary.state, SummaryState::Idle);
     }
 
     #[test]

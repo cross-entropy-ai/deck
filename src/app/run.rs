@@ -313,14 +313,14 @@ impl App {
             self.summary_worker = None;
             let cancelled = matches!(&result, Err(e) if e == crate::summary::CANCELLED_MSG);
             if !cancelled {
-                self.state.summary = match result {
+                self.state.summary.state = match result {
                     Ok(text) => SummaryState::Ready {
                         text,
                         generated_at: crate::update::now_secs(),
                     },
                     Err(reason) => SummaryState::Error(reason),
                 };
-                self.state.summary_scroll = 0;
+                self.state.summary.scroll = 0;
             }
             Redraw::Force
         } else {
@@ -390,7 +390,7 @@ impl App {
             // Animate the Agents-tab Summary spinner while generating, even
             // with no input events. Force past the frame-rate floor so the
             // braille frames step smoothly (~12.5 fps).
-            if self.state.summary == SummaryState::Generating && spinner.due(Instant::now()) {
+            if self.state.summary.state == SummaryState::Generating && spinner.due(Instant::now()) {
                 redraw = Redraw::Force;
             }
 

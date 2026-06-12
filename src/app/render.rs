@@ -47,11 +47,11 @@ impl App {
         // pure allocation churn.
         let context_menu = s.overlay.context_menu.as_ref();
         // The summary popup shows the Ready text in a big centered view.
-        let summary_popup = match (&s.summary, s.overlay.summary_popup) {
+        let summary_popup = match (&s.summary.state, s.overlay.summary_popup) {
             (crate::state::SummaryState::Ready { text, .. }, true) => Some(text.as_str()),
             _ => None,
         };
-        let summary_popup_scroll = s.summary_popup_scroll;
+        let summary_popup_scroll = s.summary.popup_scroll;
         let new_session_overlay = s.overlay.new_session.as_ref();
         let add_remote_overlay = s.overlay.add_remote.as_ref();
         let port_forward_overlay = s.overlay.port_forward.as_ref();
@@ -93,17 +93,17 @@ impl App {
         let mut captured_summary_popup_max_scroll: usize = 0;
         terminal.draw(|frame| {
             // Unified slice the sidebar consumes: local rows first
-            // (flat index == filtered_pos), then remotes (flat index
+            // (flat index == session position), then remotes (flat index
             // == local_count + remote_idx). Both SessionRow and
             // RemoteSessionRow impl SidebarSession directly, so the
             // sidebar reads straight from storage — no per-frame
             // borrowed-view shells needed.
-            let local_count = self.state.filtered.len();
+            let local_count = self.state.sessions.len();
             let sessions_dyn: Vec<&dyn ui::SidebarSession> = self
                 .state
-                .filtered
+                .sessions
                 .iter()
-                .map(|&i| &self.state.sessions[i] as &dyn ui::SidebarSession)
+                .map(|s| s as &dyn ui::SidebarSession)
                 .chain(
                     self.state
                         .remote_sessions
@@ -188,7 +188,7 @@ impl App {
 
             // The Summary card shows how long ago its text landed; compute the
             // "Xm ago" age here so the renderer stays free of wall-clock reads.
-            let summary_age = match &self.state.summary {
+            let summary_age = match &self.state.summary.state {
                 crate::state::SummaryState::Ready { generated_at, .. } => Some(
                     crate::update::relative_age(
                         crate::update::now_secs().saturating_sub(*generated_at),
@@ -216,10 +216,10 @@ impl App {
                     show_borders,
                     sidebar_tab,
                     agent_rows: &agent_rows,
-                    summary: &self.state.summary,
+                    summary: &self.state.summary.state,
                     summary_age: summary_age.as_deref(),
                     spinner_idx,
-                    summary_scroll: self.state.summary_scroll,
+                    summary_scroll: self.state.summary.scroll,
                     tabs_mode: layout_mode == LayoutMode::Vertical,
                     view_mode,
                     plugins: &plugin_views,
@@ -514,7 +514,7 @@ impl App {
         })?;
 
         self.state.hit_regions = captured_hits;
-        self.state.summary_popup_max_scroll = captured_summary_popup_max_scroll;
+        self.state.summary.popup_max_scroll = captured_summary_popup_max_scroll;
 
         Ok(())
     }

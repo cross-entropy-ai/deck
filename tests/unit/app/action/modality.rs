@@ -26,7 +26,7 @@ fn make_state() -> AppState {
         })
         .collect();
     state.session_order = state.sessions.iter().map(|s| s.name.clone()).collect();
-    state.recompute_filter();
+    state.clamp_projects_focus();
     state.focus_mode = FocusMode::Sidebar;
     state
 }

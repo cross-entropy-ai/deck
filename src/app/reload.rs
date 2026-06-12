@@ -42,6 +42,10 @@ impl App {
     /// local if active, drop agent highlight, supersede focus).
     pub(super) fn offboard_remote_host(&mut self, host: &str) {
         let detach = self.remote.offboard(host);
+        // Reap the host's executor FIFO lane so a removed host doesn't leak
+        // its parked worker + sender (bug #22). Keyed by `Option<String>`
+        // host the way the rest of deck keys local-vs-remote.
+        self.session_exec.remove(&Some(host.to_string()));
         self.detach_host_view(host, detach);
     }
 

@@ -140,7 +140,7 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     // child and restoring the prior card is handled in dispatch.
     if key.code == KeyCode::Esc
         && state.agents_tab_active()
-        && state.summary == crate::state::SummaryState::Generating
+        && state.summary.state == crate::state::SummaryState::Generating
     {
         return Action::Summary(SummaryAction::Cancel);
     }

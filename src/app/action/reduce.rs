@@ -225,13 +225,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
             match state.session_target(target) {
                 Some(SessionTargetRef::Local(_)) => {
-                    let Some(&session_idx) = state.filtered.get(state.focused) else {
+                    let Some(row) = state.sessions.get(state.focused) else {
                         return fx;
                     };
-                    let name = state.sessions[session_idx].name.clone();
-                    let killing_current = state.sessions[session_idx].is_current;
+                    let name = row.name.clone();
+                    let killing_current = row.is_current;
 
-                    let next_focused = if state.focused + 1 < state.filtered.len() {
+                    let next_focused = if state.focused + 1 < state.sessions.len() {
                         state.focused
                     } else {
                         state.focused.saturating_sub(1)
@@ -240,22 +240,26 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     // Pre-switch off the doomed session only when it's the
                     // one deck is attached to. Killing a *non-current* row
                     // must leave the main view (local or remote) where it is
-                    // — see KillRequest.switch_to.
+                    // — see KillRequest.switch_to. The neighbor and the
+                    // kill guard (`can_kill`) both read `sessions` now, so
+                    // they pick from the same list (was: guard over
+                    // `sessions`, pre-switch over `filtered` — safe only
+                    // while the two coincided, which they always did).
                     let switch_to = if killing_current {
-                        let alt_idx = if state.focused + 1 < state.filtered.len() {
+                        let alt_idx = if state.focused + 1 < state.sessions.len() {
                             Some(state.focused + 1)
                         } else if state.focused > 0 {
                             Some(state.focused - 1)
                         } else {
                             None
                         };
-                        alt_idx.map(|i| state.sessions[state.filtered[i]].name.clone())
+                        alt_idx.map(|i| state.sessions[i].name.clone())
                     } else {
                         None
                     };
 
                     state.session_order.retain(|n| n != &name);
-                    state.focused = next_focused.min(state.filtered.len().saturating_sub(1));
+                    state.focused = next_focused.min(state.sessions.len().saturating_sub(1));
 
                     fx.kill_session(KillRequest {
                         name,
@@ -290,10 +294,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.config_remotes.retain(|r| r.host != host);
             state.remote_sessions.retain(|s| s.host != host);
             // Clamp the Projects cursor against the Projects row space.
-            let total = state.filtered.len() + state.remote_sessions.len();
-            if total > 0 && state.focused >= total {
-                state.focused = total - 1;
-            }
+            state.clamp_projects_focus();
             state.clamp_agent_focus();
             fx.save_config();
             fx.refresh_sessions();
@@ -303,7 +304,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if state.agents_tab_active() {
                 return fx;
             }
-            let local_count = state.filtered.len();
+            let local_count = state.sessions.len();
             // Remote row: reorder only within the same host's contiguous
             // block (hosts can't interleave). Swap with the adjacent row in
             // `direction` if it's the same host and a real session; persist
@@ -333,10 +334,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 return fx;
             }
 
-            let Some(&session_idx) = state.filtered.get(state.focused) else {
+            let Some(row) = state.sessions.get(state.focused) else {
                 return fx;
             };
-            let name = state.sessions[session_idx].name.clone();
+            let name = row.name.clone();
             if let Some(pos) = state.session_order.iter().position(|n| n == &name) {
                 let new_pos = (pos as i32 + direction)
                     .clamp(0, state.session_order.len() as i32 - 1)
@@ -344,11 +345,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 if new_pos != pos {
                     state.session_order.swap(pos, new_pos);
                     state.apply_order();
-                    state.recompute_filter();
-                    if let Some(new_focused) = state
-                        .filtered
-                        .iter()
-                        .position(|&i| state.sessions[i].name == name)
+                    state.clamp_projects_focus();
+                    if let Some(new_focused) =
+                        state.sessions.iter().position(|s| s.name == name)
                     {
                         state.focused = new_focused;
                     }
@@ -752,9 +751,9 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
             state.scroll_summary(delta);
         }
         SummaryAction::OpenPopup => {
-            if matches!(state.summary, crate::state::SummaryState::Ready { .. }) {
+            if matches!(state.summary.state, crate::state::SummaryState::Ready { .. }) {
                 state.overlay.summary_popup = true;
-                state.summary_popup_scroll = 0;
+                state.summary.popup_scroll = 0;
             }
         }
         SummaryAction::ClosePopup => {
@@ -764,13 +763,13 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
             state.scroll_summary_popup(delta);
         }
         SummaryAction::StartDrag => {
-            state.dragging_summary = true;
+            state.summary.dragging = true;
         }
         SummaryAction::Resize(rows) => {
             state.set_summary_height(rows);
         }
         SummaryAction::StopDrag => {
-            state.dragging_summary = false;
+            state.summary.dragging = false;
             fx.save_config();
         }
         SummaryAction::OpenLanguageEditor => {

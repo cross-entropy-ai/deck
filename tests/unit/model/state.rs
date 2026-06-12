@@ -20,7 +20,7 @@ fn make_state(
     state.prefs.show_borders = show_borders;
     state.sessions = vec![make_session("alpha"), make_session("beta")];
     state.session_order = state.sessions.iter().map(|s| s.name.clone()).collect();
-    state.recompute_filter();
+    state.clamp_projects_focus();
     state
 }
 
@@ -62,7 +62,7 @@ fn sidebar_header_status_reflects_host_reachability() {
     for (row, expected) in cases {
         let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
         state.remote_sessions = vec![row];
-        state.recompute_filter();
+        state.clamp_projects_focus();
         let layout = state.sidebar_layout(ViewMode::Expanded);
         let status = layout.items().iter().find_map(|item| match &item.data {
             SidebarItemData::Header { status, .. } => Some(*status),
@@ -76,7 +76,7 @@ fn sidebar_header_status_reflects_host_reachability() {
 fn agent_rows_ordered_local_then_hosts() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.remote_sessions = vec![remote_row("h1", false, false)];
-    state.recompute_filter();
+    state.clamp_projects_focus();
     state.agents.insert(None, vec![detected("local", "%1")]);
     state
         .agents
@@ -139,7 +139,7 @@ fn agents_layout_groups_agents_under_host_dividers() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
     state.remote_sessions = vec![remote_row("h1", false, false)];
-    state.recompute_filter();
+    state.clamp_projects_focus();
     state.agents.insert(None, vec![detected("local", "%1")]);
     state
         .agents
@@ -180,9 +180,9 @@ fn agents_layout_pins_summary_card_at_top() {
 fn summary_card_height_is_fixed_across_states() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     let idle = state.summary_card_height();
-    state.summary = SummaryState::Generating;
+    state.summary.state = SummaryState::Generating;
     assert_eq!(state.summary_card_height(), idle);
-    state.summary = SummaryState::Ready {
+    state.summary.state = SummaryState::Ready {
         text: "a much longer body".repeat(20),
         generated_at: 0,
     };
@@ -198,9 +198,9 @@ fn scroll_summary_clamps_to_max() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.hit_regions.summary.max_scroll = 3;
     state.scroll_summary(-5);
-    assert_eq!(state.summary_scroll, 0, "can't scroll above the top");
+    assert_eq!(state.summary.scroll, 0, "can't scroll above the top");
     state.scroll_summary(10);
-    assert_eq!(state.summary_scroll, 3, "clamped to max offset");
+    assert_eq!(state.summary.scroll, 3, "clamped to max offset");
 }
 
 #[test]
@@ -323,7 +323,7 @@ fn sidebar_layout_omits_local_header_in_compact() {
 fn sidebar_layout_keeps_local_header_and_placeholder_when_empty() {
     let mut empty = make_state(LayoutMode::Horizontal, false, 80, 24);
     empty.sessions.clear();
-    empty.recompute_filter();
+    empty.clamp_projects_focus();
     let layout = empty.sidebar_layout(ViewMode::Expanded);
     assert!(
         layout
@@ -716,7 +716,7 @@ fn focus_skips_collapsed_remote_group() {
     // Layout: 2 local rows (idx 0,1), then host h1 (idx 2). Collapse local.
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.remote_sessions = vec![remote_row("h1", false, false)];
-    state.recompute_filter();
+    state.clamp_projects_focus();
     state.collapsed_sections.insert(None);
 
     // Local rows are hidden, the remote row is not.
@@ -729,7 +729,7 @@ fn focus_skips_collapsed_remote_group() {
 fn section_key_of_focus_maps_local_and_remote() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.remote_sessions = vec![remote_row("h1", false, false)];
-    state.recompute_filter();
+    state.clamp_projects_focus();
     assert_eq!(state.section_key_of_focus(0), None); // local
     assert_eq!(state.section_key_of_focus(1), None); // local
     assert_eq!(state.section_key_of_focus(2), Some("h1".to_string())); // remote
@@ -825,4 +825,34 @@ fn prefs_config_round_trip_is_identity() {
     let round_tripped = Prefs::from_config(&written, rederived_index);
     assert_eq!(prefs, round_tripped);
     assert_eq!(rederived_index, theme_index, "theme name<->index round-trips");
+}
+
+#[test]
+fn session_indexing_matches_direct_storage_after_filtered_removal() {
+    // Regression (D18): `filtered` was the identity permutation over
+    // `sessions`, so removing it must leave the flat focus index decoding
+    // straight into `sessions` (local) then `remote_sessions`, unchanged.
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.sessions = vec![make_session("a"), make_session("b"), make_session("c")];
+    state.session_order = state.sessions.iter().map(|s| s.name.clone()).collect();
+    state.remote_sessions = vec![remote_row("h1", false, false)];
+    state.clamp_projects_focus();
+
+    // Local rows occupy 0..sessions.len(); each flat index resolves to the
+    // session at that exact position (the old `sessions[filtered[i]]`).
+    for (i, expected) in ["a", "b", "c"].iter().enumerate() {
+        match state.session_target(FocusTarget(i)) {
+            Some(SessionTargetRef::Local(row)) => assert_eq!(&row.name, expected),
+            other => panic!("flat index {i} should be local {expected}, got {other:?}"),
+        }
+        assert_eq!(state.focusable_index_for(None, expected), Some(i));
+    }
+    // Remote rows follow at sessions.len()..
+    let remote_flat = state.sessions.len();
+    match state.session_target(FocusTarget(remote_flat)) {
+        Some(SessionTargetRef::Remote(row)) => assert_eq!(row.host, "h1"),
+        other => panic!("flat index {remote_flat} should be remote h1, got {other:?}"),
+    }
+    assert_eq!(state.focusable_index_for(Some("h1"), "s"), Some(remote_flat));
+    assert_eq!(state.focusable_count(), 4);
 }
