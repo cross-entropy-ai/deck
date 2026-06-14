@@ -1,57 +1,47 @@
-//! Unified session **control plane** behind one trait.
+//! Unified session control plane behind one trait.
 //!
-//! deck talks to one local tmux server and N remote ones over ssh. Today
-//! those are two parallel code bases (`infra::tmux` vs `infra::remote_tmux`)
-//! that the high-level layers keep branching on. This module is the first
-//! step of collapsing that split (see `docs/session-abstraction.md`): a
-//! single [`SessionControl`] trait that both a local and a remote backend
-//! implement, keyed the way the rest of deck keys things — `Option<String>`
-//! host, `None` = local, `Some(host)` = remote.
+//! A single [`SessionControl`] trait implemented by a local and a remote
+//! backend, keyed the way the rest of deck keys things: `Option<String>`
+//! host, `None` = local, `Some(host)` = remote. See
+//! `docs/session-abstraction.md`.
 //!
-//! Scope here is the **control plane only**: the stateless tmux/ssh CLI
-//! wrappers that the session executor already runs off the UI thread:
-//! switch / rename / kill / new / persist-order / list-dir. PTY / attachment
-//! lifecycle (spawn / drain / write / resize / status) and polling refresh
-//! stay owned by their existing workers until a concrete migration needs them.
+//! Scope is the control plane only — the stateless tmux/ssh CLI wrappers the
+//! executor runs off the UI thread (switch / rename / kill / new /
+//! persist-order / list-dir). PTY lifecycle and the polling refresh stay
+//! with their existing workers.
 
 pub mod executor;
 pub mod local;
 pub mod remote;
 
-/// The session **control plane**, shared by local and remote backends.
+/// The session control plane, shared by local and remote backends.
 ///
 /// One impl per transport: [`local::LocalControl`] (in-process tmux) and
-/// [`remote::RemoteControl`] (ssh+tmux). Each backend holds whatever it
-/// needs to reproduce today's behaviour exactly (e.g. its own client tty,
-/// or its host name) — the trait surface never mentions ssh, ttys, or
-/// markers; those are implementation-private.
+/// [`remote::RemoteControl`] (ssh+tmux). The trait surface never mentions
+/// ssh, ttys, or markers — those are implementation-private.
 ///
-/// Methods are sync at the backend boundary and run on the executor's
-/// per-backend worker threads, so slow tmux/ssh calls stay off the UI thread.
+/// Methods are sync and run on the executor's per-backend worker threads, so
+/// slow tmux/ssh calls stay off the UI thread.
 pub trait SessionControl {
-    /// Switch this backend's own client to `name`. tty-targeting (local
-    /// `switch-client -c <tty>` / remote marker-gated `-c "$C"`) is an
-    /// implementation detail, not part of the surface.
-    fn switch_to_session(&self, name: &str);
+    /// Switch this backend's own client to `name`.
+    fn switch_to(&self, name: &str);
 
-    /// Rename session `old` to `new` on this backend's server.
+    /// Rename session `old` to `new`.
     fn rename(&self, old: &str, new: &str);
 
-    /// Kill session `name` on this backend's server. Any pre-switch off
-    /// the doomed session is App-level orchestration and happens before
-    /// the op is submitted, not here.
+    /// Kill session `name`. Any pre-switch off the doomed session is App-level
+    /// orchestration done before the op is submitted.
     fn kill(&self, name: &str);
 
-    /// Create a detached session `name` starting in `dir`. Returns
-    /// whether the create succeeded.
-    fn new_session(&self, name: &str, dir: &str) -> bool;
+    /// Create a detached session `name` starting in `dir`. Returns whether
+    /// the create succeeded.
+    fn new(&self, name: &str, dir: &str) -> bool;
 
-    /// Persist `order` (session names in display order) onto this
-    /// backend's tmux server via the `@deck_order` user option.
+    /// Persist `order` (session names in display order) via the `@deck_order`
+    /// user option.
     fn persist_order(&self, order: &[String]);
 
-    /// List subdirectories under `path` on this backend's machine for the
-    /// new-session working-dir browser. Returns the directory names and an
-    /// optional one-line error message (`None` on success).
+    /// List subdirectories under `path` for the new-session dir browser.
+    /// Returns the names and an optional one-line error (`None` on success).
     fn list_dir(&self, path: &str) -> (Vec<String>, Option<String>);
 }

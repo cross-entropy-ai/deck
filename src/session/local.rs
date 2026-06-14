@@ -1,43 +1,32 @@
 //! Local (in-process) backend for the session control plane.
 //!
-//! Drives the local tmux server by running `tmux` in this process, exactly
-//! as `infra::tmux` does today.
+//! Drives the local tmux server by running `tmux` in this process via
+//! `infra::tmux`.
 
 use crate::infra::tmux;
 
 use super::SessionControl;
 
 /// Local control-plane backend.
-///
-/// Holds what local needs to reproduce today's behaviour exactly:
-///
-/// - `client_tty` — deck's own tmux client tty, captured from the local
-///   PTY (`local_terminal.pty.slave_tty`, originally `master.tty_name()`).
-///   Today's `switch_client` targets the client explicitly by tty
-///   (`switch-client -c <tty>`) when it's known, and falls back to a bare
-///   `switch-client -t` when it's empty (see `app::dispatch::switch_client`
-///   and `tmux::current_session_for_tty`). Empty string = unknown, matching
-///   the existing `slave_tty.is_empty()` check.
 pub struct LocalControl {
-    /// deck's own tmux client tty; empty when unknown.
+    /// deck's own tmux client tty; empty when unknown. When set,
+    /// `switch_to_session` targets this client explicitly by tty so it
+    /// doesn't switch some other attached client.
     pub client_tty: String,
 }
 
 impl LocalControl {
-    /// Build a local backend targeting deck's own client tty. Pass the
-    /// empty string when the tty isn't known yet (matches today's
-    /// `slave_tty.is_empty()` fallback to a bare `switch-client`).
+    /// Build a local backend targeting deck's own client tty. Pass the empty
+    /// string when the tty isn't known yet (falls back to a bare
+    /// `switch-client`).
     pub fn new(client_tty: String) -> Self {
         Self { client_tty }
     }
 }
 
 impl SessionControl for LocalControl {
-    fn switch_to_session(&self, name: &str) {
-        // Replicate `App::switch_client` (src/app/dispatch.rs): re-point
-        // deck's own embedded tmux client. Target it by tty when known so we
-        // don't switch some other attached client; bare `switch-client -t`
-        // otherwise. The `active_remote` reset stays in App.
+    fn switch_to(&self, name: &str) {
+        // Target deck's own client by tty when known; bare switch otherwise.
         if self.client_tty.is_empty() {
             tmux::switch_session(name);
         } else {
@@ -46,21 +35,14 @@ impl SessionControl for LocalControl {
     }
 
     fn rename(&self, old: &str, new: &str) {
-        // The local rename path's `session_order` in-place patch stays in
-        // App (it mutates App state); this method is just the tmux call.
         tmux::rename_session(old, new);
     }
 
     fn kill(&self, name: &str) {
-        // The pre-switch off the doomed session (`switch_to_session_if_safe`)
-        // stays in App. This method just runs the kill, matching the local
-        // kill handler.
         tmux::kill_session(name);
     }
 
-    fn new_session(&self, name: &str, dir: &str) -> bool {
-        // `create_new_session`'s post-create switch stays in App; this is
-        // just the create call.
+    fn new(&self, name: &str, dir: &str) -> bool {
         tmux::new_session(name, dir).is_some()
     }
 
@@ -69,9 +51,8 @@ impl SessionControl for LocalControl {
     }
 
     fn list_dir(&self, path: &str) -> (Vec<String>, Option<String>) {
-        // List immediate subdirectories, sorted, with a short one-line error
-        // message on failure. The remote counterpart is `remote_tmux::list_dir`;
-        // both feed the new-session picker's pure filter.
+        // Immediate subdirectories, sorted, with a short one-line error on
+        // failure. Remote counterpart: `remote_tmux::list_dir`.
         match std::fs::read_dir(path) {
             Ok(rd) => {
                 let mut names: Vec<String> = rd
