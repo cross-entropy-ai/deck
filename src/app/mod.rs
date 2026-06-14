@@ -114,8 +114,8 @@ pub struct App {
     /// since — so a slow ssh focus can't clobber a later user action.
     focus_seq: u64,
     /// Active-pane probe results (the pane Deck's main view shows). Drained
-    /// each tick to steer the Agents-tab `▶` marker — see
-    /// `apply_active_pane_outcome`.
+    /// each tick to steer the Agents-tab row highlight onto the active pane —
+    /// see `apply_active_pane_outcome`.
     active_pane_tx: std::sync::mpsc::Sender<ActivePaneOutcome>,
     active_pane_rx: std::sync::mpsc::Receiver<ActivePaneOutcome>,
     /// True while an active-pane probe thread is outstanding. Single-flights
@@ -150,8 +150,8 @@ pub(super) struct FocusOutcome {
 }
 
 /// Result of an active-pane probe, sent back from the probe thread to the
-/// event loop. Carries the pane Deck's main view shows so the Agents-tab
-/// `▶` marker can follow the *real* active pane (see `probe_active_pane` /
+/// event loop. Carries the pane Deck's main view shows so the Agents-tab row
+/// highlight can follow the *real* active pane (see `probe_active_pane` /
 /// `apply_active_pane_outcome`).
 pub(super) struct ActivePaneOutcome {
     /// The displayed host at spawn (`None` = local). Dropped if the user

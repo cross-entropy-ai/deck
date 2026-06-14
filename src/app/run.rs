@@ -303,8 +303,8 @@ impl App {
         redraw
     }
 
-    /// Drain active-pane probes: move the `▶` marker to follow the real
-    /// active pane. Only forces a redraw when the marker actually moved, so
+    /// Drain active-pane probes: move the row highlight to follow the real
+    /// active pane. Only forces a redraw when something actually moved, so
     /// the periodic probe doesn't repaint every tick for no change.
     fn pump_active_pane(&mut self) -> Redraw {
         let mut redraw = Redraw::No;
