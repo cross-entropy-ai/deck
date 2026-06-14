@@ -182,6 +182,24 @@ fn migrate_keybindings_with(
     changed
 }
 
+/// Parse a command's bound key strings into chords, dropping duplicates and
+/// pushing a warning for each unparseable spec. A `Single` binding is just a
+/// one-element slice, so both config shapes share this.
+fn parse_binding_list(name: &str, specs: &[String], warnings: &mut Vec<String>) -> Vec<KeyChord> {
+    let mut fresh = Vec::new();
+    for s in specs {
+        match parse_key(s) {
+            Ok(kb) => {
+                if !fresh.contains(&kb) {
+                    fresh.push(kb);
+                }
+            }
+            Err(e) => warnings.push(format!("keybinding `{name}`: cannot parse `{s}`: {e}")),
+        }
+    }
+    fresh
+}
+
 impl Keybindings {
     pub fn from_config(
         raw: &BTreeMap<String, KeyBindingValue>,
@@ -215,32 +233,10 @@ impl Keybindings {
                     reverse.insert(cmd, Vec::new());
                 }
                 KeyBindingValue::Single(s) => {
-                    let mut fresh = Vec::new();
-                    match parse_key(s) {
-                        Ok(kb) => fresh.push(kb),
-                        Err(e) => warnings.push(format!(
-                            "keybinding `{}`: cannot parse `{}`: {}",
-                            name, s, e
-                        )),
-                    }
-                    reverse.insert(cmd, fresh);
+                    reverse.insert(cmd, parse_binding_list(name, std::slice::from_ref(s), &mut warnings));
                 }
                 KeyBindingValue::Multi(list) => {
-                    let mut fresh = Vec::new();
-                    for s in list {
-                        match parse_key(s) {
-                            Ok(kb) => {
-                                if !fresh.contains(&kb) {
-                                    fresh.push(kb);
-                                }
-                            }
-                            Err(e) => warnings.push(format!(
-                                "keybinding `{}`: cannot parse `{}`: {}",
-                                name, s, e
-                            )),
-                        }
-                    }
-                    reverse.insert(cmd, fresh);
+                    reverse.insert(cmd, parse_binding_list(name, list, &mut warnings));
                 }
             }
         }
