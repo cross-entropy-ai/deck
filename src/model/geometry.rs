@@ -226,6 +226,25 @@ pub struct SectionMeta {
     pub divider: bool,
 }
 
+/// The switches that distinguish the two sidebar tabs when they're built
+/// through the shared `build_sections` skeleton. The section structure (a
+/// local section then one per remote host) is identical; only these toggles
+/// and the per-row content differ.
+#[derive(Debug, Clone, Copy)]
+pub struct SectionLayoutOpts {
+    /// Push `@local` / `@host` divider headers. Projects omits them in Compact
+    /// view (rows carry an origin prefix instead); the Agents tab always shows
+    /// them.
+    pub show_headers: bool,
+    /// Track and apply per-section collapse (Projects/Expanded only). The
+    /// Agents tab leaves this off so a host collapsed on Projects can't hide
+    /// its agent rows.
+    pub collapsible: bool,
+    /// Give remote section headers a 1-row top margin (Agents tab) instead of
+    /// sitting flush (Projects).
+    pub remote_header_margin: bool,
+}
+
 /// A built sidebar layout plus the per-header metadata the hit-tester needs
 /// to resolve divider clicks back to a host. Returned together so the two
 /// can never drift: they're produced in the same pass.

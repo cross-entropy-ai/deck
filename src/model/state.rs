@@ -21,7 +21,7 @@ pub use crate::effects::{
 pub use crate::forwards::{ForwardHealth, ForwardKey, PfAddForm, PfField, PortForwardOverlay};
 pub use crate::geometry::{
     AgentHit, AgentRow, AgentTarget, BuiltLayout, DividerButton, DividerHit, HitKind, HitRegions,
-    KillConfirmHits, SectionMeta, SidebarLayout, SummaryHits, TabRects,
+    KillConfirmHits, SectionLayoutOpts, SectionMeta, SidebarLayout, SummaryHits, TabRects,
 };
 pub use crate::menu::{session_menu_disabled, ContextMenu, MenuItem, MenuKind};
 pub use crate::overlay::{ExcludeEditorState, Modal, OverlayState, RenameState, WarningState};
@@ -1046,75 +1046,122 @@ impl AppState {
             .button("…")
     }
 
+    /// Shared skeleton behind both sidebar tabs: a local section followed by
+    /// one section per remote host (in `remote_hosts_in_order`). Each section
+    /// gets its `@local` / `@host` divider plus the matching [`SectionMeta`]
+    /// (when `opts.show_headers`), then `push_rows` fills that section's body —
+    /// `host` is `None` for local, `Some(host)` for a remote. The two tabs are
+    /// structurally identical and differ only in the `opts` switches and what
+    /// rows `push_rows` emits.
+    ///
+    /// `push_rows` may also push its own placeholder header + `SectionMeta`
+    /// (the Agents tab does this for empty sections); those land after the
+    /// divider, keeping `sections` parallel to the crate's section numbering.
+    fn build_sections(
+        &self,
+        opts: SectionLayoutOpts,
+        mut push_rows: impl FnMut(&mut SidebarLayout, &mut Vec<SectionMeta>, Option<&str>),
+    ) -> BuiltLayout {
+        let mut layout = SidebarLayout::new();
+        let mut sections: Vec<SectionMeta> = Vec::new();
+        layout.set_collapsible(opts.collapsible);
+
+        // Each divider header's (section_idx, key) in push order, so collapse
+        // flags can be flipped after the list is built; section_idx counts
+        // pushed headers, matching the crate's section numbering (`sections`).
+        let mut group_headers: Vec<(usize, HostKey)> = Vec::new();
+
+        // Push one section's divider header + `SectionMeta`. `first` (the local
+        // section) stays flush at the top; later remote sections take a 1-row
+        // top margin when `opts.remote_header_margin` is set.
+        let push_divider = |layout: &mut SidebarLayout,
+                                sections: &mut Vec<SectionMeta>,
+                                group_headers: &mut Vec<(usize, HostKey)>,
+                                header: BasicItem,
+                                meta: SectionMeta,
+                                key: HostKey,
+                                first: bool| {
+            if !opts.show_headers {
+                return;
+            }
+            group_headers.push((sections.len(), key));
+            if first || !opts.remote_header_margin {
+                layout.push_header_auto(header);
+            } else {
+                layout.push_header_margin(header, 1);
+            }
+            sections.push(meta);
+        };
+
+        push_divider(
+            &mut layout,
+            &mut sections,
+            &mut group_headers,
+            self.local_divider(),
+            SectionMeta {
+                host: None,
+                buttons: vec![DividerButton::LocalMore],
+                divider: true,
+            },
+            HostKey::local(),
+            true,
+        );
+        push_rows(&mut layout, &mut sections, None);
+
+        for (host_idx, host) in self.remote_hosts_in_order().into_iter().enumerate() {
+            push_divider(
+                &mut layout,
+                &mut sections,
+                &mut group_headers,
+                self.remote_divider(&host, host_idx),
+                SectionMeta {
+                    host: Some(host.clone()),
+                    buttons: vec![DividerButton::Reconnect, DividerButton::More],
+                    divider: true,
+                },
+                HostKey::remote(&host),
+                false,
+            );
+            push_rows(&mut layout, &mut sections, Some(&host));
+        }
+
+        // Flip each group header's collapsed flag so the widget hides its rows
+        // and the geometry/scroll/hit-test all honor the collapse. Skipped when
+        // the tab isn't collapsible (the Agents tab) so a host collapsed on the
+        // Projects tab can't hide its agent rows here.
+        if opts.collapsible {
+            for (section_idx, key) in group_headers {
+                layout.set_collapsed(section_idx, self.collapsed_sections.contains(&key));
+            }
+        }
+
+        BuiltLayout { layout, sections }
+    }
+
     /// Build the unified Projects-tab layout: a flat `BasicItem` list of
     /// `@local` / `@host` dividers (Expanded only) interleaved with session
     /// rows, plus the per-divider [`SectionMeta`] the hit-tester resolves
     /// clicks against. Renderer and hit-tester share this so they can't
     /// disagree about which row lives where.
     pub fn sidebar_layout(&self, view_mode: ViewMode) -> BuiltLayout {
-        let mut layout = SidebarLayout::new();
-        let mut sections: Vec<SectionMeta> = Vec::new();
         // Group dividers (`@local`, `@host`) are an Expanded-view adornment;
-        // Compact rows already carry an origin prefix.
+        // Compact rows already carry an origin prefix. Collapse is likewise an
+        // Expanded-only feature.
         let show_headers = matches!(view_mode, ViewMode::Expanded);
-
-        // Collapse is an Expanded-view feature. Track each group header's
-        // (section_idx, key) so we can flip its collapsed flag after the list
-        // is built; section_idx counts every pushed header in push order,
-        // matching the crate's section numbering (and `sections`).
-        layout.set_collapsible(show_headers);
-        let mut group_headers: Vec<(usize, HostKey)> = Vec::new();
-
-        let local_count = self.local_count();
-        if show_headers {
-            group_headers.push((sections.len(), HostKey::local()));
-            layout.push_header_auto(self.local_divider());
-            sections.push(SectionMeta {
-                host: None,
-                buttons: vec![DividerButton::LocalMore],
-                divider: true,
-            });
-        }
-        for pos in 0..local_count {
-            layout.push_row_auto(self.session_item(&self.entries[pos], view_mode));
-        }
-
-        // Remote groups: detect host transitions in render order (which
-        // matches focus order — `entries` is grouped by host). Flat row index
-        // is the row's position in `entries`. Each group gets an `@host`
-        // divider above.
-        let mut host_idx: usize = 0;
-        let mut prev_host: Option<&str> = None;
-        for e in self.entries.iter() {
-            let Some(host) = e.host.as_deref() else {
-                continue; // local rows already pushed above
-            };
-            let new_host = Some(host) != prev_host;
-            if new_host {
-                if prev_host.is_some() {
-                    host_idx += 1;
+        self.build_sections(
+            SectionLayoutOpts {
+                show_headers,
+                collapsible: show_headers,
+                remote_header_margin: false,
+            },
+            |layout, _sections, host| {
+                // `entries` is grouped by host and contiguous, so filtering by
+                // host yields each section's rows in flat-index (focus) order.
+                for e in self.entries.iter().filter(|e| e.host.as_deref() == host) {
+                    layout.push_row_auto(self.session_item(e, view_mode));
                 }
-                if show_headers {
-                    group_headers.push((sections.len(), HostKey::remote(host)));
-                    layout.push_header_auto(self.remote_divider(host, host_idx));
-                    sections.push(SectionMeta {
-                        host: Some(host.to_string()),
-                        buttons: vec![DividerButton::Reconnect, DividerButton::More],
-                        divider: true,
-                    });
-                }
-                prev_host = Some(host);
-            }
-            layout.push_row_auto(self.session_item(e, view_mode));
-        }
-
-        // Flip each group header's collapsed flag so the widget hides its
-        // rows and the geometry/scroll/hit-test all honor the collapse.
-        for (section_idx, key) in group_headers {
-            layout.set_collapsed(section_idx, self.collapsed_sections.contains(&key));
-        }
-
-        BuiltLayout { layout, sections }
+            },
+        )
     }
 
     /// Distinct remote hosts in the order their rows first appear in
@@ -1269,37 +1316,24 @@ impl AppState {
     /// section has no agents. `row_idx` on each `Agent` item matches the
     /// `agent_rows()` position so focus/scroll/hit-test stay in sync.
     pub fn agents_layout(&self) -> BuiltLayout {
-        let mut layout = SidebarLayout::new();
-        let mut sections: Vec<SectionMeta> = Vec::new();
         // No collapse on the Agents tab — sections are informational and
-        // always expanded, so the focus index maps straight to a row. The
-        // Summary card is no longer in the list: it renders as a separate
-        // widget pinned above, so the list is pure `BasicItem`.
-        layout.set_collapsible(false);
-
-        // Push a divider header for `host`, then either its agent rows or a
-        // single inert placeholder header (no agents / still detecting).
-        let push_section = |layout: &mut SidebarLayout,
-                            sections: &mut Vec<SectionMeta>,
-                            header: BasicItem,
-                            meta: SectionMeta,
-                            host: Option<&str>,
-                            first: bool| {
-            if first {
-                layout.push_header_auto(header);
-            } else {
-                // A 1-row top margin sets each remote section off from
-                // what's above; local stays flush at the top.
-                layout.push_header_margin(header, 1);
-            }
-            sections.push(meta);
-            match self.section_agents(host) {
+        // always expanded, so the focus index maps straight to a row. Remote
+        // sections take a 1-row top margin to set them off. The Summary card
+        // renders as a separate widget pinned above, so the list is pure
+        // `BasicItem`.
+        self.build_sections(
+            SectionLayoutOpts {
+                show_headers: true,
+                collapsible: false,
+                remote_header_margin: true,
+            },
+            |layout, sections, host| match self.section_agents(host) {
                 Some(list) if !list.is_empty() => {
                     for agent in list {
-                        // A status glyph prefix, plus a filled marker on
-                        // the agent deck is currently focused on (the
-                        // "you are here" pane), so switching shows where
-                        // you landed even without per-row coloring.
+                        // A status glyph prefix, plus a filled marker on the
+                        // agent deck is currently focused on (the "you are
+                        // here" pane), so switching shows where you landed even
+                        // without per-row coloring.
                         let here = self.active_agent.as_ref().is_some_and(|t| {
                             t.host.as_deref() == host && t.pane_id == agent.pane_id
                         });
@@ -1310,9 +1344,9 @@ impl AppState {
                             crate::agent::AgentStatus::Unknown => "·",
                         };
                         let lead = if here { "▶" } else { " " };
-                        // No accent color: like session rows, focus shows
-                        // only via the highlight background bar. The status
-                        // glyph + ▶ marker carry the per-row state.
+                        // No accent color: like session rows, focus shows only
+                        // via the highlight background bar. The status glyph +
+                        // ▶ marker carry the per-row state.
                         layout.push_row_auto(BasicItem::new(format!(
                             "{lead} {dot} {}",
                             agent.location()
@@ -1320,6 +1354,8 @@ impl AppState {
                     }
                 }
                 other => {
+                    // A single inert placeholder header: no agents, or still
+                    // detecting (section not probed yet).
                     let label = if other.is_some() {
                         "  no agents"
                     } else {
@@ -1332,38 +1368,8 @@ impl AppState {
                         divider: false,
                     });
                 }
-            }
-        };
-
-        push_section(
-            &mut layout,
-            &mut sections,
-            self.local_divider(),
-            SectionMeta {
-                host: None,
-                buttons: vec![DividerButton::LocalMore],
-                divider: true,
             },
-            None,
-            true,
-        );
-
-        for (host_idx, host) in self.remote_hosts_in_order().into_iter().enumerate() {
-            push_section(
-                &mut layout,
-                &mut sections,
-                self.remote_divider(&host, host_idx),
-                SectionMeta {
-                    host: Some(host.clone()),
-                    buttons: vec![DividerButton::Reconnect, DividerButton::More],
-                    divider: true,
-                },
-                Some(&host),
-                false,
-            );
-        }
-
-        BuiltLayout { layout, sections }
+        )
     }
 
     /// The layout for the active sidebar tab. Projects → the session
