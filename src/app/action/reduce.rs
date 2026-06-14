@@ -842,15 +842,13 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
                 }
                 let new_end = s.rfind('/').map(|i| i + 1).unwrap_or(0);
                 s.truncate(new_end);
-                ns.picker.input = crate::new_session::make_textarea(&s);
-                ns.refilter();
+                ns.set_path(&s);
                 let parent_after = crate::new_session::split_input(ns.input_str())
                     .0
                     .to_string();
                 if parent_before != parent_after {
                     fx.reread_new_session_entries();
                 }
-                ns.picker.error = None;
             }
         }
         NewSessionAction::DirEnter => {
@@ -859,10 +857,8 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
                     let entry = ns.picker.items[idx].clone();
                     let (parent, _leaf) = crate::new_session::split_input(ns.input_str());
                     let new_path = format!("{}{}/", parent, entry);
-                    ns.picker.input = crate::new_session::make_textarea(&new_path);
-                    ns.refilter();
+                    ns.set_path(&new_path);
                     fx.reread_new_session_entries();
-                    ns.picker.error = None;
                 }
             }
         }
@@ -876,17 +872,13 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
         }
         NewSessionAction::Next => {
             if let Some(ns) = state.overlay.new_session.as_mut() {
-                if !ns.picker.filtered.is_empty() {
-                    ns.picker.step(1);
-                }
+                ns.picker.step(1);
             }
         }
         NewSessionAction::Clear => {
             if let Some(ns) = state.overlay.new_session.as_mut() {
-                ns.picker.input = crate::new_session::make_textarea("");
-                ns.refilter();
+                ns.set_path("");
                 fx.reread_new_session_entries();
-                ns.picker.error = None;
             }
         }
         NewSessionAction::DeleteSegment => {
@@ -902,13 +894,10 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
                         .unwrap_or(0);
                     new_end -= prev;
                 }
-                let truncated = &s[..new_end];
-                ns.picker.input = crate::new_session::make_textarea(truncated);
-                ns.refilter();
+                ns.set_path(&s[..new_end]);
                 // Always reread: the user explicitly cleared the segment they
                 // were typing and expects a fresh listing of the parent dir.
                 fx.reread_new_session_entries();
-                ns.picker.error = None;
             }
         }
     }
@@ -1184,9 +1173,7 @@ fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffec
         }
         AddRemoteAction::Next => {
             if let Some(ar) = state.overlay.add_remote.as_mut() {
-                if !ar.picker.filtered.is_empty() {
-                    ar.picker.step(1);
-                }
+                ar.picker.step(1);
             }
         }
         AddRemoteAction::Close => {
@@ -1283,8 +1270,8 @@ fn set_mode(o: &mut Option<PortForwardOverlay>, delta: i32) {
 /// invalid value sitting in the form.
 fn handle_pf_input(f: &mut PfAddForm, key: crossterm::event::KeyEvent) {
     use crossterm::event::KeyCode;
+    let port_field = matches!(f.focus, PfField::ListenPort | PfField::TargetPort);
     if let KeyCode::Char(c) = key.code {
-        let port_field = matches!(f.focus, PfField::ListenPort | PfField::TargetPort);
         if port_field && !c.is_ascii_digit() {
             return;
         }
@@ -1295,7 +1282,6 @@ fn handle_pf_input(f: &mut PfAddForm, key: crossterm::event::KeyEvent) {
             return;
         }
     }
-    let port_field = matches!(f.focus, PfField::ListenPort | PfField::TargetPort);
     let Some(ta) = f.focused_textarea_mut() else {
         return;
     };

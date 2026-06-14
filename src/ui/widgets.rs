@@ -23,6 +23,18 @@ pub fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
     Rect::new(x, y, w, h)
 }
 
+/// Size and center a filter-picker popup: clamp `content_height` up to
+/// `min_height` and down to the available area (leaving a 1-row top/bottom
+/// and 2-col left/right margin), clamp `width` the same way, then center
+/// in `area`.
+pub fn popup_rect(area: Rect, width: u16, content_height: u16, min_height: u16) -> Rect {
+    let height = content_height
+        .max(min_height)
+        .min(area.height.saturating_sub(2));
+    let width = width.min(area.width.saturating_sub(4));
+    centered_rect(area, width, height)
+}
+
 /// Visual options for a rounded popup frame.
 pub struct PopupStyle<'a> {
     pub title: Option<&'a str>,

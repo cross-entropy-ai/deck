@@ -6,10 +6,8 @@ use ratatui::Frame;
 
 use crate::add_remote::AddRemoteState;
 use crate::theme::Theme;
-use crate::ui::form::field_row;
-use crate::ui::widgets::{
-    centered_rect, draw_picker_list, popup_frame, PopupStyle, TextAreaColors,
-};
+use crate::ui::form::labeled_field;
+use crate::ui::widgets::{draw_picker_list, popup_frame, popup_rect, PopupStyle};
 
 const POPUP_WIDTH: u16 = 56;
 const MAX_VISIBLE: usize = 8;
@@ -21,11 +19,8 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
     let visible = p.filtered.len().clamp(1, MAX_VISIBLE);
     let extra_err = if p.error.is_some() { 1 } else { 0 };
     // borders(2) + host(1) + blank(1) + list(visible) + blank(1) + [err] + footer(1)
-    let height = (2 + 1 + 1 + visible as u16 + 1 + extra_err + 1)
-        .max(POPUP_MIN_HEIGHT)
-        .min(area.height.saturating_sub(2));
-    let width = POPUP_WIDTH.min(area.width.saturating_sub(4));
-    let popup = centered_rect(area, width, height);
+    let content_height = 2 + 1 + 1 + visible as u16 + 1 + extra_err + 1;
+    let popup = popup_rect(area, POPUP_WIDTH, content_height, POPUP_MIN_HEIGHT);
 
     let inner = popup_frame(
         frame.buffer_mut(),
@@ -53,20 +48,7 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
     let rows = Layout::vertical(constraints).split(inner);
     let mut i = 0;
 
-    field_row(
-        frame.buffer_mut(),
-        rows[i],
-        "  host: ",
-        Style::default().fg(theme.accent),
-        &p.input,
-        true,
-        TextAreaColors {
-            fg: theme.text,
-            bg: theme.bg,
-            cursor_fg: theme.bg,
-            cursor_bg: theme.accent,
-        },
-    );
+    labeled_field(frame.buffer_mut(), rows[i], "  host: ", &p.input, true, theme);
     i += 1;
     i += 1; // blank
 

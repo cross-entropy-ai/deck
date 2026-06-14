@@ -3,13 +3,10 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Paragraph, Widget};
 use ratatui::Frame;
-use ratatui_textarea::TextArea;
 
 use crate::theme::Theme;
-use crate::ui::form::field_row;
-use crate::ui::widgets::{
-    centered_rect, draw_picker_list, popup_frame, PopupStyle, TextAreaColors,
-};
+use crate::ui::form::labeled_field;
+use crate::ui::widgets::{draw_picker_list, popup_frame, popup_rect, PopupStyle};
 
 use super::NewSessionView;
 
@@ -22,11 +19,8 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
     let entry_rows = visible_entries.max(1) as u16; // always reserve one row for "(no entries)"
     let extra_for_error = if view.error.is_some() { 1 } else { 0 };
     // borders(2) + name(1) + path(1) + blank(1) + entries(N) + blank(1) + error(0|1) + footer(1)
-    let height = (2 + 1 + 1 + 1 + entry_rows + 1 + extra_for_error + 1)
-        .max(POPUP_MIN_HEIGHT)
-        .min(area.height.saturating_sub(2));
-    let width = POPUP_WIDTH.min(area.width.saturating_sub(4));
-    let popup = centered_rect(area, width, height);
+    let content_height = 2 + 1 + 1 + 1 + entry_rows + 1 + extra_for_error + 1;
+    let popup = popup_rect(area, POPUP_WIDTH, content_height, POPUP_MIN_HEIGHT);
 
     // Title carries the target host for remote creation so it's obvious
     // the dir browser is listing that host, not the local machine.
@@ -64,21 +58,21 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
 
     let mut row_idx: usize = 0;
 
-    render_input_row(
-        frame,
+    labeled_field(
+        frame.buffer_mut(),
         rows[row_idx],
-        view.name,
         "  Name: ",
+        view.name,
         view.focus_name,
         theme,
     );
     row_idx += 1;
 
-    render_input_row(
-        frame,
+    labeled_field(
+        frame.buffer_mut(),
         rows[row_idx],
-        view.input,
         "  Path: ",
+        view.input,
         !view.focus_name,
         theme,
     );
@@ -130,34 +124,4 @@ pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, th
         Style::default().fg(theme.dim).add_modifier(Modifier::DIM),
     ))
     .render(rows[row_idx], frame.buffer_mut());
-}
-
-/// Render a label + TextArea pair in a single row.
-fn render_input_row(
-    frame: &mut Frame,
-    area: Rect,
-    textarea: &TextArea<'static>,
-    label: &str,
-    focused: bool,
-    theme: &Theme,
-) {
-    let label_style = if focused {
-        Style::default().fg(theme.accent)
-    } else {
-        Style::default().fg(theme.dim)
-    };
-    field_row(
-        frame.buffer_mut(),
-        area,
-        label,
-        label_style,
-        textarea,
-        focused,
-        TextAreaColors {
-            fg: theme.text,
-            bg: theme.bg,
-            cursor_fg: theme.bg,
-            cursor_bg: theme.accent,
-        },
-    );
 }

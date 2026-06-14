@@ -140,6 +140,15 @@ impl NewSessionState {
         self.picker
             .refilter(|entries, input| filter_entries(entries, split_input(input).1));
     }
+
+    /// Replace the path input with `path`, refilter the listing, and clear
+    /// any pending error. The dir-navigation actions (up, enter, clear,
+    /// delete-segment) all rewrite the whole path this way.
+    pub fn set_path(&mut self, path: &str) {
+        self.picker.input = make_textarea(path);
+        self.refilter();
+        self.picker.error = None;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

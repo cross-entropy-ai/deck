@@ -11,6 +11,8 @@ use ratatui::widgets::{Paragraph, Widget};
 use ratatui_textarea::TextArea;
 use unicode_width::UnicodeWidthStr;
 
+use crate::theme::Theme;
+
 use super::widgets::{style_textarea, TextAreaColors};
 
 /// Render a `label` + `textarea` pair on one row: the label occupies its
@@ -30,4 +32,37 @@ pub fn field_row(
     let mut ta = textarea.clone();
     style_textarea(&mut ta, focused, colors);
     ta.render(cols[1], buf);
+}
+
+/// Render a `label` + `textarea` row with the filter-picker forms' standard
+/// styling: the label is `accent` when focused and `dim` otherwise, the field
+/// uses `theme.bg` as its background, and the cursor is an accent block. Used
+/// by the new-session and add-remote pickers.
+pub fn labeled_field(
+    buf: &mut Buffer,
+    area: Rect,
+    label: &str,
+    textarea: &TextArea<'static>,
+    focused: bool,
+    theme: &Theme,
+) {
+    let label_style = if focused {
+        Style::default().fg(theme.accent)
+    } else {
+        Style::default().fg(theme.dim)
+    };
+    field_row(
+        buf,
+        area,
+        label,
+        label_style,
+        textarea,
+        focused,
+        TextAreaColors {
+            fg: theme.text,
+            bg: theme.bg,
+            cursor_fg: theme.bg,
+            cursor_bg: theme.accent,
+        },
+    );
 }
