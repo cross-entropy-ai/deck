@@ -12,9 +12,9 @@ use crate::host_key::{HostKey, HostQuery};
 use crate::keybindings::Keybindings;
 use crate::update::{UpdateCheckMode, UpdateStatus};
 
-// Re-export the model types that were split out of this file so the
-// pervasive `crate::state::X` references across the UI / app / test layers
-// keep resolving without churn. Each type's real home is the named module.
+// Re-export the model types so the pervasive `crate::state::X` references
+// across the UI / app / test layers keep resolving. Each type's real home
+// is the named module.
 pub use crate::effects::{
     CreateSessionRequest, Effect, KillRequest, RemoteSwitchRequest, RenameRequest, SideEffect,
 };
@@ -27,7 +27,7 @@ pub use crate::geometry::{
 pub use crate::menu::{session_menu_disabled, ContextMenu, MenuItem, MenuKind};
 pub use crate::overlay::{ExcludeEditorState, Modal, OverlayState, RenameState, WarningState};
 // The Summary card lives in `model::summary`; re-export its types + the
-// height constants here so the pervasive `crate::state::SummaryState` /
+// height constants here so the `crate::state::SummaryState` /
 // `crate::state::DEFAULT_SUMMARY_HEIGHT` references keep resolving.
 pub use crate::summary_card::{
     SummaryCard, SummaryState, DEFAULT_SUMMARY_HEIGHT, SUMMARY_MAX_HEIGHT, SUMMARY_MIN_HEIGHT,
@@ -184,11 +184,9 @@ pub fn frame_rate_limit_label(fps: u16) -> &'static str {
 
 /// One row in the unified sidebar session store. Local and remote sessions
 /// share this single shape, keyed by `host` the deck way (`None` = the local
-/// tmux server, `Some(host)` = a remote one over ssh) — applying the repo's
-/// "one data type, key by `Option<String>` host" rule to what was its oldest
-/// exception (two parallel `SessionRow` + `RemoteSessionRow` stores stitched
-/// by flat-index arithmetic). `kind` replaces the old `loading`/`unreachable`
-/// flags and the magic placeholder names — see [`SessionEntryKind`].
+/// tmux server, `Some(host)` = a remote one over ssh), applying the repo's
+/// "one data type, key by `Option<String>` host" rule. `kind` carries the
+/// liveness / placeholder distinction — see [`SessionEntryKind`].
 #[derive(Debug, Clone)]
 pub struct SessionEntry {
     /// `None` = local tmux server; `Some(host)` = a remote host over ssh.
@@ -201,25 +199,22 @@ pub struct SessionEntry {
 /// What a [`SessionEntry`] represents. A `Live` row is a real attachable
 /// tmux session; the other variants are the synthetic status placeholders
 /// the sidebar shows for a remote group (one row per host) before/while a
-/// real session list is available. These replace the old
-/// `loading`/`unreachable` booleans *and* the `"(no sessions)"` /
-/// `"(unreachable)"` magic session names — so a real session literally named
-/// `(no sessions)` is no longer mistaken for a placeholder.
+/// real session list is available. The variant — not a magic session name —
+/// is what distinguishes a placeholder, so a real session literally named
+/// `(no sessions)` is never mistaken for one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionEntryKind {
     /// A real tmux session deck can attach to. `is_current` is tracked for
-    /// local sessions only (remote `is_current` was never tracked, so remote
-    /// `Live` rows carry `false`).
+    /// local sessions only; remote `Live` rows carry `false`.
     Live { is_current: bool },
-    /// Synthetic placeholder: the host's ssh+tmux query hasn't returned yet
-    /// (was `RemoteSessionRow.loading`). Renders muted "(connecting...)".
+    /// Synthetic placeholder: the host's ssh+tmux query hasn't returned yet.
+    /// Renders muted "(connecting...)".
     Connecting,
-    /// Synthetic placeholder: deck couldn't reach the host over ssh (was
-    /// `RemoteSessionRow.unreachable`). Renders greyed, "(unreachable)".
+    /// Synthetic placeholder: deck couldn't reach the host over ssh. Renders
+    /// greyed, "(unreachable)".
     Unreachable,
     /// Synthetic placeholder: the host responded but its tmux server isn't
-    /// up, so it has nothing to attach to (was the `"(no sessions)"` magic
-    /// name). Renders "(no sessions)".
+    /// up, so it has nothing to attach to. Renders "(no sessions)".
     NoSessions,
 }
 
@@ -244,8 +239,8 @@ impl SessionEntry {
     }
 
     /// Whether this `Live` row is the current (attached) session. Always
-    /// false for placeholders and for remote rows (remote `is_current`
-    /// isn't tracked).
+    /// false for placeholders and for remote rows (remote `is_current` isn't
+    /// tracked).
     pub fn is_current(&self) -> bool {
         matches!(
             self.kind,
@@ -453,15 +448,13 @@ pub struct AppState {
     // Session data
     /// The single unified session store: local entries first (`host ==
     /// None`), then each remote host's rows in config order — exactly the
-    /// sidebar render/flat order. Replaces the old parallel `sessions` +
-    /// `remote_sessions` stores; the `FocusTarget` flat index is a direct
+    /// sidebar render/flat order. The `FocusTarget` flat index is a direct
     /// index into this vec, and per-row dispatch reads `entry.host` /
-    /// `entry.kind` instead of decoding `idx - local_count`.
+    /// `entry.kind`.
     pub entries: Vec<SessionEntry>,
     pub focused: usize,
     /// Name of the current (attached) *local* session. Remote current-
-    /// session isn't tracked (a deliberate local-only invariant carried
-    /// over from the two-store model).
+    /// session isn't tracked — a deliberate local-only invariant.
     pub current_session: String,
     /// Manual display order of *local* sessions, keyed by name. Remote
     /// reorder persists per-host to each remote tmux server instead.
@@ -1213,9 +1206,9 @@ impl AppState {
     }
 
     /// Distinct remote hosts in the order their rows first appear in
-    /// `remote_sessions` (the refresh worker emits hosts in config order,
-    /// one contiguous block each). Shared by `agent_entries` and
-    /// `agents_layout` so both walk sections identically.
+    /// `entries` (the refresh worker emits hosts in config order, one
+    /// contiguous block each). Shared by `agent_entries` and `agents_layout`
+    /// so both walk sections identically.
     fn remote_hosts_in_order(&self) -> Vec<String> {
         self.remote_hosts_in_order_ref()
             .map(str::to_string)
@@ -1225,7 +1218,7 @@ impl AppState {
     /// Borrowing twin of [`remote_hosts_in_order`](Self::remote_hosts_in_order):
     /// yields each distinct remote host as `&str` in first-appearance order,
     /// without the per-host `String` clone. Hot callers (`agent_entries`,
-    /// `agent_count`) that only read the host name take this path (D17).
+    /// `agent_count`) that only read the host name take this path.
     fn remote_hosts_in_order_ref(&self) -> impl Iterator<Item = &str> {
         let mut seen: HashSet<&str> = HashSet::new();
         self.entries
@@ -1588,8 +1581,7 @@ impl AppState {
     /// valid target. The renderer gates the overlay on this being `Some`.
     ///
     /// Resolves through `entry_at` so a focused *remote* row reports its
-    /// name too — the unified store treats local and remote rows the same
-    /// here (issue #41).
+    /// name too — local and remote rows are treated the same here.
     /// The highest-priority full-input modal currently open, or `None` when
     /// the sidebar/PTY is free to take input directly.
     ///
@@ -1655,7 +1647,7 @@ impl AppState {
     /// Why the focused kill `target` can't be killed, or `None` if it can.
     /// Single source of truth shared by the `x`-key path (`KillSession` /
     /// `ConfirmKill`) and the context menu's "Kill" greying so the two
-    /// can't drift (the keyboard path used to skip these checks):
+    /// can't drift:
     ///  - a synthetic placeholder remote row (loading / unreachable /
     ///    "(no sessions)") has no real session to kill — a kill would send
     ///    `ssh tmux kill-session` with a placeholder/empty name;

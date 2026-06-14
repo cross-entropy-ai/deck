@@ -56,8 +56,7 @@ fn wrap_markdown_honors_hard_newlines() {
 #[test]
 fn wrap_markdown_preserves_leading_indent() {
     // Leading spaces on a logical line are indentation (nested list items
-    // in summaries) and must survive wrapping — they used to be dropped,
-    // flattening nested lists.
+    // in summaries) and must survive wrapping.
     let lines = wrap_markdown("- top\n    - nested item", 80);
     assert_eq!(plain(&lines), vec!["- top", "    - nested item"]);
 }
@@ -85,8 +84,7 @@ fn truncate_handles_unicode_without_panic() {
 
 #[test]
 fn truncate_at_zero_width_is_empty() {
-    // Width 0 has no room for anything, not even an ellipsis (was a
-    // latent bug: it used to return a width-1 ".").
+    // Width 0 has no room for anything, not even an ellipsis.
     assert_eq!(truncate("hello", 0), "");
     assert_eq!(truncate("", 0), "");
 }

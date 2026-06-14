@@ -39,7 +39,7 @@ pub struct PluginView<'a> {
 
 /// Where a sidebar session lives. The sidebar renderer is otherwise
 /// origin-agnostic; it only consults this to drive group dividers and
-/// (later) to dispatch row-level actions to the right backend.
+/// to dispatch row-level actions to the right backend.
 #[derive(Debug, Clone, Copy)]
 pub enum SessionOrigin<'a> {
     Local,

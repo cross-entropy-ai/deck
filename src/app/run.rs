@@ -13,9 +13,8 @@
 //! **Ordering is load-bearing.** The render gate sits in the *middle* of the
 //! loop — after the input/PTY/state drains, before the worker-result drains
 //! and timers — so a render reflects the latest PTY output and dispatched
-//! action within the same iteration. The pumps are therefore called in
-//! exactly their original positions; this module only factors out the
-//! repeated flag-threading, it does not reorder side effects.
+//! action within the same iteration. The pump call order is load-bearing for
+//! the same reason and must not be reordered.
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -108,9 +107,7 @@ impl Ticker {
     /// inside. Used for the two timers whose interval is recomputed each loop
     /// iteration — the frame-rate render gate (depends on `frame_rate_limit`)
     /// and the periodic refresh (the Agents tab uses a slower cadence). The
-    /// struct's own `interval` field is ignored for these. This matches the
-    /// original `last_*.elapsed() >= computed_interval` + `last_* =
-    /// Instant::now()` pattern exactly.
+    /// struct's own `interval` field is ignored for these.
     fn due_with_interval(&mut self, interval: Duration) -> bool {
         if self.last.elapsed() >= interval {
             self.last = Instant::now();
@@ -425,8 +422,7 @@ impl App {
 
             // Frame-rate gate: render at most once per `render_min_interval`,
             // unless `force_render` bypasses it. Whenever a render actually
-            // happens (forced or gated) the gate's clock is reset — matching
-            // the original `last_render = Instant::now()` in the render block.
+            // happens (forced or gated) the gate's clock is reset.
             let min_interval = render_min_interval(self.state.prefs.frame_rate_limit);
             if needs_render && (force_render || render_gate.last.elapsed() >= min_interval) {
                 self.render(terminal)?;
@@ -550,7 +546,7 @@ impl App {
             // Re-attaching a dead local PTY is driven by the refresh cycle
             // (see `apply_local`): it re-attaches when a local session
             // reappears and otherwise leaves the pane dead, rendered as an
-            // empty state. deck no longer quits when the local tmux server
+            // empty state. deck does not quit when the local tmux server
             // empties out — it may still have remote hosts, and the user can
             // create a new session. (Quit is only the explicit `q`.)
         }

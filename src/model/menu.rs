@@ -3,11 +3,11 @@
 
 use crate::state::{attachable_on_host, FocusTarget, SessionEntry};
 
-// One list for local and remote rows. "Switch" is dropped — the focus
-// already triggers the switch, so the menu item was redundant. On a remote
-// row Rename/Kill map to `ssh <host> tmux <cmd>` and MoveUp/MoveDown reorder
-// *within the host group* (hosts can't interleave), persisted to that
-// server's `@deck_order` — same labels, different backend.
+// One list for local and remote rows. There's no "Switch" item — focus
+// already triggers the switch. On a remote row Rename/Kill map to
+// `ssh <host> tmux <cmd>` and MoveUp/MoveDown reorder *within the host group*
+// (hosts can't interleave), persisted to that server's `@deck_order` — same
+// labels, different backend.
 const SESSION_MENU_ITEMS: &[MenuItem] = &[
     MenuItem::Rename,
     MenuItem::Kill,
@@ -67,8 +67,7 @@ pub enum MenuItem {
 }
 
 impl MenuItem {
-    /// The text rendered for this item. Kept byte-identical to the old
-    /// `&'static str` menu literals so the popup looks unchanged.
+    /// The text rendered for this item.
     pub fn label(&self) -> &'static str {
         match self {
             MenuItem::Rename => "Rename",

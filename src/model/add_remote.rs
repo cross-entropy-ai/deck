@@ -1,5 +1,5 @@
 //! State + pure helpers for the "Add Remote Host" picker. A thin wrapper
-//! over the shared `FilterPicker` (D4): the candidate hosts are the
+//! over the shared `FilterPicker`: the candidate hosts are the
 //! picker's items, the input doubles as a live filter and a free-text
 //! hostname, and `chosen_host` adds the picker's selection-or-typed-text
 //! logic on top. Rendering lives in `ui/add_remote.rs`.

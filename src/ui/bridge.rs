@@ -33,9 +33,9 @@ pub fn render_screen(
                 // here.
                 //
                 // Without this, residue appears in two cases:
-                // - Session switch (covered today by terminal.clear() in
+                // - Session switch (covered by terminal.clear() in
                 //   render.rs).
-                // - Sidebar resize (no workaround; this fix addresses it).
+                // - Sidebar resize (skip=true is the only guard).
                 target.set_skip(true);
                 continue;
             }

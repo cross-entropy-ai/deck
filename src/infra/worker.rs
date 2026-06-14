@@ -1,12 +1,6 @@
 //! A small generic worker harness — one shape for the project's
 //! fire-and-forget and request/response background threads.
 //!
-//! deck historically hand-rolled a `thread::spawn` + `mpsc` pair per
-//! background job (update check, summary generation, remote focus, …),
-//! each with its own subtly different lifecycle and drop behavior. The
-//! costly one was a `Drop` that `join()`ed a worker that might be
-//! mid-HTTP, freezing the UI thread for the request timeout (bug #19).
-//!
 //! `Worker` fixes the lifecycle policy in one place:
 //!
 //! - **Drain, never block.** The UI thread reads results with
@@ -142,7 +136,7 @@ impl<Req, Res> Drop for Worker<Req, Res> {
     /// Non-blocking teardown: flip the cancel flag and drop the channels
     /// (the request `Sender` ends a service loop's `recv`; the result
     /// `Receiver` makes a one-shot's final `send` error). **Never joins**
-    /// — see the module docs (bug #19).
+    /// — see the module docs.
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
     }

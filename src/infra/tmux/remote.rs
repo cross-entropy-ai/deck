@@ -366,9 +366,9 @@ pub(crate) fn client_cache_dir_token() -> String {
 ///
 /// Readiness is deliberately NOT inferred from PTY output: that stream can
 /// carry shell banners / forced-command noise / arbitrary chunking before
-/// (or instead of) any marker, which made stream-sentinel detection both
-/// miss real markers and accept absent ones. A dedicated `[ -s marker ]`
-/// check answers exactly the question that matters. The brief connect race
+/// (or instead of) any marker, so scanning it for a sentinel both misses
+/// real markers and accepts absent ones. A dedicated `[ -s marker ]` check
+/// answers exactly the question that matters. The brief connect race
 /// (the attach prelude writes the marker just after `ssh` connects) is
 /// covered by a couple of in-shell retries — the wait happens remotely in
 /// one bounded ssh call, so a stalled host is capped by the ssh timeout,

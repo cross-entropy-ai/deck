@@ -196,8 +196,8 @@ pub(super) fn draw_footer(
         }
     }
 
-    // The "menu" button replaces the old key hints; clicking it opens the
-    // global context menu — the same one a right-click on empty space shows.
+    // The "menu" button opens the global context menu — the same one a
+    // right-click on empty space shows.
     let menu_y = area.y + rows.len() as u16;
     let menu = Some(Rect {
         x: area.x + 1,

@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 /// A state where the Agents-tab Summary card spans the top of the sidebar
 /// viewport and an agent row is drawn *inside* the card's rect — the exact
-/// geometry that made the wheel-scroll routing regress when it was tied to
-/// `HitRegions::hit` priority (agent rows outrank the card for clicks).
+/// geometry where wheel-scroll routing must not follow `HitRegions::hit`
+/// priority (agent rows outrank the card for clicks).
 fn state_with_agent_over_card() -> AppState {
     let mut state = AppState::new(120, 40);
     state.hit_regions.summary.card = Some(Rect {

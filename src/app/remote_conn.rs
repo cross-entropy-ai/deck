@@ -31,8 +31,8 @@
 //!      `config_remotes` doesn't matter (the `RemoveRemoteFromList` reducer
 //!      retains `config_remotes` first and offboards later, via the effect;
 //!      the reload diff offboards first). Don't make reconcile read
-//!      `config_remotes` — that's what the old `still_configured` run-loop
-//!      guard did, and it got the ordering subtly wrong.
+//!      `config_remotes` — keying staleness off config gets the ordering
+//!      subtly wrong.
 //!   2. Spawn events are drained only at the **top** of the run loop, never
 //!      mid-`dispatch`. So a removal path's "mutate `config_remotes` →
 //!      offboard (bump generation)" completes atomically w.r.t.
@@ -268,7 +268,7 @@ pub(crate) fn reconcile_spawn_event(
 
 /// The remote-connection state machine: conn map + spawner + active host +
 /// the deferred-switch / switch-verify ledgers + the spawn-generation
-/// counter. Replaces five `App` fields with one.
+/// counter.
 pub(crate) struct RemoteConnManager {
     /// One connection per configured remote host (status + attach PTY),
     /// seeded for every host at startup; the PTY arrives asynchronously.
@@ -350,8 +350,7 @@ impl RemoteConnManager {
         &mut self.conns
     }
 
-    /// This connection's client-tty marker id, or `0` when unknown — the
-    /// same default dispatch used inline.
+    /// This connection's client-tty marker id, or `0` when unknown.
     pub(crate) fn marker_id(&self, host: &str) -> u64 {
         self.conns
             .get(host)

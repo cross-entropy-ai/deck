@@ -1,7 +1,7 @@
 //! The shared filter-picker popup: one or more input fields above a
 //! scrollable, filtered candidate list. Centralizes the popup sizing, row
-//! layout, list windowing, error row, and footer the new-session and
-//! add-remote overlays used to each hand-roll.
+//! layout, list windowing, error row, and footer shared by the new-session
+//! and add-remote overlays.
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};

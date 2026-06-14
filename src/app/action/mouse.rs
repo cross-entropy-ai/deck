@@ -8,7 +8,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     // Single resolver for every rect-based button/region the sidebar
     // publishes. The modal check below decides *whether* we consult it: the
     // button rects (banner / tabs / summary / menu) and all session-row
-    // dispatch run only when no modal is up, so they're no longer clickable
+    // dispatch run only when no modal is up, so they can't be clicked
     // through an overlay (the mouse half of bug #7).
     let hit = state.hit_regions.hit(mouse.column, mouse.row);
 
@@ -233,8 +233,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
 
 /// Mouse handling for the active modal. ConfirmKill, SummaryPopup and
 /// ContextMenu keep their own click semantics; every other overlay swallows
-/// all mouse so clicks/wheel can't punch through to the sidebar (bug #7 —
-/// previously only new_session and port_forward were mouse-modal).
+/// all mouse so clicks/wheel can't punch through to the sidebar (bug #7).
 fn modal_mouse_to_action(
     modal: Modal,
     mouse: &MouseEvent,

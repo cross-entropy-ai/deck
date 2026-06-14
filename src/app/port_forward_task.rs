@@ -3,9 +3,9 @@
 //! calls. UI thread sends `Op` messages on a channel; the worker
 //! returns `OpResult` per executed step.
 //!
-//! Split from `infra::port_forward` so the I/O-bearing logic (process
-//! tracking, threading) is testable via the `Runner` trait without
-//! shelling out to real `ssh`.
+//! The I/O-bearing logic (process tracking, threading) is kept here,
+//! separate from `infra::port_forward`, so it's testable via the `Runner`
+//! trait without shelling out to real `ssh`.
 
 use std::collections::HashSet;
 use std::sync::mpsc::{Receiver, Sender};

@@ -263,7 +263,7 @@ impl App {
         // Re-attach the local PTY if it died (last session killed, or the
         // user detached) and the refresh now shows a local session again.
         // When there are no local sessions we deliberately stay dead and
-        // render an empty state — deck no longer quits on an empty local
+        // render an empty state rather than quitting on an empty local
         // server. Gated on this snapshot showing a session so re-attach
         // doesn't fire (and create one via `ensure_attach_target`) in the
         // empty state. A few-ms race remains — if the last session is killed

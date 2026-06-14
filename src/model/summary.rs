@@ -3,7 +3,7 @@
 //! the in-popup scroll, and the pre-generation state kept for cancel).
 //!
 //! Grouped into one [`SummaryCard`] unit on `AppState` so these related
-//! fields travel together instead of being six exploded `summary_*` fields.
+//! fields travel together.
 //! The *persisted* summary settings (`summary_prompt` / `summary_model` /
 //! `summary_height` / `summary_language`) are user preferences and stay in
 //! [`crate::state::Prefs`] — only the per-run runtime state lives here.

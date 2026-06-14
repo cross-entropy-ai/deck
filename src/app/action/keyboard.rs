@@ -78,10 +78,8 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
     }
 }
 
-/// Route a key to the per-modal handler for the active modal. The big-7
-/// overlays (SummaryPopup..ThemePicker) already captured all keys before
-/// Phase 2; help / confirm-kill / the settings input boxes did not, so they
-/// previously let a global keybinding leak through — now they don't.
+/// Route a key to the per-modal handler for the active modal. Every modal
+/// captures all keys, so a global keybinding can't leak through behind one.
 fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action {
     match modal {
         Modal::SummaryPopup => match key.code {

@@ -1,10 +1,8 @@
 //! Sidebar / hit-region geometry, plus the pure layout helpers shared by
 //! the UI (drawing) and the model/action (hit-testing) layers.
 //!
-//! These constants and pure functions used to live in `ui/layout.rs`, which
-//! forced `model::state` to import *upward* into `ui` for its hit-testing.
-//! They now live here in `model`, so `ui` and `app` depend on the model for
-//! geometry, never the reverse.
+//! These constants and pure functions live in `model` (not `ui`), so `ui`
+//! and `app` depend on the model for geometry, never the reverse.
 //!
 //! The tab bar's geometry (leading pad, inner pad, separator) is defined
 //! here as the single source of truth. Renderer and hit-tester both read
@@ -209,8 +207,7 @@ pub type SidebarLayout =
 ///
 /// `BasicItem` headers carry only text/buttons, not identity, so this
 /// side-table is what lets the hit-tester map a divider click to a host
-/// (collapse / reconnect / menu) the way the old `SidebarItemData::Header`
-/// did.
+/// (collapse / reconnect / menu).
 #[derive(Debug, Clone)]
 pub struct SectionMeta {
     /// Host this divider heads (`None` = `@local`). `None` for a
@@ -390,8 +387,7 @@ pub struct SummaryHits {
 /// renderer captures it whole and `AppState` stores it as a single field.
 /// `HitRegions::hit` is the one resolver mouse dispatch consults for every
 /// rect-based button/region test, so hit-test priority lives in one place
-/// and geometry can't drift across the layers (it dissolves the
-/// point-in-rect copies of D1).
+/// and geometry can't drift across the layers.
 ///
 /// Rects are clamped to the sidebar content area at capture time, so a
 /// narrow sidebar can never publish a button that overlaps the PTY pane.

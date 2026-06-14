@@ -12,12 +12,9 @@ fn plugin_block_rows_counts_title_and_separator() {
 
 #[test]
 fn confirm_kill_renders_clickable_in_tabs_mode() {
-    // Regression: in vertical/tabs mode draw_sidebar returned before the
-    // confirm-kill branch, so the prompt never drew and kill_confirm_hits
-    // stayed None. Combined with the mouse guard that swallows every click
-    // while confirm_kill is set, the clickable buttons worked only in
-    // horizontal mode. The prompt must render and publish hit regions in
-    // tabs mode too.
+    // In tabs mode the confirm-kill prompt must render and publish hit
+    // regions; otherwise the mouse guard swallows every click while
+    // confirm_kill is set and the clickable buttons never work.
     use ratatui::{backend::TestBackend, Terminal};
 
     let theme = &crate::theme::THEMES[0];
@@ -84,7 +81,7 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
     );
 }
 
-// --- Phase 1: one geometry, one hit-test ---
+// --- one geometry, one hit-test ---
 
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -265,7 +262,7 @@ fn footer_allocation_matches_shared_formula() {
     // The renderer must split off exactly `sidebar_footer_height` rows for
     // the footer, for every banner/plugin combination — the same formula
     // the mouse hit-tester uses (`AppState::sidebar_footer_height`), so a
-    // click can't land a row off from what was drawn (bug #5 class).
+    // click can't land a row off from what was drawn.
     let width = 30;
     let height = 24;
     let content = content_area(width, height);
@@ -320,9 +317,9 @@ fn footer_allocation_matches_shared_formula() {
 
 #[test]
 fn captured_rects_stay_within_sidebar_area() {
-    // Regression guard for #16/#17: every published rect must be a subset
-    // of the sidebar content area — nothing may reach into the PTY pane,
-    // at any width including very narrow ones.
+    // Every published rect must be a subset of the sidebar content area —
+    // nothing may reach into the PTY pane, at any width including very
+    // narrow ones.
     for width in [14u16, 15, 16, 20, 30, 48] {
         let height = 24;
         let content = content_area(width, height);
@@ -368,7 +365,7 @@ fn captured_rects_stay_within_sidebar_area() {
 
 #[test]
 fn narrow_agents_tab_does_not_leak_into_pty() {
-    // Bug #16: at a narrow sidebar width the un-clamped `Agents` tab label
+    // At a narrow sidebar width the un-clamped `Agents` tab label
     // overflows the sidebar. A click in a column beyond the sidebar must
     // resolve to `None`, never `Tab(Agents)`.
     let width = 16;

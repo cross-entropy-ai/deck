@@ -385,9 +385,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::RenameConfirm => {
             if let Some(r) = state.overlay.renaming.take() {
                 let new_name = textarea_line(&r.input).trim().to_string();
-                // Skip no-op renames. With the unified store, "(no sessions)"
-                // is no longer a reserved sentinel — a real session may carry
-                // any name.
+                // Skip no-op renames.
                 if !new_name.is_empty() && new_name != r.original_name {
                     fx.rename_session(RenameRequest {
                         old_name: r.original_name,

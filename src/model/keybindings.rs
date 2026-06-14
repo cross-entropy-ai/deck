@@ -119,8 +119,7 @@ const KEYBINDING_RENAMES: &[(&str, &str)] = &[];
 /// rewrite legacy key strings into crokey syntax, then drop every entry
 /// whose command name the binary no longer recognizes. Returns `true` if
 /// the map changed, so the caller can rewrite the config to self-heal.
-/// Removed commands (e.g. `cycle_filter`, dropped with the filter tabs)
-/// are silently discarded by the sweep.
+/// Commands the binary no longer defines are silently discarded by the sweep.
 pub fn migrate_keybindings(map: &mut BTreeMap<String, KeyBindingValue>) -> bool {
     let mut changed = migrate_keybindings_with(map, KEYBINDING_RENAMES);
     changed |= migrate_keybinding_syntax(map);

@@ -343,7 +343,7 @@ fn exhausted_retry() -> MarkerRetry {
 
 #[test]
 fn duplicate_marker_ready_fires_the_held_switch_only_once() {
-    // The in-spawn `wait_for_client_marker` and an app-side re-arm (bug #11)
+    // The in-spawn `wait_for_client_marker` and an app-side re-arm
     // can both emit MarkerReady for the same (host, marker, generation).
     // The first applies and fires the held switch; the second must be a
     // harmless no-op (no second switch), or a stale repeat would re-yank the

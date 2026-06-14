@@ -1,8 +1,7 @@
 //! The new-session creation flow: building and validating a
 //! `CreateSessionRequest`, opening the dir-browser picker (local, remote, and
 //! the add-remote-host picker), and the local + remote create paths with
-//! their post-create switch. Split out of `dispatch.rs` (Phase 4); pure code
-//! movement — same functions, same behavior.
+//! their post-create switch.
 
 use super::App;
 

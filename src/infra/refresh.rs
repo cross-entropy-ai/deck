@@ -136,8 +136,8 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
 
     // Compiled exclude patterns, memoized across ticks: the raw strings
     // change only on a config edit, so recompiling every regex on every
-    // 1 Hz tick was pure churn. (The empty initial cache is already the
-    // compiled form of no patterns.)
+    // 1 Hz tick would be pure churn. The empty initial cache is already the
+    // compiled form of no patterns.
     let mut cached_raw: Vec<String> = Vec::new();
     let mut compiled: Vec<ExcludePattern> = Vec::new();
 

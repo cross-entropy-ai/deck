@@ -2,10 +2,9 @@
 //!
 //! deck addresses local and remote uniformly by host: `None` = the local
 //! tmux server, `Some(host)` = a remote one (the local/remote rule in
-//! `CLAUDE.md`). Historically that key was a bare `Option<String>`, so
-//! every lookup into a per-host map allocated a fresh `String`
-//! (`agents.get(&Some(host.to_string()))`) on a per-frame / per-keystroke
-//! path.
+//! `CLAUDE.md`). A bare `Option<String>` key would allocate a fresh
+//! `String` on every per-host map lookup (`agents.get(&Some(host.to_string()))`),
+//! on a per-frame / per-keystroke path.
 //!
 //! [`HostKey`] is a newtype over `Option<Arc<str>>`: cloning it bumps a
 //! refcount instead of deep-copying the host name, and lookups go through

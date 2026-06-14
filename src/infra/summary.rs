@@ -16,10 +16,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::worker::Cancel;
 
 /// Hard ceiling on a single `claude` summary run. A hung or wedged
-/// `claude` must not pin `SummaryState::Generating` forever (bug #12):
-/// past this the child is killed and an error is surfaced so the card
-/// shows a failure and the Generate button re-enables. Generous because a
-/// multi-pane summary on a slow model legitimately takes a while.
+/// `claude` must not pin `SummaryState::Generating` forever: past this the
+/// child is killed and an error is surfaced so the card shows a failure and
+/// the Generate button re-enables. Generous because a multi-pane summary on
+/// a slow model legitimately takes a while.
 pub const SUMMARY_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// How often the `claude` wait loop wakes to check the deadline and the
@@ -77,7 +77,7 @@ dashes, en dashes, or hyphens to join or separate clauses; use a comma or a \
 separate sentence instead.";
 
 /// Bumped whenever `DEFAULT_SUMMARY_PROMPT_PROJECTS` changes — the Projects-tab
-/// twin of `DEFAULT_SUMMARY_PROMPT_VERSION`, migrated the same way.
+/// twin of `DEFAULT_SUMMARY_PROMPT_VERSION`, refreshed the same way.
 pub const DEFAULT_SUMMARY_PROMPT_PROJECTS_VERSION: u32 = 1;
 
 /// The default Projects-tab summary prompt. Same shape as
@@ -410,13 +410,11 @@ fn kill_and_reap(child: &mut Child) {
 /// hit as an argv. `model` (e.g. "haiku") is passed via `--model`; empty
 /// falls back to the user's Claude Code default.
 ///
-/// Bounded and cancellable (bug #12): instead of an unbounded
-/// `wait_with_output`, the child is polled against [`SUMMARY_TIMEOUT`] and
-/// the `cancel` flag, and **killed + reaped** on either — so a hung
+/// Bounded and cancellable: the child is polled against [`SUMMARY_TIMEOUT`]
+/// and the `cancel` flag, and **killed + reaped** on either — so a hung
 /// `claude` can't pin `Generating` forever and an Esc/cancel kills it
-/// promptly. Every error path (stdin write / EPIPE, spawn, timeout,
-/// cancel) also kills + reaps, closing the zombie leak the old EPIPE path
-/// left behind.
+/// promptly. Every error path (stdin write / EPIPE, spawn, timeout, cancel)
+/// also kills + reaps, so no child leaks as a zombie.
 pub fn run_claude(prompt: &str, model: &str, cancel: &Cancel) -> Result<String, String> {
     let mut cmd = Command::new("claude");
     cmd.arg("-p");

@@ -46,9 +46,7 @@ pub enum UpdateResult {
 ///
 /// Dropping it is **non-blocking** — `Worker`'s drop signals the thread and
 /// detaches rather than `join()`ing a possibly mid-HTTP worker on the UI
-/// thread (bug #19: disabling update-check used to freeze the UI for the
-/// ~5s request timeout). An in-flight request just finishes and its reply
-/// goes unread.
+/// thread. An in-flight request just finishes and its reply goes unread.
 pub struct UpdateChecker {
     worker: Worker<UpdateRequest, UpdateResult>,
 }
@@ -58,7 +56,7 @@ impl UpdateChecker {
         let worker = Worker::spawn_service("deck-update-check", |req, tx| match req {
             // Keep the loop alive as long as the UI keeps the channel open;
             // dropping `UpdateChecker` (its `Worker`) ends the `recv` and
-            // the thread exits — no blocking join (bug #19).
+            // the thread exits — no blocking join.
             UpdateRequest::Check => tx.send(do_check()).is_ok(),
         });
         UpdateChecker { worker }
@@ -175,10 +173,6 @@ impl UpdateCache {
         now.saturating_sub(status.checked_at) < ttl
     }
 }
-
-// Brew detection moved to `infra::self_update::detect_install_method`,
-// which routes the upgrade flow across brew / direct-download /
-// manual fallbacks.
 
 #[cfg(test)]
 #[path = "../../tests/unit/infra/update.rs"]

@@ -1,11 +1,9 @@
-//! Phase 2 parity test for bug #7: one modal source of truth
-//! (`AppState::active_modal`) consulted first by *both* the key and mouse
-//! mappers. For every `Modal` variant we assert (a) `active_modal` reports
-//! it, and (b) neither mapper emits a session-switching / PTY-forwarding /
-//! focus-leaking action for a battery of representative inputs. The big-7
-//! overlays already behaved this way; help / confirm-kill / the settings
-//! input boxes are the ones this test pins down (they used to leak global
-//! keys and clicks behind the overlay).
+//! One modal source of truth (`AppState::active_modal`) is consulted first
+//! by *both* the key and mouse mappers. For every `Modal` variant we assert
+//! (a) `active_modal` reports it, and (b) neither mapper emits a
+//! session-switching / PTY-forwarding / focus-leaking action for a battery
+//! of representative inputs — so help / confirm-kill / the settings input
+//! boxes can't leak global keys and clicks behind the overlay.
 
 use super::{key_to_action, mouse_to_action, Action, MenuAction};
 use crate::state::{

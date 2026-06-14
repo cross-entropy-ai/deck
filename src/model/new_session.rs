@@ -88,7 +88,7 @@ pub fn expand_path(s: &str, home: &std::path::Path) -> PathBuf {
 /// `name` field plus a dir-browse field — so it is not a plain
 /// filter-picker. The dir-browse half (the path input, directory listing,
 /// filtered/selected, and the overlay's single error slot) is delegated to
-/// the shared `FilterPicker` (D4); the `name` field, focus switching,
+/// the shared `FilterPicker`; the `name` field, focus switching,
 /// `~`/segment path editing, and `remote_host` stay bespoke here because
 /// they don't fit the generic shape.
 #[derive(Debug, Clone)]
@@ -159,8 +159,7 @@ pub enum PickerFocus {
 }
 
 /// Pick the next free `session-N`, starting the search from `start`
-/// (typically `existing.len()`). Used to pre-fill the picker's name
-/// field with what was previously generated inline at create time.
+/// (typically `existing.len()`). Used to pre-fill the picker's name field.
 pub fn auto_session_name(existing: &[&str], start: usize) -> String {
     let mut idx = start;
     loop {

@@ -1,7 +1,7 @@
 //! A generic filter-picker: a text input over a fixed list of string
 //! items, a derived `filtered` index list, a clamped selection, and a
 //! pending error. The new-session dir browser and the add-remote host
-//! picker both embed one of these (D4); each supplies its own filter
+//! picker both embed one of these; each supplies its own filter
 //! predicate (`filter_entries` / `filter_hosts`) so the filtering stays
 //! identical, only the recompute + clamp + step plumbing is shared.
 //!

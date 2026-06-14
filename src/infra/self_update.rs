@@ -2,10 +2,8 @@
 //!
 //! deck binaries reach users via several install paths — Homebrew on
 //! macOS / linuxbrew on Linux, `cargo install`, or just a direct
-//! tarball download from GitHub Releases. The original upgrade flow
-//! shelled out to `brew upgrade` unconditionally, which left Linux
-//! users without linuxbrew and macOS users without Homebrew stranded
-//! with a "Homebrew not found" wall and a copy-pasteable cargo command.
+//! tarball download from GitHub Releases. Each path needs a different
+//! upgrade mechanism.
 //!
 //! `detect_install_method()` figures out which path deck took to land
 //! on this machine and returns an `InstallMethod` the dispatcher can

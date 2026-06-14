@@ -95,8 +95,8 @@ impl SessionExecutor {
     ) {
         // Only cache the sender once the thread actually started: a failed
         // `thread::spawn` must not park a dead sender in the map, which would
-        // silently swallow every later op for this key (bug #22). On spawn
-        // failure the op is dropped; the next refresh tick reconciles.
+        // silently swallow every later op for this key. On spawn failure the
+        // op is dropped; the next refresh tick reconciles.
         //
         // The common path (worker exists) looks up via the borrowed
         // `HostQuery` so it doesn't allocate; only first-use builds a `HostKey`.
@@ -127,7 +127,7 @@ impl SessionExecutor {
     /// Drop `host`'s FIFO worker lane: removing its sender ends the worker's
     /// `recv` loop and lets the parked thread exit. Called from the
     /// host-offboard path so removing a host doesn't leak a parked worker
-    /// forever (bug #22). A later op for a reaped key re-spawns a fresh worker.
+    /// forever. A later op for a reaped key re-spawns a fresh worker.
     pub fn remove(&mut self, key: &Option<String>) {
         self.senders.remove(HostQuery::from_host(key.as_deref()));
     }

@@ -3,7 +3,7 @@
 //! does. Adding a setting means adding one [`SettingRow`]; the renderer
 //! (`app::render`) and the reducer (`app::action::reduce`) both iterate
 //! this slice, so a row's label, value, help, and adjust action can't
-//! drift apart the way three hand-kept copies used to.
+//! drift apart.
 //!
 //! This lives in the `app` layer, not `model`: each row's `adjust`
 //! produces an [`Action`], and `model` neither imports nor depends on

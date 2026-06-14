@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 /// Spawn a long-running child that genuinely IS a binary named `deck`, so
 /// `pid_looks_like_deck` recognizes it. That check matches the executable's
 /// basename (`ps comm=`), not the argv, so a `sleep` with a `deck` argv[0]
-/// no longer counts (which is the whole point of the fix). Copy `sleep` to a
+/// does not count. Copy `sleep` to a
 /// temp path whose file name is exactly our package name and run that; the
 /// returned dir holds the copied binary and should be removed once the
 /// child is reaped.

@@ -5,8 +5,7 @@
 //! (local `sh` vs `ssh`) and how we learn Deck's own client tty differ. The
 //! decision rule — when to select the exact window/pane vs only re-point our
 //! client — lives **once** here, as a shell snippet run by either transport,
-//! so the two can't drift (they used to: a same-session fix landed in the
-//! local copy and not the remote one).
+//! so the two can't drift.
 //!
 //! The rule:
 //! - Bail if we don't know our own client tty (`$C`) — without it we can't

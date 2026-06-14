@@ -1,7 +1,6 @@
 //! Config hot-reload: re-reading `~/.config/deck/config.yaml`, applying it in
 //! place, and the remote onboard/offboard reconciliation that diffs the old
-//! vs new remote list. Split out of `dispatch.rs` (Phase 4); pure code
-//! movement — same functions, same behavior.
+//! vs new remote list.
 
 use crate::config::Config;
 use crate::keybindings::{self, Keybindings};

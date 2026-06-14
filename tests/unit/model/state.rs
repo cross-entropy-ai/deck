@@ -91,7 +91,7 @@ fn agent_entries_ordered_local_then_hosts() {
 
 #[test]
 fn agent_cursor_tracks_its_agent_when_the_list_changes() {
-    // Regression: the Agents-tab cursor is a positional index. A refresh that
+    // The Agents-tab cursor is a positional index. A refresh that
     // drops the agent *above* the cursor must keep the cursor on the SAME
     // agent, or the left highlight slides onto a different agent than the
     // pane shown on the right (active_agent).
@@ -503,7 +503,7 @@ fn sidebar_footer_height_matches_renderer() {
     // The renderer (ui::sidebar::draw_sidebar) lays the footer out as
     // `2 + banner + plugins`; the hit-tester must agree or the bottom
     // visible session row goes click-dead. This locks the two fixed rows
-    // (the separator + the menu/version line) — it used to be 3.
+    // (the separator + the menu/version line).
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     assert_eq!(
         state.sidebar_footer_height(),
@@ -777,11 +777,9 @@ fn forward_key_from_spec_uses_mode_bind_and_listen() {
 
 #[test]
 fn confirm_kill_name_resolves_remote_focused_row() {
-    // Issue #41: killing a remote session set overlay.confirm_kill but the
-    // overlay name was looked up only in the local store, so it resolved to
-    // None and the confirm dialog never drew (then leaked onto the next
-    // local row). The name must come from whichever store the focused row
-    // lives in.
+    // When killing a remote session, the confirm-kill overlay name must come
+    // from whichever store the focused row lives in — not only the local
+    // store, or it resolves to None and the dialog never draws.
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     set_remote(&mut state, vec![remote_row("h1", false, false)]); // named "s"
                                                                   // Flat index 2 == local_count(2) + remote_idx(0): the remote row.
@@ -945,9 +943,8 @@ fn prefs_config_round_trip_is_identity() {
 
 #[test]
 fn session_indexing_matches_direct_storage_after_filtered_removal() {
-    // Regression (D18): `filtered` was the identity permutation over
-    // `sessions`, so removing it must leave the flat focus index decoding
-    // straight into `sessions` (local) then `remote_sessions`, unchanged.
+    // The flat focus index must decode straight into `sessions` (local) then
+    // `remote_sessions`.
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.entries = vec![make_session("a"), make_session("b"), make_session("c")];
     state.session_order = state.entries.iter().map(|s| s.name.clone()).collect();

@@ -234,9 +234,8 @@ fn try_load_from_valid_yaml_round_trips() {
 
 #[test]
 fn load_never_overwrites_a_present_but_malformed_file() {
-    // Regression for the P0 config-wipe: load() used `unwrap_or_default()`,
-    // so a single bad value turned into defaults, the migration reported
-    // "changed", and save() then replaced the user's real config.
+    // A present-but-unparseable config must never be silently replaced by
+    // defaults: a single bad value must not let save() wipe the user's file.
     let path = std::env::temp_dir().join("deck-load-malformed.yaml");
     // A config the user cares about, but with one malformed value
     // (frame_rate_limit isn't a number) so the whole parse fails.

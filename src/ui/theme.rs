@@ -17,8 +17,7 @@ pub struct Theme {
     pub pink: Color,
     /// Semantic slots, distinct from the decorative palette above so a
     /// theme can tune "this is an error" without recoloring a pink host
-    /// accent. Seeded from `pink`/`yellow`/`green` so today's appearance
-    /// is unchanged: `error` == `pink`, `warning` == `yellow`,
+    /// accent. Currently `error` == `pink`, `warning` == `yellow`,
     /// `success` == `green`.
     pub error: Color,
     pub warning: Color,

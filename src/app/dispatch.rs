@@ -316,9 +316,7 @@ impl App {
         // No full redraw here: switching only re-points the existing
         // tmux client at another session, so ratatui's per-cell diff
         // against the new vt100 screen repaints what actually changed.
-        // The host-terminal clear used to flash the whole screen on
-        // every switch; the wide-char residue it papered over is now
-        // handled in bridge.rs via `set_skip`.
+        // Wide-char residue is handled in bridge.rs via `set_skip`.
     }
 
     /// (Re)establish the persistent `ssh -tt host tmux attach` PTY for a

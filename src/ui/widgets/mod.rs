@@ -2,8 +2,8 @@
 //! concern: popup sizing/framing (`popup`), single-line text fields
 //! (`textarea`), label+field form rows (`field`), the shared filter picker
 //! (`picker`), list/row rendering (`list`), and scrollable text with
-//! scrollbars (`scroll`). Centralizing these removes hand-rolled copies and
-//! keeps popups consistent (rounded corners, shared windowing).
+//! scrollbars (`scroll`). Centralizing these keeps popups consistent
+//! (rounded corners, shared windowing).
 
 mod field;
 mod list;

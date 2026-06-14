@@ -171,8 +171,8 @@ pub(super) struct SummaryCardProps<'a> {
     pub summary_scroll: usize,
 }
 
-/// Draw the Agents-tab Summary card into its own rect (pinned above the
-/// list, no longer a list item). Returns the card's click/scroll regions.
+/// Draw the Agents-tab Summary card into its own rect, pinned above the
+/// list. Returns the card's click/scroll regions.
 pub(super) fn draw_summary_card(
     frame: &mut Frame,
     rect: Rect,

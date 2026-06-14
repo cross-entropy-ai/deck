@@ -466,8 +466,8 @@ fn reorder_session_moves_up() {
 
 #[test]
 fn reorder_local_session_leaves_remotes_pinned_after_in_order() {
-    // Regression for the unified store: a local reorder must not perturb the
-    // remote block, which stays after all locals in its own order.
+    // A local reorder must not perturb the remote block, which stays after
+    // all locals in its own order.
     let mut state = make_test_state(3);
     set_remote(
         &mut state,
@@ -499,8 +499,7 @@ fn reorder_session_at_boundary_is_noop() {
 
 fn remote_row(host: &str, name: &str) -> SessionEntry {
     // A name matching the "(no sessions)" label builds the NoSessions
-    // placeholder (the call sites used to pass the magic label as a name);
-    // any other name is a real Live remote session.
+    // placeholder; any other name is a real Live remote session.
     let kind = if name == NO_SESSIONS_LABEL {
         SessionEntryKind::NoSessions
     } else {
@@ -815,15 +814,6 @@ fn new_session_input_crossing_slash_sets_reread() {
     assert_eq!(ns_input_str(&state), "~/foo/");
     assert!(fx.has_reread_new_session_entries());
 }
-
-// `new_session_backspace_at_trailing_slash_goes_up` was deleted with
-// the schema delta. The "up a level" behavior now lives in
-// `Action::NewSession(NewSessionAction::DirUp)` (added in Task 12) and will be tested there.
-
-// `new_session_tab_descends_into_selected_entry` was deleted with the
-// keyboard split: Tab now toggles focus (Action::NewSession(NewSessionAction::SwitchFocus)).
-// The "descend into selected entry" behavior moves to
-// `Action::NewSession(NewSessionAction::DirEnter)` (added in Task 12) and will be tested there.
 
 #[test]
 fn new_session_next_clamped_to_filtered_len() {
@@ -1193,8 +1183,8 @@ fn host_divider_menu_has_new_session_first_and_remove_last() {
 #[test]
 fn global_menu_has_no_new_session() {
     use crate::state::{MenuItem, MenuKind};
-    // Creating a local session lives on the `@local` divider now, so the
-    // blank-area right-click menu no longer offers it.
+    // Creating a local session lives on the `@local` divider, so the
+    // blank-area right-click menu does not offer it.
     assert!(!MenuKind::Global.items().contains(&MenuItem::NewSession));
 }
 
