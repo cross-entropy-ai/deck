@@ -357,6 +357,9 @@ pub struct Prefs {
     /// with the agent panes at generation time. Seeded in `App::new` and
     /// refreshed on config reload.
     pub summary_prompt: String,
+    /// The Projects-tab summary prompt (session-framed), used when Generate is
+    /// triggered on the Projects tab; `summary_prompt` is used on Agents.
+    pub summary_prompt_projects: String,
     /// Model passed to `claude --model` for the summary (from config); empty
     /// follows the user's Claude Code default.
     pub summary_model: String,
@@ -393,6 +396,7 @@ impl Prefs {
             plugins: cfg.plugins.clone(),
             update_check_mode: cfg.update_check,
             summary_prompt: cfg.summary_prompt.clone(),
+            summary_prompt_projects: cfg.summary_prompt_projects.clone(),
             summary_model: cfg.summary_model.clone(),
             summary_height: cfg
                 .summary_height
@@ -432,6 +436,8 @@ impl Prefs {
             collapsed_agent_sections: collapsed_agents,
             summary_prompt: self.summary_prompt.clone(),
             summary_prompt_version: crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION,
+            summary_prompt_projects: self.summary_prompt_projects.clone(),
+            summary_prompt_projects_version: crate::summary::DEFAULT_SUMMARY_PROMPT_PROJECTS_VERSION,
             summary_model: self.summary_model.clone(),
             summary_height: self.summary_height,
             summary_language: self.summary_language.clone(),
@@ -606,6 +612,7 @@ impl AppState {
                 plugins: Vec::new(),
                 update_check_mode: UpdateCheckMode::default(),
                 summary_prompt: String::new(),
+                summary_prompt_projects: String::new(),
                 summary_model: String::new(),
                 summary_height: DEFAULT_SUMMARY_HEIGHT,
                 summary_language: String::new(),
@@ -1045,27 +1052,24 @@ impl AppState {
 
     /// `BasicItem` for one Agents-tab row, the twin of `session_item`. A real
     /// agent shows a status glyph (`●` working / `○` idle / `◐` waiting / `·`
-    /// unknown) and, when it's the pane deck currently shows, a `▶` "you are
-    /// here" marker — no per-row color, like session rows; the glyph + marker
-    /// carry the state. An empty section's placeholder shows `detecting…`
-    /// (not yet probed) or `no agents` (probed, none found).
+    /// unknown) before its location — no per-row color, like session rows.
+    /// The pane deck currently shows isn't marked here: the row highlight
+    /// (the cursor follows the active pane, see `steer_marker_to_pane`)
+    /// already carries "you are here". An empty section's placeholder shows
+    /// `detecting…` (not yet probed) or `no agents` (probed, none found).
     fn agent_item(&self, entry: &AgentEntry) -> BasicItem {
         match &entry.kind {
             AgentEntryKind::Agent(agent) => {
-                let here = self.active_agent.as_ref().is_some_and(|t| {
-                    t.host.as_deref() == entry.host.as_deref() && t.pane_id == agent.pane_id
-                });
                 let dot = match agent.status {
                     crate::agent::AgentStatus::Working => "●",
                     crate::agent::AgentStatus::Idle => "○",
                     crate::agent::AgentStatus::Waiting => "◐",
                     crate::agent::AgentStatus::Unknown => "·",
                 };
-                let lead = if here { "▶" } else { " " };
-                BasicItem::new(format!("{lead} {dot} {}", agent.location()))
+                BasicItem::new(format!("{dot} {}", agent.location()))
             }
             AgentEntryKind::Placeholder { probed } => {
-                BasicItem::new(if *probed { "  no agents" } else { "  detecting…" })
+                BasicItem::new(if *probed { "no agents" } else { "detecting…" })
             }
         }
     }
@@ -1531,14 +1535,15 @@ impl AppState {
         }
     }
 
-    /// Point the Agents-tab `▶` marker at the agent occupying `pane_id` on
-    /// `host` (`None` = local), or clear it when that pane holds no agent —
-    /// so the marker follows the real active pane even when the user switches
-    /// panes outside Deck. When an agent is found the section-list cursor
-    /// follows it too (`focus_cursors_on`); a pane with no agent only clears
-    /// the marker and leaves the cursor where the user left it. No-op when
+    /// Track the active pane on `host` (`None` = local): set `active_agent`
+    /// to the agent occupying `pane_id`, or clear it when that pane holds no
+    /// agent — so the active-agent state follows the real active pane even
+    /// when the user switches panes outside Deck. When an agent is found the
+    /// section-list cursor follows it too (`focus_cursors_on`), so the row
+    /// highlight lands on the active pane; a pane with no agent only clears
+    /// `active_agent` and leaves the cursor where the user left it. No-op when
     /// the host's agents haven't been probed yet, so a probe that races ahead
-    /// of detection can't blank a valid marker (absence = "not known", not
+    /// of detection can't blank a valid highlight (absence = "not known", not
     /// "no agent here").
     pub fn steer_marker_to_pane(&mut self, host: Option<&str>, pane_id: &str) {
         let target = match self.agents.get(HostQuery::from_host(host)) {

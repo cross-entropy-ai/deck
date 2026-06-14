@@ -163,6 +163,11 @@ pub struct Config {
     /// "never seeded" (a fresh config, or one predating this field), which
     /// the migration treats as stale and refreshes.
     pub summary_prompt_version: u32,
+    /// The Projects-tab summary prompt template, the session-framed twin of
+    /// `summary_prompt` (which is agent-framed). Same migration rules.
+    pub summary_prompt_projects: String,
+    /// Default-template version `summary_prompt_projects` was seeded from.
+    pub summary_prompt_projects_version: u32,
     /// Model passed to `claude --model` when generating the summary. Empty
     /// follows the user's Claude Code default; defaults to a fast, cheap
     /// model since summarizing buffers doesn't need a strong one.
@@ -204,6 +209,8 @@ impl Default for Config {
             // stamps the real version and persists the prompt to disk.
             summary_prompt: crate::summary::DEFAULT_SUMMARY_PROMPT.to_string(),
             summary_prompt_version: 0,
+            summary_prompt_projects: crate::summary::DEFAULT_SUMMARY_PROMPT_PROJECTS.to_string(),
+            summary_prompt_projects_version: 0,
             summary_model: crate::summary::DEFAULT_SUMMARY_MODEL.to_string(),
             summary_height: crate::state::DEFAULT_SUMMARY_HEIGHT,
             summary_language: String::new(),
@@ -342,14 +349,25 @@ impl Config {
     /// A hand-edited prompt survives until the default template's version
     /// is bumped, at which point it's reset to the new default.
     fn migrate_summary_prompt(&mut self) -> bool {
+        let mut changed = false;
         if self.summary_prompt_version < crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION
             || self.summary_prompt.trim().is_empty()
         {
             self.summary_prompt = crate::summary::DEFAULT_SUMMARY_PROMPT.to_string();
             self.summary_prompt_version = crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION;
-            return true;
+            changed = true;
         }
-        false
+        if self.summary_prompt_projects_version
+            < crate::summary::DEFAULT_SUMMARY_PROMPT_PROJECTS_VERSION
+            || self.summary_prompt_projects.trim().is_empty()
+        {
+            self.summary_prompt_projects =
+                crate::summary::DEFAULT_SUMMARY_PROMPT_PROJECTS.to_string();
+            self.summary_prompt_projects_version =
+                crate::summary::DEFAULT_SUMMARY_PROMPT_PROJECTS_VERSION;
+            changed = true;
+        }
+        changed
     }
 
     pub fn save(&self) {

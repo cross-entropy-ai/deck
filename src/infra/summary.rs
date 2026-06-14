@@ -76,6 +76,32 @@ those three inline markers are rendered. Do NOT use dash punctuation: no em \
 dashes, en dashes, or hyphens to join or separate clauses; use a comma or a \
 separate sentence instead.";
 
+/// Bumped whenever `DEFAULT_SUMMARY_PROMPT_PROJECTS` changes — the Projects-tab
+/// twin of `DEFAULT_SUMMARY_PROMPT_VERSION`, migrated the same way.
+pub const DEFAULT_SUMMARY_PROMPT_PROJECTS_VERSION: u32 = 1;
+
+/// The default Projects-tab summary prompt. Same shape as
+/// `DEFAULT_SUMMARY_PROMPT` but framed for tmux sessions rather than agent
+/// panes — `{{SESSIONS}}` is filled with one `<session>` block per session.
+pub const DEFAULT_SUMMARY_PROMPT_PROJECTS: &str = "\
+You are deck, a tmux session manager. Below is the recent terminal buffer of \
+each open tmux session, one <session> block per session, where the id is the \
+session name (and host=\"…\" marks a remote host).
+
+{{SESSIONS}}
+
+Summarize the current state across all sessions: what's happening in each, \
+which are actively running versus idle or waiting for input, and any errors or \
+blockers. Then suggest the most useful next action. Refer to sessions by their \
+id. Be concise: if one sentence says it clearly, use one sentence.
+
+Formatting: plain prose with short paragraphs. You may use `## headings`, \
+**bold** for emphasis, and `inline code` for commands, paths, and ids. Do NOT \
+use tables, code fences (```), bullet lists, blockquotes, or links; only \
+those three inline markers are rendered. Do NOT use dash punctuation: no em \
+dashes, en dashes, or hyphens to join or separate clauses; use a comma or a \
+separate sentence instead.";
+
 /// One pane to capture for a summary: an agent's pane (Agents tab) or a
 /// session's active pane (Projects tab). The two tabs build these differently
 /// but the capture + prompt path is identical.

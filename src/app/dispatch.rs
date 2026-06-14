@@ -446,7 +446,13 @@ impl App {
                 })
                 .collect()
         };
-        let template = self.state.prefs.summary_prompt.clone();
+        // Each tab has its own prompt: agent-framed on Agents, session-framed
+        // on Projects.
+        let template = if self.state.agents_tab_active() {
+            self.state.prefs.summary_prompt.clone()
+        } else {
+            self.state.prefs.summary_prompt_projects.clone()
+        };
         let model = self.state.prefs.summary_model.clone();
         let language = self.state.prefs.summary_language.clone();
 
@@ -526,13 +532,13 @@ impl App {
     }
 
     /// Probe the pane Deck's main view currently shows and steer the
-    /// Agents-tab `▶` marker onto whatever agent lives there — so the marker
-    /// tracks the *real* active pane even when the user switches panes
-    /// outside Deck. Resolves the displayed client's transport exactly like
-    /// `switch_to_agent_pane` (local tty vs remote marker), then runs the
+    /// Agents-tab row highlight onto whatever agent lives there — so the
+    /// highlight tracks the *real* active pane even when the user switches
+    /// panes outside Deck. Resolves the displayed client's transport exactly
+    /// like `switch_to_agent_pane` (local tty vs remote marker), then runs the
     /// query off-thread (remote ssh can stall). Single-flighted so a slow
     /// probe can't pile up behind the periodic tick; only runs on the Agents
-    /// tab, where the marker is shown.
+    /// tab, where the highlight is shown.
     pub(super) fn probe_active_pane(&mut self) {
         if !self.state.agents_tab_active() || self.active_pane_in_flight {
             return;
@@ -576,7 +582,7 @@ impl App {
     }
 
     /// Apply an active-pane probe result (drained in the event loop). Steer
-    /// the `▶` marker onto the agent in the now-active pane, or clear it if
+    /// the highlight onto the agent in the now-active pane, or clear it if
     /// that pane holds no agent. Dropped when stale — a newer focus/session
     /// action bumped `focus_seq`, the displayed host changed, or (remote) the
     /// connection generation rolled. A probe that read no pane id, or whose
