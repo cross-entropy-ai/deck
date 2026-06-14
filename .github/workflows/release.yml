@@ -71,6 +71,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Sync crate version to tag
+        shell: bash
+        run: |
+          V="${{ github.ref_name }}"
+          V="${V#v}"
+          perl -i -pe 'if (!$done && /^version\s*=/) { $_ = "version = \"'"$V"'\"\n"; $done = 1 }' Cargo.toml
+          echo "Building with crate version: $(grep -m1 '^version' Cargo.toml)"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
