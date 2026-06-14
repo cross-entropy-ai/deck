@@ -128,10 +128,17 @@ pub(super) fn draw_sessions(
     for v in layout.visible_items(scroll, area.height) {
         match v.row_idx {
             None => {
-                // A header: resolve its global section index, then place a
-                // hit rect over each `[icon]` button using the same
-                // right-aligned layout the preset renders.
-                let Some(section_idx) = layout.header_at_y(v.viewport_y, scroll) else {
+                // A header: the bar (and its buttons) sits `item.lead` rows
+                // below the block top — the lead rows are inert section-spacing
+                // margin that both the renderer and `header_at_y` skip. Resolve
+                // the bar's viewport row first, then hit-test/place rects there;
+                // using `v.viewport_y` directly would land on the margin row, so
+                // a remote divider (which carries a 1-row top margin) would never
+                // register and its button clicks would fall through to collapse.
+                let Some(bar_y) = v.viewport_y_for_item_line(v.item.lead) else {
+                    continue;
+                };
+                let Some(section_idx) = layout.header_at_y(bar_y, scroll) else {
                     continue;
                 };
                 let Some(meta) = props.built.sections.get(section_idx) else {
@@ -147,7 +154,7 @@ pub(super) fn draw_sessions(
                         kind: *kind,
                         rect: Rect {
                             x: area.x + range.start,
-                            y: area.y + v.viewport_y,
+                            y: area.y + bar_y,
                             width: range.end - range.start,
                             height: 1,
                         },

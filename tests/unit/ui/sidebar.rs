@@ -250,6 +250,108 @@ fn agents_tab_publishes_clickable_agent_entries() {
     }
 }
 
+#[test]
+fn remote_divider_buttons_register_below_their_top_margin() {
+    // A remote `@host` divider carries a 1-row top margin (section spacing),
+    // so its bar — and its `[⟳]`/`[…]` buttons — paint one row *below* the
+    // header block's top. The hit rects must follow the bar to that row;
+    // earlier they were published at the block top (the inert margin row), so
+    // the bar's buttons resolved to nothing and a click fell through to
+    // collapse the section instead of reconnecting / opening the menu.
+    use crate::state::{AppState, DividerButton, SidebarTab, ViewMode};
+
+    let theme = &crate::theme::THEMES[0];
+    let keybindings = Keybindings::default();
+
+    let mut state = AppState::new(80, 24);
+    state.prefs.sidebar_tab = SidebarTab::Projects;
+    // One remote host so the layout has a margined `@h1` divider.
+    state.entries.push(crate::state::SessionEntry {
+        host: Some("h1".to_string()),
+        name: "s".to_string(),
+        dir: String::new(),
+        kind: crate::state::SessionEntryKind::Live { is_current: false },
+    });
+    state.clamp_projects_focus();
+    let built = state.sidebar_layout(ViewMode::Expanded);
+    let sessions: Vec<&dyn SidebarSession> = state
+        .entries
+        .iter()
+        .map(|e| e as &dyn SidebarSession)
+        .collect();
+
+    let backend = TestBackend::new(40, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut captured = HitRegions::default();
+    terminal
+        .draw(|frame| {
+            captured = super::draw_sidebar(
+                frame,
+                frame.area(),
+                SidebarProps {
+                    sessions: &sessions,
+                    local_count: state.local_count(),
+                    built: &built,
+                    focus_target: state.focus_target(),
+                    sidebar_active: true,
+                    theme,
+                    show_help: false,
+                    confirm_kill: None,
+                    rename_input: None,
+                    show_borders: true,
+                    sidebar_tab: SidebarTab::Projects,
+                    agent_entries: &[],
+                    summary: &SummaryState::Idle,
+                    summary_age: None,
+                    spinner_idx: 0,
+                    summary_scroll: 0,
+                    summary_card_height: 0,
+                    tabs_mode: false,
+                    plugins: &[],
+                    blink_on: false,
+                    keybindings: &keybindings,
+                    update_available: None,
+                },
+            );
+        })
+        .unwrap();
+
+    // The remote divider publishes both of its buttons, in order.
+    let h1: Vec<&crate::state::DividerHit> = captured
+        .dividers
+        .iter()
+        .filter(|h| h.host == "h1")
+        .collect();
+    let kinds: Vec<DividerButton> = h1.iter().map(|h| h.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![DividerButton::Reconnect, DividerButton::More],
+        "remote `@h1` divider must register its reconnect + more buttons"
+    );
+
+    // Each button rect resolves back through the priority resolver (so a
+    // click there is a button, not a collapse) and lands on a painted `[`
+    // of the rendered bar — proving the rect tracks the bar row, not the
+    // blank margin row above it.
+    let buf = terminal.backend().buffer();
+    for h in &h1 {
+        let pos = (h.rect.x, h.rect.y);
+        assert!(
+            matches!(captured.hit(h.rect.x, h.rect.y), Some(HitKind::Divider(_))),
+            "{:?} button rect {:?} must resolve to a divider hit",
+            h.kind,
+            h.rect
+        );
+        assert_eq!(
+            buf[pos].symbol(),
+            "[",
+            "{:?} button rect {:?} must sit on the painted `[icon]`",
+            h.kind,
+            h.rect
+        );
+    }
+}
+
 /// The content area `draw_sidebar` lays out within for a horizontal
 /// sidebar with borders: the bordered container insets the full area by
 /// one cell on each side.
