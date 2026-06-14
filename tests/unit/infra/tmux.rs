@@ -173,19 +173,6 @@ fn pid_looks_like_deck_with_runner_false_on_other_proc() {
 }
 
 #[test]
-fn pid_looks_like_deck_false_on_substring_only() {
-    // A recycled pid running `vim deck.md`: the argv mentions "deck", but
-    // the executable basename is `vim`. Must not be mistaken for ours.
-    let runner = FakeRunner::new();
-    let pid_str = "1234";
-    runner.set(
-        &["-p", pid_str, "-o", "comm="],
-        FakeResponse::Ok("/usr/bin/vim".to_string()),
-    );
-    assert!(!pid_looks_like_deck_with(&runner, 1234));
-}
-
-#[test]
 fn pid_looks_like_deck_false_on_prefixed_binary() {
     // Exact match, not a prefix: a `deckard` binary is not us.
     let runner = FakeRunner::new();

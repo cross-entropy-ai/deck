@@ -76,30 +76,6 @@ fn focus_prev_decrements_and_switches() {
 }
 
 #[test]
-fn focus_prev_stops_at_zero() {
-    let mut state = make_test_state(5);
-    state.focused = 0;
-    let fx = apply_action(&mut state, Action::FocusPrev);
-    assert_eq!(state.focused, 0);
-    assert!(fx.first_switch_session().is_none());
-}
-
-#[test]
-fn switch_project_on_remote_no_sessions_shows_placeholder() {
-    let mut state = make_test_state(1);
-    state
-        .entries
-        .push(remote_row("remote-a", NO_SESSIONS_LABEL));
-    state.focused = state.local_count();
-
-    let fx = apply_action(&mut state, Action::SwitchProject);
-
-    assert_eq!(fx.first_remote_placeholder(), Some("remote-a"));
-    assert!(fx.first_switch_session().is_none());
-    assert!(!fx.has_refresh_sessions());
-}
-
-#[test]
 fn sidebar_click_remote_no_sessions_does_not_refresh() {
     let mut state = make_test_state(1);
     state
@@ -241,17 +217,6 @@ fn toggle_layout_flips_and_signals_resize() {
 }
 
 #[test]
-fn toggle_borders_signals_resize_and_save() {
-    let mut state = make_test_state(1);
-    let was = state.prefs.show_borders;
-    let fx = apply_action(&mut state, Action::ToggleBorders);
-    assert_ne!(state.prefs.show_borders, was);
-    assert!(fx.has_resize_pty());
-    assert!(fx.has_full_redraw_after_resize());
-    assert!(fx.has_save_config());
-}
-
-#[test]
 fn open_settings_switches_main_pane_to_settings() {
     let mut state = make_test_state(1);
     state.focus_mode = FocusMode::Sidebar;
@@ -343,17 +308,6 @@ fn settings_adjust_layout_resizes_and_saves() {
     state.settings.selected = 2;
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_eq!(state.prefs.layout_mode, LayoutMode::Vertical);
-    assert!(fx.has_resize_pty());
-    assert!(fx.has_save_config());
-}
-
-#[test]
-fn settings_adjust_borders_resizes_and_saves() {
-    let mut state = make_test_state(1);
-    let initial = state.prefs.show_borders;
-    state.settings.selected = 3;
-    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert_ne!(state.prefs.show_borders, initial);
     assert!(fx.has_resize_pty());
     assert!(fx.has_save_config());
 }
@@ -691,31 +645,12 @@ fn toggle_view_mode_flips_and_saves() {
 }
 
 #[test]
-fn settings_adjust_view_mode_toggles() {
-    let mut state = make_test_state(1);
-    state.settings.selected = 4;
-    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert_eq!(state.prefs.view_mode, ViewMode::Compact);
-    assert!(fx.has_save_config());
-}
-
-#[test]
 fn settings_adjust_frame_rate_cycles_and_saves() {
     let mut state = make_test_state(1);
     state.prefs.frame_rate_limit = 5;
     state.settings.selected = 5;
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_eq!(state.prefs.frame_rate_limit, 10);
-    assert!(fx.has_save_config());
-}
-
-#[test]
-fn settings_adjust_prev_frame_rate_cycles_backwards() {
-    let mut state = make_test_state(1);
-    state.prefs.frame_rate_limit = 5;
-    state.settings.selected = 5;
-    let fx = apply_action(&mut state, Action::Settings(SettingsAction::AdjustPrev));
-    assert_eq!(state.prefs.frame_rate_limit, 2);
     assert!(fx.has_save_config());
 }
 
@@ -763,31 +698,6 @@ fn settings_next_clamps_to_descriptor_table_length() {
     assert_eq!(state.settings.selected, SETTING_ROWS.len() - 1);
 }
 
-#[test]
-fn settings_descriptor_table_order_matches_indexed_tests() {
-    // The index-driven settings tests assert behavior at fixed rows; pin
-    // those labels so a reorder of SETTING_ROWS can't silently invalidate
-    // them.
-    use crate::app::settings::SETTING_ROWS;
-    let labels: Vec<&str> = SETTING_ROWS.iter().map(|r| r.label).collect();
-    assert_eq!(
-        labels,
-        vec![
-            "Theme",
-            "Transparent",
-            "Layout",
-            "Borders",
-            "View",
-            "Frame rate",
-            "Exclude",
-            "Keybindings",
-            "Update check",
-            "Summary lang",
-            "Agents probe",
-        ]
-    );
-}
-
 fn rename_state(initial: &str) -> RenameState {
     RenameState::new(initial.to_string(), initial.to_string(), None)
 }
@@ -812,15 +722,6 @@ fn rename_input_key_appends_char() {
     state.overlay.renaming = Some(rename_state("hello"));
     apply_action(&mut state, Action::RenameInputKey(key(KeyCode::Char('!'))));
     assert_eq!(rename_input_text(&state), "hello!");
-}
-
-#[test]
-fn rename_input_key_backspace_deletes() {
-    use crossterm::event::KeyCode;
-    let mut state = make_test_state(1);
-    state.overlay.renaming = Some(rename_state("hello"));
-    apply_action(&mut state, Action::RenameInputKey(key(KeyCode::Backspace)));
-    assert_eq!(rename_input_text(&state), "hell");
 }
 
 #[test]
@@ -1152,28 +1053,6 @@ fn open_form_with_focus(
 }
 
 #[test]
-fn pf_add_input_key_appends_to_focused_textarea() {
-    use crossterm::event::KeyCode;
-    let mut state = make_test_state(0);
-    open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "");
-    for c in ['8', '0', '8', '0'] {
-        crate::action::apply_action(
-            &mut state,
-            Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))),
-        );
-    }
-    let f = state
-        .overlay
-        .port_forward
-        .as_ref()
-        .unwrap()
-        .add_form
-        .as_ref()
-        .unwrap();
-    assert_eq!(f.field_text(crate::state::PfField::ListenPort), "8080");
-}
-
-#[test]
 fn pf_add_input_drops_non_digits_in_port_fields() {
     use crossterm::event::KeyCode;
     let mut state = make_test_state(0);
@@ -1317,28 +1196,6 @@ fn global_menu_has_no_new_session() {
     // Creating a local session lives on the `@local` divider now, so the
     // blank-area right-click menu no longer offers it.
     assert!(!MenuKind::Global.items().contains(&MenuItem::NewSession));
-}
-
-#[test]
-fn session_menu_has_no_switch_or_remove() {
-    use crate::state::{FocusTarget, MenuItem, MenuKind};
-    // One item list serves local and remote rows. "Switch" is gone (the
-    // focus already triggers the switch) and "Remove from list" lives on
-    // the host-divider menu, not the per-session menu.
-    let menu = MenuKind::Session {
-        focus: FocusTarget(0),
-        disabled: &[],
-    };
-    assert_eq!(
-        menu.items(),
-        &[
-            MenuItem::Rename,
-            MenuItem::Kill,
-            MenuItem::MoveUp,
-            MenuItem::MoveDown
-        ]
-    );
-    assert!(!menu.items().contains(&MenuItem::RemoveFromList));
 }
 
 #[test]

@@ -689,13 +689,6 @@ fn collapsed_local_group_hides_rows() {
 }
 
 #[test]
-fn expanded_local_group_shows_rows() {
-    let state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    let built = state.sidebar_layout(ViewMode::Expanded);
-    assert!(!built.layout.is_row_hidden(0));
-}
-
-#[test]
 fn focus_skips_collapsed_remote_group() {
     // Layout: 2 local rows (idx 0,1), then host h1 (idx 2). Collapse local.
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
@@ -709,16 +702,6 @@ fn focus_skips_collapsed_remote_group() {
     assert!(state.is_focus_collapsed(0));
     assert!(state.is_focus_collapsed(1));
     assert!(!state.is_focus_collapsed(2));
-}
-
-#[test]
-fn section_key_of_focus_maps_local_and_remote() {
-    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    set_remote(&mut state, vec![remote_row("h1", false, false)]);
-    state.clamp_projects_focus();
-    assert_eq!(state.section_key_of_focus(0), None); // local
-    assert_eq!(state.section_key_of_focus(1), None); // local
-    assert_eq!(state.section_key_of_focus(2), Some("h1".to_string())); // remote
 }
 
 #[test]

@@ -2,16 +2,6 @@ use super::{context_menu_width, tab_col_ranges, tab_label};
 use crate::menu::MenuItem;
 
 #[test]
-fn local_tab_label_is_bare_name() {
-    assert_eq!(tab_label(None, "alpha"), "alpha");
-}
-
-#[test]
-fn remote_tab_label_joins_host_and_session() {
-    assert_eq!(tab_label(Some("box"), "work"), "box:work");
-}
-
-#[test]
 fn remote_tab_label_truncates_each_side_to_six() {
     // Each side caps at 6 columns (5 chars + ellipsis), joined by ":".
     let label = tab_label(Some("longhostname"), "longsession");

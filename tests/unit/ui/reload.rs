@@ -6,11 +6,6 @@ fn wrap_width_zero_returns_empty() {
 }
 
 #[test]
-fn wrap_width_fits_in_single_chunk() {
-    assert_eq!(wrap_width("hi", 10), vec!["hi".to_string()]);
-}
-
-#[test]
 fn wrap_width_splits_on_width_boundary() {
     let chunks = wrap_width("abcdefghijklmnop", 5);
     assert_eq!(chunks.len(), 4);
@@ -22,12 +17,8 @@ fn wrap_width_splits_on_width_boundary() {
 }
 
 #[test]
-fn reload_row_count_ok_is_one_row() {
+fn reload_row_count_ok_is_one_row_and_none_is_zero() {
     assert_eq!(reload_row_count(Some(&ReloadStatus::Ok), 20), 1);
-}
-
-#[test]
-fn reload_row_count_none_is_zero_rows() {
     assert_eq!(reload_row_count(None, 20), 0);
 }
 

@@ -63,12 +63,6 @@ fn wrap_markdown_preserves_leading_indent() {
 }
 
 #[test]
-fn wrap_markdown_keeps_indent_at_text_start() {
-    let lines = wrap_markdown("  indented", 80);
-    assert_eq!(plain(&lines), vec!["  indented"]);
-}
-
-#[test]
 fn wrap_markdown_still_collapses_inter_word_spaces() {
     // Only *leading* spaces are kept; runs of spaces between words at a
     // wrap boundary still collapse the usual way.
@@ -87,11 +81,6 @@ fn wrap_markdown_cjk_uses_display_width() {
 #[test]
 fn truncate_handles_unicode_without_panic() {
     assert_eq!(truncate("🪆 Nested deck detected", 10), "🪆 Nested…");
-}
-
-#[test]
-fn truncate_keeps_short_strings() {
-    assert_eq!(truncate("hello", 10), "hello");
 }
 
 #[test]

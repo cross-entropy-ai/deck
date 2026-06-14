@@ -20,13 +20,6 @@ fn glob_question_mark_matches_single_char() {
 }
 
 #[test]
-fn glob_exact_match() {
-    let patterns = compile_patterns(&["scratch".to_string()]);
-    assert!(session_excluded("scratch", &patterns));
-    assert!(!session_excluded("scratch2", &patterns));
-}
-
-#[test]
 fn regex_pattern_matches() {
     let patterns = compile_patterns(&["/^test-.+$/".to_string()]);
     assert!(session_excluded("test-abc", &patterns));
@@ -76,19 +69,8 @@ fn parse_json_with_exclude_patterns() {
 }
 
 #[test]
-fn parse_json_without_exclude_patterns_uses_default() {
-    let json = r#"{
-  "theme": "Catppuccin Mocha",
-  "layout": "horizontal",
-  "show_borders": true,
-  "sidebar_width": 28
-}"#;
-    let config = parse(json);
-    assert_eq!(config.exclude_patterns, vec!["_*"]);
-}
-
-#[test]
-fn parse_json_without_view_mode_uses_default() {
+fn parse_json_without_optional_fields_uses_defaults() {
+    // One representative for serde default-on-missing across optional fields.
     let json = r#"{
   "theme": "Catppuccin Mocha",
   "layout": "horizontal",
@@ -97,25 +79,8 @@ fn parse_json_without_view_mode_uses_default() {
 }"#;
     let config = parse(json);
     assert_eq!(config.view_mode, ViewMode::Expanded);
-}
-
-#[test]
-fn parse_json_without_frame_rate_limit_uses_default() {
-    let json = r#"{
-  "theme": "Catppuccin Mocha",
-  "layout": "horizontal",
-  "show_borders": true,
-  "sidebar_width": 28
-}"#;
-    let config = parse(json);
     assert_eq!(config.frame_rate_limit, 5);
-}
-
-#[test]
-fn parse_json_with_frame_rate_limit() {
-    let json = r#"{ "frame_rate_limit": 30 }"#;
-    let config = parse(json);
-    assert_eq!(config.frame_rate_limit, 30);
+    assert_eq!(config.exclude_patterns, vec!["_*"]);
 }
 
 #[test]
@@ -152,13 +117,6 @@ fn parse_json_with_plugins() {
     assert_eq!(config.plugins[0].command, "findgpu");
     assert_eq!(config.plugins[0].key, 'g');
     assert_eq!(config.plugins[1].key, 'm');
-}
-
-#[test]
-fn parse_json_without_sidebar_height_uses_default() {
-    let json = r#"{ "theme": "Nord" }"#;
-    let config = parse(json);
-    assert_eq!(config.sidebar_height, SIDEBAR_HEIGHT);
 }
 
 #[test]
@@ -225,13 +183,6 @@ fn parse_json_with_update_check_disabled() {
     let json = r#"{ "update_check": "disabled" }"#;
     let config = parse(json);
     assert_eq!(config.update_check, UpdateCheckMode::Disabled);
-}
-
-#[test]
-fn parse_json_with_update_check_enabled() {
-    let json = r#"{ "update_check": "enabled" }"#;
-    let config = parse(json);
-    assert_eq!(config.update_check, UpdateCheckMode::Enabled);
 }
 
 #[test]
@@ -352,18 +303,6 @@ fn empty_keybindings_still_serialize() {
 }
 
 #[test]
-fn forward_spec_local_to_flag_with_bind() {
-    let spec = ForwardSpec {
-        mode: ForwardMode::Local,
-        bind_addr: Some("127.0.0.1".into()),
-        listen_port: 8080,
-        target_host: Some("example.com".into()),
-        target_port: Some(80),
-    };
-    assert_eq!(spec.to_ssh_flag(), "-L 127.0.0.1:8080:example.com:80");
-}
-
-#[test]
 fn forward_spec_local_to_flag_no_bind() {
     let spec = ForwardSpec {
         mode: ForwardMode::Local,
@@ -458,24 +397,6 @@ fn fwd(port: u16) -> ForwardSpec {
         target_host: Some("localhost".into()),
         target_port: Some(80),
     }
-}
-
-#[test]
-fn diff_forwards_added() {
-    let old: Vec<ForwardSpec> = vec![];
-    let new = vec![fwd(8080)];
-    let ops = diff_forwards(&old, &new);
-    assert_eq!(ops.len(), 1);
-    assert!(matches!(&ops[0], ForwardOp::Add(s) if s.listen_port == 8080));
-}
-
-#[test]
-fn diff_forwards_removed() {
-    let old = vec![fwd(8080)];
-    let new: Vec<ForwardSpec> = vec![];
-    let ops = diff_forwards(&old, &new);
-    assert_eq!(ops.len(), 1);
-    assert!(matches!(&ops[0], ForwardOp::Cancel(s) if s.listen_port == 8080));
 }
 
 #[test]

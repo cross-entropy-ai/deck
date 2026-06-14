@@ -204,15 +204,12 @@ fn marker_retry_waits_before_the_backoff_elapses() {
 }
 
 #[test]
-fn marker_retry_fires_once_the_backoff_elapses() {
+fn marker_retry_backoff_grows_with_attempts() {
+    // First attempt fires once BASE elapses.
     assert_eq!(
         marker_retry_decision(MARKER_RETRY_BASE, 0),
         MarkerRetryAction::Retry
     );
-}
-
-#[test]
-fn marker_retry_backoff_grows_with_attempts() {
     // Second attempt needs BASE * 2 elapsed: BASE alone is not enough.
     assert_eq!(
         marker_retry_decision(MARKER_RETRY_BASE, 1),

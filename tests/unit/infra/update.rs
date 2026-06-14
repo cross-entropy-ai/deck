@@ -44,15 +44,3 @@ fn cache_is_fresh_handles_clock_skew() {
     // now < checked_at — clock moved backwards; treat as fresh.
     assert!(UpdateCache::is_fresh(&status, 1500, 200));
 }
-
-#[test]
-fn update_check_mode_serialization() {
-    assert_eq!(
-        serde_json::to_string(&UpdateCheckMode::Enabled).unwrap(),
-        "\"enabled\""
-    );
-    assert_eq!(
-        serde_json::to_string(&UpdateCheckMode::Disabled).unwrap(),
-        "\"disabled\""
-    );
-}

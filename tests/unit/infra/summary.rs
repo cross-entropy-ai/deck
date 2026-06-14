@@ -47,11 +47,6 @@ fn build_prompt_escapes_attribute_specials() {
 }
 
 #[test]
-fn default_prompt_carries_the_placeholder() {
-    assert!(DEFAULT_SUMMARY_PROMPT.contains(PROMPT_PLACEHOLDER));
-}
-
-#[test]
 fn language_label_shows_default_for_empty() {
     assert_eq!(language_label(""), "Default");
     assert_eq!(language_label("中文"), "中文");

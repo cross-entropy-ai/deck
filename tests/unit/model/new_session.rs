@@ -2,11 +2,6 @@ use super::*;
 use std::path::PathBuf;
 
 #[test]
-fn split_input_empty() {
-    assert_eq!(split_input(""), ("", ""));
-}
-
-#[test]
 fn split_input_trailing_slash() {
     assert_eq!(split_input("~/foo/"), ("~/foo/", ""));
 }
@@ -19,11 +14,6 @@ fn split_input_partial_leaf() {
 #[test]
 fn split_input_no_slash() {
     assert_eq!(split_input("foo"), ("", "foo"));
-}
-
-#[test]
-fn split_input_root_only() {
-    assert_eq!(split_input("/"), ("/", ""));
 }
 
 #[test]

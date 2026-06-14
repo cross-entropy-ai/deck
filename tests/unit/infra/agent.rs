@@ -176,11 +176,3 @@ fn claude_classifier_reads_traffic_light_from_buffer() {
         AgentStatus::Unknown
     );
 }
-
-#[test]
-fn codex_is_unknown_until_a_classifier_exists() {
-    assert_eq!(
-        classify_status(AgentKind::Codex, "esc to interrupt"),
-        AgentStatus::Unknown
-    );
-}

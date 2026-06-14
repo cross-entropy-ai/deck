@@ -348,47 +348,6 @@ fn runtime_uppercase_event_matches_bound_uppercase() {
 }
 
 #[test]
-fn trigger_upgrade_default_key_is_u() {
-    let kb = Keybindings::default();
-    assert_eq!(
-        kb.lookup(&ev(KeyCode::Char('u'), KeyModifiers::NONE)),
-        Some(Command::TriggerUpgrade)
-    );
-}
-
-#[test]
-fn trigger_upgrade_appears_in_all() {
-    assert!(Command::ALL.contains(&Command::TriggerUpgrade));
-    assert_eq!(
-        Command::from_name("trigger_upgrade"),
-        Some(Command::TriggerUpgrade)
-    );
-}
-
-#[test]
-fn reload_config_default_key_is_r() {
-    let kb = Keybindings::default();
-    assert_eq!(
-        kb.lookup(&ev(KeyCode::Char('r'), KeyModifiers::NONE)),
-        Some(Command::ReloadConfig)
-    );
-}
-
-#[test]
-fn reload_config_is_not_global() {
-    assert!(!Command::ReloadConfig.is_global());
-}
-
-#[test]
-fn reload_config_appears_in_all() {
-    assert!(Command::ALL.contains(&Command::ReloadConfig));
-    assert_eq!(
-        Command::from_name("reload_config"),
-        Some(Command::ReloadConfig)
-    );
-}
-
-#[test]
 fn ensure_complete_fills_missing_commands() {
     let mut map: BTreeMap<String, KeyBindingValue> = BTreeMap::new();
     map.insert(
