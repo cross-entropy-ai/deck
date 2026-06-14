@@ -163,7 +163,10 @@ fn parse_panes_reads_tab_fields() {
 fn claude_classifier_reads_traffic_light_from_buffer() {
     // Working spinner: the "<verb>ing… (" status line.
     let working = "✶ Cogitating… (12s · ↑ 3.2k tokens · esc to interrupt)";
-    assert_eq!(classify_status(AgentKind::Claude, working), AgentStatus::Working);
+    assert_eq!(
+        classify_status(AgentKind::Claude, working),
+        AgentStatus::Working
+    );
 
     // Idle at the prompt, nothing pending.
     let idle = "╭───────────╮\n│ > │\n╰───────────╯\n? for shortcuts";
@@ -171,7 +174,10 @@ fn claude_classifier_reads_traffic_light_from_buffer() {
 
     // A permission dialog → waiting on the user.
     let prompt = "Do you want to proceed?\n❯ 1. Yes\n  2. No";
-    assert_eq!(classify_status(AgentKind::Claude, prompt), AgentStatus::Waiting);
+    assert_eq!(
+        classify_status(AgentKind::Claude, prompt),
+        AgentStatus::Waiting
+    );
 
     // A finished turn ("…ed for <n>") below a stale spinner reads as idle —
     // bottom-up wins.
@@ -179,7 +185,10 @@ fn claude_classifier_reads_traffic_light_from_buffer() {
     assert_eq!(classify_status(AgentKind::Claude, done), AgentStatus::Idle);
 
     // Empty capture → unknown.
-    assert_eq!(classify_status(AgentKind::Claude, "   "), AgentStatus::Unknown);
+    assert_eq!(
+        classify_status(AgentKind::Claude, "   "),
+        AgentStatus::Unknown
+    );
 }
 
 #[test]

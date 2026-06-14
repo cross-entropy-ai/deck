@@ -50,8 +50,8 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
     let body_rows = (area.height as usize)
         .saturating_sub(header.len())
         .saturating_sub(1); // footer
-    // Worst-case entry height bounds the window so a selected tall entry
-    // can't be pushed past the bottom.
+                            // Worst-case entry height bounds the window so a selected tall entry
+                            // can't be pushed past the bottom.
     let max_entry_height = entries.iter().map(entry_height).max().unwrap_or(1).max(1);
     let visible = (body_rows / max_entry_height).max(1);
     let start = scroll_window(settings.selected, entries.len(), visible);

@@ -1,4 +1,4 @@
-use super::{format_idle_badge, truncate, wrap_markdown, MdStyle};
+use super::{truncate, wrap_markdown, MdStyle};
 
 /// Flatten a `wrap_markdown` result back to plain strings per line.
 fn plain(lines: &[Vec<(String, MdStyle)>]) -> Vec<String> {
@@ -124,13 +124,4 @@ fn truncate_cjk_counts_display_width_not_bytes() {
     assert_eq!(truncate("你好世界", 8), "你好世界");
     // A wide char that can't fit beside the ellipsis is dropped.
     assert_eq!(truncate("你好", 2), "…");
-}
-
-#[test]
-fn idle_time_uses_human_units() {
-    assert_eq!(format_idle_badge(5), None);
-    assert_eq!(format_idle_badge(59), None);
-    assert_eq!(format_idle_badge(60), Some("1m".to_string()));
-    assert_eq!(format_idle_badge(3600), Some("1h".to_string()));
-    assert_eq!(format_idle_badge(172800), Some("2d".to_string()));
 }

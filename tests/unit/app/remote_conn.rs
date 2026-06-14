@@ -95,10 +95,7 @@ fn reconcile_drops_event_for_a_never_seen_host() {
 #[test]
 fn marker_ready_applies_when_generation_and_marker_match() {
     let mut conns = HashMap::new();
-    conns.insert(
-        "h".to_string(),
-        conn(RemoteConnStatus::Connected, 7, false),
-    );
+    conns.insert("h".to_string(), conn(RemoteConnStatus::Connected, 7, false));
     let mut generations = HashMap::new();
     generations.insert("h".to_string(), 3u64);
 
@@ -115,10 +112,7 @@ fn marker_ready_dropped_when_marker_id_is_not_the_live_one() {
     // within… well, a respawn bumps generation, but defensively the marker
     // id guard still rejects a confirmation for a marker that isn't current).
     let mut conns = HashMap::new();
-    conns.insert(
-        "h".to_string(),
-        conn(RemoteConnStatus::Connected, 9, false),
-    );
+    conns.insert("h".to_string(), conn(RemoteConnStatus::Connected, 9, false));
     let mut generations = HashMap::new();
     generations.insert("h".to_string(), 3u64);
 
@@ -134,10 +128,7 @@ fn marker_ready_dropped_when_generation_is_stale_even_if_marker_matches() {
     // The generation guard runs first: a MarkerReady from an abandoned
     // generation is dropped regardless of marker id.
     let mut conns = HashMap::new();
-    conns.insert(
-        "h".to_string(),
-        conn(RemoteConnStatus::Connected, 7, false),
-    );
+    conns.insert("h".to_string(), conn(RemoteConnStatus::Connected, 7, false));
     let mut generations = HashMap::new();
     generations.insert("h".to_string(), 4u64);
 

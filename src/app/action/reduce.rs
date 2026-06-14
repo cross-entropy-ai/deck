@@ -1,13 +1,11 @@
+use crate::app::settings::SETTING_ROWS;
 use crate::config::ForwardMode;
 use crate::new_session::textarea_line;
 use crate::state::{
     cycle_option, session_menu_disabled, step_clamped, AppState, ContextMenu, FocusMode,
-    KillRequest,
-    LayoutMode, MainView, MenuItem, MenuKind, PfAddForm, PfField, PortForwardOverlay,
-    RemoteSwitchRequest,
-    RenameRequest, RenameState, SideEffect, SidebarTab, ViewMode,
+    KillRequest, LayoutMode, MainView, MenuItem, MenuKind, PfAddForm, PfField, PortForwardOverlay,
+    RemoteSwitchRequest, RenameRequest, RenameState, SideEffect, SidebarTab, ViewMode,
 };
-use crate::app::settings::SETTING_ROWS;
 use crate::theme::THEMES;
 
 use super::{
@@ -257,7 +255,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                         } else {
                             None
                         };
-                        alt_idx.and_then(|i| state.entries.get(i)).map(|e| e.name.clone())
+                        alt_idx
+                            .and_then(|i| state.entries.get(i))
+                            .map(|e| e.name.clone())
                     } else {
                         None
                     };
@@ -294,7 +294,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // to disk) and clear any session rows for it so the sidebar
             // updates before the next refresh round lands.
             state.config_remotes.retain(|r| r.host != host);
-            state.entries.retain(|e| e.host.as_deref() != Some(host.as_str()));
+            state
+                .entries
+                .retain(|e| e.host.as_deref() != Some(host.as_str()));
             // Clamp the Projects cursor against the Projects row space.
             state.clamp_projects_focus();
             state.clamp_agent_focus();
@@ -556,12 +558,10 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
             state.settings.theme_picker_open = false;
         }
         SettingsAction::Next => {
-            state.settings.selected =
-                step_clamped(state.settings.selected, SETTING_ROWS.len(), 1);
+            state.settings.selected = step_clamped(state.settings.selected, SETTING_ROWS.len(), 1);
         }
         SettingsAction::Prev => {
-            state.settings.selected =
-                step_clamped(state.settings.selected, SETTING_ROWS.len(), -1);
+            state.settings.selected = step_clamped(state.settings.selected, SETTING_ROWS.len(), -1);
         }
         SettingsAction::Adjust | SettingsAction::AdjustPrev => {
             let direction = if matches!(action, SettingsAction::AdjustPrev) {
@@ -745,7 +745,10 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
             state.scroll_summary(delta);
         }
         SummaryAction::OpenPopup => {
-            if matches!(state.summary.state, crate::state::SummaryState::Ready { .. }) {
+            if matches!(
+                state.summary.state,
+                crate::state::SummaryState::Ready { .. }
+            ) {
                 state.overlay.summary_popup = true;
                 state.summary.popup_scroll = 0;
             }
@@ -767,8 +770,9 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
             fx.save_config();
         }
         SummaryAction::OpenLanguageEditor => {
-            state.overlay.summary_lang_input =
-                Some(crate::new_session::make_textarea(&state.prefs.summary_language));
+            state.overlay.summary_lang_input = Some(crate::new_session::make_textarea(
+                &state.prefs.summary_language,
+            ));
         }
         SummaryAction::LanguageInputKey(key) => {
             if let Some(ref mut ta) = state.overlay.summary_lang_input {

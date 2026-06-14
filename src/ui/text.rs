@@ -225,12 +225,6 @@ pub(super) fn format_keys_for(keybindings: &Keybindings, cmd: Command) -> String
 // (the leaf shared by the renderer and the hit-tester); re-exported here
 // so the `ui::text` call sites and tests keep their `super::truncate` path.
 pub(super) use crate::geometry::truncate;
-// Pure string helper moved down into `model` (geometry) so the sidebar
-// layout builder can format rows without depending on `ui`; re-exported
-// here for the `ui::text` unit test.
-#[cfg(test)]
-pub(super) use crate::geometry::format_idle_badge;
-
 #[cfg(test)]
 #[path = "../../tests/unit/ui/text.rs"]
 mod tests;

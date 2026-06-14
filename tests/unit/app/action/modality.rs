@@ -22,10 +22,7 @@ fn make_state() -> AppState {
             host: None,
             name: format!("sess-{i}"),
             dir: format!("/tmp/sess-{i}"),
-            kind: SessionKind::Live {
-                is_current: i == 0,
-                idle_seconds: Some(0),
-            },
+            kind: SessionKind::Live { is_current: i == 0 },
         })
         .collect();
     state.session_order = state.entries.iter().map(|s| s.name.clone()).collect();
@@ -55,8 +52,7 @@ fn open_modal(state: &mut AppState, modal: Modal) {
             state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(vec![]));
         }
         Modal::Rename => {
-            state.overlay.renaming =
-                Some(RenameState::new("sess-0".into(), "sess-0".into(), None));
+            state.overlay.renaming = Some(RenameState::new("sess-0".into(), "sess-0".into(), None));
         }
         Modal::ContextMenu => {
             state.overlay.context_menu = Some(ContextMenu {
@@ -197,9 +193,10 @@ fn mouse_at(kind: MouseEventKind, col: u16, row: u16) -> MouseEvent {
 /// hard-coding.
 fn session_row_coord(state: &AppState) -> (u16, u16) {
     for row in 0..40u16 {
-        if let Action::SidebarClickSession(_) =
-            mouse_to_action(&mouse_at(MouseEventKind::Down(MouseButton::Left), 2, row), state)
-        {
+        if let Action::SidebarClickSession(_) = mouse_to_action(
+            &mouse_at(MouseEventKind::Down(MouseButton::Left), 2, row),
+            state,
+        ) {
             return (2, row);
         }
     }

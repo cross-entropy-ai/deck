@@ -1,8 +1,8 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::Frame;
 
-use crate::keybindings::Keybindings;
 use crate::geometry::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
+use crate::keybindings::Keybindings;
 use crate::state::{
     AgentRow, BuiltLayout, FocusTarget, HitRegions, KillConfirmHits, SidebarTab, SummaryHits,
 };
@@ -98,13 +98,14 @@ fn clamp_hits(hits: &mut HitRegions, area: Rect) {
     hits.summary.button = hits.summary.button.and_then(|r| clamp_rect(r, area));
     hits.summary.popup = hits.summary.popup.and_then(|r| clamp_rect(r, area));
     hits.summary.card = hits.summary.card.and_then(|r| clamp_rect(r, area));
-    hits.dividers.retain_mut(|h| match clamp_rect(h.rect, area) {
-        Some(r) => {
-            h.rect = r;
-            true
-        }
-        None => false,
-    });
+    hits.dividers
+        .retain_mut(|h| match clamp_rect(h.rect, area) {
+            Some(r) => {
+                h.rect = r;
+                true
+            }
+            None => false,
+        });
     hits.agents.retain_mut(|h| match clamp_rect(h.rect, area) {
         Some(r) => {
             h.rect = r;

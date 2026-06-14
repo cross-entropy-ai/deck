@@ -168,10 +168,7 @@ pub fn generate(
     // A non-default language just appends a closing instruction, per the
     // user's request — the template itself stays language-agnostic.
     if !language.trim().is_empty() {
-        prompt.push_str(&format!(
-            "\n\nGive me the response in {}.",
-            language.trim()
-        ));
+        prompt.push_str(&format!("\n\nGive me the response in {}.", language.trim()));
     }
     let started = SystemTime::now();
     let result = run_claude(&prompt, model, cancel);

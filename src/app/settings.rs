@@ -114,7 +114,10 @@ pub const SETTING_ROWS: &[SettingRow] = &[
     },
     SettingRow {
         label: "Agents probe",
-        value: |s| crate::state::agents_probe_interval_label(s.prefs.agents_probe_interval_secs).to_string(),
+        value: |s| {
+            crate::state::agents_probe_interval_label(s.prefs.agents_probe_interval_secs)
+                .to_string()
+        },
         help: |_| "Left/right cycles how often the Agents tab probes".to_string(),
         adjust: |dir| Action::Settings(SettingsAction::CycleAgentsProbeInterval(dir)),
     },

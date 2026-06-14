@@ -103,9 +103,7 @@ fn list_sessions_with_runner_returns_parsed_rows() {
     // in one stdout, demuxed by their `S`/`W` prefixes.
     runner.set(
         LIST_SESSIONS_ARGS,
-        FakeResponse::Ok(
-            "S\talpha\t/tmp/alpha\t1\nS\tbeta\t/tmp/beta\t\nW\talpha\t99".to_string(),
-        ),
+        FakeResponse::Ok("S\talpha\t/tmp/alpha\t1\nS\tbeta\t/tmp/beta\t\nW\talpha\t99".to_string()),
     );
 
     let got = list_sessions_with(&runner);

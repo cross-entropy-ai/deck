@@ -13,10 +13,6 @@
 //! switch / rename / kill / new / persist-order / list-dir. PTY / attachment
 //! lifecycle (spawn / drain / write / resize / status) and polling refresh
 //! stay owned by their existing workers until a concrete migration needs them.
-//!
-//! This phase is a pure re-homing: the same tmux/ssh commands run with the
-//! same arguments. Backends fill in the method bodies; the trait surface is
-//! limited to operations used by the executor today.
 
 pub mod executor;
 pub mod local;

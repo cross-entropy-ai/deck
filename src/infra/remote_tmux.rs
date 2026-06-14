@@ -91,9 +91,9 @@ fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Sess
         &["tmux", "list-sessions", "-F", SESSION_LIST_FORMAT_SSH],
     ) {
         // No window-activity probe here, unlike the local path: nothing
-        // reads remote activity (remote `SessionEntry`s carry idle = None),
-        // so the extra `list-windows -a` ssh roundtrip per host per refresh
-        // tick would be pure waste. Rows parse with `activity = 0`.
+        // reads remote activity (the most-recently-active attach pick is
+        // local-only), so the extra `list-windows -a` ssh roundtrip per host
+        // per refresh tick would be pure waste. Rows parse with `activity = 0`.
         Ok(raw) => Some(parse_sessions(&raw, &HashMap::new())),
         // ssh connected and tmux reported there's no server running: the
         // host is reachable, it just has no sessions. This is the *only*
@@ -598,8 +598,8 @@ fn dir_error_message(err: &CommandError) -> String {
 mod tests {
     use super::*;
     use crate::focus::{FOCUS_EXACT_MARKER, FOCUS_SESSION_MARKER};
-    use crate::tmux::PaneFocus;
     use crate::infra::command::Output;
+    use crate::tmux::PaneFocus;
     use std::os::unix::process::ExitStatusExt;
     use std::process::ExitStatus;
     use std::sync::Mutex;
@@ -715,9 +715,8 @@ mod tests {
         // Names and the `;` separator are single-quoted so the remote shell
         // passes them literally to tmux (tmux interprets the `;`).
         assert!(
-            calls[0].contains(
-                "set-option -t '=a' @deck_order 0 ';' set-option -t '=b' @deck_order 1"
-            ),
+            calls[0]
+                .contains("set-option -t '=a' @deck_order 0 ';' set-option -t '=b' @deck_order 1"),
             "got: {}",
             calls[0]
         );

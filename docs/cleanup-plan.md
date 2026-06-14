@@ -557,7 +557,7 @@ Plan, in order:
    indexing and fix the kill-guard asymmetry while there.
 3. [x] Unify the stores: one `Vec<SessionEntry>` where
    `SessionEntry { host: Option<String>, name, dir, kind }` and
-   `kind ∈ {Live{is_current, idle}, Connecting, Unreachable, NoSessions}`
+   `kind ∈ {Live{is_current}, Connecting, Unreachable, NoSessions}`
    replaces `SessionRow` + `RemoteSessionRow` + reserved-name sentinels
    (`"(no sessions)"` as a magic string disappears). `session_target`'s
    decode, `focusable_index_for`, `section_key_of_focus`, and the

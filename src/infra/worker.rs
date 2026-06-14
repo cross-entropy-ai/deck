@@ -83,14 +83,12 @@ impl<Res: Send + 'static> Worker<(), Res> {
         let (res_tx, res_rx) = mpsc::channel::<Res>();
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_for_job = Cancel(Arc::clone(&cancel));
-        let _ = thread::Builder::new()
-            .name(name.into())
-            .spawn(move || {
-                let out = job(cancel_for_job);
-                // A dropped receiver (worker cancelled) just means nobody's
-                // listening — fine, we exit either way.
-                let _ = res_tx.send(out);
-            });
+        let _ = thread::Builder::new().name(name.into()).spawn(move || {
+            let out = job(cancel_for_job);
+            // A dropped receiver (worker cancelled) just means nobody's
+            // listening — fine, we exit either way.
+            let _ = res_tx.send(out);
+        });
         Worker {
             req_tx: None,
             res_rx,
@@ -111,15 +109,13 @@ impl<Req: Send + 'static, Res: Send + 'static> Worker<Req, Res> {
         let (req_tx, req_rx) = mpsc::channel::<Req>();
         let (res_tx, res_rx) = mpsc::channel::<Res>();
         let cancel = Arc::new(AtomicBool::new(false));
-        let _ = thread::Builder::new()
-            .name(name.into())
-            .spawn(move || {
-                while let Ok(req) = req_rx.recv() {
-                    if !handle(req, &res_tx) {
-                        return;
-                    }
+        let _ = thread::Builder::new().name(name.into()).spawn(move || {
+            while let Ok(req) = req_rx.recv() {
+                if !handle(req, &res_tx) {
+                    return;
                 }
-            });
+            }
+        });
         Worker {
             req_tx: Some(req_tx),
             res_rx,

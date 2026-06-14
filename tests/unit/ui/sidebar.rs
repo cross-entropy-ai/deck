@@ -179,10 +179,7 @@ fn agents_tab_publishes_clickable_agent_rows() {
         host: Some("h1".to_string()),
         name: "s".to_string(),
         dir: String::new(),
-        kind: crate::state::SessionKind::Live {
-            is_current: false,
-            idle_seconds: None,
-        },
+        kind: crate::state::SessionKind::Live { is_current: false },
     });
     state.clamp_projects_focus();
     state

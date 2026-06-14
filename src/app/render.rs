@@ -185,11 +185,11 @@ impl App {
             // The Summary card shows how long ago its text landed; compute the
             // "Xm ago" age here so the renderer stays free of wall-clock reads.
             let summary_age = match &self.state.summary.state {
-                crate::state::SummaryState::Ready { generated_at, .. } => Some(
-                    crate::update::relative_age(
+                crate::state::SummaryState::Ready { generated_at, .. } => {
+                    Some(crate::update::relative_age(
                         crate::update::now_secs().saturating_sub(*generated_at),
-                    ),
-                ),
+                    ))
+                }
                 _ => None,
             };
 
@@ -490,13 +490,8 @@ impl App {
             }
 
             if let Some(text) = summary_popup {
-                captured_summary_popup_max_scroll = ui::draw_summary_popup(
-                    frame,
-                    frame.area(),
-                    text,
-                    summary_popup_scroll,
-                    theme,
-                );
+                captured_summary_popup_max_scroll =
+                    ui::draw_summary_popup(frame, frame.area(), text, summary_popup_scroll, theme);
             }
 
             // Overlay the reload bar last so it sits on top of the sidebar

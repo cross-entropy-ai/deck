@@ -222,7 +222,9 @@ fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 fn keybindings_view_key_to_action(key: &KeyEvent) -> Action {
     match key.code {
         KeyCode::Esc => Action::Settings(SettingsAction::CloseKeybindingsView),
-        KeyCode::Char('j') | KeyCode::Down => Action::Settings(SettingsAction::KeybindingsScrollDown),
+        KeyCode::Char('j') | KeyCode::Down => {
+            Action::Settings(SettingsAction::KeybindingsScrollDown)
+        }
         KeyCode::Char('k') | KeyCode::Up => Action::Settings(SettingsAction::KeybindingsScrollUp),
         _ => Action::None,
     }

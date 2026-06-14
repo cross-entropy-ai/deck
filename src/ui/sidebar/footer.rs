@@ -205,7 +205,9 @@ pub(super) fn draw_footer(
         Span::raw(" "),
         Span::styled(
             menu_label,
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!("   [$ deck v{}]", env!("CARGO_PKG_VERSION")),

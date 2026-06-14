@@ -15,10 +15,7 @@ use crate::theme::Theme;
 fn clamp_to_area(rect: Rect, area: Rect) -> Rect {
     let area_right = area.x + area.width;
     if rect.x >= area_right {
-        return Rect {
-            width: 0,
-            ..rect
-        };
+        return Rect { width: 0, ..rect };
     }
     Rect {
         width: rect.width.min(area_right - rect.x),
@@ -69,10 +66,7 @@ pub(super) fn draw_header(
 
     let line = Line::from(vec![
         Span::styled(" ", Style::default().bg(theme.bg)),
-        Span::styled(
-            projects_label,
-            tab_style(active == SidebarTab::Projects),
-        ),
+        Span::styled(projects_label, tab_style(active == SidebarTab::Projects)),
         Span::styled(gap, Style::default().bg(theme.bg)),
         Span::styled(agents_label, tab_style(active == SidebarTab::Agents)),
     ]);

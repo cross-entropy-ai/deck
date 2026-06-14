@@ -40,7 +40,6 @@ pub struct RefreshRequest {
 pub struct SnapshotRow {
     pub name: String,
     pub dir: String,
-    pub idle_seconds: u64,
     /// Persisted display rank from the session's `@deck_order` option,
     /// or `None` if it was never reordered. Used to restore the manual
     /// arrangement on first load after a deck restart.
@@ -201,22 +200,13 @@ fn collect_local(
 
     let sessions = tmux::list_sessions();
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-
     let rows = sessions
         .into_iter()
         .filter(|s| !config::session_excluded(&s.name, compiled))
-        .map(|s| {
-            let idle_seconds = now.saturating_sub(s.activity);
-            SnapshotRow {
-                name: s.name,
-                dir: s.dir,
-                idle_seconds,
-                order: s.order,
-            }
+        .map(|s| SnapshotRow {
+            name: s.name,
+            dir: s.dir,
+            order: s.order,
         })
         .collect();
 
@@ -318,11 +308,7 @@ fn collect_remotes(
                         host: host_name.clone(),
                         name: s.name,
                         dir: s.dir,
-                        // Remote refresh doesn't collect idle activity yet.
-                        kind: crate::state::SessionKind::Live {
-                            is_current: false,
-                            idle_seconds: None,
-                        },
+                        kind: crate::state::SessionKind::Live { is_current: false },
                     });
                 }
             }

@@ -14,8 +14,7 @@ use crate::state::{
 };
 
 /// Braille spinner frames for the Summary card's "Generating…" state.
-pub(super) const SUMMARY_SPINNER: [&str; 10] =
-    ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+pub(super) const SUMMARY_SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 use super::super::text::{pad_line, wrap_markdown};
 use super::super::widgets::markdown_window;
@@ -178,10 +177,7 @@ pub(super) fn draw_summary_card(
         card: Some(rect),
         ..SummaryHits::default()
     };
-    frame.render_widget(
-        Block::default().style(Style::default().bg(theme.bg)),
-        rect,
-    );
+    frame.render_widget(Block::default().style(Style::default().bg(theme.bg)), rect);
 
     let mut lines: Vec<ratatui::text::Line> = Vec::new();
 
@@ -297,14 +293,8 @@ pub(super) fn draw_summary_card(
         }
         SummaryState::Ready { text, .. } => {
             let content_w = width.saturating_sub(3); // 2 indent + 1 scrollbar
-            let (row_spans, max_scroll) = markdown_window(
-                text,
-                rows,
-                props.summary_scroll,
-                content_w,
-                theme,
-                theme.bg,
-            );
+            let (row_spans, max_scroll) =
+                markdown_window(text, rows, props.summary_scroll, content_w, theme, theme.bg);
             summary.max_scroll = max_scroll;
             for spans in row_spans {
                 let mut row = vec![Span::styled("  ", Style::default().bg(theme.bg))];

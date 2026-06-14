@@ -7,10 +7,7 @@ fn kind_for(unreachable: bool, loading: bool) -> SessionKind {
     } else if loading {
         SessionKind::Connecting
     } else {
-        SessionKind::Live {
-            is_current: false,
-            idle_seconds: None,
-        }
+        SessionKind::Live { is_current: false }
     }
 }
 

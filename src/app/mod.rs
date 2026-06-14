@@ -176,8 +176,7 @@ impl App {
         // wiped invisibly. Surface keybinding warnings in the reload strip
         // instead; its TTL clears them after a few seconds.
         if !kb_warnings.is_empty() {
-            state.reload_status =
-                Some(crate::state::ReloadStatus::Err(kb_warnings.join("; ")));
+            state.reload_status = Some(crate::state::ReloadStatus::Err(kb_warnings.join("; ")));
             state.reload_status_at = Some(std::time::Instant::now());
         }
 
@@ -336,11 +335,7 @@ impl App {
     ///   re-grab focus);
     /// - drop the agent highlight if it belonged to this host (a gone host
     ///   shouldn't keep a footer line marked active).
-    pub(super) fn detach_host_view(
-        &mut self,
-        host: &str,
-        detach: remote_conn::DetachOutcome,
-    ) {
+    pub(super) fn detach_host_view(&mut self, host: &str, detach: remote_conn::DetachOutcome) {
         if detach.was_active {
             self.needs_full_redraw = true;
         }

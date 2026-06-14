@@ -380,8 +380,9 @@ impl App {
 
             let background_plugin_alive =
                 self.plugin_instances.iter().enumerate().any(|(i, inst)| {
-                    inst.as_ref()
-                        .is_some_and(|inst| inst.alive && self.state.main_view != MainView::Plugin(i))
+                    inst.as_ref().is_some_and(|inst| {
+                        inst.alive && self.state.main_view != MainView::Plugin(i)
+                    })
                 });
             if background_plugin_alive && blink.due(Instant::now()) {
                 redraw = redraw.merge(Redraw::Soft);

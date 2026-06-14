@@ -71,8 +71,7 @@ fn log_dir_is_under_home_cache_not_tmp() {
 
 #[test]
 fn write_log_entry_disabled_writes_nothing() {
-    let dir =
-        std::env::temp_dir().join(format!("deck-summary-test-off-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("deck-summary-test-off-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     write_log_entry(&dir, false, 1, "secret pane contents");
     assert!(
@@ -85,8 +84,7 @@ fn write_log_entry_disabled_writes_nothing() {
 #[test]
 fn write_log_entry_enabled_is_owner_only() {
     use std::os::unix::fs::PermissionsExt;
-    let dir =
-        std::env::temp_dir().join(format!("deck-summary-test-perm-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("deck-summary-test-perm-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     write_log_entry(&dir, true, 42, "body");
     let file = dir.join("summary-42.md");
@@ -100,8 +98,7 @@ fn write_log_entry_enabled_is_owner_only() {
 
 #[test]
 fn prune_logs_keeps_newest_n() {
-    let dir =
-        std::env::temp_dir().join(format!("deck-summary-test-prune-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("deck-summary-test-prune-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     for i in 1000..1025 {
@@ -114,8 +111,14 @@ fn prune_logs_keeps_newest_n() {
         .map(|e| e.file_name().into_string().unwrap())
         .collect();
     assert_eq!(names.len(), 20, "should retain exactly 20");
-    assert!(names.contains(&"summary-1024.md".to_string()), "keeps newest");
-    assert!(!names.contains(&"summary-1000.md".to_string()), "drops oldest");
+    assert!(
+        names.contains(&"summary-1024.md".to_string()),
+        "keeps newest"
+    );
+    assert!(
+        !names.contains(&"summary-1000.md".to_string()),
+        "drops oldest"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -138,7 +141,11 @@ fn run_command_cancel_kills_the_child_and_returns_cancelled() {
 
     let start = Instant::now();
     let result = run_command(cmd, "prompt", &cancel);
-    assert_eq!(result, Err(CANCELLED_MSG.to_string()), "cancel returns the sentinel");
+    assert_eq!(
+        result,
+        Err(CANCELLED_MSG.to_string()),
+        "cancel returns the sentinel"
+    );
     assert!(
         start.elapsed().as_secs() < 5,
         "cancel must be prompt, took {:?}",

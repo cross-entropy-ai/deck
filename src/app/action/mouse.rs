@@ -69,7 +69,9 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             return Action::Summary(SummaryAction::StartDrag);
         }
         MouseEventKind::Drag(MouseButton::Left) if state.summary.dragging => {
-            return Action::Summary(SummaryAction::Resize(state.summary_height_for_drag(mouse.row)));
+            return Action::Summary(SummaryAction::Resize(
+                state.summary_height_for_drag(mouse.row),
+            ));
         }
         MouseEventKind::Up(MouseButton::Left) if state.summary.dragging => {
             return Action::Summary(SummaryAction::StopDrag);

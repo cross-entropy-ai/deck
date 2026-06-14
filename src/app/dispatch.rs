@@ -552,7 +552,9 @@ impl App {
         }
         self.state
             .agents
-            .get(crate::host_key::HostQuery::from_host(target.host.as_deref()))
+            .get(crate::host_key::HostQuery::from_host(
+                target.host.as_deref(),
+            ))
             .is_some_and(|list| list.iter().any(|a| a.pane_id == target.pane_id))
     }
 
@@ -783,7 +785,6 @@ impl App {
         self.state.reload_status = Some(crate::state::ReloadStatus::Err(msg.into()));
         self.state.reload_status_at = Some(std::time::Instant::now());
     }
-
 
     /// Validate the add form. On validate-failure: set status, form stays
     /// open, no worker call. On validate-success: send `AddForward` to

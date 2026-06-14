@@ -7,9 +7,7 @@ use ratatui_sectioned_list::ItemKind;
 use serde::{Deserialize, Serialize};
 
 use crate::config::PluginConfig;
-use crate::geometry::{
-    context_menu_rect, format_idle_badge, host_accent, shorten_dir, tab_col_ranges, tab_label,
-};
+use crate::geometry::{context_menu_rect, host_accent, shorten_dir, tab_col_ranges, tab_label};
 use crate::host_key::{HostKey, HostQuery};
 use crate::keybindings::Keybindings;
 use crate::update::{UpdateCheckMode, UpdateStatus};
@@ -20,9 +18,7 @@ use crate::update::{UpdateCheckMode, UpdateStatus};
 pub use crate::effects::{
     CreateSessionRequest, Effect, KillRequest, RemoteSwitchRequest, RenameRequest, SideEffect,
 };
-pub use crate::forwards::{
-    ForwardHealth, ForwardKey, PfAddForm, PfField, PortForwardOverlay,
-};
+pub use crate::forwards::{ForwardHealth, ForwardKey, PfAddForm, PfField, PortForwardOverlay};
 pub use crate::geometry::{
     AgentHit, AgentRow, AgentTarget, BuiltLayout, DividerButton, DividerHit, HitKind, HitRegions,
     KillConfirmHits, SectionMeta, SidebarLayout, SummaryHits, TabRects,
@@ -169,9 +165,8 @@ pub fn frame_rate_limit_label(fps: u16) -> &'static str {
 /// tmux server, `Some(host)` = a remote one over ssh) — applying the repo's
 /// "one data type, key by `Option<String>` host" rule to what was its oldest
 /// exception (two parallel `SessionRow` + `RemoteSessionRow` stores stitched
-/// by flat-index arithmetic). `kind` carries activity for real sessions and
-/// replaces the old `loading`/`unreachable` flags and the magic placeholder
-/// names — see [`SessionKind`].
+/// by flat-index arithmetic). `kind` replaces the old `loading`/`unreachable`
+/// flags and the magic placeholder names — see [`SessionKind`].
 #[derive(Debug, Clone)]
 pub struct SessionEntry {
     /// `None` = local tmux server; `Some(host)` = a remote host over ssh.
@@ -192,13 +187,8 @@ pub struct SessionEntry {
 pub enum SessionKind {
     /// A real tmux session deck can attach to. `is_current` is tracked for
     /// local sessions only (remote `is_current` was never tracked, so remote
-    /// `Live` rows carry `false`). `idle_seconds` is `None` when the backend
-    /// doesn't collect activity yet (remote today) — the renderer paints a
-    /// neutral placeholder rather than a misleading idle badge.
-    Live {
-        is_current: bool,
-        idle_seconds: Option<u64>,
-    },
+    /// `Live` rows carry `false`).
+    Live { is_current: bool },
     /// Synthetic placeholder: the host's ssh+tmux query hasn't returned yet
     /// (was `RemoteSessionRow.loading`). Renders muted "(connecting...)".
     Connecting,
@@ -243,7 +233,6 @@ impl SessionEntry {
             }
         )
     }
-
 }
 
 /// The attachable (`Live`) sessions on `host` (`None` = local), in display
@@ -987,9 +976,8 @@ impl AppState {
         &crate::theme::THEMES[self.prefs.theme_index]
     }
 
-    /// `BasicItem` for one session row. Expanded carries the name plus dim
-    /// `dir` / idle lines (height 3, matching the old card); Compact is a
-    /// single `origin:name` line.
+    /// `BasicItem` for one session row. Expanded carries the name plus a dim
+    /// `dir` line (height 2); Compact is a single `origin:name` line.
     fn session_item(&self, e: &SessionEntry, view_mode: ViewMode) -> BasicItem {
         let loading = matches!(e.kind, SessionKind::Connecting);
         let name = if loading {
@@ -1012,18 +1000,9 @@ impl AppState {
                 } else {
                     shorten_dir(&e.dir)
                 };
-                let idle = match e.kind {
-                    SessionKind::Live {
-                        idle_seconds: Some(s),
-                        ..
-                    } => format_idle_badge(s)
-                        .map(|t| format!("idle {t}"))
-                        .unwrap_or_default(),
-                    _ => String::new(),
-                };
-                // Always two secondary lines (even when blank) so every
-                // Expanded row is a uniform 3 rows tall.
-                BasicItem::new(name).line(dir).line(idle)
+                // One secondary line (even when blank) so every Expanded row
+                // is a uniform 2 rows tall.
+                BasicItem::new(name).line(dir)
             }
         }
     }
@@ -1183,9 +1162,9 @@ impl AppState {
     /// pane switched to via a click, the way `focusable_index_for` does
     /// for the Projects tab.
     pub fn agent_row_index_for(&self, target: &AgentTarget) -> Option<usize> {
-        self.agent_rows()
-            .iter()
-            .position(|row| row.host == target.host.as_deref() && row.agent.pane_id == target.pane_id)
+        self.agent_rows().iter().position(|row| {
+            row.host == target.host.as_deref() && row.agent.pane_id == target.pane_id
+        })
     }
 
     /// Row height the Summary card reserves: title + blank + a
@@ -1215,7 +1194,10 @@ impl AppState {
     /// drawn over it outrank the card for *clicks* but not for the wheel.
     pub fn summary_card_at(&self, col: u16, row: u16) -> bool {
         let pos = Position::new(col, row);
-        self.hit_regions.summary.card.is_some_and(|r| r.contains(pos))
+        self.hit_regions
+            .summary
+            .card
+            .is_some_and(|r| r.contains(pos))
     }
 
     /// Whether `(col, row)` is on the card's bottom drag-handle row.
@@ -1278,57 +1260,61 @@ impl AppState {
 
         // Push a divider header for `host`, then either its agent rows or a
         // single inert placeholder header (no agents / still detecting).
-        let push_section =
-            |layout: &mut SidebarLayout, sections: &mut Vec<SectionMeta>, header: BasicItem, meta: SectionMeta, host: Option<&str>, first: bool| {
-                if first {
-                    layout.push_header_auto(header);
-                } else {
-                    // A 1-row top margin sets each remote section off from
-                    // what's above; local stays flush at the top.
-                    layout.push_header_margin(header, 1);
-                }
-                sections.push(meta);
-                match self.section_agents(host) {
-                    Some(list) if !list.is_empty() => {
-                        for agent in list {
-                            // A status glyph prefix, plus a filled marker on
-                            // the agent deck is currently focused on (the
-                            // "you are here" pane), so switching shows where
-                            // you landed even without per-row coloring.
-                            let here = self.active_agent.as_ref().is_some_and(|t| {
-                                t.host.as_deref() == host && t.pane_id == agent.pane_id
-                            });
-                            let dot = match agent.status {
-                                crate::agent::AgentStatus::Working => "●",
-                                crate::agent::AgentStatus::Idle => "○",
-                                crate::agent::AgentStatus::Waiting => "◐",
-                                crate::agent::AgentStatus::Unknown => "·",
-                            };
-                            let lead = if here { "▶" } else { " " };
-                            // No accent color: like session rows, focus shows
-                            // only via the highlight background bar. The status
-                            // glyph + ▶ marker carry the per-row state.
-                            layout.push_row_auto(BasicItem::new(format!(
-                                "{lead} {dot} {}",
-                                agent.location()
-                            )));
-                        }
-                    }
-                    other => {
-                        let label = if other.is_some() {
-                            "  no agents"
-                        } else {
-                            "  detecting…"
-                        };
-                        layout.push_header_auto(BasicItem::new(label));
-                        sections.push(SectionMeta {
-                            host: host.map(str::to_string),
-                            buttons: Vec::new(),
-                            divider: false,
+        let push_section = |layout: &mut SidebarLayout,
+                            sections: &mut Vec<SectionMeta>,
+                            header: BasicItem,
+                            meta: SectionMeta,
+                            host: Option<&str>,
+                            first: bool| {
+            if first {
+                layout.push_header_auto(header);
+            } else {
+                // A 1-row top margin sets each remote section off from
+                // what's above; local stays flush at the top.
+                layout.push_header_margin(header, 1);
+            }
+            sections.push(meta);
+            match self.section_agents(host) {
+                Some(list) if !list.is_empty() => {
+                    for agent in list {
+                        // A status glyph prefix, plus a filled marker on
+                        // the agent deck is currently focused on (the
+                        // "you are here" pane), so switching shows where
+                        // you landed even without per-row coloring.
+                        let here = self.active_agent.as_ref().is_some_and(|t| {
+                            t.host.as_deref() == host && t.pane_id == agent.pane_id
                         });
+                        let dot = match agent.status {
+                            crate::agent::AgentStatus::Working => "●",
+                            crate::agent::AgentStatus::Idle => "○",
+                            crate::agent::AgentStatus::Waiting => "◐",
+                            crate::agent::AgentStatus::Unknown => "·",
+                        };
+                        let lead = if here { "▶" } else { " " };
+                        // No accent color: like session rows, focus shows
+                        // only via the highlight background bar. The status
+                        // glyph + ▶ marker carry the per-row state.
+                        layout.push_row_auto(BasicItem::new(format!(
+                            "{lead} {dot} {}",
+                            agent.location()
+                        )));
                     }
                 }
-            };
+                other => {
+                    let label = if other.is_some() {
+                        "  no agents"
+                    } else {
+                        "  detecting…"
+                    };
+                    layout.push_header_auto(BasicItem::new(label));
+                    sections.push(SectionMeta {
+                        host: host.map(str::to_string),
+                        buttons: Vec::new(),
+                        divider: false,
+                    });
+                }
+            }
+        };
 
         push_section(
             &mut layout,
@@ -1451,9 +1437,9 @@ impl AppState {
             return false;
         }
         idx < self.focusable_count()
-            && self
-                .collapsed_sections
-                .contains(HostQuery::from_host(self.section_key_of_focus(idx).as_deref()))
+            && self.collapsed_sections.contains(HostQuery::from_host(
+                self.section_key_of_focus(idx).as_deref(),
+            ))
     }
 
     /// Decode the active tab's cursor into a focus target. Returns `None`

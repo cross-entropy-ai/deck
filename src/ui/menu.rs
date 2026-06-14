@@ -36,7 +36,11 @@ pub fn draw_context_menu(
         .iter()
         .enumerate()
         .map(|(i, item)| {
-            let label = format!(" {:<width$}", item.label(), width = inner_w.saturating_sub(1));
+            let label = format!(
+                " {:<width$}",
+                item.label(),
+                width = inner_w.saturating_sub(1)
+            );
             if disabled.contains(item) {
                 // Greyed-out: shown for context but not selectable, so it
                 // never takes the accent highlight even at `selected`.

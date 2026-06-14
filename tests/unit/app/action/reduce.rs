@@ -6,15 +6,12 @@ use crate::state::{
     NO_SESSIONS_LABEL,
 };
 
-fn make_session(name: &str, idle: u64) -> SessionEntry {
+fn make_session(name: &str) -> SessionEntry {
     SessionEntry {
         host: None,
         name: name.to_string(),
         dir: format!("/tmp/{}", name),
-        kind: SessionKind::Live {
-            is_current: false,
-            idle_seconds: Some(idle),
-        },
+        kind: SessionKind::Live { is_current: false },
     }
 }
 
@@ -30,7 +27,7 @@ fn set_current(state: &mut AppState, i: usize) {
 fn make_test_state(n: usize) -> AppState {
     let mut state = AppState::new(120, 40);
     state.entries = (0..n)
-        .map(|i| make_session(&format!("sess-{}", i), 0))
+        .map(|i| make_session(&format!("sess-{}", i)))
         .collect();
     set_current(&mut state, 0);
     state.session_order = state.entries.iter().map(|s| s.name.clone()).collect();
@@ -90,7 +87,9 @@ fn focus_prev_stops_at_zero() {
 #[test]
 fn switch_project_on_remote_no_sessions_shows_placeholder() {
     let mut state = make_test_state(1);
-    state.entries.push(remote_row("remote-a", NO_SESSIONS_LABEL));
+    state
+        .entries
+        .push(remote_row("remote-a", NO_SESSIONS_LABEL));
     state.focused = state.local_count();
 
     let fx = apply_action(&mut state, Action::SwitchProject);
@@ -103,7 +102,9 @@ fn switch_project_on_remote_no_sessions_shows_placeholder() {
 #[test]
 fn sidebar_click_remote_no_sessions_does_not_refresh() {
     let mut state = make_test_state(1);
-    state.entries.push(remote_row("remote-a", NO_SESSIONS_LABEL));
+    state
+        .entries
+        .push(remote_row("remote-a", NO_SESSIONS_LABEL));
     let target = state.local_count();
 
     let mut fx = crate::state::SideEffect::default();
@@ -176,7 +177,9 @@ fn kill_keyboard_blocked_on_remote_placeholder() {
     // Pressing `x` on a "(no sessions)" placeholder must not open the
     // confirm prompt — confirming would ssh `kill-session` a placeholder.
     let mut state = make_test_state(1);
-    state.entries.push(remote_row("remote-a", NO_SESSIONS_LABEL));
+    state
+        .entries
+        .push(remote_row("remote-a", NO_SESSIONS_LABEL));
     state.focused = state.local_count();
     let fx = apply_action(&mut state, Action::KillSession);
     assert!(!state.overlay.confirm_kill);
@@ -209,7 +212,9 @@ fn kill_keyboard_allowed_on_remote_session_with_sibling() {
 fn confirm_kill_blocked_on_remote_placeholder() {
     // Even a forced/stale confirm can't fire on a placeholder row.
     let mut state = make_test_state(1);
-    state.entries.push(remote_row("remote-a", NO_SESSIONS_LABEL));
+    state
+        .entries
+        .push(remote_row("remote-a", NO_SESSIONS_LABEL));
     state.focused = state.local_count();
     state.overlay.confirm_kill = true;
     let fx = apply_action(&mut state, Action::ConfirmKill);
@@ -271,7 +276,10 @@ fn open_theme_picker_from_sidebar_bypasses_settings() {
     let mut state = make_test_state(1);
     state.focus_mode = FocusMode::Sidebar;
     state.main_view = MainView::Terminal;
-    apply_action(&mut state, Action::Settings(SettingsAction::OpenThemePicker));
+    apply_action(
+        &mut state,
+        Action::Settings(SettingsAction::OpenThemePicker),
+    );
     assert!(state.settings.theme_picker_open);
     // The picker overlays the current view rather than entering the
     // settings page, so neither the view nor the focus changes.
@@ -285,7 +293,10 @@ fn confirm_theme_picker_selects_theme_and_saves() {
     state.prefs.theme_index = 0;
     state.settings.theme_picker_open = true;
     state.settings.theme_picker_selected = 3;
-    let fx = apply_action(&mut state, Action::Settings(SettingsAction::ConfirmThemePicker));
+    let fx = apply_action(
+        &mut state,
+        Action::Settings(SettingsAction::ConfirmThemePicker),
+    );
     assert!(!state.settings.theme_picker_open);
     assert!(!fx.has_save_config());
 }
@@ -296,7 +307,10 @@ fn theme_picker_next_previews_theme_immediately() {
     state.prefs.theme_index = 0;
     state.settings.theme_picker_open = true;
     state.settings.theme_picker_selected = 0;
-    let fx = apply_action(&mut state, Action::Settings(SettingsAction::ThemePickerNext));
+    let fx = apply_action(
+        &mut state,
+        Action::Settings(SettingsAction::ThemePickerNext),
+    );
     assert_eq!(state.settings.theme_picker_selected, 1);
     assert_eq!(state.prefs.theme_index, 1);
     assert!(fx.has_save_config());
@@ -312,8 +326,14 @@ fn theme_picker_next_at_end_still_saves() {
     state.prefs.theme_index = last;
     state.settings.theme_picker_open = true;
     state.settings.theme_picker_selected = last;
-    let fx = apply_action(&mut state, Action::Settings(SettingsAction::ThemePickerNext));
-    assert_eq!(state.settings.theme_picker_selected, last, "stays pinned at the end");
+    let fx = apply_action(
+        &mut state,
+        Action::Settings(SettingsAction::ThemePickerNext),
+    );
+    assert_eq!(
+        state.settings.theme_picker_selected, last,
+        "stays pinned at the end"
+    );
     assert!(fx.has_save_config(), "Next at the end still persists");
 }
 
@@ -390,19 +410,32 @@ fn dismiss_help() {
 #[test]
 fn open_local_divider_menu_greys_remote_items_and_starts_on_new_session() {
     let mut state = make_test_state(1);
-    apply_action(&mut state, Action::Menu(MenuAction::OpenLocalDivider { x: 5, y: 5 }));
+    apply_action(
+        &mut state,
+        Action::Menu(MenuAction::OpenLocalDivider { x: 5, y: 5 }),
+    );
     let menu = state.overlay.context_menu.as_ref().expect("menu open");
     assert!(matches!(menu.kind, crate::state::MenuKind::LocalDivider));
     // Highlight starts on the first enabled item, never a greyed one.
-    assert_eq!(menu.items()[menu.selected], crate::state::MenuItem::NewSession);
-    assert!(menu.disabled().contains(&crate::state::MenuItem::PortForward));
-    assert!(menu.disabled().contains(&crate::state::MenuItem::RemoveFromList));
+    assert_eq!(
+        menu.items()[menu.selected],
+        crate::state::MenuItem::NewSession
+    );
+    assert!(menu
+        .disabled()
+        .contains(&crate::state::MenuItem::PortForward));
+    assert!(menu
+        .disabled()
+        .contains(&crate::state::MenuItem::RemoveFromList));
 }
 
 #[test]
 fn local_divider_new_session_opens_local_picker() {
     let mut state = make_test_state(1);
-    apply_action(&mut state, Action::Menu(MenuAction::OpenLocalDivider { x: 0, y: 0 }));
+    apply_action(
+        &mut state,
+        Action::Menu(MenuAction::OpenLocalDivider { x: 0, y: 0 }),
+    );
     let fx = apply_action(&mut state, Action::Menu(MenuAction::Confirm));
     // "New session" on @local routes to the local picker, not a remote one.
     assert!(fx.has_open_new_session_picker());
@@ -482,7 +515,10 @@ fn reorder_local_session_leaves_remotes_pinned_after_in_order() {
     // Regression for the unified store: a local reorder must not perturb the
     // remote block, which stays after all locals in its own order.
     let mut state = make_test_state(3);
-    set_remote(&mut state, vec![remote_row("h", "ra"), remote_row("h", "rb")]);
+    set_remote(
+        &mut state,
+        vec![remote_row("h", "ra"), remote_row("h", "rb")],
+    );
     state.focused = 1;
     apply_action(&mut state, Action::ReorderSession(-1));
     assert_eq!(state.entries[0].name, "sess-1");
@@ -514,10 +550,7 @@ fn remote_row(host: &str, name: &str) -> SessionEntry {
     let kind = if name == NO_SESSIONS_LABEL {
         SessionKind::NoSessions
     } else {
-        SessionKind::Live {
-            is_current: false,
-            idle_seconds: None,
-        }
+        SessionKind::Live { is_current: false }
     };
     SessionEntry {
         host: Some(host.to_string()),
@@ -590,7 +623,10 @@ fn exclude_editor_add_pattern() {
     let mut state = make_test_state(1);
     state.prefs.exclude_patterns = vec!["_*".to_string()];
     apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
-    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeStartAdd));
+    apply_action(
+        &mut state,
+        Action::Settings(SettingsAction::ExcludeStartAdd),
+    );
     assert!(state.overlay.exclude_editor.as_ref().unwrap().adding);
     apply_action(
         &mut state,
@@ -625,7 +661,10 @@ fn exclude_editor_invalid_regex_shows_error() {
     let mut state = make_test_state(1);
     state.prefs.exclude_patterns = vec![];
     apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
-    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeStartAdd));
+    apply_action(
+        &mut state,
+        Action::Settings(SettingsAction::ExcludeStartAdd),
+    );
     for ch in "/[invalid/".chars() {
         apply_action(
             &mut state,
@@ -898,7 +937,10 @@ fn new_session_next_clamped_to_filtered_len() {
 #[test]
 fn new_session_delete_segment_goes_back_to_slash() {
     let mut state = picker_state_with("~/foo/bar", vec![]);
-    let fx = apply_action(&mut state, Action::NewSession(NewSessionAction::DeleteSegment));
+    let fx = apply_action(
+        &mut state,
+        Action::NewSession(NewSessionAction::DeleteSegment),
+    );
     assert_eq!(ns_input_str(&state), "~/foo/");
     assert!(fx.has_reread_new_session_entries());
 }
@@ -909,13 +951,19 @@ fn new_session_switch_focus_toggles_field() {
     // picker_state_with sets focus to Dir; switch to Name first
     state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
 
-    apply_action(&mut state, Action::NewSession(NewSessionAction::SwitchFocus));
+    apply_action(
+        &mut state,
+        Action::NewSession(NewSessionAction::SwitchFocus),
+    );
     assert_eq!(
         state.overlay.new_session.as_ref().unwrap().focus,
         crate::new_session::PickerFocus::Dir
     );
 
-    apply_action(&mut state, Action::NewSession(NewSessionAction::SwitchFocus));
+    apply_action(
+        &mut state,
+        Action::NewSession(NewSessionAction::SwitchFocus),
+    );
     assert_eq!(
         state.overlay.new_session.as_ref().unwrap().focus,
         crate::new_session::PickerFocus::Name
@@ -1109,7 +1157,10 @@ fn pf_add_input_key_appends_to_focused_textarea() {
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "");
     for c in ['8', '0', '8', '0'] {
-        crate::action::apply_action(&mut state, Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))));
+        crate::action::apply_action(
+            &mut state,
+            Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))),
+        );
     }
     let f = state
         .overlay
@@ -1128,7 +1179,10 @@ fn pf_add_input_drops_non_digits_in_port_fields() {
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "");
     for c in ['8', 'a', '0', '.', '8', '0'] {
-        crate::action::apply_action(&mut state, Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))));
+        crate::action::apply_action(
+            &mut state,
+            Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))),
+        );
     }
     let f = state
         .overlay
@@ -1147,7 +1201,10 @@ fn pf_add_input_allows_non_digits_in_host_fields() {
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::TargetHost, "");
     for c in ['h', '-', '1', '.', 'x'] {
-        crate::action::apply_action(&mut state, Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))));
+        crate::action::apply_action(
+            &mut state,
+            Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))),
+        );
     }
     let f = state
         .overlay
@@ -1166,7 +1223,10 @@ fn pf_add_input_rejects_out_of_range_ports() {
     let mut state = make_test_state(0);
     // "6553" is fine, but appending '6' would yield "65536" > u16::MAX.
     open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "6553");
-    crate::action::apply_action(&mut state, Action::Pf(PfAction::AddInputKey(key(KeyCode::Char('6')))));
+    crate::action::apply_action(
+        &mut state,
+        Action::Pf(PfAction::AddInputKey(key(KeyCode::Char('6')))),
+    );
     let f = state
         .overlay
         .port_forward
@@ -1178,7 +1238,10 @@ fn pf_add_input_rejects_out_of_range_ports() {
     assert_eq!(f.field_text(crate::state::PfField::ListenPort), "6553");
 
     // "65535" should be acceptable.
-    crate::action::apply_action(&mut state, Action::Pf(PfAction::AddInputKey(key(KeyCode::Char('5')))));
+    crate::action::apply_action(
+        &mut state,
+        Action::Pf(PfAction::AddInputKey(key(KeyCode::Char('5')))),
+    );
     let f = state
         .overlay
         .port_forward
@@ -1196,7 +1259,10 @@ fn pf_add_input_blocks_whitespace_in_host_fields() {
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::state::PfField::TargetHost, "");
     for c in ['1', ' ', '2', '\t', '7'] {
-        crate::action::apply_action(&mut state, Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))));
+        crate::action::apply_action(
+            &mut state,
+            Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))),
+        );
     }
     let f = state
         .overlay
@@ -1303,10 +1369,7 @@ fn remote(host: &str, name: &str) -> SessionEntry {
         host: Some(host.into()),
         name: name.into(),
         dir: "/srv".into(),
-        kind: SessionKind::Live {
-            is_current: false,
-            idle_seconds: None,
-        },
+        kind: SessionKind::Live { is_current: false },
     }
 }
 
@@ -1321,10 +1384,7 @@ fn remote_session_with_siblings_disables_nothing() {
         host: None,
         name: "s".into(),
         dir: "/".into(),
-        kind: SessionKind::Live {
-            is_current: false,
-            idle_seconds: Some(0),
-        },
+        kind: SessionKind::Live { is_current: false },
     };
     assert!(session_menu_disabled(&local, &sessions).is_empty());
 }
@@ -1368,10 +1428,17 @@ fn focus_next_skips_collapsed_remote_group() {
     // "h2" (flat 4). Collapse "h"; from local row 1, FocusNext must jump
     // straight to the h2 row (flat 4), skipping the hidden h rows.
     let mut state = make_test_state(2);
-    set_remote(&mut state, vec![remote_row("h", "a"),
-        remote_row("h", "b"),
-        remote_row("h2", "c"),]);
-    state.collapsed_sections.insert(crate::host_key::HostKey::remote("h"));
+    set_remote(
+        &mut state,
+        vec![
+            remote_row("h", "a"),
+            remote_row("h", "b"),
+            remote_row("h2", "c"),
+        ],
+    );
+    state
+        .collapsed_sections
+        .insert(crate::host_key::HostKey::remote("h"));
     state.focused = 1;
     apply_action(&mut state, Action::FocusNext);
     assert_eq!(state.focused, 4, "focus skips the collapsed h group");
@@ -1385,12 +1452,19 @@ fn toggle_section_collapse_leaves_focus_put() {
     // highlight is simply not drawn while hidden and returns on expand; j/k
     // step out to a visible row from there.
     let mut state = make_test_state(2);
-    set_remote(&mut state, vec![remote_row("h", "a"),
-        remote_row("h", "b"),
-        remote_row("h2", "c"),]);
+    set_remote(
+        &mut state,
+        vec![
+            remote_row("h", "a"),
+            remote_row("h", "b"),
+            remote_row("h2", "c"),
+        ],
+    );
     state.focused = 2;
     let fx = apply_action(&mut state, Action::ToggleSection(Some("h".to_string())));
-    assert!(state.collapsed_sections.contains(crate::host_key::HostQuery::from_host(Some("h"))));
+    assert!(state
+        .collapsed_sections
+        .contains(crate::host_key::HostQuery::from_host(Some("h"))));
     assert_eq!(state.focused, 2, "collapse leaves the selection put");
     assert!(fx.has_save_config(), "collapse persists to config");
 }
@@ -1398,9 +1472,13 @@ fn toggle_section_collapse_leaves_focus_put() {
 #[test]
 fn toggle_section_expands_back() {
     let mut state = make_test_state(2);
-    state.collapsed_sections.insert(crate::host_key::HostKey::local());
+    state
+        .collapsed_sections
+        .insert(crate::host_key::HostKey::local());
     let fx = apply_action(&mut state, Action::ToggleSection(None));
-    assert!(!state.collapsed_sections.contains(crate::host_key::HostQuery::from_host(None)));
+    assert!(!state
+        .collapsed_sections
+        .contains(crate::host_key::HostQuery::from_host(None)));
     assert!(fx.has_save_config());
 }
 
@@ -1437,7 +1515,10 @@ mod agents_tab {
     #[test]
     fn entering_agents_syncs_right_pane_to_focused_agent() {
         let mut state = make_test_state(3);
-        state.agents.insert(crate::host_key::HostKey::local(), vec![agent("a", "%1"), agent("b", "%2")]);
+        state.agents.insert(
+            crate::host_key::HostKey::local(),
+            vec![agent("a", "%1"), agent("b", "%2")],
+        );
         // Opening the tab switches the right pane to the focused agent so
         // the panel highlight and the active pane agree immediately.
         let fx = apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
@@ -1451,7 +1532,10 @@ mod agents_tab {
     #[test]
     fn entering_agents_restores_cursor_onto_active_agent() {
         let mut state = make_test_state(3);
-        state.agents.insert(crate::host_key::HostKey::local(), vec![agent("a", "%1"), agent("b", "%2")]);
+        state.agents.insert(
+            crate::host_key::HostKey::local(),
+            vec![agent("a", "%1"), agent("b", "%2")],
+        );
         // An agent was active from a prior switch; returning to the tab
         // puts the cursor back on it rather than resetting to row 0.
         state.active_agent = Some(crate::state::AgentTarget {
@@ -1535,7 +1619,10 @@ mod agents_tab {
     #[test]
     fn cursor_is_per_tab() {
         let mut state = make_test_state(3);
-        state.agents.insert(crate::host_key::HostKey::local(), vec![agent("a", "%1"), agent("b", "%2")]);
+        state.agents.insert(
+            crate::host_key::HostKey::local(),
+            vec![agent("a", "%1"), agent("b", "%2")],
+        );
         state.focused = 2; // Projects cursor
 
         apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
@@ -1549,7 +1636,10 @@ mod agents_tab {
     #[test]
     fn navigate_on_agents_follows_cursor() {
         let mut state = make_test_state(3);
-        state.agents.insert(crate::host_key::HostKey::local(), vec![agent("a", "%1"), agent("b", "%2")]);
+        state.agents.insert(
+            crate::host_key::HostKey::local(),
+            vec![agent("a", "%1"), agent("b", "%2")],
+        );
         apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
         // Moving the cursor switches the right pane to follow it, the same
         // way the Projects tab does — so the highlight stays consistent.
@@ -1564,22 +1654,30 @@ mod agents_tab {
     #[test]
     fn enter_on_agents_switches_to_pane() {
         let mut state = make_test_state(3);
-        state.agents.insert(crate::host_key::HostKey::local(), vec![agent("a", "%1"), agent("b", "%2")]);
+        state.agents.insert(
+            crate::host_key::HostKey::local(),
+            vec![agent("a", "%1"), agent("b", "%2")],
+        );
         apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
         apply_action(&mut state, Action::FocusNext); // cursor -> row 1 (%2)
         let fx = apply_action(&mut state, Action::SwitchProject);
-        let switched = fx.effects().iter().any(|e| {
-            matches!(e, Effect::SwitchAgentPane(t) if t.pane_id == "%2" && t.host.is_none())
-        });
+        let switched = fx.effects().iter().any(
+            |e| matches!(e, Effect::SwitchAgentPane(t) if t.pane_id == "%2" && t.host.is_none()),
+        );
         assert!(switched, "Enter on Agents tab focuses the agent's pane");
     }
 
     #[test]
     fn kill_is_suppressed_on_agents() {
         let mut state = make_test_state(3);
-        state.agents.insert(crate::host_key::HostKey::local(), vec![agent("a", "%1")]);
+        state
+            .agents
+            .insert(crate::host_key::HostKey::local(), vec![agent("a", "%1")]);
         apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
         apply_action(&mut state, Action::KillSession);
-        assert!(!state.overlay.confirm_kill, "no kill prompt on the Agents tab");
+        assert!(
+            !state.overlay.confirm_kill,
+            "no kill prompt on the Agents tab"
+        );
     }
 }

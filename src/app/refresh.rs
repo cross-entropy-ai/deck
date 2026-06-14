@@ -216,7 +216,6 @@ impl App {
             host: None,
             kind: SessionKind::Live {
                 is_current: r.name == current,
-                idle_seconds: Some(r.idle_seconds),
             },
             name: r.name,
             dir: r.dir,

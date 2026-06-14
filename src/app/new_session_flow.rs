@@ -82,9 +82,7 @@ impl App {
                     .get(self.state.focused)
                     .filter(|e| e.is_local())
                     .map(|e| e.dir.clone())
-                    .unwrap_or_else(|| {
-                        crate::config::home_dir().to_string_lossy().into_owned()
-                    });
+                    .unwrap_or_else(|| crate::config::home_dir().to_string_lossy().into_owned());
                 let existing_names: Vec<String> =
                     self.state.local_entries().map(|e| e.name.clone()).collect();
                 NewSessionTarget {

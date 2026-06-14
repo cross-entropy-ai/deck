@@ -252,7 +252,8 @@ mod tests {
             },
         );
         assert!(
-            exec.senders.contains_key(HostQuery::from_host(host.as_deref())),
+            exec.senders
+                .contains_key(HostQuery::from_host(host.as_deref())),
             "submit should cache the host's FIFO sender"
         );
 
@@ -260,7 +261,9 @@ mod tests {
         // recv ends (sender dropped).
         exec.remove(&host);
         assert!(
-            !exec.senders.contains_key(HostQuery::from_host(host.as_deref())),
+            !exec
+                .senders
+                .contains_key(HostQuery::from_host(host.as_deref())),
             "remove should prune the offboarded host's sender"
         );
 

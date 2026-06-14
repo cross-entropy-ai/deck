@@ -299,13 +299,17 @@ impl RemoteConnManager {
     /// Seed one `Connecting` placeholder per host and kick a spawn for each
     /// (the startup path). Each host starts at generation 1.
     pub(crate) fn start(hosts: &[String], pty_size: portable_pty::PtySize) -> Self {
-        let generations: HashMap<String, u64> =
-            hosts.iter().map(|h| (h.clone(), 1)).collect();
+        let generations: HashMap<String, u64> = hosts.iter().map(|h| (h.clone(), 1)).collect();
         let spawn_list: Vec<(String, u64)> = hosts.iter().map(|h| (h.clone(), 1)).collect();
         let spawner = RemoteSpawner::start(&spawn_list, pty_size);
         let conns: HashMap<String, RemoteConn> = hosts
             .iter()
-            .map(|h| (h.clone(), RemoteConn::placeholder(RemoteConnStatus::Connecting)))
+            .map(|h| {
+                (
+                    h.clone(),
+                    RemoteConn::placeholder(RemoteConnStatus::Connecting),
+                )
+            })
             .collect();
         Self {
             conns,
@@ -349,7 +353,10 @@ impl RemoteConnManager {
     /// This connection's client-tty marker id, or `0` when unknown — the
     /// same default dispatch used inline.
     pub(crate) fn marker_id(&self, host: &str) -> u64 {
-        self.conns.get(host).map(|c| c.client_marker_id).unwrap_or(0)
+        self.conns
+            .get(host)
+            .map(|c| c.client_marker_id)
+            .unwrap_or(0)
     }
 
     pub(crate) fn is_live(&self, host: &str) -> bool {
@@ -374,7 +381,9 @@ impl RemoteConnManager {
     }
 
     pub(crate) fn is_marker_stuck(&self, host: &str) -> bool {
-        self.conns.get(host).is_some_and(RemoteConn::is_marker_stuck)
+        self.conns
+            .get(host)
+            .is_some_and(RemoteConn::is_marker_stuck)
     }
 
     /// Whether a host's connection is live *and* its marker is confirmed —

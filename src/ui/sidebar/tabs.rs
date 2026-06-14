@@ -49,7 +49,9 @@ pub(super) fn draw_sidebar_tabs(
 
         let label = match session.origin() {
             SessionOrigin::Local => crate::geometry::tab_label(None, session.name()),
-            SessionOrigin::Remote { host } => crate::geometry::tab_label(Some(host), session.name()),
+            SessionOrigin::Remote { host } => {
+                crate::geometry::tab_label(Some(host), session.name())
+            }
         };
 
         let bg = if is_focused { theme.surface } else { theme.bg };

@@ -38,9 +38,9 @@ pub(crate) const SESSION_LIST_FORMAT: &str = "#{session_name}\t#{session_path}\t
 pub(crate) const SESSION_LIST_FORMAT_SSH: &str =
     "$'#{session_name}\\t#{session_path}\\t#{@deck_order}'";
 
-/// `list-windows -a -F` format for per-session activity. Local-only: the
-/// remote path skips the activity probe entirely (nothing renders remote
-/// idle badges), so there is no ssh-quoted variant.
+/// `list-windows -a -F` format for per-session activity. Local-only (it
+/// drives the most-recently-active attach pick): the remote path skips the
+/// activity probe entirely, so there is no ssh-quoted variant.
 pub(crate) const WINDOW_ACTIVITY_FORMAT: &str = "#{session_name}\t#{window_activity}";
 
 /// Parse `tmux list-sessions` output. Both callers use the same three

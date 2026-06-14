@@ -158,22 +158,6 @@ pub fn shorten_dir(dir: &str) -> String {
     }
 }
 
-/// Short idle-age badge (`3m` / `2h` / `1d`), or `None` under a minute.
-/// Pure; co-located with [`shorten_dir`] for the same reason. `ui::text`
-/// re-exports it.
-pub fn format_idle_badge(seconds: u64) -> Option<String> {
-    if seconds < 60 {
-        return None;
-    }
-    if seconds < 3600 {
-        return Some(format!("{}m", seconds / 60));
-    }
-    if seconds < 86_400 {
-        return Some(format!("{}h", seconds / 3600));
-    }
-    Some(format!("{}d", seconds / 86_400))
-}
-
 fn tab_width(index: usize, name: &str) -> u16 {
     let idx_width = format!("{}", index + 1).len() as u16;
     let name_width = UnicodeWidthStr::width(name) as u16;

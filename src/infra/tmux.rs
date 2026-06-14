@@ -141,8 +141,14 @@ pub fn own_session() -> Option<String> {
     if pane.trim().is_empty() {
         return None;
     }
-    tmux(&["display-message", "-p", "-t", pane.trim(), "#{session_name}"])
-        .filter(|s| !s.is_empty())
+    tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        pane.trim(),
+        "#{session_name}",
+    ])
+    .filter(|s| !s.is_empty())
 }
 
 /// Get the current session name (from the first attached client).
@@ -192,7 +198,13 @@ pub fn new_session(name: &str, dir: &str) -> Option<String> {
 
 /// Switch a specific tmux client (by TTY) to a different session.
 pub fn switch_client_for_tty(client_tty: &str, session: &str) {
-    let _ = tmux(&["switch-client", "-c", client_tty, "-t", &exact_target(session)]);
+    let _ = tmux(&[
+        "switch-client",
+        "-c",
+        client_tty,
+        "-t",
+        &exact_target(session),
+    ]);
 }
 
 /// Outcome of an agent-pane focus (local or remote). Distinguishes a true

@@ -90,14 +90,20 @@ pub(crate) fn run_focus_with(
 ) -> PaneFocus {
     let out = match transport {
         FocusTransport::Local { client_tty } => {
-            let cmd =
-                focus_command(&format!("C={}", shell_single_quote(client_tty)), session, pane_id);
+            let cmd = focus_command(
+                &format!("C={}", shell_single_quote(client_tty)),
+                session,
+                pane_id,
+            );
             runner
                 .run("sh", &["-c", &cmd], LOCAL_TIMEOUT)
                 .map(|o| o.stdout_trimmed())
         }
         FocusTransport::Remote { host, marker_id } => {
-            let set_c = format!("C=$(cat {} 2>/dev/null)", client_marker_token(host, *marker_id));
+            let set_c = format!(
+                "C=$(cat {} 2>/dev/null)",
+                client_marker_token(host, *marker_id)
+            );
             let cmd = focus_command(&set_c, session, pane_id);
             run_ssh(runner, host, &[cmd.as_str()])
         }

@@ -5,10 +5,7 @@ fn make_session(name: &str) -> SessionEntry {
         host: None,
         name: name.to_string(),
         dir: format!("/tmp/{name}"),
-        kind: SessionKind::Live {
-            is_current: false,
-            idle_seconds: Some(0),
-        },
+        kind: SessionKind::Live { is_current: false },
     }
 }
 
@@ -33,10 +30,7 @@ fn kind_for(unreachable: bool, loading: bool) -> SessionKind {
     } else if loading {
         SessionKind::Connecting
     } else {
-        SessionKind::Live {
-            is_current: false,
-            idle_seconds: None,
-        }
+        SessionKind::Live { is_current: false }
     }
 }
 
@@ -79,10 +73,14 @@ fn agent_rows_ordered_local_then_hosts() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
-    state.agents.insert(crate::host_key::HostKey::local(), vec![detected("local", "%1")]);
-    state
-        .agents
-        .insert(crate::host_key::HostKey::remote("h1"), vec![detected("h1s", "%2")]);
+    state.agents.insert(
+        crate::host_key::HostKey::local(),
+        vec![detected("local", "%1")],
+    );
+    state.agents.insert(
+        crate::host_key::HostKey::remote("h1"),
+        vec![detected("h1s", "%2")],
+    );
 
     // Agent rows appear in section order: local (`None`) then each host.
     let hosts: Vec<Option<&str>> = state.agent_rows().iter().map(|r| r.host).collect();
@@ -109,9 +107,10 @@ fn agent_cursor_tracks_its_agent_when_the_list_changes() {
 
     // Refresh drops "a"; "b" shifts from index 1 to 0.
     let key = state.focused_agent_key();
-    state
-        .agents
-        .insert(crate::host_key::HostKey::local(), vec![detected("b", "%2"), detected("c", "%3")]);
+    state.agents.insert(
+        crate::host_key::HostKey::local(),
+        vec![detected("b", "%2"), detected("c", "%3")],
+    );
     state.reanchor_agent_focus(key);
 
     assert_eq!(state.agent_focused, 0, "cursor follows b to its new index");
@@ -124,16 +123,25 @@ fn agent_cursor_clamps_when_focused_agent_disappears() {
     state.prefs.sidebar_tab = SidebarTab::Agents;
     state.agents.insert(
         crate::host_key::HostKey::local(),
-        vec![detected("a", "%1"), detected("b", "%2"), detected("c", "%3")],
+        vec![
+            detected("a", "%1"),
+            detected("b", "%2"),
+            detected("c", "%3"),
+        ],
     );
     state.agent_focused = 2; // cursor on "c"
 
     let key = state.focused_agent_key();
     // "c" is gone; only "a" remains.
-    state.agents.insert(crate::host_key::HostKey::local(), vec![detected("a", "%1")]);
+    state
+        .agents
+        .insert(crate::host_key::HostKey::local(), vec![detected("a", "%1")]);
     state.reanchor_agent_focus(key);
 
-    assert_eq!(state.agent_focused, 0, "clamps into range when the agent is gone");
+    assert_eq!(
+        state.agent_focused, 0,
+        "clamps into range when the agent is gone"
+    );
 }
 
 #[test]
@@ -142,10 +150,14 @@ fn agents_layout_groups_agents_under_host_dividers() {
     state.prefs.sidebar_tab = SidebarTab::Agents;
     set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
-    state.agents.insert(crate::host_key::HostKey::local(), vec![detected("local", "%1")]);
-    state
-        .agents
-        .insert(crate::host_key::HostKey::remote("h1"), vec![detected("h1s", "%2")]);
+    state.agents.insert(
+        crate::host_key::HostKey::local(),
+        vec![detected("local", "%1")],
+    );
+    state.agents.insert(
+        crate::host_key::HostKey::remote("h1"),
+        vec![detected("h1s", "%2")],
+    );
 
     let built = state.agents_layout();
     // Two focusable agent rows (local agent, then h1's), in agent_rows order.
@@ -187,7 +199,9 @@ fn agents_layout_shows_placeholder_for_empty_section() {
     state.prefs.sidebar_tab = SidebarTab::Agents;
     // Local probed but empty -> "no agents" placeholder header (an inert
     // header, not a focusable row).
-    state.agents.insert(crate::host_key::HostKey::local(), vec![]);
+    state
+        .agents
+        .insert(crate::host_key::HostKey::local(), vec![]);
     let built = state.agents_layout();
     assert!(
         built
@@ -227,13 +241,18 @@ fn apply_remote_agents_drops_stale_on_failed_probe() {
         },
     ];
     // Prior round: local + both hosts had detected agents.
-    state.agents.insert(crate::host_key::HostKey::local(), vec![detected("local", "%1")]);
-    state
-        .agents
-        .insert(crate::host_key::HostKey::remote("h1"), vec![detected("h1old", "%10")]);
-    state
-        .agents
-        .insert(crate::host_key::HostKey::remote("h2"), vec![detected("h2old", "%20")]);
+    state.agents.insert(
+        crate::host_key::HostKey::local(),
+        vec![detected("local", "%1")],
+    );
+    state.agents.insert(
+        crate::host_key::HostKey::remote("h1"),
+        vec![detected("h1old", "%10")],
+    );
+    state.agents.insert(
+        crate::host_key::HostKey::remote("h2"),
+        vec![detected("h2old", "%20")],
+    );
 
     // This round queried both hosts; only h1's probe succeeded.
     let covered: std::collections::HashSet<String> =
@@ -248,21 +267,31 @@ fn apply_remote_agents_drops_stale_on_failed_probe() {
         "%11"
     );
     assert!(
-        !state.agents.contains_key(crate::host_key::HostQuery::from_host(Some("h2"))),
+        !state
+            .agents
+            .contains_key(crate::host_key::HostQuery::from_host(Some("h2"))),
         "stale agents on a failed-probe host must be dropped"
     );
-    assert!(state.agents.contains_key(crate::host_key::HostQuery::from_host(None)), "local entry untouched");
+    assert!(
+        state
+            .agents
+            .contains_key(crate::host_key::HostQuery::from_host(None)),
+        "local entry untouched"
+    );
 }
 
 #[test]
 fn apply_remote_agents_prunes_unconfigured_hosts() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     // No remotes configured; a leftover host entry should be pruned.
-    state
-        .agents
-        .insert(crate::host_key::HostKey::remote("ghost"), vec![detected("s", "%1")]);
+    state.agents.insert(
+        crate::host_key::HostKey::remote("ghost"),
+        vec![detected("s", "%1")],
+    );
     state.apply_remote_agents(Default::default(), Default::default());
-    assert!(!state.agents.contains_key(crate::host_key::HostQuery::from_host(Some("ghost"))));
+    assert!(!state
+        .agents
+        .contains_key(crate::host_key::HostQuery::from_host(Some("ghost"))));
 }
 
 #[test]
@@ -648,7 +677,9 @@ fn confirm_kill_name_none_when_not_pending() {
 #[test]
 fn collapsed_local_group_hides_rows() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.collapsed_sections.insert(crate::host_key::HostKey::local());
+    state
+        .collapsed_sections
+        .insert(crate::host_key::HostKey::local());
     let built = state.sidebar_layout(ViewMode::Expanded);
 
     assert!(built.layout.is_collapsible());
@@ -670,7 +701,9 @@ fn focus_skips_collapsed_remote_group() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
-    state.collapsed_sections.insert(crate::host_key::HostKey::local());
+    state
+        .collapsed_sections
+        .insert(crate::host_key::HostKey::local());
 
     // Local rows are hidden, the remote row is not.
     assert!(state.is_focus_collapsed(0));
@@ -690,7 +723,10 @@ fn section_key_of_focus_maps_local_and_remote() {
 
 #[test]
 fn agents_probe_interval_cycles_and_labels() {
-    assert_eq!(normalize_agents_probe_interval(3), DEFAULT_AGENTS_PROBE_INTERVAL);
+    assert_eq!(
+        normalize_agents_probe_interval(3),
+        DEFAULT_AGENTS_PROBE_INTERVAL
+    );
     assert_eq!(agents_probe_interval_label(1), "1s (fast)");
     assert_eq!(agents_probe_interval_label(10), "10s (very slow)");
 
@@ -777,7 +813,10 @@ fn prefs_config_round_trip_is_identity() {
         .expect("written theme name must resolve to an index");
     let round_tripped = Prefs::from_config(&written, rederived_index);
     assert_eq!(prefs, round_tripped);
-    assert_eq!(rederived_index, theme_index, "theme name<->index round-trips");
+    assert_eq!(
+        rederived_index, theme_index,
+        "theme name<->index round-trips"
+    );
 }
 
 #[test]
@@ -803,7 +842,10 @@ fn session_indexing_matches_direct_storage_after_filtered_removal() {
     let remote_flat = state.local_count();
     let entry = state.entry_at(FocusTarget(remote_flat)).unwrap();
     assert_eq!(entry.host.as_deref(), Some("h1"));
-    assert_eq!(state.focusable_index_for(Some("h1"), "s"), Some(remote_flat));
+    assert_eq!(
+        state.focusable_index_for(Some("h1"), "s"),
+        Some(remote_flat)
+    );
     assert_eq!(state.focusable_count(), 4);
 }
 
@@ -815,8 +857,8 @@ fn flat_index_decodes_to_host_and_kind() {
     set_remote(
         &mut state,
         vec![
-            remote_row("h", false, false),  // Live
-            remote_row("d", true, false),   // Unreachable
+            remote_row("h", false, false), // Live
+            remote_row("d", true, false),  // Unreachable
             SessionEntry {
                 host: Some("e".into()),
                 name: String::new(),
@@ -870,9 +912,8 @@ fn kill_policy_over_entries_guards_placeholder_and_last_remote() {
     state.entries[4].name = "p1".into();
     state.entries[5].name = "p2".into();
 
-    let blocked = |s: &AppState, i: usize| {
-        s.kill_blocked_reason(s.entry_at(FocusTarget(i)).unwrap())
-    };
+    let blocked =
+        |s: &AppState, i: usize| s.kill_blocked_reason(s.entry_at(FocusTarget(i)).unwrap());
     assert_eq!(blocked(&state, 2), Some("no session to kill")); // placeholder
     assert_eq!(blocked(&state, 3), Some("last session on host")); // solo
     assert_eq!(blocked(&state, 4), None); // pair has a sibling
@@ -892,10 +933,7 @@ fn no_sessions_name_is_a_normal_live_session_now() {
                 host: Some("h".into()),
                 name: crate::state::NO_SESSIONS_LABEL.to_string(),
                 dir: "/tmp".into(),
-                kind: SessionKind::Live {
-                    is_current: false,
-                    idle_seconds: None,
-                },
+                kind: SessionKind::Live { is_current: false },
             }, // flat 2
             remote_row("h", false, false), // flat 3 (sibling so it isn't "last on host")
         ],
