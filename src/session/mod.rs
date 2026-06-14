@@ -35,7 +35,7 @@ pub trait SessionControl {
 
     /// Create a detached session `name` starting in `dir`. Returns whether
     /// the create succeeded.
-    fn new(&self, name: &str, dir: &str) -> bool;
+    fn create(&self, name: &str, dir: &str) -> bool;
 
     /// Persist `order` (session names in display order) via the `@deck_order`
     /// user option.

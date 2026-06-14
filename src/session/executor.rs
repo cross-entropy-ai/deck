@@ -183,7 +183,7 @@ fn run(backend: Box<dyn SessionControl + Send>, op: SessionOp) -> OpOutcome {
             OpOutcome::Killed
         }
         SessionOp::NewSession { name, dir } => {
-            let created = backend.new(&name, &dir);
+            let created = backend.create(&name, &dir);
             OpOutcome::Created { name, created }
         }
         SessionOp::PersistOrder { order } => {
@@ -212,7 +212,7 @@ mod tests {
         fn switch_to(&self, _name: &str) {}
         fn rename(&self, _old: &str, _new: &str) {}
         fn kill(&self, _name: &str) {}
-        fn new(&self, _name: &str, _dir: &str) -> bool {
+        fn create(&self, _name: &str, _dir: &str) -> bool {
             true
         }
         fn persist_order(&self, _order: &[String]) {}

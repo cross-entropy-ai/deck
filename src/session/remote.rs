@@ -38,7 +38,7 @@ impl SessionControl for RemoteControl {
         remote_tmux::kill_session(&self.host, name);
     }
 
-    fn new(&self, name: &str, dir: &str) -> bool {
+    fn create(&self, name: &str, dir: &str) -> bool {
         remote_tmux::new_session(&self.host, name, dir)
     }
 

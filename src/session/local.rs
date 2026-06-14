@@ -42,7 +42,7 @@ impl SessionControl for LocalControl {
         tmux::kill_session(name);
     }
 
-    fn new(&self, name: &str, dir: &str) -> bool {
+    fn create(&self, name: &str, dir: &str) -> bool {
         tmux::new_session(name, dir).is_some()
     }
 
