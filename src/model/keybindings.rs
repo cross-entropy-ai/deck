@@ -233,7 +233,10 @@ impl Keybindings {
                     reverse.insert(cmd, Vec::new());
                 }
                 KeyBindingValue::Single(s) => {
-                    reverse.insert(cmd, parse_binding_list(name, std::slice::from_ref(s), &mut warnings));
+                    reverse.insert(
+                        cmd,
+                        parse_binding_list(name, std::slice::from_ref(s), &mut warnings),
+                    );
                 }
                 KeyBindingValue::Multi(list) => {
                     reverse.insert(cmd, parse_binding_list(name, list, &mut warnings));

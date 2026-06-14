@@ -329,21 +329,18 @@ fn format_forward(f: &ForwardSpec) -> String {
         .as_deref()
         .map(|b| format!("{}:", b))
         .unwrap_or_default();
-    match f.mode {
-        ForwardMode::Local => format!(
-            "-L {}{}  \u{2192} {}:{}",
-            bind,
-            f.listen_port,
-            f.target_host.as_deref().unwrap_or(""),
-            f.target_port.unwrap_or(0)
-        ),
-        ForwardMode::Remote => format!(
-            "-R {}{}  \u{2192} {}:{}",
-            bind,
-            f.listen_port,
-            f.target_host.as_deref().unwrap_or(""),
-            f.target_port.unwrap_or(0)
-        ),
-        ForwardMode::Dynamic => format!("-D {}{}", bind, f.listen_port),
-    }
+    // -L and -R format identically bar the flag; -D has no target.
+    let flag = match f.mode {
+        ForwardMode::Local => "-L",
+        ForwardMode::Remote => "-R",
+        ForwardMode::Dynamic => return format!("-D {}{}", bind, f.listen_port),
+    };
+    format!(
+        "{} {}{}  \u{2192} {}:{}",
+        flag,
+        bind,
+        f.listen_port,
+        f.target_host.as_deref().unwrap_or(""),
+        f.target_port.unwrap_or(0)
+    )
 }

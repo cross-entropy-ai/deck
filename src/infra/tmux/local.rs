@@ -101,7 +101,7 @@ fn persist_session_order_with(runner: &dyn CommandRunner, order: &[String]) {
     // set-option -t b @deck_order 1 ; ...` (same `;`-chaining as apply_theme).
     let mut args: Vec<String> = Vec::with_capacity(order.len() * 6);
     for (rank, name) in order.iter().enumerate() {
-        if !args.is_empty() {
+        if rank > 0 {
             args.push(";".to_string());
         }
         args.push("set-option".to_string());

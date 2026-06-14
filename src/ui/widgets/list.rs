@@ -55,13 +55,12 @@ pub fn scroll_window(selected: usize, total: usize, window: usize) -> usize {
 
 /// Render a windowed, single-selection list into `rows`, one item per row.
 ///
-/// Shared by the filter-picker overlays (new-session dir browser,
-/// add-remote host picker): the list is scrolled by `scroll_window` so
-/// `selected` stays visible, each visible item gets a `▸` marker when
-/// selected, and `content(filtered[i])` supplies the row text. `rows` must
-/// hold at least `window` slots; any beyond the rendered items are left
-/// untouched (the callers reserve them as blanks). Returns how many rows
-/// were consumed (always `window`, mirroring the callers' fixed reserve).
+/// Used by the shared filter picker (`draw_filter_picker`): the list is
+/// scrolled by `scroll_window` so `selected` stays visible, each visible
+/// item gets a `▸` marker when selected, and `content(filtered[i])`
+/// supplies the row text. `rows` must hold at least `window` slots; any
+/// beyond the rendered items are left untouched (the caller reserves them
+/// as blanks).
 pub fn draw_picker_list(
     buf: &mut Buffer,
     rows: &[Rect],
@@ -70,7 +69,7 @@ pub fn draw_picker_list(
     selected: usize,
     window: usize,
     mut content: impl FnMut(usize) -> String,
-) -> usize {
+) {
     let start = scroll_window(selected, filtered.len(), window);
     let end = (start + window).min(filtered.len());
     for (pos, &idx) in filtered[start..end].iter().enumerate() {
@@ -80,5 +79,4 @@ pub fn draw_picker_list(
         Paragraph::new(list_item_line(theme, sel, format!("  {marker} "), content(idx)))
             .render(rows[pos], buf);
     }
-    window
 }
