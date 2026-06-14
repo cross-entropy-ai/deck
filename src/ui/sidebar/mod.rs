@@ -6,7 +6,7 @@ use ratatui::Frame;
 use crate::geometry::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
 use crate::keybindings::Keybindings;
 use crate::state::{
-    AgentRow, BuiltLayout, FocusTarget, HitRegions, KillConfirmHits, SidebarTab, SummaryHits,
+    AgentEntry, BuiltLayout, FocusTarget, HitRegions, KillConfirmHits, SidebarTab, SummaryHits,
 };
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
@@ -48,8 +48,8 @@ pub struct SidebarProps<'a> {
     pub rename_input: Option<&'a TextArea<'static>>,
     pub show_borders: bool,
     pub sidebar_tab: SidebarTab,
-    /// Flattened agent list for the Agents tab (see `AppState::agent_rows`).
-    pub agent_rows: &'a [AgentRow],
+    /// Flattened agent list for the Agents tab (see `AppState::agent_entries`).
+    pub agent_entries: &'a [AgentEntry],
     /// State of the Agents-tab Summary card.
     pub summary: &'a crate::state::SummaryState,
     /// Precomputed "Xm ago" age of the Ready summary, `None` otherwise.
@@ -211,9 +211,13 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
     ])
     .areas(content);
 
-    // The header counts *detected* agents, not rows: an empty section
-    // contributes a focusable placeholder row but no agent to the `(N)` tally.
-    let agent_total = props.agent_rows.iter().filter(|r| r.agent().is_some()).count();
+    // The header counts *detected* agents, not entries: an empty section
+    // contributes a focusable placeholder entry but no agent to the `(N)` tally.
+    let agent_total = props
+        .agent_entries
+        .iter()
+        .filter(|e| e.agent().is_some())
+        .count();
     let tab_rects = draw_header(
         frame,
         header_area,
@@ -283,7 +287,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
                 built: props.built,
                 focus_target: props.focus_target,
                 agents_tab,
-                agent_rows: props.agent_rows,
+                agent_entries: props.agent_entries,
             },
         );
         (divider_hits, agent_hits, summary_hits)

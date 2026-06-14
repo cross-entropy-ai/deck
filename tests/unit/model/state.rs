@@ -5,7 +5,7 @@ fn make_session(name: &str) -> SessionEntry {
         host: None,
         name: name.to_string(),
         dir: format!("/tmp/{name}"),
-        kind: SessionKind::Live { is_current: false },
+        kind: SessionEntryKind::Live { is_current: false },
     }
 }
 
@@ -24,13 +24,13 @@ fn make_state(
     state
 }
 
-fn kind_for(unreachable: bool, loading: bool) -> SessionKind {
+fn kind_for(unreachable: bool, loading: bool) -> SessionEntryKind {
     if unreachable {
-        SessionKind::Unreachable
+        SessionEntryKind::Unreachable
     } else if loading {
-        SessionKind::Connecting
+        SessionEntryKind::Connecting
     } else {
-        SessionKind::Live { is_current: false }
+        SessionEntryKind::Live { is_current: false }
     }
 }
 
@@ -56,7 +56,7 @@ fn mark_host_reconnecting_sets_loading_clears_unreachable() {
     set_remote(&mut state, vec![remote_row("h1", true, false)]);
     state.mark_host_reconnecting("h1");
     let row = state.entries.iter().find(|e| !e.is_local()).unwrap();
-    assert_eq!(row.kind, SessionKind::Connecting);
+    assert_eq!(row.kind, SessionEntryKind::Connecting);
 }
 
 #[test]
@@ -65,11 +65,11 @@ fn mark_host_reconnecting_ignores_other_hosts() {
     set_remote(&mut state, vec![remote_row("h2", true, false)]);
     state.mark_host_reconnecting("h1");
     let row = state.entries.iter().find(|e| !e.is_local()).unwrap();
-    assert_eq!(row.kind, SessionKind::Unreachable);
+    assert_eq!(row.kind, SessionEntryKind::Unreachable);
 }
 
 #[test]
-fn agent_rows_ordered_local_then_hosts() {
+fn agent_entries_ordered_local_then_hosts() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
@@ -83,7 +83,7 @@ fn agent_rows_ordered_local_then_hosts() {
     );
 
     // Agent rows appear in section order: local (`None`) then each host.
-    let rows = state.agent_rows();
+    let rows = state.agent_entries();
     let hosts: Vec<Option<&str>> = rows.iter().map(|r| r.host.as_deref()).collect();
     assert_eq!(hosts, vec![None, Some("h1")]);
 }
@@ -161,7 +161,7 @@ fn agents_layout_groups_agents_under_host_dividers() {
     );
 
     let built = state.agents_layout();
-    // Two focusable agent rows (local agent, then h1's), in agent_rows order.
+    // Two focusable agent rows (local agent, then h1's), in agent_entries order.
     assert_eq!(built.layout.row_count(), 2);
     // Focusable count on the Agents tab is the agent count, not sessions.
     assert_eq!(state.focusable_count(), 2);
@@ -855,7 +855,7 @@ fn flat_index_decodes_to_host_and_kind() {
                 host: Some("e".into()),
                 name: String::new(),
                 dir: String::new(),
-                kind: SessionKind::NoSessions,
+                kind: SessionEntryKind::NoSessions,
             },
         ],
     );
@@ -870,11 +870,11 @@ fn flat_index_decodes_to_host_and_kind() {
 
     let e3 = state.entry_at(FocusTarget(3)).unwrap();
     assert_eq!(e3.host.as_deref(), Some("d"));
-    assert_eq!(e3.kind, SessionKind::Unreachable);
+    assert_eq!(e3.kind, SessionEntryKind::Unreachable);
     assert!(!e3.is_attachable());
 
     let e4 = state.entry_at(FocusTarget(4)).unwrap();
-    assert_eq!(e4.kind, SessionKind::NoSessions);
+    assert_eq!(e4.kind, SessionEntryKind::NoSessions);
     assert!(!e4.is_attachable());
 
     assert!(state.entry_at(FocusTarget(5)).is_none());
@@ -893,7 +893,7 @@ fn kill_policy_over_entries_guards_placeholder_and_last_remote() {
                 host: Some("e".into()),
                 name: String::new(),
                 dir: String::new(),
-                kind: SessionKind::NoSessions,
+                kind: SessionEntryKind::NoSessions,
             }, // flat 2: placeholder
             remote_row("solo", false, false), // flat 3: host "solo"'s only live session
             remote_row("pair", false, false), // flat 4
@@ -925,7 +925,7 @@ fn no_sessions_name_is_a_normal_live_session_now() {
                 host: Some("h".into()),
                 name: crate::state::NO_SESSIONS_LABEL.to_string(),
                 dir: "/tmp".into(),
-                kind: SessionKind::Live { is_current: false },
+                kind: SessionEntryKind::Live { is_current: false },
             }, // flat 2
             remote_row("h", false, false), // flat 3 (sibling so it isn't "last on host")
         ],

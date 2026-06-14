@@ -65,21 +65,21 @@ impl App {
         let remote_placeholder = s.focused_remote_placeholder().map(|entry| {
             let host = entry.host.as_deref().unwrap_or_default();
             let (title, detail) = match entry.kind {
-                crate::state::SessionKind::Connecting => (
+                crate::state::SessionEntryKind::Connecting => (
                     format!("Connecting to @{host}"),
                     "Waiting for the remote terminal to connect".to_string(),
                 ),
-                crate::state::SessionKind::Unreachable => (
+                crate::state::SessionEntryKind::Unreachable => (
                     format!("Cannot reach @{host}"),
                     "Reconnect this host from the sidebar".to_string(),
                 ),
-                crate::state::SessionKind::NoSessions => (
+                crate::state::SessionEntryKind::NoSessions => (
                     format!("No sessions for @{host}"),
                     "Create one from the host menu to attach here".to_string(),
                 ),
                 // A focused remote placeholder is never `Live`, but keep a
                 // sensible fallback string rather than panic.
-                crate::state::SessionKind::Live { .. } => (
+                crate::state::SessionEntryKind::Live { .. } => (
                     format!("No attachable session for @{host}"),
                     "Create one from the host menu to attach here".to_string(),
                 ),
@@ -194,7 +194,7 @@ impl App {
             };
 
             let layout = self.state.current_layout(view_mode);
-            let agent_rows = self.state.agent_rows();
+            let agent_entries = self.state.agent_entries();
             let focus_target = self.state.focus_target();
             let summary_card_height = self.state.summary_card_height();
             captured_hits = ui::draw_sidebar(
@@ -212,7 +212,7 @@ impl App {
                     rename_input,
                     show_borders,
                     sidebar_tab,
-                    agent_rows: &agent_rows,
+                    agent_entries: &agent_entries,
                     summary: &self.state.summary.state,
                     summary_age: summary_age.as_deref(),
                     spinner_idx,

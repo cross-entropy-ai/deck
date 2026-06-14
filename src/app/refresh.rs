@@ -1,5 +1,5 @@
 use crate::refresh::{RefreshRequest, RefreshUpdate, RemoteSnapshotRow, SnapshotRow};
-use crate::state::{SessionEntry, SessionKind};
+use crate::state::{SessionEntry, SessionEntryKind};
 
 use super::App;
 
@@ -214,7 +214,7 @@ impl App {
             .collect();
         let local_block = rows.into_iter().map(|r| SessionEntry {
             host: None,
-            kind: SessionKind::Live {
+            kind: SessionEntryKind::Live {
                 is_current: r.name == current,
             },
             name: r.name,
@@ -293,7 +293,7 @@ fn mark_connecting_rows(entries: &mut [SessionEntry], is_connecting: impl Fn(&st
         // placeholders (unreachable / "no sessions") have no PTY to connect.
         if let Some(host) = entry.host.as_deref() {
             if entry.is_attachable() && is_connecting(host) {
-                entry.kind = SessionKind::Connecting;
+                entry.kind = SessionEntryKind::Connecting;
             }
         }
     }

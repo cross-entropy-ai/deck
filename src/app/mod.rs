@@ -209,7 +209,7 @@ impl App {
                 host: Some(host.clone()),
                 name: String::new(),
                 dir: String::new(),
-                kind: crate::state::SessionKind::Connecting,
+                kind: crate::state::SessionEntryKind::Connecting,
             })
             .collect();
 

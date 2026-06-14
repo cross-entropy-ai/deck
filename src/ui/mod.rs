@@ -12,7 +12,7 @@ pub mod theme;
 pub mod widgets;
 
 use crate::keybindings::Keybindings;
-use crate::state::{SessionEntry, SessionKind};
+use crate::state::{SessionEntry, SessionEntryKind};
 
 pub use add_remote::draw_add_remote;
 pub use menu::draw_context_menu;
@@ -74,13 +74,13 @@ impl SidebarSession for SessionEntry {
         // The placeholder display strings live here, derived from `kind`,
         // not stored as magic session names.
         match self.kind {
-            SessionKind::Unreachable => crate::state::UNREACHABLE_LABEL,
-            SessionKind::NoSessions => crate::state::NO_SESSIONS_LABEL,
-            SessionKind::Live { .. } | SessionKind::Connecting => &self.name,
+            SessionEntryKind::Unreachable => crate::state::UNREACHABLE_LABEL,
+            SessionEntryKind::NoSessions => crate::state::NO_SESSIONS_LABEL,
+            SessionEntryKind::Live { .. } | SessionEntryKind::Connecting => &self.name,
         }
     }
     fn unreachable(&self) -> bool {
-        matches!(self.kind, SessionKind::Unreachable)
+        matches!(self.kind, SessionEntryKind::Unreachable)
     }
 }
 

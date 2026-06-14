@@ -54,7 +54,7 @@ pub struct RemoteSnapshotRow {
     pub host: String,
     pub name: String,
     pub dir: String,
-    pub kind: crate::state::SessionKind,
+    pub kind: crate::state::SessionEntryKind,
 }
 
 /// An update from the refresh worker. Decoupled into Local + Remote
@@ -288,7 +288,7 @@ fn collect_remotes(
                     host: host.clone(),
                     name: String::new(),
                     dir: String::new(),
-                    kind: crate::state::SessionKind::Unreachable,
+                    kind: crate::state::SessionEntryKind::Unreachable,
                 });
                 continue;
             }
@@ -308,7 +308,7 @@ fn collect_remotes(
                         host: host_name.clone(),
                         name: s.name,
                         dir: s.dir,
-                        kind: crate::state::SessionKind::Live { is_current: false },
+                        kind: crate::state::SessionEntryKind::Live { is_current: false },
                     });
                 }
             }
@@ -317,7 +317,7 @@ fn collect_remotes(
                     host: host_name,
                     name: String::new(),
                     dir: String::new(),
-                    kind: crate::state::SessionKind::NoSessions,
+                    kind: crate::state::SessionEntryKind::NoSessions,
                 });
             }
             None => {
@@ -325,7 +325,7 @@ fn collect_remotes(
                     host: host_name,
                     name: String::new(),
                     dir: String::new(),
-                    kind: crate::state::SessionKind::Unreachable,
+                    kind: crate::state::SessionEntryKind::Unreachable,
                 });
             }
         }

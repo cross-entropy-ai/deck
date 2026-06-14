@@ -46,7 +46,7 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
                     rename_input: None,
                     show_borders: true,
                     sidebar_tab: crate::state::SidebarTab::Projects,
-                    agent_rows: &[],
+                    agent_entries: &[],
                     summary: &crate::state::SummaryState::Idle,
                     summary_age: None,
                     spinner_idx: 0,
@@ -135,7 +135,7 @@ fn render_hits(
                     rename_input: None,
                     show_borders: true,
                     sidebar_tab: SidebarTab::Projects,
-                    agent_rows: &[],
+                    agent_entries: &[],
                     summary: &SummaryState::Idle,
                     summary_age: None,
                     spinner_idx: 0,
@@ -154,7 +154,7 @@ fn render_hits(
 }
 
 #[test]
-fn agents_tab_publishes_clickable_agent_rows() {
+fn agents_tab_publishes_clickable_agent_entries() {
     use crate::state::{AppState, SidebarTab};
     let theme = &crate::theme::THEMES[0];
     let keybindings = Keybindings::default();
@@ -176,7 +176,7 @@ fn agents_tab_publishes_clickable_agent_rows() {
         host: Some("h1".to_string()),
         name: "s".to_string(),
         dir: String::new(),
-        kind: crate::state::SessionKind::Live { is_current: false },
+        kind: crate::state::SessionEntryKind::Live { is_current: false },
     });
     state.clamp_projects_focus();
     state
@@ -186,7 +186,7 @@ fn agents_tab_publishes_clickable_agent_rows() {
         .agents
         .insert(crate::host_key::HostKey::remote("h1"), vec![mk("%9")]);
     let built = state.agents_layout();
-    let agent_rows = state.agent_rows();
+    let agent_entries = state.agent_entries();
     let sessions: Vec<&dyn SidebarSession> = Vec::new();
 
     let backend = TestBackend::new(40, 24);
@@ -209,7 +209,7 @@ fn agents_tab_publishes_clickable_agent_rows() {
                     rename_input: None,
                     show_borders: true,
                     sidebar_tab: SidebarTab::Agents,
-                    agent_rows: &agent_rows,
+                    agent_entries: &agent_entries,
                     summary: &SummaryState::Idle,
                     summary_age: None,
                     spinner_idx: 0,
@@ -225,7 +225,7 @@ fn agents_tab_publishes_clickable_agent_rows() {
         })
         .unwrap();
 
-    // Each agent row publishes a hit, in agent_rows order, with its pane.
+    // Each agent row publishes a hit, in agent_entries order, with its pane.
     let panes: Vec<&str> = captured
         .agents
         .iter()

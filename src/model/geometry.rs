@@ -263,46 +263,47 @@ impl Default for BuiltLayout {
     }
 }
 
-/// One focusable row in the Agents tab, in display order: local section
-/// first, then each remote host's in section order. The renderer and the
-/// layout items both index into the `Vec` this produces
-/// (`AppState::agent_rows`), so they can't disagree about which row points
-/// where.
+/// One focusable entry in the Agents-tab list, the twin of `SessionEntry`:
+/// in display order, the local section first then each remote host's in
+/// section order. The renderer and the layout items both index into the `Vec`
+/// this produces (`AppState::agent_entries`), so they can't disagree about
+/// which entry points where.
 ///
-/// A row is either a detected `Agent` or the synthetic `Placeholder` that
-/// stands in for an empty section — mirroring how the Projects tab injects a
-/// `NoSessions` / `Unreachable` `SessionEntry`. Both are focusable and occupy
-/// a flat-index slot, so `agent_rows`, `agent_count`, the layout, and focus
-/// all walk the same sequence; activating a placeholder is a guarded no-op
-/// (`focused_agent` returns `None`).
+/// Its [`kind`](AgentEntry::kind) is either a detected `Agent` or the
+/// synthetic `Placeholder` standing in for an empty section — mirroring how a
+/// `SessionEntry`'s `SessionEntryKind` is `Live` or a synthetic
+/// `NoSessions` / `Unreachable`. Both are focusable and occupy a flat-index
+/// slot, so `agent_entries`, `agent_count`, the layout, and focus all walk the
+/// same sequence; activating a placeholder is a guarded no-op (`focused_agent`
+/// returns `None`).
 ///
 /// Owns its data (like `SessionEntry`) rather than borrowing out of
-/// `AppState.agents`, so it carries no lifetime — at the cost of a per-row
-/// `DetectedAgent` clone each time `agent_rows()` runs. The lists are small
+/// `AppState.agents`, so it carries no lifetime — at the cost of a per-entry
+/// `DetectedAgent` clone each time `agent_entries()` runs. The lists are small
 /// and the build is cheap, so the symmetry with `SessionEntry` is worth more
 /// than the saved copies.
 #[derive(Debug, Clone)]
-pub struct AgentRow {
+pub struct AgentEntry {
     pub host: Option<String>,
-    pub entry: AgentEntry,
+    pub kind: AgentEntryKind,
 }
 
-impl AgentRow {
-    /// The detected agent this row points at, or `None` for a placeholder.
+impl AgentEntry {
+    /// The detected agent this entry points at, or `None` for a placeholder.
     /// Lets the renderer / focus paths treat real agents and placeholders
     /// uniformly while only switching to (and counting) the real ones.
     pub fn agent(&self) -> Option<&crate::agent::DetectedAgent> {
-        match &self.entry {
-            AgentEntry::Agent(agent) => Some(agent),
-            AgentEntry::Placeholder { .. } => None,
+        match &self.kind {
+            AgentEntryKind::Agent(agent) => Some(agent),
+            AgentEntryKind::Placeholder { .. } => None,
         }
     }
 }
 
-/// What an [`AgentRow`] carries: a real detected agent, or the inert
-/// placeholder shown for a section with no agents.
+/// What an [`AgentEntry`] is — the twin of `SessionEntryKind`: a real detected
+/// agent, or the inert placeholder shown for a section with no agents.
 #[derive(Debug, Clone)]
-pub enum AgentEntry {
+pub enum AgentEntryKind {
     /// A detected agent — the switch target.
     Agent(crate::agent::DetectedAgent),
     /// An empty section's placeholder. `probed` is `true` once detection has

@@ -421,12 +421,12 @@ impl App {
         // worker doesn't touch shared state off-thread.
         let agents: Vec<crate::summary::AgentPane> = self
             .state
-            .agent_rows()
+            .agent_entries()
             .iter()
-            .filter_map(|row| {
-                let agent = row.agent()?;
+            .filter_map(|entry| {
+                let agent = entry.agent()?;
                 Some(crate::summary::AgentPane {
-                    host: row.host.clone(),
+                    host: entry.host.clone(),
                     id: agent.location(),
                     pane_id: agent.pane_id.clone(),
                 })
@@ -589,7 +589,7 @@ impl App {
             self.state.focused = idx;
         }
         // On the Agents tab, also move that tab's cursor onto the agent.
-        if let Some(idx) = self.state.agent_row_index_for(&target) {
+        if let Some(idx) = self.state.agent_entry_index_for(&target) {
             self.state.agent_focused = idx;
         }
         match target.host.as_deref() {

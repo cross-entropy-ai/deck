@@ -144,7 +144,7 @@ fn switch_tab(state: &mut AppState, fx: &mut SideEffect, tab: SidebarTab) {
     state.prefs.sidebar_tab = tab;
     if tab == SidebarTab::Agents {
         if let Some(active) = state.active_agent.clone() {
-            if let Some(idx) = state.agent_row_index_for(&active) {
+            if let Some(idx) = state.agent_entry_index_for(&active) {
                 state.agent_focused = idx;
             }
         }
@@ -1364,7 +1364,7 @@ fn apply_pf_task_result(
         OpKind::Master(_) if !ok => {
             for entry in state.entries.iter_mut() {
                 if entry.host.as_deref() == Some(host) {
-                    entry.kind = crate::state::SessionKind::Unreachable;
+                    entry.kind = crate::state::SessionEntryKind::Unreachable;
                 }
             }
         }

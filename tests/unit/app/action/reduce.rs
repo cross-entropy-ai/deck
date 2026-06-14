@@ -2,7 +2,7 @@ use super::{
     apply_action, Action, MenuAction, NewSessionAction, PfAction, SettingsAction, SummaryAction,
 };
 use crate::state::{
-    AppState, FocusMode, LayoutMode, MainView, RenameState, SessionEntry, SessionKind, ViewMode,
+    AppState, FocusMode, LayoutMode, MainView, RenameState, SessionEntry, SessionEntryKind, ViewMode,
     NO_SESSIONS_LABEL,
 };
 
@@ -11,14 +11,14 @@ fn make_session(name: &str) -> SessionEntry {
         host: None,
         name: name.to_string(),
         dir: format!("/tmp/{}", name),
-        kind: SessionKind::Live { is_current: false },
+        kind: SessionEntryKind::Live { is_current: false },
     }
 }
 
 /// Mark the entry at flat index `i` as the current local session.
 fn set_current(state: &mut AppState, i: usize) {
     if let Some(e) = state.entries.get_mut(i) {
-        if let SessionKind::Live { is_current, .. } = &mut e.kind {
+        if let SessionEntryKind::Live { is_current, .. } = &mut e.kind {
             *is_current = true;
         }
     }
@@ -502,13 +502,13 @@ fn remote_row(host: &str, name: &str) -> SessionEntry {
     // placeholder (the call sites used to pass the magic label as a name);
     // any other name is a real Live remote session.
     let kind = if name == NO_SESSIONS_LABEL {
-        SessionKind::NoSessions
+        SessionEntryKind::NoSessions
     } else {
-        SessionKind::Live { is_current: false }
+        SessionEntryKind::Live { is_current: false }
     };
     SessionEntry {
         host: Some(host.to_string()),
-        name: if matches!(kind, SessionKind::NoSessions) {
+        name: if matches!(kind, SessionEntryKind::NoSessions) {
             String::new()
         } else {
             name.to_string()
@@ -988,7 +988,7 @@ fn pf_task_result_marks_host_unreachable_on_master_failure() {
         host: Some("h1".into()),
         name: "session-a".into(),
         dir: "/tmp".into(),
-        kind: SessionKind::Connecting,
+        kind: SessionEntryKind::Connecting,
     }];
 
     crate::action::apply_action(
@@ -1004,7 +1004,7 @@ fn pf_task_result_marks_host_unreachable_on_master_failure() {
     let row = &state.entries[0];
     assert_eq!(
         row.kind,
-        SessionKind::Unreachable,
+        SessionEntryKind::Unreachable,
         "host should be flagged unreachable after master failure"
     );
 }
@@ -1200,10 +1200,10 @@ fn global_menu_has_no_new_session() {
 
 #[test]
 fn placeholder_remote_menu_disables_rename_and_kill() {
-    use crate::state::{session_menu_disabled, MenuItem, SessionKind, UNREACHABLE_LABEL};
+    use crate::state::{session_menu_disabled, MenuItem, SessionEntryKind, UNREACHABLE_LABEL};
     let cases = [
-        ("(no sessions)", SessionKind::NoSessions),
-        (UNREACHABLE_LABEL, SessionKind::Unreachable),
+        ("(no sessions)", SessionEntryKind::NoSessions),
+        (UNREACHABLE_LABEL, SessionEntryKind::Unreachable),
     ];
     for (label, kind) in cases {
         let row = SessionEntry {
@@ -1226,7 +1226,7 @@ fn remote(host: &str, name: &str) -> SessionEntry {
         host: Some(host.into()),
         name: name.into(),
         dir: "/srv".into(),
-        kind: SessionKind::Live { is_current: false },
+        kind: SessionEntryKind::Live { is_current: false },
     }
 }
 
@@ -1241,7 +1241,7 @@ fn remote_session_with_siblings_disables_nothing() {
         host: None,
         name: "s".into(),
         dir: "/".into(),
-        kind: SessionKind::Live { is_current: false },
+        kind: SessionEntryKind::Live { is_current: false },
     };
     assert!(session_menu_disabled(&local, &sessions).is_empty());
 }

@@ -10,7 +10,7 @@
 use super::{key_to_action, mouse_to_action, Action, MenuAction};
 use crate::state::{
     AppState, ContextMenu, ExcludeEditorState, FocusMode, MainView, MenuKind, Modal, RenameState,
-    SessionEntry, SessionKind,
+    SessionEntry, SessionEntryKind,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::time::{Duration, Instant};
@@ -22,7 +22,7 @@ fn make_state() -> AppState {
             host: None,
             name: format!("sess-{i}"),
             dir: format!("/tmp/sess-{i}"),
-            kind: SessionKind::Live { is_current: i == 0 },
+            kind: SessionEntryKind::Live { is_current: i == 0 },
         })
         .collect();
     state.session_order = state.entries.iter().map(|s| s.name.clone()).collect();

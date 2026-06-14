@@ -9,7 +9,7 @@ use ratatui_sectioned_list::widget::{SectionedListState, SectionedListWidget};
 use unicode_width::UnicodeWidthStr;
 
 use crate::state::{
-    AgentHit, AgentRow, AgentTarget, BuiltLayout, DividerHit, FocusTarget, SummaryHits,
+    AgentEntry, AgentHit, AgentTarget, BuiltLayout, DividerHit, FocusTarget, SummaryHits,
     SummaryState,
 };
 
@@ -28,9 +28,9 @@ pub(super) struct SessionsProps<'a> {
     /// Whether the Agents tab is active — agent rows publish a click target
     /// (switch-to-pane); session rows are focused via `focus_at_row`.
     pub agents_tab: bool,
-    /// Flattened agent list; an agent row's focus index maps into this.
+    /// Flattened agent list; an agent entry's focus index maps into this.
     /// Empty on the Projects tab.
-    pub agent_rows: &'a [AgentRow],
+    pub agent_entries: &'a [AgentEntry],
 }
 
 /// Draw the sectioned list with the crate's `basic` preset, then walk the
@@ -108,12 +108,14 @@ pub(super) fn draw_sessions(
                 // to the row-focus path, moving the cursor without switching
                 // (the same guarded no-op a `NoSessions` row gets on Projects).
                 if props.agents_tab {
-                    if let Some((row, agent)) =
-                        props.agent_rows.get(i).and_then(|row| Some((row, row.agent()?)))
+                    if let Some((entry, agent)) = props
+                        .agent_entries
+                        .get(i)
+                        .and_then(|entry| Some((entry, entry.agent()?)))
                     {
                         agents.push(AgentHit {
                             target: AgentTarget {
-                                host: row.host.clone(),
+                                host: entry.host.clone(),
                                 session: agent.session.clone(),
                                 pane_id: agent.pane_id.clone(),
                             },

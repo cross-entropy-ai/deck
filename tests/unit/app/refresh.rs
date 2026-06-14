@@ -1,13 +1,13 @@
 use super::{hosts_needing_respawn, mark_connecting_rows};
-use crate::state::{SessionEntry, SessionKind};
+use crate::state::{SessionEntry, SessionEntryKind};
 
-fn kind_for(unreachable: bool, loading: bool) -> SessionKind {
+fn kind_for(unreachable: bool, loading: bool) -> SessionEntryKind {
     if unreachable {
-        SessionKind::Unreachable
+        SessionEntryKind::Unreachable
     } else if loading {
-        SessionKind::Connecting
+        SessionEntryKind::Connecting
     } else {
-        SessionKind::Live { is_current: false }
+        SessionEntryKind::Live { is_current: false }
     }
 }
 
@@ -26,7 +26,7 @@ fn no_sessions_row(host: &str) -> SessionEntry {
         host: Some(host.to_string()),
         name: String::new(),
         dir: String::new(),
-        kind: SessionKind::NoSessions,
+        kind: SessionEntryKind::NoSessions,
     }
 }
 
@@ -78,7 +78,7 @@ fn no_sessions_row_is_never_marked_connecting() {
     // "no sessions" placeholder must not flip to the connecting state.
     let mut rows = vec![no_sessions_row("empty")];
     mark_connecting_rows(&mut rows, |_| true);
-    assert_eq!(rows[0].kind, SessionKind::NoSessions);
+    assert_eq!(rows[0].kind, SessionEntryKind::NoSessions);
 }
 
 #[test]
@@ -93,16 +93,16 @@ fn mark_connecting_rows_reflects_pty_liveness() {
     mark_connecting_rows(&mut rows, |h| h == "conn");
     assert_eq!(
         rows[0].kind,
-        SessionKind::Connecting,
+        SessionEntryKind::Connecting,
         "connecting host should show as connecting"
     );
     assert!(
-        matches!(rows[1].kind, SessionKind::Live { .. }),
+        matches!(rows[1].kind, SessionEntryKind::Live { .. }),
         "connected host should stay live"
     );
     assert_eq!(
         rows[2].kind,
-        SessionKind::Unreachable,
+        SessionEntryKind::Unreachable,
         "unreachable row untouched"
     );
 }
