@@ -174,6 +174,44 @@ fn agents_layout_groups_agents_under_host_dividers() {
 }
 
 #[test]
+fn agents_sections_fold_via_their_own_collapse_set() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.prefs.sidebar_tab = SidebarTab::Agents;
+    set_remote(&mut state, vec![remote_row("h1", false, false)]);
+    state.clamp_projects_focus();
+    state.agents.insert(
+        crate::host_key::HostKey::local(),
+        vec![detected("local", "%1")],
+    );
+    state.agents.insert(
+        crate::host_key::HostKey::remote("h1"),
+        vec![detected("h1s", "%2")],
+    );
+    state.rebuild_agent_entries();
+    // Both sections expanded: neither agent row is hidden from focus.
+    assert!(!state.is_focus_collapsed(0));
+    assert!(!state.is_focus_collapsed(1));
+    let expanded_height = state.agents_layout().layout.total_height();
+
+    // Folding the local section on the Agents tab hides its agent row (focus
+    // skips it, layout shrinks), and touches only the Agents collapse set —
+    // Projects folds independently.
+    state
+        .collapsed_agent_sections
+        .insert(crate::host_key::HostKey::local());
+    assert!(state.is_focus_collapsed(0), "local agent row now hidden");
+    assert!(!state.is_focus_collapsed(1), "h1 agent row still visible");
+    assert!(
+        state.agents_layout().layout.total_height() < expanded_height,
+        "collapsing a section shrinks the rendered layout",
+    );
+    assert!(
+        state.collapsed_sections.is_empty(),
+        "Projects collapse set is untouched by Agents folding",
+    );
+}
+
+#[test]
 fn summary_card_height_is_fixed_across_states() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     let idle = state.summary_card_height();

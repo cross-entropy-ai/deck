@@ -549,6 +549,12 @@ pub struct AppState {
     /// divider — its session rows are hidden by the layout. Persisted to
     /// config (`collapsed_sections`) and restored at startup.
     pub collapsed_sections: HashSet<HostKey>,
+
+    /// Agents-tab twin of `collapsed_sections`, keyed the same way. Kept
+    /// separate so a host collapsed on the Projects tab doesn't hide its
+    /// agent rows (and vice versa) — the two tabs fold independently.
+    /// Runtime-only (not persisted to config).
+    pub collapsed_agent_sections: HashSet<HostKey>,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -622,6 +628,7 @@ impl AppState {
             agent_entries: Vec::new(),
             active_agent: None,
             collapsed_sections: HashSet::new(),
+            collapsed_agent_sections: HashSet::new(),
         }
     }
 
@@ -1097,6 +1104,7 @@ impl AppState {
     fn build_sections(
         &self,
         opts: SectionLayoutOpts,
+        collapsed: &HashSet<HostKey>,
         mut push_rows: impl FnMut(&mut SidebarLayout, &mut Vec<SectionMeta>, Option<&str>),
     ) -> BuiltLayout {
         let mut layout = SidebarLayout::new();
@@ -1163,12 +1171,12 @@ impl AppState {
         }
 
         // Flip each group header's collapsed flag so the widget hides its rows
-        // and the geometry/scroll/hit-test all honor the collapse. Skipped when
-        // the tab isn't collapsible (the Agents tab) so a host collapsed on the
-        // Projects tab can't hide its agent rows here.
+        // and the geometry/scroll/hit-test all honor the collapse, using the
+        // caller's collapse set (`collapsed_sections` for Projects,
+        // `collapsed_agent_sections` for Agents — each tab folds independently).
         if opts.collapsible {
             for (section_idx, key) in group_headers {
-                layout.set_collapsed(section_idx, self.collapsed_sections.contains(&key));
+                layout.set_collapsed(section_idx, collapsed.contains(&key));
             }
         }
 
@@ -1191,6 +1199,7 @@ impl AppState {
                 collapsible: show_headers,
                 remote_header_margin: show_headers,
             },
+            &self.collapsed_sections,
             |layout, _sections, host| {
                 // `entries` is grouped by host and contiguous, so filtering by
                 // host yields each section's rows in flat-index (focus) order.
@@ -1366,8 +1375,8 @@ impl AppState {
     /// (`detecting…` / `no agents`). Every row maps 1:1 to a stored
     /// `agent_entries` element so focus/scroll/hit-test stay in sync.
     pub fn agents_layout(&self) -> BuiltLayout {
-        // No collapse on the Agents tab — sections are informational and
-        // always expanded, so the focus index maps straight to a row. Remote
+        // Sections fold independently of Projects via `collapsed_agent_sections`
+        // (a host collapsed here doesn't touch the Projects list). Remote
         // sections take a 1-row top margin to set them off. The Summary card
         // renders as a separate widget pinned above, so the list is pure
         // `BasicItem`. The body mirrors `sidebar_layout` exactly: filter the
@@ -1376,9 +1385,10 @@ impl AppState {
         self.build_sections(
             SectionLayoutOpts {
                 show_headers: true,
-                collapsible: false,
+                collapsible: true,
                 remote_header_margin: true,
             },
+            &self.collapsed_agent_sections,
             |layout, _sections, host| {
                 for entry in self
                     .agent_entries
@@ -1472,13 +1482,24 @@ impl AppState {
         self.entries.get(idx).and_then(|e| e.host.clone())
     }
 
+    /// Host of the group the Agents-tab cursor row lives in (`None` = local),
+    /// the agent twin of `section_key_of_focus`. Used by the section-toggle
+    /// keybinding and focus-skip logic on the Agents tab.
+    pub fn agent_section_key_of_focus(&self) -> Option<String> {
+        self.agent_entries
+            .get(self.agent_focused)
+            .and_then(|e| e.host.clone())
+    }
+
     /// Whether the row at flat focus index `idx` sits in a collapsed group
-    /// (so keyboard focus should skip over it).
+    /// (so keyboard focus should skip over it). Tab-aware: each tab folds
+    /// against its own collapse set.
     pub fn is_focus_collapsed(&self, idx: usize) -> bool {
-        // The Agents tab is never collapsible — its rows map straight to
-        // `agent_entries`, and `section_key_of_focus` assumes session indexing.
         if self.agents_tab_active() {
-            return false;
+            return self.agent_entries.get(idx).is_some_and(|e| {
+                self.collapsed_agent_sections
+                    .contains(HostQuery::from_host(e.host.as_deref()))
+            });
         }
         idx < self.focusable_count()
             && self.collapsed_sections.contains(HostQuery::from_host(

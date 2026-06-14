@@ -435,23 +435,28 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.save_config();
         }
         Action::ToggleSection(key) => {
-            // Flip the group's collapsed membership. Collapse is only
+            // Flip the group's collapsed membership in the active tab's own
+            // set (the two tabs fold independently). Collapse is only
             // meaningful in Expanded view, but the set is stored uniformly
             // (the layout ignores it in Compact/Vertical where there are no
             // dividers), so no view-mode gate is needed here.
+            //
+            // Collapsing the focused row's group does NOT move focus: the
+            // selection (and main pane) are unchanged — the highlight is just
+            // hidden until expand, and `j`/`k` step out to a visible row
+            // (focus_next/focus_prev skip hidden rows).
             let host_key = crate::host_key::HostKey::from(key);
-            if state.collapsed_sections.contains(&host_key) {
-                state.collapsed_sections.remove(&host_key);
+            if state.agents_tab_active() {
+                // Agents collapse is runtime-only, so no save_config here.
+                if !state.collapsed_agent_sections.remove(&host_key) {
+                    state.collapsed_agent_sections.insert(host_key);
+                }
             } else {
-                state.collapsed_sections.insert(host_key);
-                // Don't move focus when collapsing the focused row's group:
-                // collapse must not switch the selection (the main pane
-                // didn't switch either). `focused` stays put — its highlight
-                // is simply not drawn while hidden and returns on expand.
-                // `j`/`k` step out to a visible row from there (focus_next/
-                // focus_prev skip hidden rows).
+                if !state.collapsed_sections.remove(&host_key) {
+                    state.collapsed_sections.insert(host_key);
+                }
+                fx.save_config();
             }
-            fx.save_config();
         }
         Action::Settings(a) => return reduce_settings(state, a),
         Action::Summary(a) => return reduce_summary(state, a),

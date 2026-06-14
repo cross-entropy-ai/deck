@@ -49,11 +49,10 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 fn command_to_action(cmd: Command, state: &AppState) -> Action {
     match cmd {
         Command::ToggleSection => {
-            // Toggle the group the focused row lives in. Only meaningful in
-            // Expanded view on the Projects tab (the Agents tab has no
-            // collapsible groups).
+            // Toggle the group the focused row lives in. Both tabs fold
+            // independently, so read the focused section from the active tab.
             if state.agents_tab_active() {
-                Action::None
+                Action::ToggleSection(state.agent_section_key_of_focus())
             } else {
                 Action::ToggleSection(state.section_key_of_focus(state.focused))
             }
