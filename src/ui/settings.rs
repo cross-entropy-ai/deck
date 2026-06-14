@@ -492,16 +492,31 @@ mod tests {
     use ratatui::{backend::TestBackend, Terminal};
 
     fn sample_rows() -> Vec<super::super::SettingRowView> {
-        // Mirror the descriptor table's labels but with long help text, so
-        // the windowing math is exercised the way the real page exercises it.
-        crate::app::settings::SETTING_ROWS
-            .iter()
-            .map(|row| super::super::SettingRowView {
-                label: row.label,
-                value: "value".to_string(),
-                help: "a fairly long help line that takes a row".to_string(),
-            })
-            .collect()
+        // A representative page of rows with long help text, so the
+        // windowing math is exercised the way the real page exercises it.
+        // Self-contained on purpose: the renderer only consumes
+        // `SettingRowView`, so the test must not reach back into the
+        // `app`-layer descriptor table to build its fixtures.
+        [
+            "Theme",
+            "Transparent",
+            "Layout",
+            "Borders",
+            "View",
+            "Frame rate",
+            "Exclude",
+            "Keybindings",
+            "Update check",
+            "Summary lang",
+            "Agents probe",
+        ]
+        .into_iter()
+        .map(|label| super::super::SettingRowView {
+            label,
+            value: "value".to_string(),
+            help: "a fairly long help line that takes a row".to_string(),
+        })
+        .collect()
     }
 
     /// #15 regression guard: on a short terminal the selected (last) row
