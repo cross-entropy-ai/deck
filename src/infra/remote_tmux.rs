@@ -14,7 +14,7 @@ use std::time::Duration;
 use crate::agent::DetectedAgent;
 use crate::infra::command::{default_runner, CommandError, CommandRunner};
 use crate::infra::tmux::SessionInfo;
-use crate::infra::tmux_parse::{
+use crate::infra::parser::tmux::{
     exact_target, parse_sessions, DECK_ORDER_OPTION, SESSION_LIST_FORMAT_SSH,
 };
 
@@ -121,7 +121,10 @@ fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Detect
     // tmux format; `2>/dev/null` swallows tmux's "no server" noise so a
     // server-less host still yields a clean ps. The marker must be
     // shell-safe (see `AGENT_PROBE_MARKER`).
-    let format = format!("$'{}'", crate::agent::PANE_FORMAT.replace('\t', "\\t"));
+    let format = format!(
+        "$'{}'",
+        crate::infra::parser::pane::PANE_FORMAT.replace('\t', "\\t")
+    );
     let raw = run_ssh(
         runner,
         host,
@@ -143,7 +146,7 @@ fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Detect
     )
     .ok()?;
     let (panes_part, ps_part) = raw.split_once(AGENT_PROBE_MARKER)?;
-    let panes = crate::agent::parse_panes(panes_part);
+    let panes = crate::infra::parser::pane::parse_panes(panes_part);
     let mut agents = crate::agent::detect_agents(&panes, ps_part);
 
     // Classify each agent's status from its pane buffer. One batched hop
@@ -557,21 +560,12 @@ fn list_dir_with(
     let path = shell_quote_remote_path(path);
     match run_ssh(runner, host, &["ls", "-1pA", "--", path.as_str()]) {
         Ok(raw) => {
-            let mut names = parse_dir_listing(&raw);
+            let mut names = crate::infra::parser::dir::parse_dir_listing(&raw);
             names.sort();
             (names, None)
         }
         Err(err) => (Vec::new(), Some(dir_error_message(&err))),
     }
-}
-
-/// Keep only directory lines — those `ls -p` suffixed with `/` — and
-/// strip the trailing slash. Non-directory lines (no `/`) are dropped.
-pub(crate) fn parse_dir_listing(raw: &str) -> Vec<String> {
-    raw.lines()
-        .filter_map(|line| line.strip_suffix('/'))
-        .map(str::to_string)
-        .collect()
 }
 
 /// Short, one-line error for the picker's error slot. Distinguishes a
@@ -922,15 +916,6 @@ mod tests {
         fn run(&self, _p: &str, _a: &[&str], _t: Duration) -> Result<Output, CommandError> {
             self.0.lock().unwrap().take().expect("called once")
         }
-    }
-
-    #[test]
-    fn parse_dir_listing_keeps_dirs_drops_files() {
-        // `ls -1pA` suffixes directories (incl. dotfile dirs) with `/`.
-        let raw = "src/\nmain.rs\ntests/\n.config/\nREADME";
-        let mut got = parse_dir_listing(raw);
-        got.sort();
-        assert_eq!(got, vec![".config", "src", "tests"]);
     }
 
     #[test]

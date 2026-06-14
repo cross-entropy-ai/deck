@@ -264,28 +264,6 @@ pub fn detect_agents(panes: &[PaneInfo], ps_output: &str) -> Vec<DetectedAgent> 
     found
 }
 
-/// Parse `tmux list-panes -F '#{pane_pid}\t#{session_name}\t#{window_index}\t#{pane_index}'`
-/// output into `PaneInfo`s. Shared by the local and ssh gathering paths.
-pub fn parse_panes(raw: &str) -> Vec<PaneInfo> {
-    raw.lines()
-        .filter_map(|line| {
-            let mut f = line.split('\t');
-            let pid = f.next()?.trim().parse::<u32>().ok()?;
-            Some(PaneInfo {
-                pid,
-                session: f.next()?.to_string(),
-                window: f.next()?.to_string(),
-                pane: f.next()?.to_string(),
-                pane_id: f.next()?.to_string(),
-            })
-        })
-        .collect()
-}
-
-/// The `-F` format string for the pane fields `parse_panes` expects.
-pub const PANE_FORMAT: &str =
-    "#{pane_pid}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_id}";
-
 /// Snapshot of the process table for agent detection: `ps -axo
 /// pid=,ppid=,args=`. Empty string on failure (→ no agents).
 ///

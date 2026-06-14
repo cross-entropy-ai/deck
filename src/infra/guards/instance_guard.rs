@@ -218,5 +218,5 @@ fn send_signal(pid: u32, sig: libc::c_int) -> Result<(), KillError> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/infra/instance_guard.rs"]
+#[path = "../../../tests/unit/infra/instance_guard.rs"]
 mod tests;

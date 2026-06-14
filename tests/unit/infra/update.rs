@@ -19,32 +19,6 @@ fn compare_garbage_returns_none() {
 }
 
 #[test]
-fn parse_release_strips_v_prefix() {
-    let body = r#"{"tag_name":"v0.2.0","html_url":"https://example.com/tag"}"#;
-    let (ver, url) = parse_release_json(body).unwrap();
-    assert_eq!(ver, "0.2.0");
-    assert_eq!(url, "https://example.com/tag");
-}
-
-#[test]
-fn parse_release_without_v_prefix_ok() {
-    let body = r#"{"tag_name":"0.2.0","html_url":"https://example.com/tag"}"#;
-    let (ver, _) = parse_release_json(body).unwrap();
-    assert_eq!(ver, "0.2.0");
-}
-
-#[test]
-fn parse_release_missing_field_errors() {
-    let body = r#"{"tag_name":"v0.2.0"}"#;
-    assert!(parse_release_json(body).is_err());
-}
-
-#[test]
-fn parse_release_invalid_json_errors() {
-    assert!(parse_release_json("not json").is_err());
-}
-
-#[test]
 fn cache_is_fresh_boundary() {
     let status = UpdateStatus {
         latest_version: "0.2.0".into(),

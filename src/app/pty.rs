@@ -51,7 +51,7 @@ impl App {
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no tmux session to attach"))?;
         // Exact-match target so attach can't land on a different session
         // that `target` happens to be a prefix of.
-        let target = crate::infra::tmux_parse::exact_target(&target);
+        let target = crate::infra::parser::tmux::exact_target(&target);
         let args = ["attach", "-t", target.as_str()];
         Pty::spawn("tmux", &args, pane_size(size.0, size.1))
     }

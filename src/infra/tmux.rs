@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::infra::command::{default_runner, CommandError, CommandRunner};
-use crate::infra::tmux_parse::{
+use crate::infra::parser::tmux::{
     exact_target, parse_sessions, parse_window_activity, DECK_ORDER_OPTION, SESSION_LIST_FORMAT,
     WINDOW_ACTIVITY_FORMAT,
 };
@@ -118,9 +118,14 @@ fn persist_session_order_with(runner: &dyn CommandRunner, order: &[String]) {
 /// needs: pid (subtree root) + session/window/pane for locating. See
 /// `crate::agent`.
 pub fn agent_panes() -> Vec<crate::agent::PaneInfo> {
-    tmux(&["list-panes", "-a", "-F", crate::agent::PANE_FORMAT])
-        .map(|raw| crate::agent::parse_panes(&raw))
-        .unwrap_or_default()
+    tmux(&[
+        "list-panes",
+        "-a",
+        "-F",
+        crate::infra::parser::pane::PANE_FORMAT,
+    ])
+    .map(|raw| crate::infra::parser::pane::parse_panes(&raw))
+    .unwrap_or_default()
 }
 
 /// Capture the visible buffer of a pane (`%N`) as plain text, for the

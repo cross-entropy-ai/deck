@@ -133,7 +133,7 @@ fn persist_session_order_batches_set_option_calls() {
 fn exact_target_forces_exact_match() {
     // Leading `=` makes tmux match the session name exactly instead of by
     // prefix/fnmatch, so a target can't resolve to a different session.
-    assert_eq!(crate::infra::tmux_parse::exact_target("work"), "=work");
+    assert_eq!(crate::infra::parser::tmux::exact_target("work"), "=work");
 }
 
 #[test]

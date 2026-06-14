@@ -146,20 +146,6 @@ fn excluded_session_agents_are_filtered_out() {
 }
 
 #[test]
-fn parse_panes_reads_tab_fields() {
-    let raw = "56578\tdeck\t1\t0\t%240\n74037\ttpu-spot\t2\t1\t%243\nbad_line";
-    let got = parse_panes(raw);
-    assert_eq!(got.len(), 2);
-    assert_eq!(got[0].pid, 56578);
-    assert_eq!(got[0].session, "deck");
-    assert_eq!(got[0].pane_id, "%240");
-    assert_eq!(got[1].pid, 74037);
-    assert_eq!(got[1].window, "2");
-    assert_eq!(got[1].pane, "1");
-    assert_eq!(got[1].pane_id, "%243");
-}
-
-#[test]
 fn claude_classifier_reads_traffic_light_from_buffer() {
     // Working spinner: the "<verb>ing… (" status line.
     let working = "✶ Cogitating… (12s · ↑ 3.2k tokens · esc to interrupt)";

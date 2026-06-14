@@ -1,4 +1,4 @@
-use crate::infra::listeners::{parse_netstat, parse_ss};
+use crate::infra::parser::listeners::{parse_netstat, parse_ss};
 
 #[test]
 fn netstat_extracts_listen_ports() {

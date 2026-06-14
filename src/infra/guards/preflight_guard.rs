@@ -88,5 +88,5 @@ fn ensure_at_least_one_session(runner: &dyn CommandRunner) -> Result<(), String>
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/infra/preflight_guard.rs"]
+#[path = "../../../tests/unit/infra/preflight_guard.rs"]
 mod tests;

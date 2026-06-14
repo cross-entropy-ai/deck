@@ -116,18 +116,7 @@ fn fetch_latest() -> Result<(String, String), String> {
         return Err(format!("HTTP {}", status));
     }
     let body = resp.text().map_err(|e| format!("read body: {}", e))?;
-    parse_release_json(&body)
-}
-
-pub fn parse_release_json(body: &str) -> Result<(String, String), String> {
-    #[derive(Deserialize)]
-    struct Release {
-        tag_name: String,
-        html_url: String,
-    }
-    let r: Release = serde_json::from_str(body).map_err(|e| format!("parse: {}", e))?;
-    let version = r.tag_name.trim_start_matches('v').to_string();
-    Ok((version, r.html_url))
+    crate::infra::parser::release::parse_release_json(&body)
 }
 
 /// Returns `Some(true)` iff `latest > current` under semver. `None` on parse failure.

@@ -24,7 +24,7 @@
 use std::time::Duration;
 
 use crate::infra::command::{default_runner, CommandRunner};
-use crate::infra::tmux_parse::exact_target;
+use crate::infra::parser::tmux::exact_target;
 use crate::remote_tmux::{client_marker_token, run_ssh, shell_single_quote};
 use crate::tmux::PaneFocus;
 
