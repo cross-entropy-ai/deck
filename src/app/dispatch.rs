@@ -460,52 +460,44 @@ impl App {
     }
 
     fn switch_to_agent_pane(&mut self, target: crate::state::AgentTarget) {
-        // Stamp this click as the newest focus intent; any in-flight remote
-        // focus from a prior click is now stale and won't commit.
+        // Stamp this click as the newest focus intent; any in-flight focus
+        // from a prior click is now stale and won't commit.
         self.focus_seq += 1;
-        match &target.host {
-            None => {
-                // Local focus is a synchronous tmux call — instant, no
-                // network — so we commit inline on success. A stale `%id`
-                // (pane gone) makes the command fail → no commit, no lie.
-                self.warning_state = None;
-                let tty = self.local_terminal.pty.slave_tty.clone();
-                match tmux::focus_local_pane(&tty, &target.session, &target.pane_id) {
-                    tmux::PaneFocus::ExactPane => self.commit_focus(target, true),
-                    tmux::PaneFocus::SessionOnly => self.commit_focus(target, false),
-                    tmux::PaneFocus::Failed => {}
+        self.warning_state = None;
+        // One path for both: the only local/remote difference is the
+        // transport + how we learn Deck's own client tty. Resolve that here,
+        // then run the *same* focus rule off-thread and commit via the same
+        // channel — local `sh` is instant, but routing it through the worker
+        // keeps a single code path (and remote ssh can stall, so it must be
+        // off-thread regardless). For remote we still gate on the marker being
+        // ready; without it the script would just bail server-side.
+        let transport = match &target.host {
+            None => crate::focus::FocusTransport::Local {
+                client_tty: self.local_terminal.pty.slave_tty.clone(),
+            },
+            Some(host) => {
+                let Some(marker_id) = self.remote.live_marker_id(host) else {
+                    return;
+                };
+                crate::focus::FocusTransport::Remote {
+                    host: host.clone(),
+                    marker_id,
                 }
             }
-            // Remote focus shells out over ssh, which can stall for the full
-            // timeout — run it off-thread (like `switch_to_remote`) and
-            // commit only when the worker reports success, so a degraded
-            // host can neither freeze the UI nor leave a lying highlight.
-            Some(_) => self.spawn_remote_agent_focus(target),
-        }
-    }
-
-    /// Off-thread remote agent-pane focus: gate on the connection being
-    /// live AND marker-ready (cheap, non-blocking checks), then ssh-focus
-    /// the pane on a worker and report the result (tagged with the current
-    /// `focus_seq`) back via `focus_tx`. No-op (no commit) when the host
-    /// isn't connected or its marker hasn't been written yet — focusing
-    /// then would just bail server-side and waste an ssh round-trip.
-    fn spawn_remote_agent_focus(&mut self, target: crate::state::AgentTarget) {
-        let Some(host) = target.host.clone() else {
-            return;
         };
-        let marker_id = self.remote.live_marker_id(&host);
-        let Some(marker_id) = marker_id else {
-            return;
+        // `marker_id` tags the outcome so a reconnect (which mints a new id)
+        // can reject a completion from the old connection; local has no
+        // generation, so 0 is a harmless placeholder.
+        let marker_id = match &transport {
+            crate::focus::FocusTransport::Remote { marker_id, .. } => *marker_id,
+            crate::focus::FocusTransport::Local { .. } => 0,
         };
         let tx = self.focus_tx.clone();
         let seq = self.focus_seq;
-        let session = target.session.clone();
-        let pane_id = target.pane_id.clone();
         std::thread::Builder::new()
-            .name(format!("deck-focus-{host}"))
+            .name("deck-focus".into())
             .spawn(move || {
-                let result = crate::remote_tmux::focus_pane(&host, marker_id, &session, &pane_id);
+                let result = crate::focus::run_focus(&transport, &target.session, &target.pane_id);
                 let _ = tx.send(super::FocusOutcome {
                     target,
                     result,
@@ -516,26 +508,25 @@ impl App {
             .ok();
     }
 
-    /// Apply a remote focus completion (drained in the event loop). Act on
-    /// it only when it's still valid: no newer focus action has happened
-    /// (`seq`), the connection is the *same generation* it was spawned
-    /// against (`marker_id` — a reconnect mints a new id, so an outcome
-    /// from a dropped/older PTY is rejected), the host is still connected,
-    /// and the agent is still present. A slow ssh focus that finishes after
-    /// the user moved on — or after a disconnect/reconnect — is dropped
-    /// rather than clobbering the current view. Only `ExactPane` earns the
-    /// agent highlight; `SessionOnly` moved the view without focusing the
-    /// exact pane, so it commits a plain session switch (no highlight).
+    /// Apply a focus completion (drained in the event loop). Act on it only
+    /// when it's still valid: no newer focus action has happened (`seq`); for
+    /// a remote target, the connection is the *same generation* it was
+    /// spawned against (`marker_id` — a reconnect mints a new id, so an
+    /// outcome from a dropped/older PTY is rejected); and the agent is still
+    /// present. A slow focus that finishes after the user moved on — or after
+    /// a disconnect/reconnect — is dropped rather than clobbering the view.
+    /// Only `ExactPane` earns the agent highlight; `SessionOnly` moved the
+    /// view without focusing the exact pane, so it commits a plain switch.
     pub(super) fn apply_focus_outcome(&mut self, outcome: super::FocusOutcome) {
         if outcome.seq != self.focus_seq {
             return;
         }
-        let same_generation = outcome
-            .target
-            .host
-            .as_deref()
-            .map(|h| self.remote.marker_id(h) == outcome.marker_id)
-            .unwrap_or(false);
+        // Local has no reconnect generation, so it's always current; remote
+        // must match the marker id it was spawned against.
+        let same_generation = match outcome.target.host.as_deref() {
+            None => true,
+            Some(h) => self.remote.marker_id(h) == outcome.marker_id,
+        };
         if !same_generation {
             return;
         }
@@ -549,20 +540,20 @@ impl App {
         }
     }
 
-    /// Whether a remote focus target is still actionable: its host is
-    /// connected and the agent is still detected on it. Guards stale
-    /// completions whose host was removed or whose agent has since exited.
+    /// Whether a focus target is still actionable: a remote host must still be
+    /// connected, and the agent must still be detected on its host (`None` =
+    /// local). Guards stale completions whose host was removed or whose agent
+    /// has since exited.
     fn agent_focus_target_live(&self, target: &crate::state::AgentTarget) -> bool {
-        let Some(host) = target.host.as_deref() else {
-            return true; // local targets are committed inline, not here
-        };
-        let connected = self.remote.is_live(host);
-        let still_detected = self
-            .state
+        if let Some(host) = target.host.as_deref() {
+            if !self.remote.is_live(host) {
+                return false;
+            }
+        }
+        self.state
             .agents
-            .get(crate::host_key::HostQuery::from_host(Some(host)))
-            .is_some_and(|list| list.iter().any(|a| a.pane_id == target.pane_id));
-        connected && still_detected
+            .get(crate::host_key::HostQuery::from_host(target.host.as_deref()))
+            .is_some_and(|list| list.iter().any(|a| a.pane_id == target.pane_id))
     }
 
     /// Commit a focus result — local or remote, same path: point

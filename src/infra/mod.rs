@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod command;
+pub mod focus;
 pub mod instance_guard;
 pub mod listeners;
 pub mod port_forward;

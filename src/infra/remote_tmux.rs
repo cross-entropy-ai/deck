@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use crate::agent::DetectedAgent;
 use crate::infra::command::{default_runner, CommandError, CommandRunner};
-use crate::infra::tmux::{PaneFocus, SessionInfo};
+use crate::infra::tmux::SessionInfo;
 use crate::infra::tmux_parse::{
     exact_target, parse_sessions, DECK_ORDER_OPTION, SESSION_LIST_FORMAT_SSH,
 };
@@ -23,14 +23,6 @@ use crate::infra::tmux_parse::{
 /// equals-expansion would treat it as a command path and eat it) nor with
 /// `-` (echo flag); plain underscores are safe in any remote shell.
 const AGENT_PROBE_MARKER: &str = "__DECK_AGENT_PROBE__";
-
-/// Markers the remote focus script echoes to report which branch ran:
-/// `EXACT` when the agent's window+pane were selected, `SESSION` when only
-/// Deck's own client was switched (another client shared the session, so
-/// the session-global selects were skipped). Plain underscores → safe in
-/// any remote shell, like [`AGENT_PROBE_MARKER`].
-const FOCUS_EXACT_MARKER: &str = "__DECK_FOCUS_EXACT__";
-const FOCUS_SESSION_MARKER: &str = "__DECK_FOCUS_SESSION__";
 
 /// Hard cap on a single remote ssh+tmux call. Generous compared to the
 /// local 1s budget because the first call to a host may have to wait
@@ -59,7 +51,7 @@ pub(crate) fn base_ssh_args() -> Vec<&'static str> {
 pub(crate) const REMOTE_PATH_PREFIX: &str =
     "PATH=/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$PATH";
 
-fn run_ssh(
+pub(crate) fn run_ssh(
     runner: &dyn CommandRunner,
     host: &str,
     remote_argv: &[&str],
@@ -268,7 +260,7 @@ fn is_no_server_error(err: &CommandError) -> bool {
 /// user-supplied name or path must be quoted — both for correctness
 /// (spaces) and to keep shell metacharacters from being interpreted.
 /// Embedded single quotes are escaped as `'\''`.
-fn shell_single_quote(s: &str) -> String {
+pub(crate) fn shell_single_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
@@ -420,63 +412,27 @@ fn switch_client_with(runner: &dyn CommandRunner, host: &str, marker_id: u64, se
     let _ = run_ssh(runner, host, &[cmd.as_str()]);
 }
 
-/// Focus a specific pane (by stable id `%N`) on the remote tmux server
-/// and switch the remote client to its session — the remote analog of
-/// `tmux::focus_local_pane`. One ssh hop, one tmux command sequence; the
-/// `;` is single-quoted so the remote shell hands it to tmux as its
-/// separator (not a shell one), and the pane id / session are
-/// single-quoted so `%`/specials stay literal.
-pub fn focus_pane(host: &str, marker_id: u64, session: &str, pane_id: &str) -> PaneFocus {
-    focus_pane_with(default_runner(), host, marker_id, session, pane_id)
-}
-
-/// Returns the focus outcome. The remote script echoes a marker so we know
-/// which branch ran on the host: [`FOCUS_EXACT_MARKER`] when it selected
-/// the exact window/pane, [`FOCUS_SESSION_MARKER`] when it switched only
-/// Deck's client (a co-attached client shared the session). A stale `%id`
-/// or ssh failure aborts before any marker is echoed → `Failed`, so the
-/// caller won't commit a focus that didn't land.
+/// Test seam: run the unified focus rule over the remote (ssh) transport.
+/// Production focus goes through [`crate::focus::run_focus`]; this thin
+/// wrapper exists so the remote-transport tests below can drive the shared
+/// rule with a `FakeRunner` and assert the emitted ssh command's shape.
+#[cfg(test)]
 fn focus_pane_with(
     runner: &dyn CommandRunner,
     host: &str,
     marker_id: u64,
     session: &str,
     pane_id: &str,
-) -> PaneFocus {
-    let pane = shell_single_quote(pane_id);
-    // `sess` is the switch-client/list-clients session target (exact match);
-    // `pane` is a `%N` pane id for select-window/select-pane, left as-is.
-    let sess = shell_single_quote(&exact_target(session));
-    // Act only when we can target Deck's own client (`-c "$C"`). A missing
-    // marker (`C` empty — the reconnect race before the attach wrapper
-    // writes it, or an unwritable `~/.cache`) bails immediately: no tmux
-    // command runs and no marker is echoed → `Failed`, so we never issue an
-    // untargeted op that could move another attached client.
-    //
-    // When the tty is known: `switch-client` is client-scoped (`-c`), but
-    // `select-window`/`select-pane` are *session* state — running them
-    // moves every client attached to the session. So only select the exact
-    // window/pane when Deck's client is the SOLE client on the session;
-    // when another client shares it, switch just our own client and leave
-    // the session's current window/pane alone. Each branch echoes a marker
-    // (only after its tmux command succeeds) so the caller learns whether
-    // the exact pane was actually focused.
-    let cmd = format!(
-        "{read_c} ; [ -z \"$C\" ] && exit 0 ; \
-         if tmux list-clients -t {sess} -F '#{{client_tty}}' 2>/dev/null | grep -qvxF \"$C\"; then \
-         tmux switch-client -c \"$C\" -t {sess} && echo {session_marker} ; \
-         else \
-         tmux select-window -t {pane} ';' select-pane -t {pane} ';' switch-client -c \"$C\" -t {sess} && echo {exact_marker} ; \
-         fi",
-        read_c = read_client_tty(host, marker_id),
-        session_marker = FOCUS_SESSION_MARKER,
-        exact_marker = FOCUS_EXACT_MARKER,
-    );
-    match run_ssh(runner, host, &[cmd.as_str()]) {
-        Ok(out) if out.contains(FOCUS_EXACT_MARKER) => PaneFocus::ExactPane,
-        Ok(out) if out.contains(FOCUS_SESSION_MARKER) => PaneFocus::SessionOnly,
-        _ => PaneFocus::Failed,
-    }
+) -> crate::tmux::PaneFocus {
+    crate::focus::run_focus_with(
+        runner,
+        &crate::focus::FocusTransport::Remote {
+            host: host.to_string(),
+            marker_id,
+        },
+        session,
+        pane_id,
+    )
 }
 
 /// Kill a session on the remote tmux server. The `(host, name)` tuple
@@ -641,6 +597,8 @@ fn dir_error_message(err: &CommandError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::focus::{FOCUS_EXACT_MARKER, FOCUS_SESSION_MARKER};
+    use crate::tmux::PaneFocus;
     use crate::infra::command::Output;
     use std::os::unix::process::ExitStatusExt;
     use std::process::ExitStatus;

@@ -6,8 +6,8 @@ mod ui;
 
 pub(crate) use app::action;
 pub(crate) use infra::{
-    agent, instance_guard, preflight_guard, pty, refresh, remote_tmux, self_update, shutdown, ssh,
-    summary, terminal_guard, tmux, update, worker,
+    agent, focus, instance_guard, preflight_guard, pty, refresh, remote_tmux, self_update,
+    shutdown, ssh, summary, terminal_guard, tmux, update, worker,
 };
 pub(crate) use model::{
     add_remote, config, effects, forwards, geometry, host_key, keybindings, menu, new_session,
