@@ -151,6 +151,58 @@ fn agent_cursor_clamps_when_focused_agent_disappears() {
 }
 
 #[test]
+fn steer_marker_follows_the_active_pane() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.prefs.sidebar_tab = SidebarTab::Agents;
+    state.agents.insert(
+        crate::host_key::HostKey::local(),
+        vec![detected("a", "%1"), detected("b", "%2")],
+    );
+    state.rebuild_agent_entries();
+    state.agent_focused = 0; // cursor starts on "a"
+
+    // Active pane holds agent "b" → marker lands on it, and the section-list
+    // cursor follows the marker onto "b" (index 1).
+    state.steer_marker_to_pane(None, "%2");
+    assert_eq!(
+        state.active_agent,
+        Some(AgentTarget {
+            host: None,
+            session: "b".to_string(),
+            pane_id: "%2".to_string(),
+        })
+    );
+    assert_eq!(state.agent_focused, 1, "cursor follows the marker onto b");
+
+    // Switch to a pane with no agent → marker clears, cursor stays put.
+    state.steer_marker_to_pane(None, "%9");
+    assert_eq!(state.active_agent, None);
+    assert_eq!(state.agent_focused, 1, "cursor stays when no agent is there");
+}
+
+#[test]
+fn steer_marker_leaves_marker_when_host_unprobed() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.active_agent = Some(AgentTarget {
+        host: None,
+        session: "a".to_string(),
+        pane_id: "%1".to_string(),
+    });
+    // A remote host whose agents were never probed (absent from the map):
+    // absence means "not known", so a probe there must not blank the marker.
+    state.steer_marker_to_pane(Some("box"), "%5");
+    assert_eq!(
+        state.active_agent,
+        Some(AgentTarget {
+            host: None,
+            session: "a".to_string(),
+            pane_id: "%1".to_string(),
+        }),
+        "an unprobed host leaves the existing marker untouched"
+    );
+}
+
+#[test]
 fn agents_layout_groups_agents_under_host_dividers() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
@@ -434,12 +486,14 @@ fn sidebar_layout_keeps_local_divider_when_empty() {
 #[test]
 fn is_divider_at_row_detects_header_not_session() {
     let state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    // Session area starts at row 2 (banner is 2 rows, no border). The
-    // @local divider is the first item (1 row tall); the first session
-    // card sits just below it.
-    assert!(state.is_divider_at_row(2), "row 2 is the @local divider");
-    assert!(!state.is_divider_at_row(3), "row 3 is a session card");
-    assert_eq!(state.focus_at_row(3), Some(FocusTarget(0)));
+    // Header banner is 2 rows (no border); the Summary card strip is pinned
+    // below it on both tabs, so the list begins after the card. The @local
+    // divider is the first list item (1 row tall); the first session card
+    // sits just below it.
+    let top = 2 + state.summary_card_height();
+    assert!(state.is_divider_at_row(top), "first list row is the @local divider");
+    assert!(!state.is_divider_at_row(top + 1), "next row is a session card");
+    assert_eq!(state.focus_at_row(top + 1), Some(FocusTarget(0)));
     // Rows in the header banner above the session area aren't dividers.
     assert!(!state.is_divider_at_row(0));
 }

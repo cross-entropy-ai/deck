@@ -281,7 +281,7 @@ pub(super) fn draw_summary_card(
         SummaryState::Idle => {
             lines.push(pad_line(
                 vec![Span::styled(
-                    "  No aggregated agent summary yet",
+                    "  No summary generated yet",
                     Style::default().fg(theme.muted).bg(theme.bg),
                 )],
                 theme.bg,

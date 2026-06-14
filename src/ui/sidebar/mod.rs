@@ -238,11 +238,11 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
         draw_rename_input(frame, sessions_area, props.theme, textarea);
         (Vec::new(), Vec::new(), SummaryHits::default())
     } else {
-        // On the Agents tab the Summary card is pinned at the top, above the
-        // list (it's no longer a list item). Carve it off the top of the
-        // session area; the remaining rows hold the sectioned list. The
-        // hit-tester (`session_row_hit`) reserves the same strip.
-        let (summary_strip, list_area) = if agents_tab {
+        // The Summary card is pinned at the top of both tabs, above the list.
+        // Carve it off the top of the session area; the remaining rows hold
+        // the sectioned list. The hit-tester (`session_row_hit`) reserves the
+        // same strip. The Agents tab summarizes agent panes, Projects sessions.
+        let (summary_strip, list_area) = {
             let h = props.summary_card_height.min(sessions_area.height);
             (
                 Rect {
@@ -255,16 +255,8 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
                     ..sessions_area
                 },
             )
-        } else {
-            (
-                Rect {
-                    height: 0,
-                    ..sessions_area
-                },
-                sessions_area,
-            )
         };
-        let summary_hits = if agents_tab && summary_strip.height > 0 {
+        let summary_hits = if summary_strip.height > 0 {
             draw_summary_card(
                 frame,
                 summary_strip,

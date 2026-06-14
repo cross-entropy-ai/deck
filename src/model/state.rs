@@ -817,14 +817,9 @@ impl AppState {
         if row < sessions_top || row >= sessions_bottom {
             return None;
         }
-        // The list viewport sits below the Summary card on the Agents tab,
-        // which is rendered above it (not part of the sectioned list).
-        let summary_h = if self.agents_tab_active() {
-            self.summary_card_height()
-        } else {
-            0
-        };
-        let list_top = sessions_top + summary_h;
+        // The list viewport sits below the Summary card (pinned above the list
+        // on both tabs, not part of the sectioned list).
+        let list_top = sessions_top + self.summary_card_height();
         if row < list_top || row >= sessions_bottom {
             return None;
         }
@@ -1518,14 +1513,30 @@ impl AppState {
         }
     }
 
-    /// The agent under the Agents-tab cursor, or `None` when off-tab or
-    /// no agent is focused. Resolves the cursor through `agent_entries`.
+    /// Move both section-list cursors onto `target`: the Projects-tab
+    /// `focused` session and the Agents-tab `agent_focused` row, so the
+    /// highlighted item tracks whatever pane is active — whether deck drove
+    /// the switch (`commit_focus`) or it's following the real active pane
+    /// (`steer_marker_to_pane`). Each cursor moves only if the target is
+    /// present in that list.
+    pub fn focus_cursors_on(&mut self, target: &AgentTarget) {
+        if let Some(idx) = self.focusable_index_for(target.host.as_deref(), &target.session) {
+            self.focused = idx;
+        }
+        if let Some(idx) = self.agent_entry_index_for(target) {
+            self.agent_focused = idx;
+        }
+    }
+
     /// Point the Agents-tab `▶` marker at the agent occupying `pane_id` on
     /// `host` (`None` = local), or clear it when that pane holds no agent —
     /// so the marker follows the real active pane even when the user switches
-    /// panes outside Deck. No-op when the host's agents haven't been probed
-    /// yet, so a probe that races ahead of detection can't blank a valid
-    /// marker (absence = "not known", not "no agent here").
+    /// panes outside Deck. When an agent is found the section-list cursor
+    /// follows it too (`focus_cursors_on`); a pane with no agent only clears
+    /// the marker and leaves the cursor where the user left it. No-op when
+    /// the host's agents haven't been probed yet, so a probe that races ahead
+    /// of detection can't blank a valid marker (absence = "not known", not
+    /// "no agent here").
     pub fn steer_marker_to_pane(&mut self, host: Option<&str>, pane_id: &str) {
         let target = match self.agents.get(HostQuery::from_host(host)) {
             None => return,
@@ -1538,9 +1549,14 @@ impl AppState {
                     pane_id: a.pane_id.clone(),
                 }),
         };
+        if let Some(t) = &target {
+            self.focus_cursors_on(t);
+        }
         self.active_agent = target;
     }
 
+    /// The agent under the Agents-tab cursor, or `None` when off-tab or
+    /// no agent is focused. Resolves the cursor through `agent_entries`.
     pub fn focused_agent(&self) -> Option<AgentTarget> {
         if !self.agents_tab_active() {
             return None;

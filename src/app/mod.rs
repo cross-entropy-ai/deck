@@ -113,6 +113,14 @@ pub struct App {
     /// its outcome is committed only if no newer action has bumped this
     /// since — so a slow ssh focus can't clobber a later user action.
     focus_seq: u64,
+    /// Active-pane probe results (the pane Deck's main view shows). Drained
+    /// each tick to steer the Agents-tab `▶` marker — see
+    /// `apply_active_pane_outcome`.
+    active_pane_tx: std::sync::mpsc::Sender<ActivePaneOutcome>,
+    active_pane_rx: std::sync::mpsc::Receiver<ActivePaneOutcome>,
+    /// True while an active-pane probe thread is outstanding. Single-flights
+    /// the periodic probe so a slow ssh roundtrip can't pile up threads.
+    active_pane_in_flight: bool,
     /// The tmux session deck is running inside (`$TMUX_PANE` → session), or
     /// `None` when not under tmux. Switching the main pane to it would nest
     /// tmux→deck→tmux, so that switch is blocked with a warning instead.
@@ -138,6 +146,24 @@ pub(super) struct FocusOutcome {
     /// host has since reconnected (new id) or dropped, the outcome is from
     /// an older PTY generation and must not commit — see
     /// `apply_focus_outcome`.
+    pub marker_id: u64,
+}
+
+/// Result of an active-pane probe, sent back from the probe thread to the
+/// event loop. Carries the pane Deck's main view shows so the Agents-tab
+/// `▶` marker can follow the *real* active pane (see `probe_active_pane` /
+/// `apply_active_pane_outcome`).
+pub(super) struct ActivePaneOutcome {
+    /// The displayed host at spawn (`None` = local). Dropped if the user
+    /// switched to viewing a different host before this landed.
+    pub host: Option<String>,
+    /// The client's active pane id, or `None` if the query failed / bailed.
+    pub pane_id: Option<String>,
+    /// `focus_seq` at spawn time — stale (and dropped) if it no longer
+    /// matches, so a focus/session switch in flight wins over the probe.
+    pub seq: u64,
+    /// The host's `client_marker_id` at spawn — guards against a reconnect
+    /// (same as `FocusOutcome`).
     pub marker_id: u64,
 }
 
@@ -216,6 +242,7 @@ impl App {
         let (pf_result_tx, pf_result_rx) = std::sync::mpsc::channel();
         let port_forward_tx = crate::app::port_forward_task::spawn(pf_result_tx);
         let (focus_tx, focus_rx) = std::sync::mpsc::channel();
+        let (active_pane_tx, active_pane_rx) = std::sync::mpsc::channel();
 
         let mut app = App {
             state,
@@ -235,6 +262,9 @@ impl App {
             port_forward_rx: pf_result_rx,
             focus_tx,
             focus_rx,
+            active_pane_tx,
+            active_pane_rx,
+            active_pane_in_flight: false,
             summary_worker: None,
             focus_seq: 0,
             own_session: tmux::own_session(),

@@ -438,6 +438,19 @@ fn focus_pane_with(
     )
 }
 
+/// Test seam: the active-pane probe over the remote (ssh) transport, the
+/// twin of [`focus_pane_with`].
+#[cfg(test)]
+fn active_pane_with(runner: &dyn CommandRunner, host: &str, marker_id: u64) -> Option<String> {
+    crate::focus::active_pane_with(
+        runner,
+        &crate::focus::FocusTransport::Remote {
+            host: host.to_string(),
+            marker_id,
+        },
+    )
+}
+
 /// Kill a session on the remote tmux server. The `(host, name)` tuple
 /// uniquely identifies the session — within a single tmux server
 /// `name` is unique by tmux's own constraint, and `host` picks the
@@ -783,6 +796,39 @@ mod tests {
             "no-op unless the client tty is known: {}",
             calls[0]
         );
+    }
+
+    #[test]
+    fn active_pane_reads_client_pane_id_over_ssh() {
+        // Remote echoed a `%N` id → that's the pane Deck's view shows.
+        let runner = FakeRunner::new(ok("")).with_other_stdout("%317\n");
+        assert_eq!(
+            active_pane_with(&runner, "box", 7),
+            Some("%317".to_string())
+        );
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 1, "one ssh hop");
+        // Reads the per-connection client tty, bails without it, then asks
+        // tmux for that client's active pane id.
+        assert!(
+            calls[0].contains("C=$(cat")
+                && calls[0].contains("[ -z \"$C\" ] && exit 0")
+                && calls[0].contains("display-message -t \"$C\" -p '#{pane_id}'"),
+            "probes the client's active pane: {}",
+            calls[0]
+        );
+    }
+
+    #[test]
+    fn active_pane_none_when_query_bails_or_fails() {
+        // Empty stdout models the `$C`-missing bail; a non-`%` line is
+        // likewise not a pane id. Both must read as "unknown", not a pane.
+        let bailed = FakeRunner::new(ok("")).with_other_stdout("");
+        assert_eq!(active_pane_with(&bailed, "box", 7), None);
+        let junk = FakeRunner::new(ok("")).with_other_stdout("no server running");
+        assert_eq!(active_pane_with(&junk, "box", 7), None);
+        let dead = FakeRunner::failing();
+        assert_eq!(active_pane_with(&dead, "box", 7), None);
     }
 
     #[test]

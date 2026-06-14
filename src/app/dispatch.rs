@@ -417,21 +417,35 @@ impl App {
         if self.state.summary.state == crate::state::SummaryState::Generating {
             return;
         }
-        // Snapshot the agent panes (host + location + `%N`) now, so the
-        // worker doesn't touch shared state off-thread.
-        let agents: Vec<crate::summary::AgentPane> = self
-            .state
-            .agent_entries
-            .iter()
-            .filter_map(|entry| {
-                let agent = entry.agent()?;
-                Some(crate::summary::AgentPane {
-                    host: entry.host.clone(),
-                    id: agent.location(),
-                    pane_id: agent.pane_id.clone(),
+        // Snapshot the panes to capture now, so the worker doesn't touch
+        // shared state off-thread. The Agents tab summarizes each detected
+        // agent's pane; the Projects tab summarizes each live session's active
+        // pane (captured by session name, which tmux resolves to that pane).
+        let panes: Vec<crate::summary::SummaryPane> = if self.state.agents_tab_active() {
+            self.state
+                .agent_entries
+                .iter()
+                .filter_map(|entry| {
+                    let agent = entry.agent()?;
+                    Some(crate::summary::SummaryPane {
+                        host: entry.host.clone(),
+                        id: agent.location(),
+                        target: agent.pane_id.clone(),
+                    })
                 })
-            })
-            .collect();
+                .collect()
+        } else {
+            self.state
+                .entries
+                .iter()
+                .filter(|e| e.is_attachable())
+                .map(|e| crate::summary::SummaryPane {
+                    host: e.host.clone(),
+                    id: e.name.clone(),
+                    target: e.name.clone(),
+                })
+                .collect()
+        };
         let template = self.state.prefs.summary_prompt.clone();
         let model = self.state.prefs.summary_model.clone();
         let language = self.state.prefs.summary_language.clone();
@@ -444,7 +458,7 @@ impl App {
         // `Cancel` flag, which `run_claude` polls to kill the child (#12).
         self.summary_worker = Some(crate::worker::Worker::spawn_oneshot(
             "deck-summary",
-            move |cancel| crate::summary::generate(&agents, &template, &model, &language, &cancel),
+            move |cancel| crate::summary::generate(&panes, &template, &model, &language, &cancel),
         ));
     }
 
@@ -511,6 +525,84 @@ impl App {
             .ok();
     }
 
+    /// Probe the pane Deck's main view currently shows and steer the
+    /// Agents-tab `▶` marker onto whatever agent lives there — so the marker
+    /// tracks the *real* active pane even when the user switches panes
+    /// outside Deck. Resolves the displayed client's transport exactly like
+    /// `switch_to_agent_pane` (local tty vs remote marker), then runs the
+    /// query off-thread (remote ssh can stall). Single-flighted so a slow
+    /// probe can't pile up behind the periodic tick; only runs on the Agents
+    /// tab, where the marker is shown.
+    pub(super) fn probe_active_pane(&mut self) {
+        if !self.state.agents_tab_active() || self.active_pane_in_flight {
+            return;
+        }
+        let host = self.remote.active().cloned();
+        let transport = match &host {
+            None => crate::focus::FocusTransport::Local {
+                client_tty: self.local_terminal.pty.slave_tty.clone(),
+            },
+            Some(h) => {
+                let Some(marker_id) = self.remote.live_marker_id(h) else {
+                    return;
+                };
+                crate::focus::FocusTransport::Remote {
+                    host: h.clone(),
+                    marker_id,
+                }
+            }
+        };
+        let marker_id = match &transport {
+            crate::focus::FocusTransport::Remote { marker_id, .. } => *marker_id,
+            crate::focus::FocusTransport::Local { .. } => 0,
+        };
+        let tx = self.active_pane_tx.clone();
+        let seq = self.focus_seq;
+        let spawned = std::thread::Builder::new()
+            .name("deck-active-pane".into())
+            .spawn(move || {
+                let pane_id = crate::focus::active_pane(&transport);
+                let _ = tx.send(super::ActivePaneOutcome {
+                    host,
+                    pane_id,
+                    seq,
+                    marker_id,
+                });
+            })
+            .is_ok();
+        // Only arm the single-flight gate if the thread actually launched;
+        // otherwise a failed spawn would wedge the gate shut forever.
+        self.active_pane_in_flight = spawned;
+    }
+
+    /// Apply an active-pane probe result (drained in the event loop). Steer
+    /// the `▶` marker onto the agent in the now-active pane, or clear it if
+    /// that pane holds no agent. Dropped when stale — a newer focus/session
+    /// action bumped `focus_seq`, the displayed host changed, or (remote) the
+    /// connection generation rolled. A probe that read no pane id, or whose
+    /// host isn't probed yet, leaves the marker untouched.
+    pub(super) fn apply_active_pane_outcome(&mut self, outcome: super::ActivePaneOutcome) {
+        self.active_pane_in_flight = false;
+        if outcome.seq != self.focus_seq {
+            return;
+        }
+        if self.remote.active().map(String::as_str) != outcome.host.as_deref() {
+            return;
+        }
+        let same_generation = match outcome.host.as_deref() {
+            None => true,
+            Some(h) => self.remote.marker_id(h) == outcome.marker_id,
+        };
+        if !same_generation {
+            return;
+        }
+        let Some(pane_id) = outcome.pane_id else {
+            return;
+        };
+        self.state
+            .steer_marker_to_pane(outcome.host.as_deref(), &pane_id);
+    }
+
     /// Apply a focus completion (drained in the event loop). Act on it only
     /// when it's still valid: no newer focus action has happened (`seq`); for
     /// a remote target, the connection is the *same generation* it was
@@ -574,20 +666,11 @@ impl App {
     }
 
     fn commit_focus(&mut self, target: crate::state::AgentTarget) {
-        // Move the sidebar's single highlight onto the session we just
-        // switched to, so it tracks the viewed session like j/k does (which
-        // moves the cursor and switches together). An agent-footer click
-        // otherwise switches the view without touching the highlight.
-        if let Some(idx) = self
-            .state
-            .focusable_index_for(target.host.as_deref(), &target.session)
-        {
-            self.state.focused = idx;
-        }
-        // On the Agents tab, also move that tab's cursor onto the agent.
-        if let Some(idx) = self.state.agent_entry_index_for(&target) {
-            self.state.agent_focused = idx;
-        }
+        // Move both section-list cursors onto the agent we just switched to,
+        // so the highlight tracks the viewed pane like j/k does (which moves
+        // the cursor and switches together). An agent-footer click otherwise
+        // switches the view without touching the highlight.
+        self.state.focus_cursors_on(&target);
         match target.host.as_deref() {
             Some(h) => self.remote.set_active(h),
             None => self.remote.clear_active(),

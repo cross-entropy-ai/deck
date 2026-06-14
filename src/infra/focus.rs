@@ -102,3 +102,49 @@ pub(crate) fn run_focus_with(
 pub(crate) fn run_focus(transport: &FocusTransport, session: &str, pane_id: &str) -> PaneFocus {
     run_focus_with(default_runner(), transport, session, pane_id)
 }
+
+/// The active pane of Deck's own client over `transport` — the `%N` id of
+/// the pane the main view currently mirrors. Same `$C` resolution as the
+/// focus rule (literal tty locally, `cat` of the marker remotely); bails to
+/// `None` when we don't know our client tty or the query fails. Lets the
+/// Agents tab keep its "you are here" marker on whatever pane is really
+/// active, even when the user switches panes outside Deck.
+pub(crate) fn active_pane_with(
+    runner: &dyn CommandRunner,
+    transport: &FocusTransport,
+) -> Option<String> {
+    let out = match transport {
+        FocusTransport::Local { client_tty } => {
+            let cmd = active_pane_command(&format!("C={}", shell_single_quote(client_tty)));
+            runner
+                .run("sh", &["-c", &cmd], LOCAL_TIMEOUT)
+                .map(|o| o.stdout_trimmed())
+        }
+        FocusTransport::Remote { host, marker_id } => {
+            let set_c = format!(
+                "C=$(cat {} 2>/dev/null)",
+                client_marker_token(host, *marker_id)
+            );
+            run_ssh(runner, host, &[active_pane_command(&set_c).as_str()])
+        }
+    };
+    // Only a real `%N` id counts; empty stdout means the script bailed
+    // (no client tty), which must not be read as a pane.
+    out.ok().map(|o| o.trim().to_string()).filter(|id| {
+        id.strip_prefix('%')
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    })
+}
+
+/// The `$C`-guarded `display-message` that reads our client's active pane.
+fn active_pane_command(set_client_tty: &str) -> String {
+    format!(
+        "{set_client_tty} ; [ -z \"$C\" ] && exit 0 ; \
+         tmux display-message -t \"$C\" -p '#{{pane_id}}'",
+    )
+}
+
+/// [`active_pane_with`] on the production command runner.
+pub(crate) fn active_pane(transport: &FocusTransport) -> Option<String> {
+    active_pane_with(default_runner(), transport)
+}

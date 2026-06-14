@@ -76,16 +76,20 @@ those three inline markers are rendered. Do NOT use dash punctuation: no em \
 dashes, en dashes, or hyphens to join or separate clauses; use a comma or a \
 separate sentence instead.";
 
-/// One agent pane to capture, as snapshotted from the Agents tab.
+/// One pane to capture for a summary: an agent's pane (Agents tab) or a
+/// session's active pane (Projects tab). The two tabs build these differently
+/// but the capture + prompt path is identical.
 #[derive(Debug, Clone)]
-pub struct AgentPane {
+pub struct SummaryPane {
     /// `None` = local, `Some(host)` = a remote ssh host.
     pub host: Option<String>,
-    /// Display id for the `<session>` block — the `session:window.pane`
-    /// location (`DetectedAgent::location`).
+    /// Display id for the `<session>` block — an agent's `session:window.pane`
+    /// location, or a session's name.
     pub id: String,
-    /// Stable `%N` pane handle used to capture the buffer.
-    pub pane_id: String,
+    /// The tmux `-t` target used to capture the buffer: a stable `%N` pane
+    /// handle for an agent, or a session name (resolves to its active pane)
+    /// for a session.
+    pub target: String,
 }
 
 /// A captured pane's buffer plus the identity for its `<session>` block.
@@ -115,37 +119,37 @@ pub fn language_label(lang: &str) -> &str {
 /// short, user-facing reason (no agents, claude missing, non-zero exit)
 /// for the card to display.
 pub fn generate(
-    agents: &[AgentPane],
+    panes: &[SummaryPane],
     template: &str,
     model: &str,
     language: &str,
     cancel: &Cancel,
 ) -> Result<String, String> {
-    if agents.is_empty() {
-        return Err("No agents detected to summarize.".to_string());
+    if panes.is_empty() {
+        return Err("Nothing to summarize.".to_string());
     }
     // Remote panes are captured one batched ssh hop per HOST (not one hop
     // per pane — N sequential 5s-budget roundtrips added up fast); local
     // captures stay per-pane, they're cheap tmux IPC.
     let mut by_host: std::collections::HashMap<&str, Vec<String>> =
         std::collections::HashMap::new();
-    for a in agents {
+    for a in panes {
         if let Some(host) = &a.host {
-            by_host.entry(host).or_default().push(a.pane_id.clone());
+            by_host.entry(host).or_default().push(a.target.clone());
         }
     }
     let remote_buffers: std::collections::HashMap<&str, _> = by_host
         .into_iter()
         .map(|(host, ids)| (host, crate::remote_tmux::capture_panes(host, &ids)))
         .collect();
-    let captures: Vec<PaneCapture> = agents
+    let captures: Vec<PaneCapture> = panes
         .iter()
         .map(|a| {
             let raw = match &a.host {
-                None => crate::tmux::capture_pane(&a.pane_id).unwrap_or_default(),
+                None => crate::tmux::capture_pane(&a.target).unwrap_or_default(),
                 Some(host) => remote_buffers
                     .get(host.as_str())
-                    .and_then(|m| m.get(&a.pane_id))
+                    .and_then(|m| m.get(&a.target))
                     .cloned()
                     .unwrap_or_default(),
             };
@@ -173,7 +177,7 @@ pub fn generate(
     let started = SystemTime::now();
     let result = run_claude(&prompt, model, cancel);
     // Best-effort: a logging failure must not fail the generation.
-    write_log(agents, model, &prompt, &result, started);
+    write_log(panes, model, &prompt, &result, started);
     result
 }
 
@@ -205,7 +209,7 @@ const MAX_SUMMARY_LOGS: usize = 20;
 /// captured pane buffer; when enabled, entries go under `~/.cache/deck/`
 /// owner-only and are capped. Best-effort — all IO failures are swallowed.
 fn write_log(
-    agents: &[AgentPane],
+    panes: &[SummaryPane],
     model: &str,
     prompt: &str,
     result: &Result<String, String>,
@@ -222,7 +226,7 @@ fn write_log(
         .unwrap_or(Duration::ZERO)
         .as_millis();
 
-    let sessions = agents
+    let sessions = panes
         .iter()
         .map(|a| match &a.host {
             Some(h) => format!("{h}:{}", a.id),
@@ -251,7 +255,7 @@ fn write_log(
          ## input prompt\n\n{prompt}\n\n\
          ## response\n\n{response}\n",
         version = env!("CARGO_PKG_VERSION"),
-        count = agents.len(),
+        count = panes.len(),
     );
 
     write_log_entry(&log_dir(), summary_logging_enabled(), millis, &body);

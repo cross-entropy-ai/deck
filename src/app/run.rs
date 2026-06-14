@@ -303,6 +303,32 @@ impl App {
         redraw
     }
 
+    /// Drain active-pane probes: move the `▶` marker to follow the real
+    /// active pane. Only forces a redraw when the marker actually moved, so
+    /// the periodic probe doesn't repaint every tick for no change.
+    fn pump_active_pane(&mut self) -> Redraw {
+        let mut redraw = Redraw::No;
+        while let Ok(outcome) = self.active_pane_rx.try_recv() {
+            // The marker and both section cursors can move together (see
+            // `steer_marker_to_pane`), so watch all three.
+            let before = (
+                self.state.active_agent.clone(),
+                self.state.focused,
+                self.state.agent_focused,
+            );
+            self.apply_active_pane_outcome(outcome);
+            let after = (
+                self.state.active_agent.clone(),
+                self.state.focused,
+                self.state.agent_focused,
+            );
+            if after != before {
+                redraw = Redraw::Force;
+            }
+        }
+        redraw
+    }
+
     /// The summary job finished — show its text, or the failure. A cancelled
     /// run still reports `Err("summary cancelled")`; the reducer already
     /// moved the card off `Generating` when the user cancelled, so we ignore
@@ -488,6 +514,7 @@ impl App {
                 } else {
                     self.request_refresh();
                     self.request_pf_probe();
+                    self.probe_active_pane();
                 }
             }
 
@@ -509,6 +536,8 @@ impl App {
             self.pump_port_forward()
                 .apply(&mut needs_render, &mut force_render);
             self.pump_focus()
+                .apply(&mut needs_render, &mut force_render);
+            self.pump_active_pane()
                 .apply(&mut needs_render, &mut force_render);
             self.pump_summary()
                 .apply(&mut needs_render, &mut force_render);
