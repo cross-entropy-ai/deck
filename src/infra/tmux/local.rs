@@ -212,18 +212,14 @@ pub fn switch_client_for_tty(client_tty: &str, session: &str) {
     ]);
 }
 
-/// Outcome of an agent-pane focus (local or remote). Distinguishes a true
-/// exact-pane focus — the agent's window+pane were selected and our client
-/// switched to it — from a `SessionOnly` switch, the fallback taken when
-/// another client shares the session (selecting the pane would move that
-/// client, so we switch only our own client and leave the session's
-/// window/pane alone). Callers must mark the agent active only for
-/// `ExactPane`: `SessionOnly` moved the view but did not focus the pane,
-/// so highlighting the agent would lie about what the main pane shows.
+/// Outcome of an agent-pane focus (local or remote). `ExactPane` means the
+/// agent's window+pane were selected and our client switched to it (deck
+/// always grabs the exact pane, dragging any co-client along); `Failed`
+/// means the rule bailed or the transport errored, so the caller commits
+/// nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaneFocus {
     ExactPane,
-    SessionOnly,
     Failed,
 }
 

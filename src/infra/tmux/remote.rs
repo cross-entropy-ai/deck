@@ -591,7 +591,7 @@ fn dir_error_message(err: &CommandError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::focus::{FOCUS_EXACT_MARKER, FOCUS_SESSION_MARKER};
+    use crate::focus::FOCUS_EXACT_MARKER;
     use crate::infra::command::Output;
     use crate::tmux::PaneFocus;
     use std::os::unix::process::ExitStatusExt;
@@ -726,7 +726,7 @@ mod tests {
 
     #[test]
     fn focus_pane_selects_pane_by_stable_id_over_ssh() {
-        // Remote echoed the EXACT marker → sole client, exact pane focused.
+        // Remote echoed the EXACT marker → exact pane focused.
         let runner = FakeRunner::new(ok("")).with_other_stdout(FOCUS_EXACT_MARKER);
         assert_eq!(
             focus_pane_with(&runner, "box", 7, "work", "%240"),
@@ -736,10 +736,9 @@ mod tests {
         let calls = runner.calls();
         assert_eq!(calls.len(), 1, "one ssh hop");
         // Pane id and session single-quoted; `;` quoted so tmux (not the
-        // remote shell) treats it as its command separator. The
-        // session-global select-window/select-pane only run in the else
-        // branch — i.e. when Deck is the sole client on the session — and
-        // `switch-client` is always `-c "$C"` scoped to Deck's own client.
+        // remote shell) treats it as its command separator. Deck always
+        // selects the exact window/pane, then `switch-client -c "$C"` scopes
+        // the client move to Deck's own client (a co-client follows along).
         assert!(
             calls[0].contains(
                 "select-window -t '%240' ';' select-pane -t '%240' ';' switch-client -c \"$C\" -t '=work'"
@@ -753,20 +752,11 @@ mod tests {
             "reads recorded client tty: {}",
             calls[0]
         );
-        // Missing marker bails before any tmux command — never an
-        // untargeted op that could move another client.
+        // Missing marker bails before any tmux command — without our own
+        // client tty we can't target our own client.
         assert!(
             calls[0].contains("[ -z \"$C\" ] && exit 0"),
             "bails when the client tty is unknown: {}",
-            calls[0]
-        );
-        // The exact-pane selection is gated on Deck being the only client
-        // attached to the session, so a click cannot move a co-attached
-        // client's window/pane.
-        assert!(
-            calls[0].contains("tmux list-clients -t '=work' -F '#{client_tty}'")
-                && calls[0].contains("grep -qvxF \"$C\""),
-            "guards session-global selects behind a sole-client check: {}",
             calls[0]
         );
     }
@@ -841,19 +831,6 @@ mod tests {
         assert_eq!(
             focus_pane_with(&runner, "box", 7, "work", "%240"),
             PaneFocus::Failed
-        );
-    }
-
-    #[test]
-    fn focus_pane_reports_session_only_when_co_attached() {
-        // When another client shares the session the remote script skips the
-        // exact-pane selects and echoes the SESSION marker. focus_pane must
-        // surface that as `SessionOnly` so the caller withholds the agent
-        // highlight (the main pane may show a different pane).
-        let runner = FakeRunner::new(ok("")).with_other_stdout(FOCUS_SESSION_MARKER);
-        assert_eq!(
-            focus_pane_with(&runner, "box", 7, "work", "%240"),
-            PaneFocus::SessionOnly
         );
     }
 

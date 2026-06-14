@@ -518,8 +518,8 @@ impl App {
     /// outcome from a dropped/older PTY is rejected); and the agent is still
     /// present. A slow focus that finishes after the user moved on — or after
     /// a disconnect/reconnect — is dropped rather than clobbering the view.
-    /// Only `ExactPane` earns the agent highlight; `SessionOnly` moved the
-    /// view without focusing the exact pane, so it commits a plain switch.
+    /// `ExactPane` commits the switch and earns the agent highlight;
+    /// `Failed` commits nothing.
     pub(super) fn apply_focus_outcome(&mut self, outcome: super::FocusOutcome) {
         if outcome.seq != self.focus_seq {
             return;
@@ -537,8 +537,7 @@ impl App {
             return;
         }
         match outcome.result {
-            tmux::PaneFocus::ExactPane => self.commit_focus(outcome.target, true),
-            tmux::PaneFocus::SessionOnly => self.commit_focus(outcome.target, false),
+            tmux::PaneFocus::ExactPane => self.commit_focus(outcome.target),
             tmux::PaneFocus::Failed => {}
         }
     }
@@ -562,12 +561,9 @@ impl App {
     }
 
     /// Commit a focus result — local or remote, same path: point
-    /// `active_remote` at the target's host (`None` = local) and show the
-    /// main pane. `exact` highlights the agent row (we focused its
-    /// exact pane); `!exact` is a session-only switch — Deck's client moved
-    /// to the agent's session but its window/pane was deliberately not
-    /// selected (another client shares the session), so we leave
-    /// `active_agent` cleared rather than claim a focus that didn't happen.
+    /// `active_remote` at the target's host (`None` = local), show the main
+    /// pane, and highlight the agent row (we always focus its exact pane).
+    ///
     /// A plain session switch (local or remote) isn't an agent-pane focus:
     /// drop the agent highlight and bump `focus_seq` so any in-flight
     /// remote focus's late completion is treated as stale and can't
@@ -577,7 +573,7 @@ impl App {
         self.focus_seq += 1;
     }
 
-    fn commit_focus(&mut self, target: crate::state::AgentTarget, exact: bool) {
+    fn commit_focus(&mut self, target: crate::state::AgentTarget) {
         // Move the sidebar's single highlight onto the session we just
         // switched to, so it tracks the viewed session like j/k does (which
         // moves the cursor and switches together). An agent-footer click
@@ -596,7 +592,7 @@ impl App {
             Some(h) => self.remote.set_active(h),
             None => self.remote.clear_active(),
         }
-        self.state.active_agent = exact.then_some(target);
+        self.state.active_agent = Some(target);
         self.state.focus_mode = FocusMode::Main;
         // No full redraw — like the plain switch paths, the per-cell diff
         // repaints from the new pane's vt100 screen (see `switch_client`).
