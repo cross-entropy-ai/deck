@@ -182,6 +182,10 @@ pub struct Config {
     /// How often the Agents tab probes for agents and their status, in
     /// seconds (one of 1/2/5/10). Set from the settings page.
     pub agents_probe_interval: u64,
+    /// Whether the inline Summary card (and its Generate action) is shown at
+    /// all. Off hides the card on both tabs and reclaims its rows for the
+    /// session/agent list. Set from the settings page; defaults to on.
+    pub summary_enabled: bool,
     /// Use the terminal's default (transparent) background instead of the
     /// theme's solid background color.
     pub transparent_bg: bool,
@@ -215,6 +219,7 @@ impl Default for Config {
             summary_height: crate::state::DEFAULT_SUMMARY_HEIGHT,
             summary_language: String::new(),
             agents_probe_interval: crate::state::DEFAULT_AGENTS_PROBE_INTERVAL,
+            summary_enabled: true,
             transparent_bg: true,
         }
     }

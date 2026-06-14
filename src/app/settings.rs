@@ -107,6 +107,12 @@ pub const SETTING_ROWS: &[SettingRow] = &[
         adjust: |_| Action::Settings(SettingsAction::ToggleUpdateCheck),
     },
     SettingRow {
+        label: "Summary",
+        value: |s| if s.prefs.summary_enabled { "On" } else { "Off" }.to_string(),
+        help: |_| "Left/right shows or hides the inline Summary card".to_string(),
+        adjust: |_| Action::Settings(SettingsAction::ToggleSummary),
+    },
+    SettingRow {
         label: "Summary lang",
         value: |s| crate::summary::language_label(&s.prefs.summary_language).to_string(),
         help: |_| "Left/right cycles the generated summary's language".to_string(),

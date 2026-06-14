@@ -915,6 +915,7 @@ fn prefs_config_round_trip_is_identity() {
         summary_height: 12,
         summary_language: "English".to_string(),
         agents_probe_interval: 5,
+        summary_enabled: false,
         transparent_bg: false,
     };
 

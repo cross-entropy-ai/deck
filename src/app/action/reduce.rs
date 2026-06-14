@@ -586,6 +586,10 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
             state.cycle_agents_probe_interval(direction);
             fx.save_config();
         }
+        SettingsAction::ToggleSummary => {
+            state.prefs.summary_enabled = !state.prefs.summary_enabled;
+            fx.save_config();
+        }
         SettingsAction::OpenThemePicker => {
             // Opens as a standalone overlay over the current view — from
             // the sidebar (`t`) it does *not* enter the settings page,

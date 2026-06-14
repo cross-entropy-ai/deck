@@ -120,6 +120,8 @@ pub enum SettingsAction {
     CycleFrameRateLimit(i32),
     /// Cycle the Agents-tab probe interval (settings, left/right).
     CycleAgentsProbeInterval(i32),
+    /// Toggle the inline Summary card on/off (settings, left/right/Enter).
+    ToggleSummary,
 
     ExcludeOpen,
     ExcludeClose,

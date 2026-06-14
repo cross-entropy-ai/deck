@@ -366,6 +366,9 @@ pub struct Prefs {
     /// How often the Agents tab probes (seconds). Drives the refresh cadence
     /// while that tab is active; see `App`'s run loop.
     pub agents_probe_interval_secs: u64,
+    /// Whether the inline Summary card is shown. Off collapses the card to
+    /// zero height (`summary_card_height`) so the list reclaims the rows.
+    pub summary_enabled: bool,
 }
 
 impl Prefs {
@@ -398,6 +401,7 @@ impl Prefs {
                 .clamp(SUMMARY_MIN_HEIGHT, SUMMARY_MAX_HEIGHT),
             summary_language: cfg.summary_language.clone(),
             agents_probe_interval_secs: normalize_agents_probe_interval(cfg.agents_probe_interval),
+            summary_enabled: cfg.summary_enabled,
         }
     }
 
@@ -437,6 +441,7 @@ impl Prefs {
             summary_height: self.summary_height,
             summary_language: self.summary_language.clone(),
             agents_probe_interval: self.agents_probe_interval_secs,
+            summary_enabled: self.summary_enabled,
             transparent_bg: self.transparent_bg,
         }
     }
@@ -610,6 +615,7 @@ impl AppState {
                 summary_height: DEFAULT_SUMMARY_HEIGHT,
                 summary_language: String::new(),
                 agents_probe_interval_secs: DEFAULT_AGENTS_PROBE_INTERVAL,
+                summary_enabled: true,
             },
             settings: SettingsState::default(),
             agent_focused: 0,
@@ -1297,6 +1303,9 @@ impl AppState {
     /// for every state, so overflowing Ready text scrolls inside it rather
     /// than growing the card; the user resizes it by dragging the handle.
     pub fn summary_card_height(&self) -> u16 {
+        if !self.prefs.summary_enabled {
+            return 0;
+        }
         3 + self.prefs.summary_height
     }
 
