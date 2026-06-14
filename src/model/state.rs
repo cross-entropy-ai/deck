@@ -1520,6 +1520,27 @@ impl AppState {
 
     /// The agent under the Agents-tab cursor, or `None` when off-tab or
     /// no agent is focused. Resolves the cursor through `agent_entries`.
+    /// Point the Agents-tab `▶` marker at the agent occupying `pane_id` on
+    /// `host` (`None` = local), or clear it when that pane holds no agent —
+    /// so the marker follows the real active pane even when the user switches
+    /// panes outside Deck. No-op when the host's agents haven't been probed
+    /// yet, so a probe that races ahead of detection can't blank a valid
+    /// marker (absence = "not known", not "no agent here").
+    pub fn steer_marker_to_pane(&mut self, host: Option<&str>, pane_id: &str) {
+        let target = match self.agents.get(HostQuery::from_host(host)) {
+            None => return,
+            Some(list) => list
+                .iter()
+                .find(|a| a.pane_id == pane_id)
+                .map(|a| AgentTarget {
+                    host: host.map(str::to_string),
+                    session: a.session.clone(),
+                    pane_id: a.pane_id.clone(),
+                }),
+        };
+        self.active_agent = target;
+    }
+
     pub fn focused_agent(&self) -> Option<AgentTarget> {
         if !self.agents_tab_active() {
             return None;
@@ -1664,6 +1685,29 @@ impl AppState {
     /// the Agents tab is active and corrupt the Projects cursor).
     pub fn clamp_projects_focus(&mut self) {
         clamp_cursor(&mut self.focused, self.entries.len());
+    }
+
+    /// Identity (host, session name) of the focused Projects row, captured
+    /// before a refresh rebuilds `entries` so the cursor can re-anchor to the
+    /// same session afterwards. The Projects twin of `focused_agent_key`.
+    pub fn focused_session_key(&self) -> Option<(Option<String>, String)> {
+        self.entries
+            .get(self.focused)
+            .map(|e| (e.host.clone(), e.name.clone()))
+    }
+
+    /// Re-point the Projects cursor at the session identified by `key` (its
+    /// position before `entries` was rebuilt), so the highlight keeps tracking
+    /// the same session across a refresh that reordered or grew/shrank the
+    /// list — instead of a bare clamp letting it slide onto a neighbor. Falls
+    /// back to clamping when the session is gone. The Projects twin of
+    /// `reanchor_agent_focus`; use it instead of `clamp_projects_focus` after
+    /// a refresh rebuilds the rows.
+    pub fn reanchor_projects_focus(&mut self, key: Option<(Option<String>, String)>) {
+        match key.and_then(|(host, name)| self.focusable_index_for(host.as_deref(), &name)) {
+            Some(idx) => self.focused = idx,
+            None => self.clamp_projects_focus(),
+        }
     }
 
     /// Keep the Agents-tab cursor inside the current agent list after the

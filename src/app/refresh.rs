@@ -77,6 +77,10 @@ impl App {
         rows: Vec<RemoteSnapshotRow>,
         agents: std::collections::HashMap<String, Vec<crate::agent::DetectedAgent>>,
     ) {
+        // Capture the focused session's identity before `entries` is rebuilt
+        // so the cursor can re-anchor to the same row afterwards.
+        let session_key = self.state.focused_session_key();
+
         // `config_remotes` is the single source of truth for which hosts are
         // configured: rows for hosts the user just removed (query was in flight
         // when "Remove from list" landed) are dropped so they can't blink back.
@@ -142,10 +146,10 @@ impl App {
             })
             .flatten();
         self.state.entries = local.into_iter().chain(remote_block).collect();
-        // Focus may have been parked on a placeholder row that just
-        // disappeared (e.g. host went from 1 loading placeholder to
-        // 3 real sessions, or down to 0). Clamp inside the new range.
-        self.state.clamp_projects_focus();
+        // Keep the cursor on the same session across the rebuild (the list may
+        // have reordered or a placeholder row it sat on disappeared); falls
+        // back to clamping when that session is gone.
+        self.state.reanchor_projects_focus(session_key);
 
         // Auto-recover the persistent PTY. A host whose attach PTY dropped
         // (status Failed, pane removed) but which is now reachable again in
@@ -192,6 +196,10 @@ impl App {
         rows: Vec<SnapshotRow>,
         agents: Vec<crate::agent::DetectedAgent>,
     ) {
+        // Capture the focused session's identity before `entries` is rebuilt
+        // so the cursor can re-anchor to the same row afterwards.
+        let session_key = self.state.focused_session_key();
+
         // Local section is the `None`-host key. The stored entry list is
         // rebuilt and the cursor re-anchored by the caller (`apply_update`),
         // once both entries and agents are settled.
@@ -229,7 +237,9 @@ impl App {
 
         self.state.sync_order();
         self.state.apply_order();
-        self.state.clamp_projects_focus();
+        // Keep the cursor on the same session across the rebuild; the
+        // current-session snap below may still override it deliberately.
+        self.state.reanchor_projects_focus(session_key);
 
         if self.state.current_session != current {
             // Only snap focus to the new local current-session when the

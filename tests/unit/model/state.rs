@@ -212,6 +212,31 @@ fn agents_sections_fold_via_their_own_collapse_set() {
 }
 
 #[test]
+fn projects_cursor_reanchors_to_same_session_across_rebuild() {
+    // The Projects twin of the agent-cursor reanchor: a refresh that reorders
+    // the rows must keep the cursor on the SAME session, not a neighbor.
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.focused = 1; // cursor on "beta"
+    let key = state.focused_session_key();
+    assert_eq!(key, Some((None, "beta".to_string())));
+
+    // Refresh prepends a session, shifting "beta" from index 1 to 2.
+    state.entries = vec![
+        make_session("zzz"),
+        make_session("alpha"),
+        make_session("beta"),
+    ];
+    state.reanchor_projects_focus(key);
+    assert_eq!(state.focused, 2, "cursor follows beta to its new index");
+
+    // When the focused session is gone, fall back to clamping in range.
+    let gone = state.focused_session_key();
+    state.entries = vec![make_session("alpha")];
+    state.reanchor_projects_focus(gone);
+    assert_eq!(state.focused, 0, "clamps when the session disappears");
+}
+
+#[test]
 fn summary_card_height_is_fixed_across_states() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     let idle = state.summary_card_height();
