@@ -25,131 +25,66 @@ fn formatter() -> &'static KeyCombinationFormat {
     FMT.get_or_init(|| KeyCombinationFormat::default().with_lowercase_modifiers())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Command {
-    FocusNext,
-    FocusPrev,
-    SwitchProject,
-    KillSession,
-    ReorderUp,
-    ReorderDown,
-    OpenSettings,
-    OpenThemePicker,
-    ToggleBorders,
-    ToggleLayout,
-    ToggleViewMode,
-    ToggleSection,
-    ToggleSidebarTab,
-    ToggleHelp,
-    FocusMain,
-    Quit,
-    ToggleFocus,
-    TriggerUpgrade,
-    ReloadConfig,
+/// Define `Command` and its name/description/default-key tables from one
+/// list, so adding or renaming a command touches a single row instead of
+/// four parallel matches.
+macro_rules! commands {
+    ( $( $variant:ident => $name:literal, $desc:literal, [ $($key:expr),+ ] );+ $(;)? ) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum Command {
+            $($variant),+
+        }
+
+        impl Command {
+            pub const ALL: &'static [Command] = &[ $(Command::$variant),+ ];
+
+            pub fn name(self) -> &'static str {
+                match self { $(Command::$variant => $name),+ }
+            }
+
+            pub fn description(self) -> &'static str {
+                match self { $(Command::$variant => $desc),+ }
+            }
+
+            fn default_keys(self) -> Vec<KeyChord> {
+                let raw: Vec<KeyChord> = match self {
+                    $(Command::$variant => vec![ $($key),+ ]),+
+                };
+                raw.into_iter().map(|k| k.normalized()).collect()
+            }
+        }
+    };
+}
+
+commands! {
+    FocusNext        => "focus_next",        "navigate",                [key!(j), key!(down)];
+    FocusPrev        => "focus_prev",        "navigate",                [key!(k), key!(up)];
+    SwitchProject    => "switch_project",    "switch session",          [key!(enter)];
+    KillSession      => "kill_session",      "kill session",            [key!(x)];
+    ReorderUp        => "reorder_up",        "move session up",         [key!(alt - up)];
+    ReorderDown      => "reorder_down",      "move session down",       [key!(alt - down)];
+    OpenSettings     => "open_settings",     "open settings",           [key!(s)];
+    OpenThemePicker  => "open_theme_picker", "open theme picker",       [key!(t)];
+    ToggleBorders    => "toggle_borders",    "toggle borders",          [key!(b)];
+    ToggleLayout     => "toggle_layout",     "toggle layout",           [key!(l)];
+    ToggleViewMode   => "toggle_view_mode",  "toggle compact/expanded", [key!(c)];
+    ToggleSection    => "toggle_section",    "collapse/expand group",   [key!(z)];
+    ToggleSidebarTab => "toggle_sidebar_tab","projects/agents tab",     [key!(tab)];
+    ToggleHelp       => "toggle_help",       "help",                    [key!(h), key!('?')];
+    FocusMain        => "focus_main",        "back to main",            [key!(esc)];
+    Quit             => "quit",              "quit",                    [key!(q)];
+    ToggleFocus      => "toggle_focus",      "toggle focus",            [key!(ctrl - s)];
+    TriggerUpgrade   => "trigger_upgrade",   "install update",          [key!(u)];
+    ReloadConfig     => "reload_config",     "reload config",           [key!(r)];
 }
 
 impl Command {
-    pub const ALL: &'static [Command] = &[
-        Command::FocusNext,
-        Command::FocusPrev,
-        Command::SwitchProject,
-        Command::KillSession,
-        Command::ReorderUp,
-        Command::ReorderDown,
-        Command::OpenSettings,
-        Command::OpenThemePicker,
-        Command::ToggleBorders,
-        Command::ToggleLayout,
-        Command::ToggleViewMode,
-        Command::ToggleSection,
-        Command::ToggleSidebarTab,
-        Command::ToggleHelp,
-        Command::FocusMain,
-        Command::Quit,
-        Command::ToggleFocus,
-        Command::TriggerUpgrade,
-        Command::ReloadConfig,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Command::FocusNext => "focus_next",
-            Command::FocusPrev => "focus_prev",
-            Command::SwitchProject => "switch_project",
-            Command::KillSession => "kill_session",
-            Command::ReorderUp => "reorder_up",
-            Command::ReorderDown => "reorder_down",
-            Command::OpenSettings => "open_settings",
-            Command::OpenThemePicker => "open_theme_picker",
-            Command::ToggleBorders => "toggle_borders",
-            Command::ToggleLayout => "toggle_layout",
-            Command::ToggleViewMode => "toggle_view_mode",
-            Command::ToggleSection => "toggle_section",
-            Command::ToggleSidebarTab => "toggle_sidebar_tab",
-            Command::ToggleHelp => "toggle_help",
-            Command::FocusMain => "focus_main",
-            Command::Quit => "quit",
-            Command::ToggleFocus => "toggle_focus",
-            Command::TriggerUpgrade => "trigger_upgrade",
-            Command::ReloadConfig => "reload_config",
-        }
-    }
-
-    pub fn description(self) -> &'static str {
-        match self {
-            Command::FocusNext => "navigate",
-            Command::FocusPrev => "navigate",
-            Command::SwitchProject => "switch session",
-            Command::KillSession => "kill session",
-            Command::ReorderUp => "move session up",
-            Command::ReorderDown => "move session down",
-            Command::OpenSettings => "open settings",
-            Command::OpenThemePicker => "open theme picker",
-            Command::ToggleBorders => "toggle borders",
-            Command::ToggleLayout => "toggle layout",
-            Command::ToggleViewMode => "toggle compact/expanded",
-            Command::ToggleSection => "collapse/expand group",
-            Command::ToggleSidebarTab => "projects/agents tab",
-            Command::ToggleHelp => "help",
-            Command::FocusMain => "back to main",
-            Command::Quit => "quit",
-            Command::ToggleFocus => "toggle focus",
-            Command::TriggerUpgrade => "install update",
-            Command::ReloadConfig => "reload config",
-        }
-    }
-
     pub fn from_name(s: &str) -> Option<Command> {
         Command::ALL.iter().copied().find(|c| c.name() == s)
     }
 
     pub fn is_global(self) -> bool {
         matches!(self, Command::ToggleFocus)
-    }
-
-    fn default_keys(self) -> Vec<KeyChord> {
-        let raw = match self {
-            Command::FocusNext => vec![key!(j), key!(down)],
-            Command::FocusPrev => vec![key!(k), key!(up)],
-            Command::SwitchProject => vec![key!(enter)],
-            Command::KillSession => vec![key!(x)],
-            Command::ReorderUp => vec![key!(alt - up)],
-            Command::ReorderDown => vec![key!(alt - down)],
-            Command::OpenSettings => vec![key!(s)],
-            Command::OpenThemePicker => vec![key!(t)],
-            Command::ToggleBorders => vec![key!(b)],
-            Command::ToggleLayout => vec![key!(l)],
-            Command::ToggleViewMode => vec![key!(c)],
-            Command::ToggleSection => vec![key!(z)],
-            Command::ToggleSidebarTab => vec![key!(tab)],
-            Command::ToggleHelp => vec![key!(h), key!('?')],
-            Command::FocusMain => vec![key!(esc)],
-            Command::Quit => vec![key!(q)],
-            Command::ToggleFocus => vec![key!(ctrl - s)],
-            Command::TriggerUpgrade => vec![key!(u)],
-            Command::ReloadConfig => vec![key!(r)],
-        };
-        raw.into_iter().map(|k| k.normalized()).collect()
     }
 }
 
@@ -389,7 +324,9 @@ fn parse_legacy(s: &str) -> Option<KeyChord> {
         return None;
     }
 
-    // A lone character is taken literally (lets `-` or ` ` bind cleanly).
+    // A lone character is taken literally (lets `-` or ` ` bind cleanly, and
+    // keeps a bare uppercase letter shifted rather than lowercased the way
+    // crokey would).
     let mut chars = s.chars();
     if let (Some(only), None) = (chars.next(), chars.next()) {
         return Some(chord_from_event(&KeyEvent::new(
@@ -398,71 +335,32 @@ fn parse_legacy(s: &str) -> Option<KeyChord> {
         )));
     }
 
-    let mut modifiers = KeyModifiers::NONE;
+    // Rewrite `C-`/`A-`/`S-` modifier prefixes (any order) into crokey
+    // syntax, then hand the rest to crokey — it already knows every key name
+    // deck's legacy DSL used, bar a few aliases normalized below.
+    let mut out = String::new();
     let mut rest = s;
-
-    // Strip `C-`/`A-`/`S-` modifier prefixes in any order.
     loop {
-        let upper = rest
-            .get(..2)
-            .map(str::to_ascii_uppercase)
-            .unwrap_or_default();
-        match upper.as_str() {
-            "C-" => {
-                modifiers |= KeyModifiers::CONTROL;
-                rest = &rest[2..];
-            }
-            "A-" => {
-                modifiers |= KeyModifiers::ALT;
-                rest = &rest[2..];
-            }
-            "S-" => {
-                modifiers |= KeyModifiers::SHIFT;
-                rest = &rest[2..];
-            }
+        match rest.get(..2).map(str::to_ascii_uppercase).as_deref() {
+            Some("C-") => out.push_str("ctrl-"),
+            Some("A-") => out.push_str("alt-"),
+            Some("S-") => out.push_str("shift-"),
             _ => break,
         }
+        rest = &rest[2..];
     }
-
     if rest.is_empty() {
         return None;
     }
-
-    // Named keys — case-insensitive match.
-    let code = match rest.to_ascii_lowercase().as_str() {
-        "enter" | "return" => KeyCode::Enter,
-        "esc" | "escape" => KeyCode::Esc,
-        "up" => KeyCode::Up,
-        "down" => KeyCode::Down,
-        "left" => KeyCode::Left,
-        "right" => KeyCode::Right,
-        "tab" => KeyCode::Tab,
-        "space" => KeyCode::Char(' '),
-        "backspace" => KeyCode::Backspace,
-        "delete" | "del" => KeyCode::Delete,
-        "home" => KeyCode::Home,
-        "end" => KeyCode::End,
-        "pageup" | "pgup" => KeyCode::PageUp,
-        "pagedown" | "pgdown" | "pgdn" => KeyCode::PageDown,
-        other if other.starts_with('f') && other.len() >= 2 && other.len() <= 3 => {
-            let n = other[1..].parse::<u8>().ok()?;
-            if (1..=12).contains(&n) {
-                KeyCode::F(n)
-            } else {
-                return None;
-            }
-        }
-        _ => {
-            // Single character fallback (e.g. `C-x` where rest == "x").
-            let mut cs = rest.chars();
-            match (cs.next(), cs.next()) {
-                (Some(c), None) => KeyCode::Char(c),
-                _ => return None,
-            }
-        }
-    };
-
-    Some(chord_from_event(&KeyEvent::new(code, modifiers)))
+    let lower = rest.to_ascii_lowercase();
+    out.push_str(match lower.as_str() {
+        "return" => "enter",
+        "escape" => "esc",
+        "pgup" => "pageup",
+        "pgdown" | "pgdn" => "pagedown",
+        other => other,
+    });
+    parse_key(&out).ok()
 }
 
 /// Fill the raw keybindings map with defaults for every command that the

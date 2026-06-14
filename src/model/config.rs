@@ -161,41 +161,20 @@ pub struct Config {
     /// Model passed to `claude --model` when generating the summary. Empty
     /// follows the user's Claude Code default; defaults to a fast, cheap
     /// model since summarizing buffers doesn't need a strong one.
-    #[serde(default = "default_summary_model")]
     pub summary_model: String,
     /// Height (in text rows) of the inline Agents-tab summary card's body,
     /// drag-adjustable from the card's bottom edge. Clamped on load.
-    #[serde(default = "default_summary_height")]
     pub summary_height: u16,
     /// Language the generated summary is asked to use. Empty = the model's
     /// default; otherwise a "respond in <language>" instruction is appended
     /// to the prompt. Set from the settings page.
-    #[serde(default)]
     pub summary_language: String,
     /// How often the Agents tab probes for agents and their status, in
     /// seconds (one of 1/2/5/10). Set from the settings page.
-    #[serde(default = "default_agents_probe_interval")]
     pub agents_probe_interval: u64,
     /// Use the terminal's default (transparent) background instead of the
     /// theme's solid background color.
-    #[serde(default = "default_transparent_bg")]
     pub transparent_bg: bool,
-}
-
-fn default_transparent_bg() -> bool {
-    true
-}
-
-fn default_agents_probe_interval() -> u64 {
-    crate::state::DEFAULT_AGENTS_PROBE_INTERVAL
-}
-
-fn default_summary_model() -> String {
-    crate::summary::DEFAULT_SUMMARY_MODEL.to_string()
-}
-
-fn default_summary_height() -> u16 {
-    crate::state::DEFAULT_SUMMARY_HEIGHT
 }
 
 impl Default for Config {
@@ -219,10 +198,10 @@ impl Default for Config {
             // stamps the real version and persists the prompt to disk.
             summary_prompt: crate::summary::DEFAULT_SUMMARY_PROMPT.to_string(),
             summary_prompt_version: 0,
-            summary_model: default_summary_model(),
-            summary_height: default_summary_height(),
+            summary_model: crate::summary::DEFAULT_SUMMARY_MODEL.to_string(),
+            summary_height: crate::state::DEFAULT_SUMMARY_HEIGHT,
             summary_language: String::new(),
-            agents_probe_interval: default_agents_probe_interval(),
+            agents_probe_interval: crate::state::DEFAULT_AGENTS_PROBE_INTERVAL,
             transparent_bg: true,
         }
     }

@@ -140,6 +140,27 @@ pub fn step_clamped(current: usize, len: usize, direction: i32) -> usize {
     }
 }
 
+/// Apply a scroll `delta` to `current`, clamped to `0..=max`. Shared by the
+/// summary card and its popup so the i32 round-trip lives in one place.
+pub fn scroll_clamped(current: usize, delta: i32, max: usize) -> usize {
+    (current as i32 + delta).clamp(0, max as i32) as usize
+}
+
+/// Clamp `value` to `min..=max` and store it in `*target` if it differs,
+/// returning whether `*target` changed. Shared by the drag-resize setters.
+pub fn clamp_set(target: &mut u16, value: u16, min: u16, max: u16) -> bool {
+    let clamped = value.clamp(min, max);
+    let changed = clamped != *target;
+    *target = clamped;
+    changed
+}
+
+/// Clamp `*cursor` to the last valid index of a `len`-length list (0 when
+/// empty). Shared by the Projects/Agents focus clamps.
+pub fn clamp_cursor(cursor: &mut usize, len: usize) {
+    *cursor = if len == 0 { 0 } else { (*cursor).min(len - 1) };
+}
+
 pub fn normalize_frame_rate_limit(fps: u16) -> u16 {
     if FRAME_RATE_LIMIT_OPTIONS.contains(&fps) {
         fps
@@ -1178,13 +1199,12 @@ impl AppState {
     /// Set the card body height (rows), clamped to the drag-resize bounds.
     /// Returns whether it changed.
     pub fn set_summary_height(&mut self, rows: u16) -> bool {
-        let clamped = rows.clamp(SUMMARY_MIN_HEIGHT, SUMMARY_MAX_HEIGHT);
-        if clamped != self.prefs.summary_height {
-            self.prefs.summary_height = clamped;
-            true
-        } else {
-            false
-        }
+        clamp_set(
+            &mut self.prefs.summary_height,
+            rows,
+            SUMMARY_MIN_HEIGHT,
+            SUMMARY_MAX_HEIGHT,
+        )
     }
 
     /// Whether `pos` falls anywhere on the Summary card. Used by the wheel
@@ -1220,8 +1240,8 @@ impl AppState {
     /// Apply a wheel/keyboard scroll delta to the Summary text, clamped to
     /// the captured max offset.
     pub fn scroll_summary(&mut self, delta: i32) {
-        let max = self.hit_regions.summary.max_scroll as i32;
-        self.summary.scroll = (self.summary.scroll as i32 + delta).clamp(0, max) as usize;
+        self.summary.scroll =
+            scroll_clamped(self.summary.scroll, delta, self.hit_regions.summary.max_scroll);
     }
 
     /// Move the summary card off `Generating` back to the state it held
@@ -1239,9 +1259,8 @@ impl AppState {
 
     /// Apply a scroll delta to the summary popup, clamped to its max.
     pub fn scroll_summary_popup(&mut self, delta: i32) {
-        let max = self.summary.popup_max_scroll as i32;
         self.summary.popup_scroll =
-            (self.summary.popup_scroll as i32 + delta).clamp(0, max) as usize;
+            scroll_clamped(self.summary.popup_scroll, delta, self.summary.popup_max_scroll);
     }
 
     /// Build the Agents-tab layout: an `@local` / `@host` divider per
@@ -1592,21 +1611,14 @@ impl AppState {
     /// the tab-aware `focusable_count`, which would use the agent count when
     /// the Agents tab is active and corrupt the Projects cursor).
     pub fn clamp_projects_focus(&mut self) {
-        let total = self.entries.len();
-        if total > 0 && self.focused >= total {
-            self.focused = total - 1;
-        }
+        clamp_cursor(&mut self.focused, self.entries.len());
     }
 
     /// Keep the Agents-tab cursor inside the current agent list after the
     /// detected agents change (agents come and go between refresh rounds).
     pub fn clamp_agent_focus(&mut self) {
         let total = self.agent_count();
-        if total == 0 {
-            self.agent_focused = 0;
-        } else if self.agent_focused >= total {
-            self.agent_focused = total - 1;
-        }
+        clamp_cursor(&mut self.agent_focused, total);
     }
 
     /// Identity (host, `%N` pane id) of the agent under the Agents-tab
@@ -1632,21 +1644,16 @@ impl AppState {
     /// `clamp_agent_focus` after the agent list changes.
     pub fn reanchor_agent_focus(&mut self, key: Option<(Option<String>, String)>) {
         let rows = self.agent_rows();
-        if let Some((host, pane_id)) = key {
-            if let Some(idx) = rows
-                .iter()
+        let found = key.and_then(|(host, pane_id)| {
+            rows.iter()
                 .position(|row| row.host == host.as_deref() && row.agent.pane_id == pane_id)
-            {
-                self.agent_focused = idx;
-                return;
-            }
-        }
+        });
         let total = rows.len();
-        self.agent_focused = if total == 0 {
-            0
-        } else {
-            self.agent_focused.min(total - 1)
-        };
+        drop(rows);
+        match found {
+            Some(idx) => self.agent_focused = idx,
+            None => clamp_cursor(&mut self.agent_focused, total),
+        }
     }
 
     pub fn sync_order(&mut self) {
@@ -1686,24 +1693,14 @@ impl AppState {
 
     /// Clamp and set sidebar width. Returns true if it changed.
     pub fn resize_sidebar(&mut self, new_width: u16) -> bool {
-        let (min_width, max_width) = self.sidebar_width_bounds();
-        let clamped = new_width.clamp(min_width, max_width);
-        if clamped == self.prefs.sidebar_width {
-            return false;
-        }
-        self.prefs.sidebar_width = clamped;
-        true
+        let (min, max) = self.sidebar_width_bounds();
+        clamp_set(&mut self.prefs.sidebar_width, new_width, min, max)
     }
 
     /// Clamp and set sidebar height. Returns true if it changed.
     pub fn resize_sidebar_height(&mut self, new_height: u16) -> bool {
-        let (min_height, max_height) = self.sidebar_height_bounds();
-        let clamped = new_height.clamp(min_height, max_height);
-        if clamped == self.prefs.sidebar_height {
-            return false;
-        }
-        self.prefs.sidebar_height = clamped;
-        true
+        let (min, max) = self.sidebar_height_bounds();
+        clamp_set(&mut self.prefs.sidebar_height, new_height, min, max)
     }
 }
 
