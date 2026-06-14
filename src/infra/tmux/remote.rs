@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use crate::agent::DetectedAgent;
 use crate::infra::command::{default_runner, CommandError, CommandRunner};
-use crate::infra::tmux::SessionInfo;
+use crate::tmux::SessionInfo;
 use crate::infra::parser::tmux::{
     exact_target, parse_sessions, DECK_ORDER_OPTION, SESSION_LIST_FORMAT_SSH,
 };

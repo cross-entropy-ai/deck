@@ -311,5 +311,5 @@ fn pid_looks_like_deck_with(runner: &dyn CommandRunner, pid: u32) -> bool {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/infra/tmux.rs"]
+#[path = "../../../tests/unit/infra/tmux.rs"]
 mod tests;

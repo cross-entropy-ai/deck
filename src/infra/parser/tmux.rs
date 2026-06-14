@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use crate::infra::tmux::SessionInfo;
+use crate::tmux::SessionInfo;
 
 /// tmux user-option holding deck's persisted 0-based display rank.
 /// Shared by the read format below and each backend's set-option write

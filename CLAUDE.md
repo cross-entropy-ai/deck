@@ -35,8 +35,10 @@ Source is split into five top-level modules under `src/` (plus `main.rs`).
   `Action` enum for key/mouse -> intent mapping, and the reducers).
 - **`model/`**: `model/state.rs` (`AppState`, enums, constants),
   `model/config.rs` (YAML persistence), `model/keybindings.rs`.
-- **`infra/`**: stateless backends and CLI wrappers — `infra/tmux.rs`,
-  `infra/remote_tmux.rs`, `infra/ssh.rs`, `infra/pty.rs`, `infra/agent.rs`, etc.
+- **`infra/`**: stateless backends and CLI wrappers — `infra/tmux/`
+  (`local.rs` + `remote.rs`), `infra/ssh.rs`, `infra/pty.rs`,
+  `infra/agent.rs`, etc. At the crate root these are aliased as
+  `crate::tmux` (local) and `crate::remote_tmux` (remote).
 - **`session/`**: the `SessionControl` backend trait abstracting local vs
   remote (`session/local.rs`, `session/remote.rs`, `session/executor.rs`).
 
@@ -59,8 +61,8 @@ per-session/per-host feature:
   `None` = local and `Some(host)` = a remote host (see `KillRequest`,
   `RenameRequest`, `CreateSessionRequest`, `AppState.agents`). One
   store (`HashMap<Option<String>, T>`); absence = "not known yet".
-- **Only the data-gathering branches.** `tmux.rs` (local) and
-  `remote_tmux.rs` (ssh) gather inputs differently, then feed the *same*
+- **Only the data-gathering branches.** `tmux/local.rs` (local) and
+  `tmux/remote.rs` (ssh) gather inputs differently, then feed the *same*
   pure logic (`agent::detect_agents`, `tmux_parse::parse_sessions`). The
   renderer consumes `&[&dyn SidebarSession]` and never asks "is this
   remote?". Push the local/remote split as low as it goes.

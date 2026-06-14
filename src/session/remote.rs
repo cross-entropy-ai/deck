@@ -1,9 +1,9 @@
 //! Remote (ssh) backend for the session control plane.
 //!
 //! Drives a remote tmux server via `ssh <host> tmux ...` through
-//! `infra::remote_tmux`.
+//! `infra::tmux::remote`.
 
-use crate::infra::remote_tmux;
+use crate::remote_tmux;
 
 use super::SessionControl;
 

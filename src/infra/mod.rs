@@ -7,7 +7,6 @@ pub mod parser;
 pub mod port_forward;
 pub mod pty;
 pub mod refresh;
-pub mod remote_tmux;
 pub mod self_update;
 pub mod shutdown;
 pub mod ssh;
