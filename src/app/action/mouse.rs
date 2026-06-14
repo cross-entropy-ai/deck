@@ -60,7 +60,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         MouseEventKind::Moved => {
             return Action::None;
         }
-        // Dragging the summary card's bottom edge resizes it. Checked
+        // Dragging the summary card's top edge resizes it. Checked
         // before the sidebar separator since the handle lives inside the
         // sidebar, not at its right gap.
         MouseEventKind::Down(MouseButton::Left)

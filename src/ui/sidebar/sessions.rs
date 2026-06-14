@@ -241,6 +241,19 @@ pub(super) fn draw_summary_card(
 
     let mut lines: Vec<ratatui::text::Line> = Vec::new();
 
+    // Top row: a centered dim drag grip — the card's top edge is its resize
+    // boundary now that it's pinned to the bottom (the list sits above it).
+    let grip = "\u{254c}\u{254c}\u{254c}\u{254c}\u{254c}\u{254c}";
+    let grip_pad = width.saturating_sub(grip.width()) / 2;
+    lines.push(pad_line(
+        vec![
+            Span::styled(" ".repeat(grip_pad), Style::default().bg(theme.bg)),
+            Span::styled(grip, Style::default().fg(theme.dim).bg(theme.bg)),
+        ],
+        theme.bg,
+        width,
+    ));
+
     // Title row: "Summary", plus a right-aligned Generate button (and the
     // text's "Xm ago" age + a popup button once Ready).
     let left = " \u{f0eb} Summary";
@@ -310,14 +323,14 @@ pub(super) fn draw_summary_card(
         let clamp_w = |x: u16, w: usize| (w as u16).min(rect.width.saturating_sub(x));
         summary.button = Some(Rect {
             x: rect.x + gen_x,
-            y: rect.y,
+            y: rect.y + 1,
             width: clamp_w(gen_x, gen_w),
             height: 1,
         });
         if is_ready {
             summary.popup = Some(Rect {
                 x: rect.x + popup_x,
-                y: rect.y,
+                y: rect.y + 1,
                 width: clamp_w(popup_x, popup_w),
                 height: 1,
             });
@@ -371,21 +384,10 @@ pub(super) fn draw_summary_card(
         }
     }
 
-    // Pad to one short of the card height, then a centered dim drag grip as
-    // the bottom row (the resize hit-region).
-    while lines.len() + 1 < rect.height as usize {
+    // Pad out the remaining card rows below the body.
+    while lines.len() < rect.height as usize {
         lines.push(pad_line(Vec::new(), theme.bg, width));
     }
-    let grip = "\u{254c}\u{254c}\u{254c}\u{254c}\u{254c}\u{254c}";
-    let grip_pad = width.saturating_sub(grip.width()) / 2;
-    lines.push(pad_line(
-        vec![
-            Span::styled(" ".repeat(grip_pad), Style::default().bg(theme.bg)),
-            Span::styled(grip, Style::default().fg(theme.dim).bg(theme.bg)),
-        ],
-        theme.bg,
-        width,
-    ));
 
     frame.render_widget(
         Paragraph::new(lines).style(Style::default().bg(theme.bg)),

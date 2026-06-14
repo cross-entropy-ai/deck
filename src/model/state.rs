@@ -820,13 +820,15 @@ impl AppState {
         if row < sessions_top || row >= sessions_bottom {
             return None;
         }
-        // The list viewport sits below the Summary card (pinned above the list
-        // on both tabs, not part of the sectioned list).
-        let list_top = sessions_top + self.summary_card_height();
-        if row < list_top || row >= sessions_bottom {
+        // The list viewport sits above the Summary card (pinned to the bottom
+        // of both tabs, between the list and the footer, not part of the
+        // sectioned list).
+        let list_bottom = sessions_bottom.saturating_sub(self.summary_card_height());
+        if row < sessions_top || row >= list_bottom {
             return None;
         }
-        let visible_height = sessions_bottom - list_top;
+        let list_top = sessions_top;
+        let visible_height = list_bottom - list_top;
         let built = self.current_layout(self.prefs.view_mode);
         let scroll = built
             .layout
@@ -1322,21 +1324,25 @@ impl AppState {
             .is_some_and(|r| r.contains(pos))
     }
 
-    /// Whether `(col, row)` is on the card's bottom drag-handle row.
+    /// Whether `(col, row)` is on the card's top drag-handle row. The card
+    /// is pinned to the bottom, so its top edge is the resize boundary.
     pub fn summary_resize_at(&self, col: u16, row: u16) -> bool {
         self.hit_regions.summary.card.is_some_and(|r| {
-            let handle_y = r.y + r.height.saturating_sub(1);
-            row == handle_y && col >= r.x && col < r.x + r.width
+            row == r.y && col >= r.x && col < r.x + r.width
         })
     }
 
-    /// New body height implied by dragging the handle to `row` — the rows
-    /// between the card top and the pointer, minus the title/blank/handle
-    /// chrome. Clamped by `set_summary_height`.
+    /// New body height implied by dragging the top handle to `row`. The card
+    /// bottom is anchored against the footer, so dragging the top up grows
+    /// the card: `body = (card_bottom - row) - chrome`, where chrome is the
+    /// handle, title, and blank rows. Clamped by `set_summary_height`.
     pub fn summary_height_for_drag(&self, row: u16) -> u16 {
-        let top = self.hit_regions.summary.card.map_or(0, |r| r.y);
-        // total = row - top + 1; body rows = total - 3 (title, blank, handle).
-        row.saturating_sub(top).saturating_sub(2)
+        let bottom = self
+            .hit_regions
+            .summary
+            .card
+            .map_or(0, |r| r.y + r.height);
+        bottom.saturating_sub(row).saturating_sub(3)
     }
 
     /// Apply a wheel/keyboard scroll delta to the Summary text, clamped to

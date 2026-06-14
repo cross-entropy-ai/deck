@@ -487,10 +487,10 @@ fn sidebar_layout_keeps_local_divider_when_empty() {
 fn is_divider_at_row_detects_header_not_session() {
     let state = make_state(LayoutMode::Horizontal, false, 80, 24);
     // Header banner is 2 rows (no border); the Summary card strip is pinned
-    // below it on both tabs, so the list begins after the card. The @local
-    // divider is the first list item (1 row tall); the first session card
-    // sits just below it.
-    let top = 2 + state.summary_card_height();
+    // to the bottom on both tabs, so the list begins right after the header.
+    // The @local divider is the first list item (1 row tall); the first
+    // session card sits just below it.
+    let top = 2;
     assert!(state.is_divider_at_row(top), "first list row is the @local divider");
     assert!(!state.is_divider_at_row(top + 1), "next row is a session card");
     assert_eq!(state.focus_at_row(top + 1), Some(FocusTarget(0)));
