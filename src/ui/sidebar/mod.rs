@@ -211,11 +211,14 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
     ])
     .areas(content);
 
+    // The header counts *detected* agents, not rows: an empty section
+    // contributes a focusable placeholder row but no agent to the `(N)` tally.
+    let agent_total = props.agent_rows.iter().filter(|r| r.agent().is_some()).count();
     let tab_rects = draw_header(
         frame,
         header_area,
         props.local_count,
-        props.agent_rows.len(),
+        agent_total,
         props.sidebar_tab,
         props.theme,
     );

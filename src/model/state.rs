@@ -20,8 +20,9 @@ pub use crate::effects::{
 };
 pub use crate::forwards::{ForwardHealth, ForwardKey, PfAddForm, PfField, PortForwardOverlay};
 pub use crate::geometry::{
-    AgentHit, AgentRow, AgentTarget, BuiltLayout, DividerButton, DividerHit, HitKind, HitRegions,
-    KillConfirmHits, SectionLayoutOpts, SectionMeta, SidebarLayout, SummaryHits, TabRects,
+    AgentEntry, AgentHit, AgentRow, AgentTarget, BuiltLayout, DividerButton, DividerHit, HitKind,
+    HitRegions, KillConfirmHits, SectionLayoutOpts, SectionMeta, SidebarLayout, SummaryHits,
+    TabRects,
 };
 pub use crate::menu::{session_menu_disabled, ContextMenu, MenuItem, MenuKind};
 pub use crate::overlay::{ExcludeEditorState, Modal, OverlayState, RenameState, WarningState};
@@ -1028,6 +1029,34 @@ impl AppState {
         }
     }
 
+    /// `BasicItem` for one Agents-tab row, the twin of `session_item`. A real
+    /// agent shows a status glyph (`●` working / `○` idle / `◐` waiting / `·`
+    /// unknown) and, when it's the pane deck currently shows, a `▶` "you are
+    /// here" marker — no per-row color, like session rows; the glyph + marker
+    /// carry the state. An empty section's placeholder shows `detecting…`
+    /// (not yet probed) or `no agents` (probed, none found).
+    fn agent_item(&self, host: Option<&str>, entry: AgentEntry) -> BasicItem {
+        match entry {
+            AgentEntry::Agent(agent) => {
+                let here = self
+                    .active_agent
+                    .as_ref()
+                    .is_some_and(|t| t.host.as_deref() == host && t.pane_id == agent.pane_id);
+                let dot = match agent.status {
+                    crate::agent::AgentStatus::Working => "●",
+                    crate::agent::AgentStatus::Idle => "○",
+                    crate::agent::AgentStatus::Waiting => "◐",
+                    crate::agent::AgentStatus::Unknown => "·",
+                };
+                let lead = if here { "▶" } else { " " };
+                BasicItem::new(format!("{lead} {dot} {}", agent.location()))
+            }
+            AgentEntry::Placeholder { probed } => {
+                BasicItem::new(if probed { "  no agents" } else { "  detecting…" })
+            }
+        }
+    }
+
     /// `@local` divider: accent fill + a single `[…]` menu button.
     fn local_divider(&self) -> BasicItem {
         BasicItem::new("@local")
@@ -1152,7 +1181,7 @@ impl AppState {
             SectionLayoutOpts {
                 show_headers,
                 collapsible: show_headers,
-                remote_header_margin: false,
+                remote_header_margin: show_headers,
             },
             |layout, _sections, host| {
                 // `entries` is grouped by host and contiguous, so filtering by
@@ -1186,52 +1215,70 @@ impl AppState {
             .filter(move |host| seen.insert(host))
     }
 
-    /// The flat list of detected agents for the Agents tab, in display
-    /// order: local agents first, then each remote host's agents in
-    /// section order. `Agent { row_idx }` items and the renderer index
-    /// into this, so its order is the Agents-tab `FocusTarget` numbering.
+    /// The Agents-tab rows for one section (`None` = local): one
+    /// [`AgentEntry::Agent`] per detected agent, or a single
+    /// [`AgentEntry::Placeholder`] when the section is empty (probed and
+    /// found none) or not yet probed (`detecting…`). Every section yields at
+    /// least one row — like a Projects host always carrying at least a
+    /// `NoSessions` row — so it always occupies a focus slot. `agent_rows`
+    /// and the layout both walk this, so they can't disagree.
+    fn agent_entries_for(&self, host: Option<&str>) -> Vec<AgentEntry<'_>> {
+        match self.section_agents(host) {
+            Some(list) if !list.is_empty() => list.iter().map(AgentEntry::Agent).collect(),
+            other => vec![AgentEntry::Placeholder {
+                probed: other.is_some(),
+            }],
+        }
+    }
+
+    /// The flat list of Agents-tab rows, in display order: the local section
+    /// first, then each remote host's in section order. Each section is a run
+    /// of detected agents, or a single placeholder row when empty. The
+    /// renderer and focus both index into this, so its order is the
+    /// Agents-tab `FocusTarget` numbering.
     pub fn agent_rows(&self) -> Vec<AgentRow<'_>> {
         let mut rows = Vec::new();
-        if let Some(list) = self.section_agents(None) {
-            for agent in list {
-                rows.push(AgentRow { host: None, agent });
-            }
+        for entry in self.agent_entries_for(None) {
+            rows.push(AgentRow { host: None, entry });
         }
         // Borrow each host key straight out of `agents` so the rows can
         // hold `&str` without cloning the host name per row.
         for host in self.remote_hosts_in_order_ref() {
-            if let Some(list) = self.section_agents(Some(host)) {
-                for agent in list {
-                    rows.push(AgentRow {
-                        host: Some(host),
-                        agent,
-                    });
-                }
+            for entry in self.agent_entries_for(Some(host)) {
+                rows.push(AgentRow {
+                    host: Some(host),
+                    entry,
+                });
             }
         }
         rows
     }
 
-    /// Number of focusable agent rows, without building (or cloning into)
-    /// the `agent_rows()` vec. `focusable_count` runs per keystroke and
-    /// only ever wanted the length, so it takes this path (D17).
+    /// Number of focusable Agents-tab rows, without building (or cloning
+    /// into) the `agent_rows()` vec. `focusable_count` runs per keystroke and
+    /// only ever wanted the length, so it takes this path (D17). Counts the
+    /// placeholder a section contributes when empty, matching `agent_rows`.
     pub fn agent_count(&self) -> usize {
-        let local = self.section_agents(None).map_or(0, <[_]>::len);
-        let remote: usize = self
-            .remote_hosts_in_order_ref()
-            .filter_map(|host| self.section_agents(Some(host)))
-            .map(<[_]>::len)
-            .sum();
-        local + remote
+        let rows = |host| {
+            self.section_agents(host)
+                .filter(|l| !l.is_empty())
+                .map_or(1, <[_]>::len)
+        };
+        rows(None)
+            + self
+                .remote_hosts_in_order_ref()
+                .map(|host| rows(Some(host)))
+                .sum::<usize>()
     }
 
     /// Flat focusable index of the agent row matching `target`, or `None`
     /// if it isn't currently listed. Lets the Agents-tab cursor track the
     /// pane switched to via a click, the way `focusable_index_for` does
-    /// for the Projects tab.
+    /// for the Projects tab. Placeholder rows never match a real target.
     pub fn agent_row_index_for(&self, target: &AgentTarget) -> Option<usize> {
         self.agent_rows().iter().position(|row| {
-            row.host == target.host.as_deref() && row.agent.pane_id == target.pane_id
+            row.host == target.host.as_deref()
+                && row.agent().is_some_and(|a| a.pane_id == target.pane_id)
         })
     }
 
@@ -1311,62 +1358,27 @@ impl AppState {
     }
 
     /// Build the Agents-tab layout: an `@local` / `@host` divider per
-    /// section (in `agent_rows` order) with that section's agents as
-    /// focusable rows beneath it, or a non-focusable placeholder when a
-    /// section has no agents. `row_idx` on each `Agent` item matches the
-    /// `agent_rows()` position so focus/scroll/hit-test stay in sync.
+    /// section with that section's rows beneath it — a focusable row per
+    /// detected agent, or a single placeholder row when the section is empty
+    /// (`detecting…` / `no agents`). Every row maps 1:1 to an `agent_rows()`
+    /// position so focus/scroll/hit-test stay in sync.
     pub fn agents_layout(&self) -> BuiltLayout {
         // No collapse on the Agents tab — sections are informational and
         // always expanded, so the focus index maps straight to a row. Remote
         // sections take a 1-row top margin to set them off. The Summary card
         // renders as a separate widget pinned above, so the list is pure
-        // `BasicItem`.
+        // `BasicItem`. The body mirrors `sidebar_layout`: each section's rows
+        // come from a single per-section source (`agent_entries_for`), built
+        // into `BasicItem`s by the `agent_item` twin of `session_item`.
         self.build_sections(
             SectionLayoutOpts {
                 show_headers: true,
                 collapsible: false,
                 remote_header_margin: true,
             },
-            |layout, sections, host| match self.section_agents(host) {
-                Some(list) if !list.is_empty() => {
-                    for agent in list {
-                        // A status glyph prefix, plus a filled marker on the
-                        // agent deck is currently focused on (the "you are
-                        // here" pane), so switching shows where you landed even
-                        // without per-row coloring.
-                        let here = self.active_agent.as_ref().is_some_and(|t| {
-                            t.host.as_deref() == host && t.pane_id == agent.pane_id
-                        });
-                        let dot = match agent.status {
-                            crate::agent::AgentStatus::Working => "●",
-                            crate::agent::AgentStatus::Idle => "○",
-                            crate::agent::AgentStatus::Waiting => "◐",
-                            crate::agent::AgentStatus::Unknown => "·",
-                        };
-                        let lead = if here { "▶" } else { " " };
-                        // No accent color: like session rows, focus shows only
-                        // via the highlight background bar. The status glyph +
-                        // ▶ marker carry the per-row state.
-                        layout.push_row_auto(BasicItem::new(format!(
-                            "{lead} {dot} {}",
-                            agent.location()
-                        )));
-                    }
-                }
-                other => {
-                    // A single inert placeholder header: no agents, or still
-                    // detecting (section not probed yet).
-                    let label = if other.is_some() {
-                        "  no agents"
-                    } else {
-                        "  detecting…"
-                    };
-                    layout.push_header_auto(BasicItem::new(label));
-                    sections.push(SectionMeta {
-                        host: host.map(str::to_string),
-                        buttons: Vec::new(),
-                        divider: false,
-                    });
+            |layout, _sections, host| {
+                for entry in self.agent_entries_for(host) {
+                    layout.push_row_auto(self.agent_item(host, entry));
                 }
             },
         )
@@ -1485,10 +1497,14 @@ impl AppState {
             return None;
         }
         let row = self.agent_rows().into_iter().nth(self.agent_focused)?;
+        // The guard that makes a placeholder row inert: there's no pane to
+        // switch to, so the cursor can land on it but Enter/click no-op —
+        // mirroring how Projects guards a `NoSessions` row (`is_attachable`).
+        let agent = row.agent()?;
         Some(AgentTarget {
             host: row.host.map(str::to_string),
-            session: row.agent.session.clone(),
-            pane_id: row.agent.pane_id.clone(),
+            session: agent.session.clone(),
+            pane_id: agent.pane_id.clone(),
         })
     }
 
@@ -1632,10 +1648,9 @@ impl AppState {
     /// cursor can be re-anchored to the same agent afterwards — see
     /// [`reanchor_agent_focus`](Self::reanchor_agent_focus).
     pub fn focused_agent_key(&self) -> Option<(Option<String>, String)> {
-        self.agent_rows()
-            .into_iter()
-            .nth(self.agent_focused)
-            .map(|row| (row.host.map(str::to_string), row.agent.pane_id.clone()))
+        let row = self.agent_rows().into_iter().nth(self.agent_focused)?;
+        let agent = row.agent()?;
+        Some((row.host.map(str::to_string), agent.pane_id.clone()))
     }
 
     /// Re-point the Agents-tab cursor at the agent identified by `key` (its
@@ -1651,8 +1666,9 @@ impl AppState {
     pub fn reanchor_agent_focus(&mut self, key: Option<(Option<String>, String)>) {
         let rows = self.agent_rows();
         let found = key.and_then(|(host, pane_id)| {
-            rows.iter()
-                .position(|row| row.host == host.as_deref() && row.agent.pane_id == pane_id)
+            rows.iter().position(|row| {
+                row.host == host.as_deref() && row.agent().is_some_and(|a| a.pane_id == pane_id)
+            })
         });
         let total = rows.len();
         drop(rows);

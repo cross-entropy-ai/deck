@@ -197,8 +197,9 @@ fn scroll_summary_clamps_to_max() {
 fn agents_layout_shows_placeholder_for_empty_section() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
-    // Local probed but empty -> "no agents" placeholder header (an inert
-    // header, not a focusable row).
+    // Local probed but empty -> a "no agents" placeholder. Like a Projects
+    // `NoSessions` row it's a focusable row (synthetic `AgentEntry`), so the
+    // cursor can land on it; activating it is a guarded no-op.
     state
         .agents
         .insert(crate::host_key::HostKey::local(), vec![]);
@@ -211,8 +212,15 @@ fn agents_layout_shows_placeholder_for_empty_section() {
             .any(|i| i.data.title.trim() == "no agents"),
         "empty probed section shows a no-agents placeholder",
     );
-    // The local section has no agents, so no focusable rows for it.
-    assert_eq!(built.layout.row_count(), 0);
+    // The placeholder is a focusable row now: one row, one focus slot, but no
+    // switch target (focused_agent guards it to None).
+    assert_eq!(built.layout.row_count(), 1);
+    assert_eq!(state.focusable_count(), 1);
+    state.agent_focused = 0;
+    assert!(
+        state.focused_agent().is_none(),
+        "cursor can sit on the placeholder, but it isn't switchable",
+    );
 }
 
 fn detected(session: &str, pane_id: &str) -> crate::agent::DetectedAgent {

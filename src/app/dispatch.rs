@@ -423,10 +423,13 @@ impl App {
             .state
             .agent_rows()
             .iter()
-            .map(|row| crate::summary::AgentPane {
-                host: row.host.map(str::to_string),
-                id: row.agent.location(),
-                pane_id: row.agent.pane_id.clone(),
+            .filter_map(|row| {
+                let agent = row.agent()?;
+                Some(crate::summary::AgentPane {
+                    host: row.host.map(str::to_string),
+                    id: agent.location(),
+                    pane_id: agent.pane_id.clone(),
+                })
             })
             .collect();
         let template = self.state.prefs.summary_prompt.clone();

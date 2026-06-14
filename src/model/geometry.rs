@@ -263,21 +263,52 @@ impl Default for BuiltLayout {
     }
 }
 
-/// One focusable agent row in the Agents tab, in display order: local
-/// agents first, then each remote host's agents in section order. The
-/// renderer and the `Agent { row_idx }` layout items both index into the
-/// `Vec` this produces (`AppState::agent_rows`), so they can't disagree
-/// about which agent a row points at.
+/// One focusable row in the Agents tab, in display order: local section
+/// first, then each remote host's in section order. The renderer and the
+/// layout items both index into the `Vec` this produces
+/// (`AppState::agent_rows`), so they can't disagree about which row points
+/// where.
 ///
-/// Borrows its `host`/`agent` straight out of `AppState.agents` rather
-/// than cloning: `agent_rows()` runs per frame *and* per keystroke, so a
-/// per-row `DetectedAgent` clone there was pure waste (D17). The `Vec`
-/// the produced rows live in is short-lived (one frame / one call), so a
-/// borrow is always available.
+/// A row is either a detected `Agent` or the synthetic `Placeholder` that
+/// stands in for an empty section — mirroring how the Projects tab injects a
+/// `NoSessions` / `Unreachable` `SessionEntry`. Both are focusable and occupy
+/// a flat-index slot, so `agent_rows`, `agent_count`, the layout, and focus
+/// all walk the same sequence; activating a placeholder is a guarded no-op
+/// (`focused_agent` returns `None`).
+///
+/// Borrows its `host`/agent straight out of `AppState.agents` rather than
+/// cloning: `agent_rows()` runs per frame *and* per keystroke, so a per-row
+/// `DetectedAgent` clone there was pure waste (D17). The `Vec` the produced
+/// rows live in is short-lived (one frame / one call), so a borrow is always
+/// available.
 #[derive(Debug, Clone, Copy)]
 pub struct AgentRow<'a> {
     pub host: Option<&'a str>,
-    pub agent: &'a crate::agent::DetectedAgent,
+    pub entry: AgentEntry<'a>,
+}
+
+impl AgentRow<'_> {
+    /// The detected agent this row points at, or `None` for a placeholder.
+    /// Lets the renderer / focus paths treat real agents and placeholders
+    /// uniformly while only switching to (and counting) the real ones.
+    pub fn agent(&self) -> Option<&crate::agent::DetectedAgent> {
+        match self.entry {
+            AgentEntry::Agent(agent) => Some(agent),
+            AgentEntry::Placeholder { .. } => None,
+        }
+    }
+}
+
+/// What an [`AgentRow`] carries: a real detected agent, or the inert
+/// placeholder shown for a section with no agents.
+#[derive(Debug, Clone, Copy)]
+pub enum AgentEntry<'a> {
+    /// A detected agent — the switch target.
+    Agent(&'a crate::agent::DetectedAgent),
+    /// An empty section's placeholder. `probed` is `true` once detection has
+    /// run and the section came back empty (`no agents`), `false` while the
+    /// first probe is still pending (`detecting…`). Not switchable.
+    Placeholder { probed: bool },
 }
 
 /// Which button on a divider a `DividerHit` targets.

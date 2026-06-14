@@ -103,13 +103,19 @@ pub(super) fn draw_sessions(
                 }
             }
             Some(i) => {
+                // Only real agents get a click hit. A placeholder row has no
+                // pane, so it publishes nothing — a click on it falls through
+                // to the row-focus path, moving the cursor without switching
+                // (the same guarded no-op a `NoSessions` row gets on Projects).
                 if props.agents_tab {
-                    if let Some(row) = props.agent_rows.get(i) {
+                    if let Some((row, agent)) =
+                        props.agent_rows.get(i).and_then(|row| Some((row, row.agent()?)))
+                    {
                         agents.push(AgentHit {
                             target: AgentTarget {
                                 host: row.host.map(str::to_string),
-                                session: row.agent.session.clone(),
-                                pane_id: row.agent.pane_id.clone(),
+                                session: agent.session.clone(),
+                                pane_id: agent.pane_id.clone(),
                             },
                             rect: Rect {
                                 x: area.x,
