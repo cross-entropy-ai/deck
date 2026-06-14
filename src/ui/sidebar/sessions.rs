@@ -30,7 +30,7 @@ pub(super) struct SessionsProps<'a> {
     pub agents_tab: bool,
     /// Flattened agent list; an agent row's focus index maps into this.
     /// Empty on the Projects tab.
-    pub agent_rows: &'a [AgentRow<'a>],
+    pub agent_rows: &'a [AgentRow],
 }
 
 /// Draw the sectioned list with the crate's `basic` preset, then walk the
@@ -113,7 +113,7 @@ pub(super) fn draw_sessions(
                     {
                         agents.push(AgentHit {
                             target: AgentTarget {
-                                host: row.host.map(str::to_string),
+                                host: row.host.clone(),
                                 session: agent.session.clone(),
                                 pane_id: agent.pane_id.clone(),
                             },

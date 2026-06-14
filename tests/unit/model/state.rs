@@ -83,7 +83,8 @@ fn agent_rows_ordered_local_then_hosts() {
     );
 
     // Agent rows appear in section order: local (`None`) then each host.
-    let hosts: Vec<Option<&str>> = state.agent_rows().iter().map(|r| r.host).collect();
+    let rows = state.agent_rows();
+    let hosts: Vec<Option<&str>> = rows.iter().map(|r| r.host.as_deref()).collect();
     assert_eq!(hosts, vec![None, Some("h1")]);
 }
 

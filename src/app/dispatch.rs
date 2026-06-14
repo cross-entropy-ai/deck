@@ -426,7 +426,7 @@ impl App {
             .filter_map(|row| {
                 let agent = row.agent()?;
                 Some(crate::summary::AgentPane {
-                    host: row.host.map(str::to_string),
+                    host: row.host.clone(),
                     id: agent.location(),
                     pane_id: agent.pane_id.clone(),
                 })

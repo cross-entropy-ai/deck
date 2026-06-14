@@ -1222,9 +1222,11 @@ impl AppState {
     /// least one row — like a Projects host always carrying at least a
     /// `NoSessions` row — so it always occupies a focus slot. `agent_rows`
     /// and the layout both walk this, so they can't disagree.
-    fn agent_entries_for(&self, host: Option<&str>) -> Vec<AgentEntry<'_>> {
+    fn agent_entries_for(&self, host: Option<&str>) -> Vec<AgentEntry> {
         match self.section_agents(host) {
-            Some(list) if !list.is_empty() => list.iter().map(AgentEntry::Agent).collect(),
+            Some(list) if !list.is_empty() => {
+                list.iter().cloned().map(AgentEntry::Agent).collect()
+            }
             other => vec![AgentEntry::Placeholder {
                 probed: other.is_some(),
             }],
@@ -1236,17 +1238,15 @@ impl AppState {
     /// of detected agents, or a single placeholder row when empty. The
     /// renderer and focus both index into this, so its order is the
     /// Agents-tab `FocusTarget` numbering.
-    pub fn agent_rows(&self) -> Vec<AgentRow<'_>> {
+    pub fn agent_rows(&self) -> Vec<AgentRow> {
         let mut rows = Vec::new();
         for entry in self.agent_entries_for(None) {
             rows.push(AgentRow { host: None, entry });
         }
-        // Borrow each host key straight out of `agents` so the rows can
-        // hold `&str` without cloning the host name per row.
         for host in self.remote_hosts_in_order_ref() {
             for entry in self.agent_entries_for(Some(host)) {
                 rows.push(AgentRow {
-                    host: Some(host),
+                    host: Some(host.to_string()),
                     entry,
                 });
             }
@@ -1277,7 +1277,7 @@ impl AppState {
     /// for the Projects tab. Placeholder rows never match a real target.
     pub fn agent_row_index_for(&self, target: &AgentTarget) -> Option<usize> {
         self.agent_rows().iter().position(|row| {
-            row.host == target.host.as_deref()
+            row.host.as_deref() == target.host.as_deref()
                 && row.agent().is_some_and(|a| a.pane_id == target.pane_id)
         })
     }
@@ -1500,12 +1500,14 @@ impl AppState {
         // The guard that makes a placeholder row inert: there's no pane to
         // switch to, so the cursor can land on it but Enter/click no-op —
         // mirroring how Projects guards a `NoSessions` row (`is_attachable`).
-        let agent = row.agent()?;
-        Some(AgentTarget {
-            host: row.host.map(str::to_string),
-            session: agent.session.clone(),
-            pane_id: agent.pane_id.clone(),
-        })
+        match row.entry {
+            AgentEntry::Agent(agent) => Some(AgentTarget {
+                host: row.host,
+                session: agent.session,
+                pane_id: agent.pane_id,
+            }),
+            AgentEntry::Placeholder { .. } => None,
+        }
     }
 
     /// Name to show in the kill-confirmation overlay: the focused row's
@@ -1649,8 +1651,10 @@ impl AppState {
     /// [`reanchor_agent_focus`](Self::reanchor_agent_focus).
     pub fn focused_agent_key(&self) -> Option<(Option<String>, String)> {
         let row = self.agent_rows().into_iter().nth(self.agent_focused)?;
-        let agent = row.agent()?;
-        Some((row.host.map(str::to_string), agent.pane_id.clone()))
+        match row.entry {
+            AgentEntry::Agent(agent) => Some((row.host, agent.pane_id)),
+            AgentEntry::Placeholder { .. } => None,
+        }
     }
 
     /// Re-point the Agents-tab cursor at the agent identified by `key` (its
@@ -1667,7 +1671,8 @@ impl AppState {
         let rows = self.agent_rows();
         let found = key.and_then(|(host, pane_id)| {
             rows.iter().position(|row| {
-                row.host == host.as_deref() && row.agent().is_some_and(|a| a.pane_id == pane_id)
+                row.host.as_deref() == host.as_deref()
+                    && row.agent().is_some_and(|a| a.pane_id == pane_id)
             })
         });
         let total = rows.len();

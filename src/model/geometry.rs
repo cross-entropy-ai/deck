@@ -276,23 +276,23 @@ impl Default for BuiltLayout {
 /// all walk the same sequence; activating a placeholder is a guarded no-op
 /// (`focused_agent` returns `None`).
 ///
-/// Borrows its `host`/agent straight out of `AppState.agents` rather than
-/// cloning: `agent_rows()` runs per frame *and* per keystroke, so a per-row
-/// `DetectedAgent` clone there was pure waste (D17). The `Vec` the produced
-/// rows live in is short-lived (one frame / one call), so a borrow is always
-/// available.
-#[derive(Debug, Clone, Copy)]
-pub struct AgentRow<'a> {
-    pub host: Option<&'a str>,
-    pub entry: AgentEntry<'a>,
+/// Owns its data (like `SessionEntry`) rather than borrowing out of
+/// `AppState.agents`, so it carries no lifetime — at the cost of a per-row
+/// `DetectedAgent` clone each time `agent_rows()` runs. The lists are small
+/// and the build is cheap, so the symmetry with `SessionEntry` is worth more
+/// than the saved copies.
+#[derive(Debug, Clone)]
+pub struct AgentRow {
+    pub host: Option<String>,
+    pub entry: AgentEntry,
 }
 
-impl AgentRow<'_> {
+impl AgentRow {
     /// The detected agent this row points at, or `None` for a placeholder.
     /// Lets the renderer / focus paths treat real agents and placeholders
     /// uniformly while only switching to (and counting) the real ones.
     pub fn agent(&self) -> Option<&crate::agent::DetectedAgent> {
-        match self.entry {
+        match &self.entry {
             AgentEntry::Agent(agent) => Some(agent),
             AgentEntry::Placeholder { .. } => None,
         }
@@ -301,10 +301,10 @@ impl AgentRow<'_> {
 
 /// What an [`AgentRow`] carries: a real detected agent, or the inert
 /// placeholder shown for a section with no agents.
-#[derive(Debug, Clone, Copy)]
-pub enum AgentEntry<'a> {
+#[derive(Debug, Clone)]
+pub enum AgentEntry {
     /// A detected agent — the switch target.
-    Agent(&'a crate::agent::DetectedAgent),
+    Agent(crate::agent::DetectedAgent),
     /// An empty section's placeholder. `probed` is `true` once detection has
     /// run and the section came back empty (`no agents`), `false` while the
     /// first probe is still pending (`detecting…`). Not switchable.
