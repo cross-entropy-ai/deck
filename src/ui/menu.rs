@@ -1,12 +1,12 @@
 use ratatui::style::Style;
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::geometry::context_menu_rect;
 use crate::state::MenuItem;
 use crate::theme::Theme;
-use crate::ui::widgets::{popup_frame, PopupStyle};
+use crate::ui::widgets::{full_width_row, popup_frame, PopupStyle};
 
 pub fn draw_context_menu(
     frame: &mut Frame,
@@ -36,29 +36,16 @@ pub fn draw_context_menu(
         .iter()
         .enumerate()
         .map(|(i, item)| {
-            let label = format!(
-                " {:<width$}",
-                item.label(),
-                width = inner_w.saturating_sub(1)
-            );
-            if disabled.contains(item) {
-                // Greyed-out: shown for context but not selectable, so it
-                // never takes the accent highlight even at `selected`.
-                Line::from(Span::styled(
-                    label,
-                    Style::default().fg(theme.dim).bg(theme.surface),
-                ))
+            // Greyed-out items are shown for context but not selectable, so
+            // they never take the accent highlight even at `selected`.
+            let style = if disabled.contains(item) {
+                Style::default().fg(theme.dim).bg(theme.surface)
             } else if i == selected {
-                Line::from(Span::styled(
-                    label,
-                    Style::default().fg(theme.bg).bg(theme.accent),
-                ))
+                Style::default().fg(theme.bg).bg(theme.accent)
             } else {
-                Line::from(Span::styled(
-                    label,
-                    Style::default().fg(theme.secondary).bg(theme.surface),
-                ))
-            }
+                Style::default().fg(theme.secondary).bg(theme.surface)
+            };
+            full_width_row(item.label(), inner_w, style)
         })
         .collect();
 

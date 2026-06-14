@@ -1,4 +1,6 @@
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::Span;
 use ratatui::Frame;
 
 use crate::geometry::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
@@ -69,6 +71,19 @@ pub struct SidebarProps<'a> {
 struct SidebarRenderCtx<'a> {
     theme: &'a Theme,
     blink_on: bool,
+}
+
+/// The footer/tabs "≡ menu" button label and its accent-bold span. Shared
+/// by `footer.rs` and `tabs.rs` so the two can't drift on glyph or style.
+pub(super) const MENU_LABEL: &str = "\u{2261} menu";
+
+pub(super) fn menu_span(theme: &Theme) -> Span<'static> {
+    Span::styled(
+        MENU_LABEL,
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    )
 }
 
 /// Clamp a captured rect to `area`, returning `None` if the intersection

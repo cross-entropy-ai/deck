@@ -8,21 +8,6 @@ use unicode_width::UnicodeWidthStr;
 use crate::state::{SidebarTab, TabRects};
 use crate::theme::Theme;
 
-/// Clamp a tab label's click rect to the header `area` so a narrow sidebar
-/// can't leak the rect into the PTY pane (bug #16): a tab starting past the
-/// area's right edge becomes zero-width (un-hittable), and one that merely
-/// overflows is trimmed to end at the edge.
-fn clamp_to_area(rect: Rect, area: Rect) -> Rect {
-    let area_right = area.x + area.width;
-    if rect.x >= area_right {
-        return Rect { width: 0, ..rect };
-    }
-    Rect {
-        width: rect.width.min(area_right - rect.x),
-        ..rect
-    }
-}
-
 /// Draws the sidebar header: a `Projects (N)` / `Agents (M)` tab selector.
 /// The active tab is rendered in the accent color and bold; the inactive
 /// one is dimmed. Returns each label's click rect for hit-testing.
@@ -75,24 +60,21 @@ pub(super) fn draw_header(
         area,
     );
 
+    // The two rects are clamped to the sidebar content area by the
+    // registry-wide `clamp_hits` pass, so a narrow sidebar can't leak a
+    // tab's click target into the PTY pane (bug #16).
     TabRects {
-        projects: clamp_to_area(
-            Rect {
-                x: projects_x,
-                y: area.y,
-                width: projects_w,
-                height: 1,
-            },
-            area,
-        ),
-        agents: clamp_to_area(
-            Rect {
-                x: agents_x,
-                y: area.y,
-                width: agents_w,
-                height: 1,
-            },
-            area,
-        ),
+        projects: Rect {
+            x: projects_x,
+            y: area.y,
+            width: projects_w,
+            height: 1,
+        },
+        agents: Rect {
+            x: agents_x,
+            y: area.y,
+            width: agents_w,
+            height: 1,
+        },
     }
 }

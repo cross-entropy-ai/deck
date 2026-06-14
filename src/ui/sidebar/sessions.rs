@@ -16,7 +16,7 @@ use crate::state::{
 /// Braille spinner frames for the Summary card's "Generating…" state.
 pub(super) const SUMMARY_SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-use super::super::text::{pad_line, wrap_markdown};
+use super::super::text::pad_line;
 use super::super::widgets::markdown_window;
 use super::SidebarRenderCtx;
 
@@ -291,30 +291,22 @@ pub(super) fn draw_summary_card(
                 width,
             ));
         }
-        SummaryState::Ready { text, .. } => {
+        SummaryState::Ready { text, .. } | SummaryState::Error(text) => {
+            // Error text is non-scrolling (no scroll state): render it red,
+            // pinned at the top, and don't publish a scroll range for it.
+            let is_err = matches!(props.summary, SummaryState::Error(_));
+            let fg = if is_err { theme.error } else { theme.text };
+            let scroll = if is_err { 0 } else { props.summary_scroll };
             let content_w = width.saturating_sub(3); // 2 indent + 1 scrollbar
             let (row_spans, max_scroll) =
-                markdown_window(text, rows, props.summary_scroll, content_w, theme, theme.bg);
-            summary.max_scroll = max_scroll;
+                markdown_window(text, rows, scroll, content_w, theme, fg, theme.bg);
+            if !is_err {
+                summary.max_scroll = max_scroll;
+            }
             for spans in row_spans {
                 let mut row = vec![Span::styled("  ", Style::default().bg(theme.bg))];
                 row.extend(spans);
                 lines.push(pad_line(row, theme.bg, width));
-            }
-        }
-        SummaryState::Error(msg) => {
-            let content_w = width.saturating_sub(2);
-            let wrapped = wrap_markdown(msg, content_w.max(1));
-            for i in 0..rows {
-                let mut spans = vec![Span::styled("  ", Style::default().bg(theme.bg))];
-                if let Some(runs) = wrapped.get(i) {
-                    let text: String = runs.iter().map(|(s, _)| s.as_str()).collect();
-                    spans.push(Span::styled(
-                        text,
-                        Style::default().fg(theme.error).bg(theme.bg),
-                    ));
-                }
-                lines.push(pad_line(spans, theme.bg, width));
             }
         }
     }

@@ -10,7 +10,7 @@ use crate::geometry::{TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR};
 use super::super::text::pad_line;
 use super::super::{SessionOrigin, SidebarSession};
 use super::container::draw_sidebar_container;
-use super::SidebarRenderCtx;
+use super::{menu_span, SidebarRenderCtx, MENU_LABEL};
 
 pub(super) struct TabsProps<'a> {
     pub sessions: &'a [&'a dyn SidebarSession],
@@ -96,17 +96,11 @@ pub(super) fn draw_sidebar_tabs(
 
     let tabs_width: usize = spans.iter().map(|s| s.width()).sum();
     let width = content.width as usize;
-    let menu_label = "\u{2261} menu";
-    let menu_width = menu_label.width();
+    let menu_width = MENU_LABEL.width();
     let menu_bounds = if tabs_width + menu_width + 2 < width {
         let gap = width - tabs_width - menu_width - 1;
         spans.push(Span::styled(" ".repeat(gap), Style::default().bg(theme.bg)));
-        spans.push(Span::styled(
-            menu_label,
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ));
+        spans.push(menu_span(theme));
         Some(Rect {
             x: content.x + (width - menu_width - 1) as u16,
             y: content.y,

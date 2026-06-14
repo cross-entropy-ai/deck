@@ -9,8 +9,8 @@ use crate::keybindings::{Command, Keybindings};
 use crate::theme::Theme;
 use crate::ui::form::field_row;
 use crate::ui::widgets::{
-    centered_rect, list_item_line, popup_frame, scroll_window, style_textarea, PopupStyle,
-    TextAreaColors,
+    centered_rect, clamp_popup_height, full_width_row, list_item_line, popup_frame, scroll_window,
+    style_textarea, PopupStyle, TextAreaColors,
 };
 
 use super::text::format_keys_for;
@@ -166,8 +166,7 @@ fn draw_keybindings_view(
     let popup_width = (name_width as u16 + keys_width as u16 + 16)
         .min(area.width.saturating_sub(4))
         .max(30);
-    let content_height = rows.len() as u16 + 6;
-    let popup_height = content_height.min(area.height.saturating_sub(2)).max(7);
+    let popup_height = clamp_popup_height(area, rows.len() as u16 + 6, 7);
     let popup_area = centered_rect(area, popup_width, popup_height);
 
     let inner = popup_frame(
@@ -250,9 +249,8 @@ pub fn draw_theme_picker(
         .unwrap_or(12)
         .min(area.width.saturating_sub(4) as usize)
         + 6;
-    let height = (theme_names.len() as u16 + 2).min(area.height.saturating_sub(2));
     let popup_width = (width as u16).min(area.width.saturating_sub(2)).max(12);
-    let popup_height = height.max(3);
+    let popup_height = clamp_popup_height(area, theme_names.len() as u16 + 2, 3);
     let popup_area = centered_rect(area, popup_width, popup_height);
 
     // Pad the popup background by one cell on the left and right (not top
@@ -293,19 +291,12 @@ pub fn draw_theme_picker(
         .iter()
         .enumerate()
         .map(|(offset, name)| {
-            let selected = start + offset == selected_idx;
-            let label = format!(" {:<width$}", name, width = inner_w.saturating_sub(1));
-            if selected {
-                Line::from(Span::styled(
-                    label,
-                    Style::default().fg(theme.bg).bg(theme.accent),
-                ))
+            let style = if start + offset == selected_idx {
+                Style::default().fg(theme.bg).bg(theme.accent)
             } else {
-                Line::from(Span::styled(
-                    label,
-                    Style::default().fg(theme.text).bg(theme.surface),
-                ))
-            }
+                Style::default().fg(theme.text).bg(theme.surface)
+            };
+            full_width_row(name, inner_w, style)
         })
         .collect();
 
@@ -378,9 +369,7 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
         + if editor.adding { 1 } else { 0 }
         + if editor.error.is_some() { 1 } else { 0 };
     // content rows + blank + help row + top/bottom borders = +4
-    let height = (content_lines as u16 + 4)
-        .min(area.height.saturating_sub(2))
-        .max(5);
+    let height = clamp_popup_height(area, content_lines as u16 + 4, 5);
     let width = (max_pattern_width as u16 + 8)
         .max(30)
         .min(area.width.saturating_sub(4));

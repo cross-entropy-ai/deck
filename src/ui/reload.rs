@@ -86,11 +86,11 @@ pub fn draw_reload_bar(frame: &mut Frame, area: Rect, status: &ReloadStatus, the
     if wrapped.len() > RELOAD_MAX_ROWS {
         wrapped.truncate(RELOAD_MAX_ROWS);
         if let Some(last) = wrapped.last_mut() {
-            let room = w
-                .saturating_sub(RELOAD_CONT_INDENT.width())
-                .max(1)
-                .saturating_sub(1);
-            *last = format!("{}…", truncate(last, room));
+            // Force a trailing ellipsis to signal the dropped rows. `truncate`
+            // only ellipsizes on overflow, so suffix `…` first and let it fit
+            // the whole thing to `room` — it never yields a double ellipsis.
+            let room = w.saturating_sub(RELOAD_CONT_INDENT.width()).max(1);
+            *last = truncate(&format!("{last}…"), room);
         }
     }
     let mut rows: Vec<Line> = Vec::with_capacity(wrapped.len());

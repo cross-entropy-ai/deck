@@ -10,7 +10,7 @@ use crate::theme::Theme;
 use crate::update::UpdateStatus;
 
 use super::super::{PluginStatus, PluginView};
-use super::SidebarRenderCtx;
+use super::{menu_span, SidebarRenderCtx, MENU_LABEL};
 
 pub(super) struct FooterProps<'a> {
     pub plugins: &'a [PluginView<'a>],
@@ -28,6 +28,14 @@ pub(super) struct FooterHits {
 struct PluginRowsProps<'a> {
     plugins: &'a [PluginView<'a>],
     width: usize,
+}
+
+/// A full-width horizontal rule in the footer's dim color.
+fn divider_line(width: usize, theme: &Theme) -> Line<'static> {
+    Line::from(Span::styled(
+        "─".repeat(width),
+        Style::default().fg(theme.dim),
+    ))
 }
 
 fn plugin_dot_style(status: PluginStatus, blink_on: bool, theme: &Theme) -> Style {
@@ -101,10 +109,7 @@ fn append_plugin_rows(
         ]));
     }
 
-    rows.push(Line::from(Span::styled(
-        "─".repeat(width),
-        Style::default().fg(theme.dim),
-    )));
+    rows.push(divider_line(width, theme));
 }
 
 pub(super) fn draw_footer(
@@ -115,7 +120,7 @@ pub(super) fn draw_footer(
 ) -> FooterHits {
     let theme = ctx.theme;
     let w = area.width as usize;
-    let sep = Line::from(Span::styled("─".repeat(w), Style::default().fg(theme.dim)));
+    let sep = divider_line(w, theme);
 
     let rows_capacity = usize::from(
         2 + plugin_block_rows(props.plugins.len()) + props.update_available.is_some() as u16,
@@ -193,22 +198,16 @@ pub(super) fn draw_footer(
 
     // The "menu" button replaces the old key hints; clicking it opens the
     // global context menu — the same one a right-click on empty space shows.
-    let menu_label = "\u{2261} menu";
     let menu_y = area.y + rows.len() as u16;
     let menu = Some(Rect {
         x: area.x + 1,
         y: menu_y,
-        width: menu_label.width() as u16,
+        width: MENU_LABEL.width() as u16,
         height: 1,
     });
     rows.push(Line::from(vec![
         Span::raw(" "),
-        Span::styled(
-            menu_label,
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
+        menu_span(theme),
         Span::styled(
             format!("   [$ deck v{}]", env!("CARGO_PKG_VERSION")),
             Style::default().fg(theme.dim),

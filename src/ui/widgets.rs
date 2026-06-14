@@ -23,14 +23,22 @@ pub fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
     Rect::new(x, y, w, h)
 }
 
+/// Clamp a popup's height: at least `min_height`, at most the area minus a
+/// 1-row top/bottom margin. Shared by `popup_rect` and the settings popups
+/// (which need a different width margin) so the vertical-fit rule lives in
+/// one place.
+pub fn clamp_popup_height(area: Rect, content_height: u16, min_height: u16) -> u16 {
+    content_height
+        .max(min_height)
+        .min(area.height.saturating_sub(2))
+}
+
 /// Size and center a filter-picker popup: clamp `content_height` up to
 /// `min_height` and down to the available area (leaving a 1-row top/bottom
 /// and 2-col left/right margin), clamp `width` the same way, then center
 /// in `area`.
 pub fn popup_rect(area: Rect, width: u16, content_height: u16, min_height: u16) -> Rect {
-    let height = content_height
-        .max(min_height)
-        .min(area.height.saturating_sub(2));
+    let height = clamp_popup_height(area, content_height, min_height);
     let width = width.min(area.width.saturating_sub(4));
     centered_rect(area, width, height)
 }
@@ -108,6 +116,17 @@ pub fn list_item_line<'a>(
     ])
 }
 
+/// A full-width selectable row as a single styled span: `label`
+/// left-aligned in `width` columns with a 1-col leading pad. Shared by the
+/// context menu and the theme picker so their highlight rows fill the popup
+/// the same way (the caller picks `style` per selected/disabled state).
+pub fn full_width_row(label: &str, width: usize, style: Style) -> Line<'static> {
+    Line::from(Span::styled(
+        format!(" {:<w$}", label, w = width.saturating_sub(1)),
+        style,
+    ))
+}
+
 /// Per-row scrollbar glyphs for a `rows`-tall track showing `total` items
 /// scrolled to `scroll`. `None` = no bar on that row (content fits);
 /// `Some("█")` = thumb, `Some("░")` = track. Shared by the inline summary
@@ -148,6 +167,7 @@ pub(super) fn markdown_window(
     scroll: usize,
     content_w: usize,
     theme: &Theme,
+    fg: Color,
     bg: Color,
 ) -> (Vec<Vec<Span<'static>>>, usize) {
     use super::text::{md_line_spans, md_line_width, wrap_markdown};
@@ -157,7 +177,7 @@ pub(super) fn markdown_window(
     let max_scroll = total.saturating_sub(rows);
     let scroll = scroll.min(max_scroll);
     let bar = scrollbar_cells(rows, total, scroll);
-    let base = Style::default().fg(theme.text).bg(bg);
+    let base = Style::default().fg(fg).bg(bg);
 
     let out = (0..rows)
         .map(|i| {
@@ -242,7 +262,7 @@ mod tests {
         let text = "aaaa bbbb cccc dddd eeee";
         let content_w = 5;
         let rows = 3;
-        let (out, max_scroll) = markdown_window(text, rows, 0, content_w, theme, theme.bg);
+        let (out, max_scroll) = markdown_window(text, rows, 0, content_w, theme, theme.text, theme.bg);
 
         assert_eq!(out.len(), rows, "one span list per row");
         // 5 wrapped lines, 3-row window -> 2 lines of slack.
@@ -265,8 +285,8 @@ mod tests {
     fn markdown_window_scroll_offsets_the_window() {
         let theme = &THEMES[0];
         let text = "aaaa bbbb cccc";
-        let (top, _) = markdown_window(text, 1, 0, 5, theme, theme.bg);
-        let (mid, _) = markdown_window(text, 1, 1, 5, theme, theme.bg);
+        let (top, _) = markdown_window(text, 1, 0, 5, theme, theme.text, theme.bg);
+        let (mid, _) = markdown_window(text, 1, 1, 5, theme, theme.text, theme.bg);
         assert!(row_text(&top[0]).starts_with("aaaa"));
         assert!(row_text(&mid[0]).starts_with("bbbb"));
     }
@@ -276,7 +296,7 @@ mod tests {
         let theme = &THEMES[0];
         // One short line into a 3-row window: no overflow, so no glyph and
         // each row is padded to exactly `content_w`.
-        let (out, max_scroll) = markdown_window("hi", 3, 0, 8, theme, theme.bg);
+        let (out, max_scroll) = markdown_window("hi", 3, 0, 8, theme, theme.text, theme.bg);
         assert_eq!(max_scroll, 0);
         for spans in &out {
             assert_eq!(row_text(spans).chars().count(), 8);
