@@ -421,7 +421,7 @@ impl App {
         // worker doesn't touch shared state off-thread.
         let agents: Vec<crate::summary::AgentPane> = self
             .state
-            .agent_entries()
+            .agent_entries
             .iter()
             .filter_map(|entry| {
                 let agent = entry.agent()?;

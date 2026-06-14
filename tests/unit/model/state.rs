@@ -81,10 +81,11 @@ fn agent_entries_ordered_local_then_hosts() {
         crate::host_key::HostKey::remote("h1"),
         vec![detected("h1s", "%2")],
     );
+    state.rebuild_agent_entries();
 
     // Agent rows appear in section order: local (`None`) then each host.
-    let rows = state.agent_entries();
-    let hosts: Vec<Option<&str>> = rows.iter().map(|r| r.host.as_deref()).collect();
+    let hosts: Vec<Option<&str>> =
+        state.agent_entries.iter().map(|r| r.host.as_deref()).collect();
     assert_eq!(hosts, vec![None, Some("h1")]);
 }
 
@@ -104,6 +105,7 @@ fn agent_cursor_tracks_its_agent_when_the_list_changes() {
             detected("c", "%3"),
         ],
     );
+    state.rebuild_agent_entries();
     state.agent_focused = 1; // cursor on agent "b" (%2)
 
     // Refresh drops "a"; "b" shifts from index 1 to 0.
@@ -112,6 +114,7 @@ fn agent_cursor_tracks_its_agent_when_the_list_changes() {
         crate::host_key::HostKey::local(),
         vec![detected("b", "%2"), detected("c", "%3")],
     );
+    state.rebuild_agent_entries();
     state.reanchor_agent_focus(key);
 
     assert_eq!(state.agent_focused, 0, "cursor follows b to its new index");
@@ -130,6 +133,7 @@ fn agent_cursor_clamps_when_focused_agent_disappears() {
             detected("c", "%3"),
         ],
     );
+    state.rebuild_agent_entries();
     state.agent_focused = 2; // cursor on "c"
 
     let key = state.focused_agent_key();
@@ -137,6 +141,7 @@ fn agent_cursor_clamps_when_focused_agent_disappears() {
     state
         .agents
         .insert(crate::host_key::HostKey::local(), vec![detected("a", "%1")]);
+    state.rebuild_agent_entries();
     state.reanchor_agent_focus(key);
 
     assert_eq!(
@@ -159,6 +164,7 @@ fn agents_layout_groups_agents_under_host_dividers() {
         crate::host_key::HostKey::remote("h1"),
         vec![detected("h1s", "%2")],
     );
+    state.rebuild_agent_entries();
 
     let built = state.agents_layout();
     // Two focusable agent rows (local agent, then h1's), in agent_entries order.
@@ -204,6 +210,7 @@ fn agents_layout_shows_placeholder_for_empty_section() {
     state
         .agents
         .insert(crate::host_key::HostKey::local(), vec![]);
+    state.rebuild_agent_entries();
     let built = state.agents_layout();
     assert!(
         built

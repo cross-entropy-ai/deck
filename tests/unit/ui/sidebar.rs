@@ -185,8 +185,9 @@ fn agents_tab_publishes_clickable_agent_entries() {
     state
         .agents
         .insert(crate::host_key::HostKey::remote("h1"), vec![mk("%9")]);
+    state.rebuild_agent_entries();
     let built = state.agents_layout();
-    let agent_entries = state.agent_entries();
+    let agent_entries = state.agent_entries.clone();
     let sessions: Vec<&dyn SidebarSession> = Vec::new();
 
     let backend = TestBackend::new(40, 24);

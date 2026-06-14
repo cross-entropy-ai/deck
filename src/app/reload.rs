@@ -171,6 +171,10 @@ impl App {
         self.state
             .entries
             .retain(|e| e.host.as_deref().is_none_or(|h| kept.contains(h)));
+        // Host set just changed; rebuild the stored Agents list so a removed
+        // host's section drops immediately rather than lingering until the
+        // refresh queued below lands.
+        self.state.rebuild_agent_entries();
 
         self.resize_pty();
         if theme_changed {

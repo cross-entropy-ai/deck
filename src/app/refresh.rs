@@ -49,6 +49,10 @@ impl App {
     }
 
     pub(super) fn apply_update(&mut self, update: RefreshUpdate) {
+        // Capture the focused agent's identity before the round rebuilds the
+        // `entries`/`agents` the Agents list is derived from, so the cursor
+        // can re-anchor to the same pane afterwards (see reanchor_agent_focus).
+        let agent_key = self.state.focused_agent_key();
         match update {
             RefreshUpdate::Local {
                 current_session,
@@ -61,6 +65,11 @@ impl App {
                 self.apply_remote(rows, agents);
             }
         }
+        // `entries` + `agents` are settled for this round: rebuild the stored
+        // Agents-tab list from them (model A — stored, like `entries`), then
+        // re-anchor the cursor against the freshly built list.
+        self.state.rebuild_agent_entries();
+        self.state.reanchor_agent_focus(agent_key);
     }
 
     fn apply_remote(
@@ -172,11 +181,9 @@ impl App {
         // Apply this round's agent detection: store probed hosts, drop
         // stale agents on covered-but-failed hosts, prune to configured.
         // (Logic lives on AppState so it's unit-testable; see its tests.)
-        // Re-anchor the cursor to the agent it was on so the highlight keeps
-        // tracking the active pane across the list change (not the raw index).
-        let agent_key = self.state.focused_agent_key();
+        // The stored entry list is rebuilt and the cursor re-anchored by the
+        // caller (`apply_update`), once both entries and agents are settled.
         self.state.apply_remote_agents(covered_hosts, agents);
-        self.state.reanchor_agent_focus(agent_key);
     }
 
     fn apply_local(
@@ -185,14 +192,12 @@ impl App {
         rows: Vec<SnapshotRow>,
         agents: Vec<crate::agent::DetectedAgent>,
     ) {
-        // Local section is the `None`-host key. Re-anchor the Agents-tab
-        // cursor to the same agent across the list change so the highlight
-        // keeps matching the active pane (the index alone would drift).
-        let agent_key = self.state.focused_agent_key();
+        // Local section is the `None`-host key. The stored entry list is
+        // rebuilt and the cursor re-anchored by the caller (`apply_update`),
+        // once both entries and agents are settled.
         self.state
             .agents
             .insert(crate::host_key::HostKey::local(), agents);
-        self.state.reanchor_agent_focus(agent_key);
 
         // On first load, restore the manual order persisted on each
         // session's `@deck_order` rank (written by ReorderSession).

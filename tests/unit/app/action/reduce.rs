@@ -1376,6 +1376,7 @@ mod agents_tab {
             crate::host_key::HostKey::local(),
             vec![agent("a", "%1"), agent("b", "%2")],
         );
+        state.rebuild_agent_entries();
         // Opening the tab switches the right pane to the focused agent so
         // the panel highlight and the active pane agree immediately.
         let fx = apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
@@ -1393,6 +1394,7 @@ mod agents_tab {
             crate::host_key::HostKey::local(),
             vec![agent("a", "%1"), agent("b", "%2")],
         );
+        state.rebuild_agent_entries();
         // An agent was active from a prior switch; returning to the tab
         // puts the cursor back on it rather than resetting to row 0.
         state.active_agent = Some(crate::state::AgentTarget {
@@ -1480,6 +1482,7 @@ mod agents_tab {
             crate::host_key::HostKey::local(),
             vec![agent("a", "%1"), agent("b", "%2")],
         );
+        state.rebuild_agent_entries();
         state.focused = 2; // Projects cursor
 
         apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
@@ -1497,6 +1500,7 @@ mod agents_tab {
             crate::host_key::HostKey::local(),
             vec![agent("a", "%1"), agent("b", "%2")],
         );
+        state.rebuild_agent_entries();
         apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
         // Moving the cursor switches the right pane to follow it, the same
         // way the Projects tab does — so the highlight stays consistent.
@@ -1515,6 +1519,7 @@ mod agents_tab {
             crate::host_key::HostKey::local(),
             vec![agent("a", "%1"), agent("b", "%2")],
         );
+        state.rebuild_agent_entries();
         apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
         apply_action(&mut state, Action::FocusNext); // cursor -> row 1 (%2)
         let fx = apply_action(&mut state, Action::SwitchProject);

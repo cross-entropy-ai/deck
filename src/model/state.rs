@@ -535,6 +535,14 @@ pub struct AppState {
     /// See `crate::agent`.
     pub agents: HashMap<HostKey, Vec<crate::agent::DetectedAgent>>,
 
+    /// The flattened Agents-tab list, the twin of `entries` — stored, not
+    /// derived per frame. Built from `agents` + the host order (see
+    /// `rebuild_agent_entries`) whenever a refresh round settles, so the
+    /// renderer, layout, and focus all index a stable list. Local section
+    /// first, then each remote host in `remote_hosts_in_order`, each section a
+    /// run of detected agents or a single placeholder when empty.
+    pub agent_entries: Vec<AgentEntry>,
+
     /// Sidebar groups the user has collapsed (Expanded view only).
     /// `HostKey::local()` is the `@local` group; `HostKey::remote(host)`
     /// is a remote `@host` group. A collapsed group renders as just its
@@ -611,6 +619,7 @@ impl AppState {
             config_remotes: Vec::new(),
             forward_health: HashMap::new(),
             agents: HashMap::new(),
+            agent_entries: Vec::new(),
             active_agent: None,
             collapsed_sections: HashSet::new(),
         }
@@ -1238,12 +1247,20 @@ impl AppState {
         }
     }
 
-    /// The flat list of Agents-tab entries, in display order: the local
-    /// section first, then each remote host's in section order. Each section
-    /// is a run of detected agents, or a single placeholder entry when empty.
-    /// The renderer and focus both index into this, so its order is the
-    /// Agents-tab `FocusTarget` numbering.
-    pub fn agent_entries(&self) -> Vec<AgentEntry> {
+    /// Recompute the stored [`agent_entries`](Self::agent_entries) from the
+    /// `agents` map and the current host order. Called when a refresh round
+    /// settles (see `App::apply_update`) — the one point where both the agent
+    /// detection and the host order are fresh — mirroring how `entries` is
+    /// rebuilt there. Cheap, but not per-frame: the layout/focus then read the
+    /// stored list directly.
+    pub fn rebuild_agent_entries(&mut self) {
+        self.agent_entries = self.build_agent_entries();
+    }
+
+    /// Build the flattened entry list: the local section first, then each
+    /// remote host in section order. Each section is a run of detected agents,
+    /// or a single placeholder entry when empty.
+    fn build_agent_entries(&self) -> Vec<AgentEntry> {
         let mut entries = self.agent_entries_for(None);
         for host in self.remote_hosts_in_order_ref() {
             entries.extend(self.agent_entries_for(Some(host)));
@@ -1251,22 +1268,10 @@ impl AppState {
         entries
     }
 
-    /// Number of focusable Agents-tab entries, without building (or cloning
-    /// into) the `agent_entries()` vec. `focusable_count` runs per keystroke
-    /// and only ever wanted the length, so it takes this path (D17). Counts
-    /// the placeholder a section contributes when empty, matching
-    /// `agent_entries`.
+    /// Number of focusable Agents-tab entries — just the stored list's length,
+    /// since every section contributes at least a placeholder entry.
     pub fn agent_count(&self) -> usize {
-        let rows = |host| {
-            self.section_agents(host)
-                .filter(|l| !l.is_empty())
-                .map_or(1, <[_]>::len)
-        };
-        rows(None)
-            + self
-                .remote_hosts_in_order_ref()
-                .map(|host| rows(Some(host)))
-                .sum::<usize>()
+        self.agent_entries.len()
     }
 
     /// Flat focusable index of the agent entry matching `target`, or `None`
@@ -1274,7 +1279,7 @@ impl AppState {
     /// pane switched to via a click, the way `focusable_index_for` does
     /// for the Projects tab. Placeholder entries never match a real target.
     pub fn agent_entry_index_for(&self, target: &AgentTarget) -> Option<usize> {
-        self.agent_entries().iter().position(|entry| {
+        self.agent_entries.iter().position(|entry| {
             entry.host.as_deref() == target.host.as_deref()
                 && entry.agent().is_some_and(|a| a.pane_id == target.pane_id)
         })
@@ -1358,16 +1363,16 @@ impl AppState {
     /// Build the Agents-tab layout: an `@local` / `@host` divider per
     /// section with that section's rows beneath it — a focusable row per
     /// detected agent, or a single placeholder row when the section is empty
-    /// (`detecting…` / `no agents`). Every row maps 1:1 to an `agent_entries()`
-    /// entry so focus/scroll/hit-test stay in sync.
+    /// (`detecting…` / `no agents`). Every row maps 1:1 to a stored
+    /// `agent_entries` element so focus/scroll/hit-test stay in sync.
     pub fn agents_layout(&self) -> BuiltLayout {
         // No collapse on the Agents tab — sections are informational and
         // always expanded, so the focus index maps straight to a row. Remote
         // sections take a 1-row top margin to set them off. The Summary card
         // renders as a separate widget pinned above, so the list is pure
-        // `BasicItem`. The body mirrors `sidebar_layout`: each section's rows
-        // come from a single per-section source (`agent_entries_for`), built
-        // into `BasicItem`s by the `agent_item` twin of `session_item`.
+        // `BasicItem`. The body mirrors `sidebar_layout` exactly: filter the
+        // stored list by host, build each entry into a `BasicItem` via the
+        // `agent_item` twin of `session_item`.
         self.build_sections(
             SectionLayoutOpts {
                 show_headers: true,
@@ -1375,8 +1380,12 @@ impl AppState {
                 remote_header_margin: true,
             },
             |layout, _sections, host| {
-                for entry in self.agent_entries_for(host) {
-                    layout.push_row_auto(self.agent_item(&entry));
+                for entry in self
+                    .agent_entries
+                    .iter()
+                    .filter(|e| e.host.as_deref() == host)
+                {
+                    layout.push_row_auto(self.agent_item(entry));
                 }
             },
         )
@@ -1494,15 +1503,15 @@ impl AppState {
         if !self.agents_tab_active() {
             return None;
         }
-        let entry = self.agent_entries().into_iter().nth(self.agent_focused)?;
+        let entry = self.agent_entries.get(self.agent_focused)?;
         // The guard that makes a placeholder entry inert: there's no pane to
         // switch to, so the cursor can land on it but Enter/click no-op —
         // mirroring how Projects guards a `NoSessions` row (`is_attachable`).
-        match entry.kind {
+        match &entry.kind {
             AgentEntryKind::Agent(agent) => Some(AgentTarget {
-                host: entry.host,
-                session: agent.session,
-                pane_id: agent.pane_id,
+                host: entry.host.clone(),
+                session: agent.session.clone(),
+                pane_id: agent.pane_id.clone(),
             }),
             AgentEntryKind::Placeholder { .. } => None,
         }
@@ -1648,9 +1657,9 @@ impl AppState {
     /// cursor can be re-anchored to the same agent afterwards — see
     /// [`reanchor_agent_focus`](Self::reanchor_agent_focus).
     pub fn focused_agent_key(&self) -> Option<(Option<String>, String)> {
-        let entry = self.agent_entries().into_iter().nth(self.agent_focused)?;
-        match entry.kind {
-            AgentEntryKind::Agent(agent) => Some((entry.host, agent.pane_id)),
+        let entry = self.agent_entries.get(self.agent_focused)?;
+        match &entry.kind {
+            AgentEntryKind::Agent(agent) => Some((entry.host.clone(), agent.pane_id.clone())),
             AgentEntryKind::Placeholder { .. } => None,
         }
     }
@@ -1666,15 +1675,13 @@ impl AppState {
     /// gone (finished, went idle, or its host dropped). Use this instead of
     /// `clamp_agent_focus` after the agent list changes.
     pub fn reanchor_agent_focus(&mut self, key: Option<(Option<String>, String)>) {
-        let entries = self.agent_entries();
         let found = key.and_then(|(host, pane_id)| {
-            entries.iter().position(|entry| {
+            self.agent_entries.iter().position(|entry| {
                 entry.host.as_deref() == host.as_deref()
                     && entry.agent().is_some_and(|a| a.pane_id == pane_id)
             })
         });
-        let total = entries.len();
-        drop(entries);
+        let total = self.agent_entries.len();
         match found {
             Some(idx) => self.agent_focused = idx,
             None => clamp_cursor(&mut self.agent_focused, total),

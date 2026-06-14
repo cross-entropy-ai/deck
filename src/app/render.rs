@@ -194,7 +194,7 @@ impl App {
             };
 
             let layout = self.state.current_layout(view_mode);
-            let agent_entries = self.state.agent_entries();
+            let agent_entries = self.state.agent_entries.as_slice();
             let focus_target = self.state.focus_target();
             let summary_card_height = self.state.summary_card_height();
             captured_hits = ui::draw_sidebar(
@@ -212,7 +212,7 @@ impl App {
                     rename_input,
                     show_borders,
                     sidebar_tab,
-                    agent_entries: &agent_entries,
+                    agent_entries,
                     summary: &self.state.summary.state,
                     summary_age: summary_age.as_deref(),
                     spinner_idx,
