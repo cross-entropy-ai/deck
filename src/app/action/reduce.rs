@@ -447,16 +447,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // (focus_next/focus_prev skip hidden rows).
             let host_key = crate::host_key::HostKey::from(key);
             if state.agents_tab_active() {
-                // Agents collapse is runtime-only, so no save_config here.
                 if !state.collapsed_agent_sections.remove(&host_key) {
                     state.collapsed_agent_sections.insert(host_key);
                 }
-            } else {
-                if !state.collapsed_sections.remove(&host_key) {
-                    state.collapsed_sections.insert(host_key);
-                }
-                fx.save_config();
+            } else if !state.collapsed_sections.remove(&host_key) {
+                state.collapsed_sections.insert(host_key);
             }
+            fx.save_config();
         }
         Action::Settings(a) => return reduce_settings(state, a),
         Action::Summary(a) => return reduce_summary(state, a),

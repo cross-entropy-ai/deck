@@ -412,6 +412,7 @@ impl Prefs {
         keybindings: std::collections::BTreeMap<String, crate::config::KeyBindingValue>,
         remotes: Vec<crate::config::RemoteConfig>,
         collapsed: Vec<Option<String>>,
+        collapsed_agents: Vec<Option<String>>,
     ) -> crate::config::Config {
         crate::config::Config {
             theme: crate::theme::THEMES[self.theme_index].name.to_string(),
@@ -428,6 +429,7 @@ impl Prefs {
             update_check: self.update_check_mode,
             remotes,
             collapsed_sections: collapsed,
+            collapsed_agent_sections: collapsed_agents,
             summary_prompt: self.summary_prompt.clone(),
             summary_prompt_version: crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION,
             summary_model: self.summary_model.clone(),
@@ -553,7 +555,8 @@ pub struct AppState {
     /// Agents-tab twin of `collapsed_sections`, keyed the same way. Kept
     /// separate so a host collapsed on the Projects tab doesn't hide its
     /// agent rows (and vice versa) — the two tabs fold independently.
-    /// Runtime-only (not persisted to config).
+    /// Persisted to config (`collapsed_agent_sections`) and restored at
+    /// startup, just like `collapsed_sections`.
     pub collapsed_agent_sections: HashSet<HostKey>,
 }
 

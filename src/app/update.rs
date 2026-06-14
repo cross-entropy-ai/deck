@@ -24,6 +24,11 @@ impl App {
                     .iter()
                     .map(|k| k.host().map(str::to_string))
                     .collect(),
+                self.state
+                    .collapsed_agent_sections
+                    .iter()
+                    .map(|k| k.host().map(str::to_string))
+                    .collect(),
             )
             .save();
         // We just wrote the file; adopt its new mtime so the config watcher

@@ -149,6 +149,11 @@ pub struct Config {
     /// trips as a JSON array like `[null, "host1"]`. Empty by default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collapsed_sections: Vec<Option<String>>,
+    /// Agents-tab groups the user has collapsed — the Agents twin of
+    /// `collapsed_sections`, kept separate so the two tabs fold
+    /// independently. Same `[null, "host1"]` shape. Empty by default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub collapsed_agent_sections: Vec<Option<String>>,
     /// The Agents-tab summary prompt template. `{{SESSIONS}}` is replaced
     /// with one `<session>` block per agent pane. Editable; reset to the
     /// bundled default when `summary_prompt_version` falls behind the
@@ -194,6 +199,7 @@ impl Default for Config {
             update_check: UpdateCheckMode::Enabled,
             remotes: Vec::new(),
             collapsed_sections: Vec::new(),
+            collapsed_agent_sections: Vec::new(),
             // Seeded with version 0 so `migrate_summary_prompt` always
             // stamps the real version and persists the prompt to disk.
             summary_prompt: crate::summary::DEFAULT_SUMMARY_PROMPT.to_string(),

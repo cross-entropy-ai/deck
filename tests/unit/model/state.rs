@@ -908,6 +908,7 @@ fn prefs_config_round_trip_is_identity() {
         update_check: crate::update::UpdateCheckMode::Disabled,
         remotes: Vec::new(),
         collapsed_sections: Vec::new(),
+        collapsed_agent_sections: Vec::new(),
         summary_prompt: "prompt".to_string(),
         summary_prompt_version: crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION,
         summary_model: "model".to_string(),
@@ -919,7 +920,12 @@ fn prefs_config_round_trip_is_identity() {
 
     let theme_index = 2;
     let prefs = Prefs::from_config(&cfg, theme_index);
-    let written = prefs.to_config(std::collections::BTreeMap::new(), Vec::new(), Vec::new());
+    let written = prefs.to_config(
+        std::collections::BTreeMap::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
     // Re-derive the theme index from the written name rather than reusing the
     // input, so the round trip actually exercises the name<->index mapping
     // that lives outside Prefs (to_config writes THEMES[idx].name).

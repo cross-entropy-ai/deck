@@ -197,6 +197,11 @@ impl App {
             .iter()
             .map(|h| crate::host_key::HostKey::from(h.clone()))
             .collect();
+        state.collapsed_agent_sections = cfg
+            .collapsed_agent_sections
+            .iter()
+            .map(|h| crate::host_key::HostKey::from(h.clone()))
+            .collect();
 
         // The TUI owns the alternate screen, so a startup eprintln! would be
         // wiped invisibly. Surface keybinding warnings in the reload strip
