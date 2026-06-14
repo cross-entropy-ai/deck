@@ -1,74 +1,20 @@
-//! Shared form-row rendering: a label + single-line `TextArea` pair.
-//! Collapses the near-identical row renderers in the new-session and
-//! port-forward forms into one helper. The caller supplies the resolved
-//! label style (focus/enabled logic differs per form) and field colors.
+//! The shared filter-picker popup: one or more input fields above a
+//! scrollable, filtered candidate list. Centralizes the popup sizing, row
+//! layout, list windowing, error row, and footer the new-session and
+//! add-remote overlays used to each hand-roll.
 
-use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Paragraph, Widget};
 use ratatui::Frame;
 use ratatui_textarea::TextArea;
-use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
-use super::widgets::{
-    draw_picker_list, popup_frame, popup_rect, style_textarea, PopupStyle, TextAreaColors,
-};
-
-/// Render a `label` + `textarea` pair on one row: the label occupies its
-/// rendered width, the textarea fills the rest.
-pub fn field_row(
-    buf: &mut Buffer,
-    area: Rect,
-    label: &str,
-    label_style: Style,
-    textarea: &TextArea<'static>,
-    focused: bool,
-    colors: TextAreaColors,
-) {
-    let label_w = label.width() as u16;
-    let cols = Layout::horizontal([Constraint::Length(label_w), Constraint::Min(0)]).split(area);
-    Paragraph::new(Span::styled(label.to_string(), label_style)).render(cols[0], buf);
-    let mut ta = textarea.clone();
-    style_textarea(&mut ta, focused, colors);
-    ta.render(cols[1], buf);
-}
-
-/// Render a `label` + `textarea` row with the filter-picker forms' standard
-/// styling: the label is `accent` when focused and `dim` otherwise, the field
-/// uses `theme.bg` as its background, and the cursor is an accent block. Used
-/// by the new-session and add-remote pickers.
-pub fn labeled_field(
-    buf: &mut Buffer,
-    area: Rect,
-    label: &str,
-    textarea: &TextArea<'static>,
-    focused: bool,
-    theme: &Theme,
-) {
-    let label_style = if focused {
-        Style::default().fg(theme.accent)
-    } else {
-        Style::default().fg(theme.dim)
-    };
-    field_row(
-        buf,
-        area,
-        label,
-        label_style,
-        textarea,
-        focused,
-        TextAreaColors {
-            fg: theme.text,
-            bg: theme.bg,
-            cursor_fg: theme.bg,
-            cursor_bg: theme.accent,
-        },
-    );
-}
+use super::field::labeled_field;
+use super::list::draw_picker_list;
+use super::popup::{popup_frame, popup_rect, PopupStyle};
 
 /// One labeled input row of a filter-picker popup.
 pub struct PickerField<'a> {
@@ -95,9 +41,7 @@ pub struct FilterPickerView<'a> {
 }
 
 /// Draw a filter-picker popup; `content(idx)` renders the list row for
-/// candidate `idx`. Centralizes the popup sizing, row layout, list
-/// windowing, error row, and footer the new-session and add-remote pickers
-/// used to each hand-roll.
+/// candidate `idx`.
 pub fn draw_filter_picker(
     frame: &mut Frame,
     area: Rect,

@@ -10,8 +10,7 @@ use ratatui_textarea::TextArea;
 use crate::keybindings::{Command, Keybindings};
 use crate::state::KillConfirmHits;
 use crate::theme::Theme;
-use crate::ui::form::field_row;
-use crate::ui::widgets::TextAreaColors;
+use crate::ui::widgets::{field_row, TextAreaColors};
 
 use super::text::format_keys_for;
 

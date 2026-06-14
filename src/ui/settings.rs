@@ -7,10 +7,9 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::keybindings::{Command, Keybindings};
 use crate::theme::Theme;
-use crate::ui::form::field_row;
 use crate::ui::widgets::{
-    centered_rect, clamp_popup_height, full_width_row, list_item_line, popup_frame, scroll_window,
-    style_textarea, PopupStyle, TextAreaColors,
+    centered_rect, clamp_popup_height, field_row, full_width_row, list_item_line, popup_frame,
+    scroll_window, style_textarea, PopupStyle, TextAreaColors,
 };
 
 use super::text::format_keys_for;

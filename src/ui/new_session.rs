@@ -2,7 +2,7 @@ use ratatui::layout::Rect;
 use ratatui::Frame;
 
 use crate::theme::Theme;
-use crate::ui::form::{draw_filter_picker, FilterPickerView, PickerField};
+use crate::ui::widgets::{draw_filter_picker, FilterPickerView, PickerField};
 
 use super::NewSessionView;
 

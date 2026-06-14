@@ -1,6 +1,5 @@
 mod add_remote;
 pub mod bridge;
-pub mod form;
 mod menu;
 mod new_session;
 pub mod overlays;

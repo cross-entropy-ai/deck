@@ -3,7 +3,7 @@ use ratatui::Frame;
 
 use crate::add_remote::AddRemoteState;
 use crate::theme::Theme;
-use crate::ui::form::{draw_filter_picker, FilterPickerView, PickerField};
+use crate::ui::widgets::{draw_filter_picker, FilterPickerView, PickerField};
 
 const POPUP_WIDTH: u16 = 56;
 const MAX_VISIBLE: usize = 8;

@@ -9,8 +9,7 @@ use ratatui_textarea::TextArea;
 use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
 use crate::state::{ForwardHealth, ForwardKey, PfAddForm, PfField, PortForwardOverlay};
 use crate::theme::Theme;
-use crate::ui::form::field_row;
-use crate::ui::widgets::{centered_rect, popup_frame, PopupStyle, TextAreaColors};
+use crate::ui::widgets::{centered_rect, field_row, popup_frame, PopupStyle, TextAreaColors};
 use std::collections::HashMap;
 
 const OVERLAY_WIDTH: u16 = 64;
