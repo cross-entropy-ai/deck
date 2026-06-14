@@ -2,11 +2,14 @@ use std::ops::Range;
 
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Span;
+use ratatui::text::{Span, Text};
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
-use ratatui_sectioned_list::widget::{SectionedListState, SectionedListWidget};
+use ratatui_sectioned_list::widget::{basic_style, SectionedListState, SectionedListWidget};
+use ratatui_sectioned_list::ItemKind;
 use unicode_width::UnicodeWidthStr;
+
+use crate::theme::Theme;
 
 use crate::state::{
     AgentEntry, AgentHit, AgentTarget, BuiltLayout, DividerHit, FocusTarget, SummaryHits,
@@ -15,6 +18,43 @@ use crate::state::{
 
 /// Braille spinner frames for the Summary card's "Generating…" state.
 pub(super) const SUMMARY_SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// Recolor the leading status glyph of an agent row as a traffic light:
+/// green = working, red = not working (idle), yellow = waiting for the user,
+/// gray = unknown. The glyph itself is chosen in `AppState::agent_item`; here
+/// we only override its color. `basic_style` builds a row's first line as
+/// `[marker, "<glyph> <location>"]`, so we split the title span and tint just
+/// the glyph, leaving the focus/bold styling and the location text intact.
+/// Placeholder rows ("no agents" / "detecting…") start with no known glyph and
+/// pass through unchanged.
+fn recolor_agent_dot(mut text: Text<'static>, theme: &Theme) -> Text<'static> {
+    let Some(line) = text.lines.first_mut() else {
+        return text;
+    };
+    if line.spans.len() < 2 {
+        return text;
+    }
+    let mut chars = line.spans[1].content.chars();
+    let Some(glyph) = chars.next() else {
+        return text;
+    };
+    let color = match glyph {
+        '●' => theme.success, // working
+        '○' => theme.error,   // not working (idle)
+        '◐' => theme.warning, // waiting for the user
+        '·' => theme.dim,     // unknown
+        _ => return text,
+    };
+    let style = line.spans[1].style;
+    let marker = line.spans[0].clone();
+    let rest: String = chars.collect();
+    line.spans = vec![
+        marker,
+        Span::styled(glyph.to_string(), style.fg(color)),
+        Span::styled(rest, style),
+    ];
+    text
+}
 
 use super::super::text::pad_line;
 use super::super::widgets::markdown_window;
@@ -64,8 +104,20 @@ pub(super) fn draw_sessions(
     let focused = props.focus_target.map(|f| f.0);
     let mut state = SectionedListState::new();
     state.set_focused(focused.unwrap_or(usize::MAX));
-    let widget =
-        SectionedListWidget::basic(layout).highlight_style(Style::default().bg(ctx.theme.surface));
+    // Render with the crate's `basic_style`, then on the Agents tab recolor the
+    // leading status dot of each agent row (the glyph already encodes status;
+    // see `AppState::agent_item`). Project rows fall straight through.
+    let theme = ctx.theme;
+    let agents_tab = props.agents_tab;
+    let widget = SectionedListWidget::new(layout, move |item, item_ctx| {
+        let text = basic_style(item, item_ctx);
+        if agents_tab && matches!(item.kind, ItemKind::Row) {
+            recolor_agent_dot(text, theme)
+        } else {
+            text
+        }
+    })
+    .highlight_style(Style::default().bg(ctx.theme.surface));
     frame.render_stateful_widget(widget, area, &mut state);
 
     // Recompute the scroll the widget used (same formula) and walk the

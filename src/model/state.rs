@@ -1045,7 +1045,8 @@ impl AppState {
 
     /// `BasicItem` for one Agents-tab row, the twin of `session_item`. A real
     /// agent shows a status glyph (`●` working / `○` idle / `◐` waiting / `·`
-    /// unknown) before its location — no per-row color, like session rows.
+    /// unknown) before its location; the renderer tints that glyph as a traffic
+    /// light (`recolor_agent_dot`), so the glyph shape and its color agree.
     /// The pane deck currently shows isn't marked here: the row highlight
     /// (the cursor follows the active pane, see `steer_marker_to_pane`)
     /// already carries "you are here". An empty section's placeholder shows
