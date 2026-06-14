@@ -31,12 +31,42 @@ pub struct InstanceGuard {
 }
 
 impl InstanceGuard {
-    pub fn acquire(current_pid: u32) -> Result<Self, AcquireError> {
-        Self::acquire_at(Self::default_lock_path(), current_pid)
+    /// Acquire the lock on behalf of the running process. `force` takes over
+    /// (terminating a previous deck instance) instead of failing if the lock
+    /// is held. The `*_at` variants take an injectable path/kill for tests.
+    pub fn acquire_for_current_process(force: bool) -> Result<Self, AcquireError> {
+        let pid = std::process::id();
+        let path = Self::default_lock_path();
+        if force {
+            Self::acquire_forcing_at(path, pid, real_kill)
+        } else {
+            Self::acquire_at(path, pid)
+        }
     }
 
-    pub fn acquire_forcing(current_pid: u32) -> Result<Self, AcquireError> {
-        Self::acquire_forcing_at(Self::default_lock_path(), current_pid, real_kill)
+    /// Like [`acquire_for_current_process`], but on a contention error
+    /// (another instance running, or a force-kill denied) it prints the
+    /// user-facing diagnostic and exits the process. Genuine I/O errors are
+    /// returned for the caller to propagate.
+    ///
+    /// [`acquire_for_current_process`]: Self::acquire_for_current_process
+    pub fn acquire_for_current_process_or_exit(force: bool) -> io::Result<Self> {
+        match Self::acquire_for_current_process(force) {
+            Ok(guard) => Ok(guard),
+            Err(AcquireError::AlreadyRunning { pid }) => {
+                match pid {
+                    Some(pid) => eprintln!("deck: another instance is already running (pid {pid})"),
+                    None => eprintln!("deck: another instance is already running"),
+                }
+                eprintln!("Retry with `deck --force` or kill the previous instance.");
+                std::process::exit(1);
+            }
+            Err(AcquireError::ForceKillDenied { pid }) => {
+                eprintln!("deck: cannot terminate pid {pid}: permission denied");
+                std::process::exit(1);
+            }
+            Err(AcquireError::Io(err)) => Err(err),
+        }
     }
 
     fn acquire_at(lock_path: PathBuf, current_pid: u32) -> Result<Self, AcquireError> {
