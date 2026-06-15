@@ -574,6 +574,66 @@ fn sync_remote_forward_health_mirrors_host_status() {
 }
 
 #[test]
+fn forward_badge_rolls_up_per_host_health() {
+    use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
+    use crate::state::{ForwardBadgeStatus, ForwardHealth, ForwardKey};
+
+    let spec = |port: u16| ForwardSpec {
+        mode: ForwardMode::Local,
+        bind_addr: None,
+        listen_port: port,
+        target_host: Some("127.0.0.1".into()),
+        target_port: Some(port),
+    };
+    let f1 = spec(8001);
+    let f2 = spec(8002);
+
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.config_remotes = vec![
+        RemoteConfig {
+            host: "h1".into(),
+            forwards: vec![f1.clone(), f2.clone()],
+        },
+        RemoteConfig {
+            host: "nofwd".into(),
+            forwards: vec![],
+        },
+    ];
+    let set = |state: &mut AppState, a: ForwardHealth, b: ForwardHealth| {
+        state
+            .forward_health
+            .insert(ForwardKey::from_spec("h1", &f1), a);
+        state
+            .forward_health
+            .insert(ForwardKey::from_spec("h1", &f2), b);
+    };
+
+    // A host with no forwards never shows a badge.
+    assert_eq!(state.forward_badge("nofwd"), None);
+    // An unknown host (not in config) likewise.
+    assert_eq!(state.forward_badge("ghost"), None);
+
+    // total always counts every configured forward; status is the rollup.
+    set(&mut state, ForwardHealth::Up, ForwardHealth::Up);
+    let b = state.forward_badge("h1").unwrap();
+    assert_eq!((b.total, b.status), (2, ForwardBadgeStatus::AllUp));
+
+    set(&mut state, ForwardHealth::Down, ForwardHealth::Down);
+    assert_eq!(state.forward_badge("h1").unwrap().status, ForwardBadgeStatus::AllDown);
+
+    set(&mut state, ForwardHealth::Up, ForwardHealth::Down);
+    assert_eq!(state.forward_badge("h1").unwrap().status, ForwardBadgeStatus::Mixed);
+
+    // A probing forward alongside an up one is still "mixed", not all-up.
+    set(&mut state, ForwardHealth::Up, ForwardHealth::Probing);
+    assert_eq!(state.forward_badge("h1").unwrap().status, ForwardBadgeStatus::Mixed);
+
+    // Nothing confirmed either way yet → neutral "probing".
+    set(&mut state, ForwardHealth::Probing, ForwardHealth::Probing);
+    assert_eq!(state.forward_badge("h1").unwrap().status, ForwardBadgeStatus::Probing);
+}
+
+#[test]
 fn resize_sidebar_handles_small_terminals() {
     let mut state = make_state(LayoutMode::Horizontal, true, 20, 40);
     assert!(state.resize_sidebar(30));

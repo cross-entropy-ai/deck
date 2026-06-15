@@ -2,7 +2,7 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 use crate::state::{AppState, DividerButton, FocusTarget, HitKind, LayoutMode, MainView, Modal};
 
-use super::{Action, MenuAction, SettingsAction, SummaryAction};
+use super::{Action, MenuAction, PfAction, SettingsAction, SummaryAction};
 
 pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     // Single resolver for every rect-based button/region the sidebar
@@ -134,6 +134,9 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             Some(HitKind::Divider(i)) => {
                 let dh = &state.hit_regions.dividers[i];
                 return match dh.kind {
+                    // The `[⇄N]` badge opens the host's port-forward overlay —
+                    // the same destination as the divider menu's "Port forward".
+                    DividerButton::ForwardBadge => Action::Pf(PfAction::Open(dh.host.clone())),
                     DividerButton::Reconnect => Action::ReconnectHost {
                         host: dh.host.clone(),
                     },

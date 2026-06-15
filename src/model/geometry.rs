@@ -13,6 +13,8 @@ use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
 use unicode_width::UnicodeWidthStr;
 
+use crate::forwards::ForwardBadge;
+
 use unicode_width::UnicodeWidthChar;
 
 use crate::menu::MenuItem;
@@ -221,6 +223,11 @@ pub struct SectionMeta {
     /// carries buttons). `false` for placeholder rows that occupy a header
     /// slot but aren't interactive.
     pub divider: bool,
+    /// Port-forward rollup for this host's divider, when it has forwards.
+    /// Drives the colored `[⇄N]` badge; `None` = no badge (no forwards, or
+    /// a non-host divider). Carried here so the renderer can color the badge
+    /// without re-deriving health from config.
+    pub forward_badge: Option<ForwardBadge>,
 }
 
 /// The switches that distinguish the two sidebar tabs when they're built
@@ -312,6 +319,9 @@ pub enum AgentEntryKind {
 /// Which button on a divider a `DividerHit` targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DividerButton {
+    /// `[⇄N]` — the port-forward status badge (leftmost). Click opens the
+    /// host's port-forward overlay. Present only when the host has forwards.
+    ForwardBadge,
     /// `[⟳]` — force-refresh (reconnect) the host.
     Reconnect,
     /// `[…]` — open the host-divider menu.

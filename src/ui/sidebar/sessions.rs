@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Span, Text};
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
@@ -12,8 +12,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::theme::Theme;
 
 use crate::state::{
-    AgentEntry, AgentHit, AgentTarget, BuiltLayout, DividerHit, FocusTarget, SummaryHits,
-    SummaryState,
+    AgentEntry, AgentHit, AgentTarget, BuiltLayout, DividerHit, FocusTarget, ForwardBadgeStatus,
+    SummaryHits, SummaryState,
 };
 
 /// Braille spinner frames for the Summary card's "Generating…" state.
@@ -53,6 +53,33 @@ fn recolor_agent_dot(mut text: Text<'static>, theme: &Theme) -> Text<'static> {
         Span::styled(glyph.to_string(), style.fg(color)),
         Span::styled(rest, style),
     ];
+    text
+}
+
+/// Traffic-light color for a divider's port-forward badge: green all up, red
+/// all down, orange mixed, muted while still probing.
+fn forward_badge_color(status: ForwardBadgeStatus, theme: &Theme) -> Color {
+    match status {
+        ForwardBadgeStatus::AllUp => theme.success,
+        ForwardBadgeStatus::AllDown => theme.error,
+        ForwardBadgeStatus::Mixed => theme.warning,
+        ForwardBadgeStatus::Probing => theme.muted,
+    }
+}
+
+/// Retint the `[⇄N]` port-forward badge span on a remote divider to its
+/// traffic-light `color`, leaving the rest of the bar in the host accent.
+/// `basic_style` paints each header button as its own span, so the badge —
+/// the leftmost button, prefixed `[⇄` — is a single span to recolor.
+fn recolor_forward_badge(mut text: Text<'static>, color: Color) -> Text<'static> {
+    for line in &mut text.lines {
+        for span in &mut line.spans {
+            if span.content.starts_with("[⇄") {
+                span.style = span.style.fg(color);
+                return text;
+            }
+        }
+    }
     text
 }
 
@@ -109,13 +136,34 @@ pub(super) fn draw_sessions(
     // see `AppState::agent_item`). Project rows fall straight through.
     let theme = ctx.theme;
     let agents_tab = props.agents_tab;
+    // Per-host badge color, keyed by the divider's `@host` (sans `@`) so the
+    // closure can recolor the `[⇄N]` span without re-deriving forward health.
+    let badge_colors: std::collections::HashMap<&str, Color> = props
+        .built
+        .sections
+        .iter()
+        .filter_map(|m| {
+            let host = m.host.as_deref()?;
+            let badge = m.forward_badge?;
+            Some((host, forward_badge_color(badge.status, theme)))
+        })
+        .collect();
     let widget = SectionedListWidget::new(layout, move |item, item_ctx| {
         let text = basic_style(item, item_ctx);
         if agents_tab && matches!(item.kind, ItemKind::Row) {
-            recolor_agent_dot(text, theme)
-        } else {
-            text
+            return recolor_agent_dot(text, theme);
         }
+        if matches!(item.kind, ItemKind::Header) {
+            if let Some(color) = item
+                .data
+                .title
+                .strip_prefix('@')
+                .and_then(|host| badge_colors.get(host).copied())
+            {
+                return recolor_forward_badge(text, color);
+            }
+        }
+        text
     })
     .highlight_style(Style::default().bg(ctx.theme.surface));
     frame.render_stateful_widget(widget, area, &mut state);

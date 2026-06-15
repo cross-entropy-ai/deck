@@ -44,6 +44,57 @@ impl ForwardKey {
     }
 }
 
+// --- Divider badge rollup ---
+
+/// Aggregate liveness of a host's configured forwards, shown as a colored
+/// `[⇄N]` badge on the remote `@host` divider (left of `[⟳]`). `total` is the
+/// forward count; `status` is the rollup color the renderer paints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ForwardBadge {
+    pub total: usize,
+    pub status: ForwardBadgeStatus,
+}
+
+/// The traffic-light state of a [`ForwardBadge`]: green when every forward is
+/// up, red when every one is down, orange when some are up and some aren't,
+/// and "probing" (neutral) while none has been confirmed either way yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForwardBadgeStatus {
+    AllUp,
+    AllDown,
+    Mixed,
+    Probing,
+}
+
+impl ForwardBadge {
+    /// Roll a host's per-forward health up into a single badge. Returns `None`
+    /// when the host has no configured forwards (no badge is drawn).
+    pub fn rollup(healths: impl Iterator<Item = ForwardHealth>) -> Option<Self> {
+        let (mut up, mut down, mut total) = (0usize, 0usize, 0usize);
+        for h in healths {
+            total += 1;
+            match h {
+                ForwardHealth::Up => up += 1,
+                ForwardHealth::Down => down += 1,
+                ForwardHealth::Probing => {}
+            }
+        }
+        if total == 0 {
+            return None;
+        }
+        let status = if up == total {
+            ForwardBadgeStatus::AllUp
+        } else if down == total {
+            ForwardBadgeStatus::AllDown
+        } else if up == 0 && down == 0 {
+            ForwardBadgeStatus::Probing
+        } else {
+            ForwardBadgeStatus::Mixed
+        };
+        Some(Self { total, status })
+    }
+}
+
 // --- Port forward overlay ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

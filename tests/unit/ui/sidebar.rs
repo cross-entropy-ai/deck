@@ -352,6 +352,138 @@ fn remote_divider_buttons_register_below_their_top_margin() {
     }
 }
 
+#[test]
+fn remote_divider_shows_colored_forward_badge() {
+    // A remote host with configured forwards grows a leftmost `[⇄N]` badge on
+    // its divider: N counts the forwards, the color is the health rollup, and
+    // a click opens that host's port-forward overlay (not a collapse).
+    use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
+    use crate::state::{AppState, DividerButton, ForwardHealth, ForwardKey, SidebarTab, ViewMode};
+
+    let theme = &crate::theme::THEMES[0];
+    let keybindings = Keybindings::default();
+
+    let spec = |port: u16| ForwardSpec {
+        mode: ForwardMode::Local,
+        bind_addr: None,
+        listen_port: port,
+        target_host: Some("127.0.0.1".into()),
+        target_port: Some(port),
+    };
+    let (f1, f2) = (spec(8001), spec(8002));
+
+    let mut state = AppState::new(80, 24);
+    state.prefs.sidebar_tab = SidebarTab::Projects;
+    state.prefs.sidebar_width = 40;
+    state.config_remotes = vec![RemoteConfig {
+        host: "h1".into(),
+        forwards: vec![f1.clone(), f2.clone()],
+    }];
+    state.entries.push(crate::state::SessionEntry {
+        host: Some("h1".to_string()),
+        name: "s".to_string(),
+        dir: String::new(),
+        kind: crate::state::SessionEntryKind::Live { is_current: false },
+    });
+    state.clamp_projects_focus();
+    // One forward up, one down → a "mixed" (warning-colored) rollup of 2.
+    state
+        .forward_health
+        .insert(ForwardKey::from_spec("h1", &f1), ForwardHealth::Up);
+    state
+        .forward_health
+        .insert(ForwardKey::from_spec("h1", &f2), ForwardHealth::Down);
+
+    let built = state.sidebar_layout(ViewMode::Expanded);
+    let sessions: Vec<&dyn SidebarSession> = state
+        .entries
+        .iter()
+        .map(|e| e as &dyn SidebarSession)
+        .collect();
+
+    let backend = TestBackend::new(40, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut captured = HitRegions::default();
+    terminal
+        .draw(|frame| {
+            captured = super::draw_sidebar(
+                frame,
+                frame.area(),
+                SidebarProps {
+                    sessions: &sessions,
+                    local_count: state.local_count(),
+                    built: &built,
+                    focus_target: state.focus_target(),
+                    sidebar_active: true,
+                    theme,
+                    show_help: false,
+                    confirm_kill: None,
+                    rename_input: None,
+                    show_borders: true,
+                    sidebar_tab: SidebarTab::Projects,
+                    agent_entries: &[],
+                    summary: &SummaryState::Idle,
+                    summary_age: None,
+                    spinner_idx: 0,
+                    summary_scroll: 0,
+                    summary_card_height: 0,
+                    tabs_mode: false,
+                    plugins: &[],
+                    blink_on: false,
+                    keybindings: &keybindings,
+                    update_available: None,
+                },
+            );
+        })
+        .unwrap();
+
+    // Buttons register left→right as badge, reconnect, more.
+    let h1: Vec<&crate::state::DividerHit> =
+        captured.dividers.iter().filter(|h| h.host == "h1").collect();
+    let kinds: Vec<DividerButton> = h1.iter().map(|h| h.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            DividerButton::ForwardBadge,
+            DividerButton::Reconnect,
+            DividerButton::More
+        ],
+        "the forward badge must be the leftmost divider button"
+    );
+    let badge = h1[0];
+    assert!(
+        badge.rect.x < h1[1].rect.x,
+        "badge sits to the left of the reconnect button"
+    );
+
+    // The badge paints `[⇄2]` in the warning color (mixed health).
+    let buf = terminal.backend().buffer();
+    assert_eq!(buf[(badge.rect.x, badge.rect.y)].symbol(), "[");
+    assert_eq!(buf[(badge.rect.x + 1, badge.rect.y)].symbol(), "⇄");
+    assert_eq!(buf[(badge.rect.x + 2, badge.rect.y)].symbol(), "2");
+    assert_eq!(
+        buf[(badge.rect.x + 1, badge.rect.y)].fg,
+        theme.warning,
+        "mixed forward health colors the badge with the warning slot"
+    );
+
+    // Clicking the badge opens the host's port-forward overlay.
+    let badge_rect = badge.rect;
+    state.hit_regions = captured;
+    let click = crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: badge_rect.x,
+        row: badge_rect.y,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    };
+    match crate::action::mouse_to_action(&click, &state) {
+        crate::action::Action::Pf(crate::action::PfAction::Open(host)) => {
+            assert_eq!(host, "h1");
+        }
+        other => panic!("expected Pf(Open), got {other:?}"),
+    }
+}
+
 /// The content area `draw_sidebar` lays out within for a horizontal
 /// sidebar with borders: the bordered container insets the full area by
 /// one cell on each side.

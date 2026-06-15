@@ -18,7 +18,10 @@ use crate::update::{UpdateCheckMode, UpdateStatus};
 pub use crate::effects::{
     CreateSessionRequest, Effect, KillRequest, RemoteSwitchRequest, RenameRequest, SideEffect,
 };
-pub use crate::forwards::{ForwardHealth, ForwardKey, PfAddForm, PfField, PortForwardOverlay};
+pub use crate::forwards::{
+    ForwardBadge, ForwardBadgeStatus, ForwardHealth, ForwardKey, PfAddForm, PfField,
+    PortForwardOverlay,
+};
 pub use crate::geometry::{
     AgentEntry, AgentEntryKind, AgentHit, AgentTarget, BuiltLayout, DividerButton, DividerHit,
     HitKind, HitRegions, KillConfirmHits, SectionLayoutOpts, SectionMeta, SidebarLayout,
@@ -1084,14 +1087,31 @@ impl AppState {
             .button("…")
     }
 
-    /// `@host` divider: per-host accent fill + `[⟳]` reconnect and `[…]`
-    /// menu buttons.
-    fn remote_divider(&self, host: &str, host_idx: usize) -> BasicItem {
-        BasicItem::new(format!("@{host}"))
+    /// `@host` divider: per-host accent fill, an optional `[⇄N]` port-forward
+    /// badge (leftmost, only when the host has forwards), then `[⟳]` reconnect
+    /// and `[…]` menu buttons.
+    fn remote_divider(&self, host: &str, host_idx: usize, badge: Option<ForwardBadge>) -> BasicItem {
+        let mut item = BasicItem::new(format!("@{host}"))
             .separator("─")
-            .color(host_accent(self.active_theme(), host_idx))
-            .button("⟳")
-            .button("…")
+            .color(host_accent(self.active_theme(), host_idx));
+        if let Some(badge) = badge {
+            item = item.button(format!("⇄{}", badge.total));
+        }
+        item.button("⟳").button("…")
+    }
+
+    /// Port-forward rollup for a remote host's divider badge, or `None` when
+    /// the host has no configured forwards. Each forward's liveness comes from
+    /// `forward_health` (defaulting to `Probing` until first probed), so the
+    /// badge color and the port-forward overlay always agree.
+    pub fn forward_badge(&self, host: &str) -> Option<ForwardBadge> {
+        let remote = self.config_remotes.iter().find(|r| r.host == host)?;
+        ForwardBadge::rollup(remote.forwards.iter().map(|f| {
+            self.forward_health
+                .get(&ForwardKey::from_spec(host, f))
+                .copied()
+                .unwrap_or(ForwardHealth::Probing)
+        }))
     }
 
     /// Shared skeleton behind both sidebar tabs: a local section followed by
@@ -1151,6 +1171,7 @@ impl AppState {
                 host: None,
                 buttons: vec![DividerButton::LocalMore],
                 divider: true,
+                forward_badge: None,
             },
             HostKey::local(),
             true,
@@ -1158,15 +1179,26 @@ impl AppState {
         push_rows(&mut layout, &mut sections, None);
 
         for (host_idx, host) in self.remote_hosts_in_order().into_iter().enumerate() {
+            let badge = self.forward_badge(&host);
+            // The badge button is leftmost (drawn before `[⟳]`/`[…]`), so its
+            // `DividerButton` entry must lead `buttons` to stay parallel with
+            // the `BasicItem` button order the hit-tester zips against.
+            let mut buttons = Vec::with_capacity(3);
+            if badge.is_some() {
+                buttons.push(DividerButton::ForwardBadge);
+            }
+            buttons.push(DividerButton::Reconnect);
+            buttons.push(DividerButton::More);
             push_divider(
                 &mut layout,
                 &mut sections,
                 &mut group_headers,
-                self.remote_divider(&host, host_idx),
+                self.remote_divider(&host, host_idx, badge),
                 SectionMeta {
                     host: Some(host.clone()),
-                    buttons: vec![DividerButton::Reconnect, DividerButton::More],
+                    buttons,
                     divider: true,
+                    forward_badge: badge,
                 },
                 HostKey::remote(&host),
                 false,
