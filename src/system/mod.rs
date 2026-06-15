@@ -43,8 +43,11 @@ pub trait System {
 
     /// Snapshot one lane's sessions + detected agents. Run off the UI thread by
     /// the refresh worker. `None` means the lane was unreachable this round
-    /// (distinct from "reachable, empty").
-    fn snapshot(&self, lane: &LaneId) -> Option<LaneSnapshot>;
+    /// (distinct from a reachable lane with no sessions). `probe_agents` is the
+    /// shell's hint that the Agents tab is active — when false a backend should
+    /// skip the (possibly expensive) agent detection and leave
+    /// [`LaneSnapshot::agents`] `None`.
+    fn snapshot(&self, lane: &LaneId, probe_agents: bool) -> Option<LaneSnapshot>;
 
     /// The control-plane handle for one lane (switch/rename/kill/create/…),
     /// run on the executor's per-lane worker thread. `ctx` carries the shell
@@ -124,9 +127,13 @@ pub enum BadgeStatus {
     Idle,
 }
 
-/// One lane's refresh result.
+/// One lane's refresh result. Returned inside `Option` — `None` from
+/// [`snapshot`](System::snapshot) means the lane was unreachable.
 #[derive(Debug, Clone)]
 pub struct LaneSnapshot {
     pub sessions: Vec<SessionInfo>,
-    pub agents: Vec<DetectedAgent>,
+    /// Detected agents, or `None` when not probed this round (the Agents tab
+    /// was inactive) or the agent probe failed — distinct from `Some(vec![])`
+    /// (probed, none found), which the shell uses to drop stale agents.
+    pub agents: Option<Vec<DetectedAgent>>,
 }

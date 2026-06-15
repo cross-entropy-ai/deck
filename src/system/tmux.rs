@@ -152,16 +152,26 @@ impl System for TmuxSystem {
         section_def(ctx, lane)
     }
 
-    fn snapshot(&self, lane: &LaneId) -> Option<LaneSnapshot> {
+    fn snapshot(&self, lane: &LaneId, probe_agents: bool) -> Option<LaneSnapshot> {
         match TmuxSystem::host_of(lane) {
             None => Some(LaneSnapshot {
                 sessions: tmux::list_sessions(),
-                agents: agent::detect_agents(&tmux::agent_panes(), &agent::ps_snapshot()),
+                // Raw detection only; the shell classifies status + applies
+                // exclude filters. `None` when the Agents tab is inactive.
+                agents: probe_agents
+                    .then(|| agent::detect_agents(&tmux::agent_panes(), &agent::ps_snapshot())),
             }),
-            Some(host) => Some(LaneSnapshot {
-                sessions: remote_tmux::list_sessions(host)?,
-                agents: remote_tmux::agent_probe(host).unwrap_or_default(),
-            }),
+            Some(host) => {
+                // Unreachable (the ssh+tmux list failed) → `None`, no probe:
+                // probing too would double the 5s ssh stall on a dead host.
+                let sessions = remote_tmux::list_sessions(host)?;
+                let agents = if probe_agents {
+                    remote_tmux::agent_probe(host)
+                } else {
+                    None
+                };
+                Some(LaneSnapshot { sessions, agents })
+            }
         }
     }
 

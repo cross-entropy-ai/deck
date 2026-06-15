@@ -18,7 +18,8 @@ use std::sync::Arc;
 use std::thread;
 
 use crate::config::{self, ExcludePattern};
-use crate::remote_tmux;
+use crate::system::tmux::TmuxSystem;
+use crate::system::System;
 use crate::tmux;
 
 pub struct RefreshRequest {
@@ -191,7 +192,9 @@ fn collect_local(
     }
     .unwrap_or_default();
 
-    let sessions = tmux::list_sessions();
+    // Gather the local lane's sessions + agents through the tmux System.
+    let snap = TmuxSystem.snapshot(&TmuxSystem::local_lane(), req.show_agents);
+    let (sessions, raw_agents) = snap.map_or_else(|| (Vec::new(), None), |s| (s.sessions, s.agents));
 
     let rows = sessions
         .into_iter()
@@ -203,17 +206,13 @@ fn collect_local(
         })
         .collect();
 
-    // Agent detection: walk each pane's process subtree for an interactive
-    // Claude Code / Codex (no hooks, cheap per round). Apply the SAME exclude
-    // filter as the rows above, so an agent in a hidden session doesn't
-    // surface in the footer. Skipped (no `ps`/subtree walk) when agents off.
-    let agents = if req.show_agents {
-        let mut agents =
-            crate::agent::detect_agents(&tmux::agent_panes(), &crate::agent::ps_snapshot());
+    // The System detects agents (when `show_agents`); the shell applies the
+    // SAME exclude filter as the rows above (so an agent in a hidden session
+    // doesn't surface) and classifies each one's traffic-light status from its
+    // pane buffer (local capture is cheap; remote agents stay `Unknown` until
+    // their probe captures buffers too).
+    let agents = if let Some(mut agents) = raw_agents {
         agents.retain(|a| !config::session_excluded(&a.session, compiled));
-        // Classify each agent's traffic-light status from its pane buffer.
-        // Local capture is cheap; remote agents stay `Unknown` (gray) until
-        // their probe captures buffers too.
         for a in &mut agents {
             if let Some(buf) = tmux::capture_pane(&a.pane_id) {
                 a.status = crate::agent::classify_status(a.kind, &buf);
@@ -248,18 +247,12 @@ fn collect_remotes(
             thread::Builder::new()
                 .name(format!("deck-remote-{host}"))
                 .spawn(move || {
-                    let sessions = remote_tmux::list_sessions(&host);
-                    // Probe agents ONLY when enabled AND the host is reachable
-                    // (`list_sessions` returned `Some`, incl. no-server). An
-                    // unreachable host already spent one 5s ssh timeout;
-                    // probing too would double the stall and hold the
-                    // single-flight gate ~10s, suppressing other hosts.
-                    let agents = if probe_agents && sessions.is_some() {
-                        remote_tmux::agent_probe(&host)
-                    } else {
-                        None
-                    };
-                    (host, sessions, agents)
+                    // The System gathers this host's lane: `None` = unreachable,
+                    // and it skips the agent probe when not enabled or the host
+                    // is unreachable (so a dead host doesn't spend two 5s ssh
+                    // timeouts and hold the single-flight gate ~10s).
+                    let snap = TmuxSystem.snapshot(&TmuxSystem::host_lane(&host), probe_agents);
+                    (host, snap)
                 })
                 .ok()
         })
@@ -268,8 +261,8 @@ fn collect_remotes(
     let mut out = Vec::new();
     let mut agents_by_host = HashMap::new();
     for (host, handle) in remotes.iter().zip(handles) {
-        let (host_name, sessions, agents) = match handle.and_then(|h| h.join().ok()) {
-            Some(triple) => triple,
+        let (host_name, snap) = match handle.and_then(|h| h.join().ok()) {
+            Some(pair) => pair,
             None => {
                 // Thread spawn or join failed — rare. Fall back to the
                 // original host string, mark unreachable.
@@ -282,39 +275,41 @@ fn collect_remotes(
                 continue;
             }
         };
-        if let Some(list) = agents {
+        let Some(snap) = snap else {
+            // Unreachable lane.
+            out.push(RemoteSnapshotRow {
+                host: host_name,
+                name: String::new(),
+                dir: String::new(),
+                kind: crate::state::SessionEntryKind::Unreachable,
+            });
+            continue;
+        };
+        // Only insert when the probe actually ran (`Some`); a failed/skipped
+        // probe leaves the host's agents "not probed" (stale kept upstream).
+        if let Some(list) = snap.agents {
             agents_by_host.insert(host_name.clone(), list);
         }
-        match sessions {
-            Some(mut sessions) if !sessions.is_empty() => {
-                // Honor per-session @deck_order from a remote reorder: ranked
-                // sessions first (by rank), never-reordered ones after in
-                // tmux's order. remote_sessions is rebuilt every refresh, so
-                // sorting here is what makes the order stick.
-                sessions.sort_by_key(|s| (s.order.is_none(), s.order.unwrap_or(0)));
-                for s in sessions {
-                    out.push(RemoteSnapshotRow {
-                        host: host_name.clone(),
-                        name: s.name,
-                        dir: s.dir,
-                        kind: crate::state::SessionEntryKind::Live { is_current: false },
-                    });
-                }
-            }
-            Some(_empty) => {
+        let mut sessions = snap.sessions;
+        if sessions.is_empty() {
+            out.push(RemoteSnapshotRow {
+                host: host_name,
+                name: String::new(),
+                dir: String::new(),
+                kind: crate::state::SessionEntryKind::NoSessions,
+            });
+        } else {
+            // Honor per-session @deck_order from a remote reorder: ranked
+            // sessions first (by rank), never-reordered ones after in tmux's
+            // order. remote_sessions is rebuilt every refresh, so sorting here
+            // is what makes the order stick.
+            sessions.sort_by_key(|s| (s.order.is_none(), s.order.unwrap_or(0)));
+            for s in sessions {
                 out.push(RemoteSnapshotRow {
-                    host: host_name,
-                    name: String::new(),
-                    dir: String::new(),
-                    kind: crate::state::SessionEntryKind::NoSessions,
-                });
-            }
-            None => {
-                out.push(RemoteSnapshotRow {
-                    host: host_name,
-                    name: String::new(),
-                    dir: String::new(),
-                    kind: crate::state::SessionEntryKind::Unreachable,
+                    host: host_name.clone(),
+                    name: s.name,
+                    dir: s.dir,
+                    kind: crate::state::SessionEntryKind::Live { is_current: false },
                 });
             }
         }
