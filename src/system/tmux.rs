@@ -175,18 +175,22 @@ impl System for TmuxSystem {
         }
     }
 
-    fn on_button(&self, lane: &LaneId, command: &str) -> Vec<Effect> {
+    fn on_button(&self, lane: &LaneId, command: &str, x: u16, y: u16) -> Vec<Effect> {
         let host = TmuxSystem::host_of(lane);
         match command {
-            cmd::MENU => match host {
-                None => vec![], // local menu is opened by the shell's overlay path
-                Some(_h) => vec![],
-            },
+            cmd::MENU => vec![Effect::OpenDividerMenu {
+                host: host.map(str::to_string),
+                x,
+                y,
+            }],
             cmd::RECONNECT => match host {
-                Some(h) => vec![Effect::RefreshSessions, Effect::ShowRemotePlaceholder(h.to_string())],
+                Some(h) => vec![Effect::ReconnectHost(h.to_string())],
                 None => vec![],
             },
-            cmd::FORWARDS => vec![],
+            cmd::FORWARDS => match host {
+                Some(h) => vec![Effect::OpenForwardOverlay(h.to_string())],
+                None => vec![],
+            },
             _ => vec![],
         }
     }

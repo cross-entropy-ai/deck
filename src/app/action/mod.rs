@@ -78,6 +78,16 @@ pub enum Action {
         host: String,
     },
 
+    /// A divider button declared by a System was clicked. Routed to that
+    /// System's `on_button` (decision A) — the shell doesn't interpret the
+    /// command itself. `(x, y)` is the button's screen position.
+    SystemButton {
+        lane: crate::lane::LaneId,
+        command: String,
+        x: u16,
+        y: u16,
+    },
+
     Quit,
 
     /// Settings page and its sub-overlays (theme picker, keybindings view,

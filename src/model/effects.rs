@@ -23,6 +23,18 @@ pub enum Effect {
     CreateSession(CreateSessionRequest),
     /// Detach a remote host from deck (equivalent to `deck remote remove <host>`).
     RemoveRemoteHost(String),
+    /// Reconnect/respawn a remote host's ssh+tmux PTY. Emitted by a System's
+    /// `on_button` (the `[⟳]` divider button); App rebuilds the connection.
+    ReconnectHost(String),
+    /// Open a host's port-forward overlay (the `[⇄N]` badge button).
+    OpenForwardOverlay(String),
+    /// Open a divider's context menu at `(x, y)`. `host` is `None` for the
+    /// `@local` divider, `Some(host)` for a remote one (the `[…]` button).
+    OpenDividerMenu {
+        host: Option<String>,
+        x: u16,
+        y: u16,
+    },
     OpenNewSessionPicker,
     OpenRemoteNewSessionPicker(String),
     OpenAddRemotePicker,

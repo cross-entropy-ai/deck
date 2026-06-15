@@ -477,11 +477,15 @@ fn remote_divider_shows_colored_forward_badge() {
         row: badge_rect.y,
         modifiers: crossterm::event::KeyModifiers::NONE,
     };
+    // Decision A: the click yields a generic SystemButton carrying the lane +
+    // the system's button command; the tmux System turns "forwards" into the
+    // port-forward overlay (verified in the system's own tests).
     match crate::action::mouse_to_action(&click, &state) {
-        crate::action::Action::Pf(crate::action::PfAction::Open(host)) => {
-            assert_eq!(host, "h1");
+        crate::action::Action::SystemButton { lane, command, .. } => {
+            assert_eq!(command, "forwards");
+            assert_eq!(TmuxSystem::host_of(&lane), Some("h1"));
         }
-        other => panic!("expected Pf(Open), got {other:?}"),
+        other => panic!("expected SystemButton, got {other:?}"),
     }
 }
 

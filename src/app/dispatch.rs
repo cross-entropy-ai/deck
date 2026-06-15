@@ -174,6 +174,22 @@ impl App {
                 self.request_refresh();
                 false
             }
+            Action::SystemButton {
+                lane,
+                command,
+                x,
+                y,
+            } => {
+                // Decision A: the System owns what its divider buttons do. Ask
+                // it for the effects and run them through the normal pipeline.
+                use crate::system::System;
+                let mut fx = crate::state::SideEffect::default();
+                for e in crate::system::tmux::TmuxSystem.on_button(&lane, &command, x, y) {
+                    fx.push(e);
+                }
+                self.execute_side_effects(&fx);
+                false
+            }
             Action::Pf(PfAction::AddSubmit) => {
                 self.pf_add_submit();
                 false
@@ -794,6 +810,28 @@ impl App {
                     // pointer) so a later re-add of the same host gets a fresh
                     // connection instead of inheriting stale `Failed` status.
                     self.offboard_remote_host(host);
+                }
+                // The divider-button effects a System emits (decision A). Each
+                // reuses the existing action path, so behavior can't drift from
+                // the keyboard/menu routes to the same destinations.
+                Effect::ReconnectHost(host) => {
+                    self.dispatch(Action::ReconnectHost {
+                        host: host.clone(),
+                    });
+                }
+                Effect::OpenForwardOverlay(host) => {
+                    self.dispatch(Action::Pf(PfAction::Open(host.clone())));
+                }
+                Effect::OpenDividerMenu { host, x, y } => {
+                    let action = match host {
+                        Some(h) => Action::Menu(MenuAction::OpenHostDivider {
+                            host: h.clone(),
+                            x: *x,
+                            y: *y,
+                        }),
+                        None => Action::Menu(MenuAction::OpenLocalDivider { x: *x, y: *y }),
+                    };
+                    self.dispatch(action);
                 }
                 Effect::ApplyTmuxTheme => {
                     tmux::apply_theme(&THEMES[self.state.prefs.theme_index]);

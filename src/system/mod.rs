@@ -53,10 +53,12 @@ pub trait System {
     fn control(&self, lane: &LaneId, ctx: &ControlCtx) -> Box<dyn SessionControl + Send>;
 
     /// Handle a click on a button this system declared on `lane`'s divider,
-    /// identified by the button's [`command`](SectionButton::command). Returns
-    /// shell effects to enqueue. This is the single seam that lets a system own
-    /// button semantics without the reducer growing a per-system arm.
-    fn on_button(&self, lane: &LaneId, command: &str) -> Vec<Effect>;
+    /// identified by the button's [`command`](SectionButton::command). `(x, y)`
+    /// is the button's screen position, for commands that open positioned UI
+    /// (e.g. a context menu). Returns shell effects to enqueue. This is the
+    /// single seam that lets a system own button semantics without the reducer
+    /// growing a per-system arm.
+    fn on_button(&self, lane: &LaneId, command: &str, x: u16, y: u16) -> Vec<Effect>;
 }
 
 /// Read-only state a [`System`] consults to build its [`sections`](System::sections).
