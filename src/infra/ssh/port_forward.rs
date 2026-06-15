@@ -3,7 +3,7 @@
 //! the returned `Command`s on their own threads.
 //!
 //! All builders pass the same `-o ControlMaster=auto -o ControlPath=…
-//! -o ControlPersist=…` block so this worker and `app::remote_spawn`
+//! -o ControlPersist=…` block so this worker and `app::ssh::remote_spawn`
 //! share the same master socket per host.
 
 use std::process::Command;
@@ -12,7 +12,7 @@ use crate::config::ForwardSpec;
 
 /// The common ssh argument block: the shared [`crate::ssh::CONTROL_OPTS`]
 /// control options followed by `host`, so this worker and
-/// `app::remote_spawn` reach the same master socket per host.
+/// `app::ssh::remote_spawn` reach the same master socket per host.
 pub fn ssh_args_for_host(host: &str) -> Vec<String> {
     crate::ssh::CONTROL_OPTS
         .iter()

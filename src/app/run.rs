@@ -271,7 +271,7 @@ impl App {
         let mut redraw = Redraw::No;
         while let Ok(r) = self.port_forward_rx.try_recv() {
             match r.kind {
-                crate::app::port_forward_task::OpKind::Probe(key, health) => {
+                crate::app::ssh::port_forward_task::OpKind::Probe(key, health) => {
                     self.dispatch(Action::Pf(PfAction::ProbeResult { key, health }));
                 }
                 kind => {

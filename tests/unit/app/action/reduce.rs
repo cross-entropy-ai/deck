@@ -956,7 +956,7 @@ fn pf_task_result_persists_forward_when_overlay_closed() {
         &mut state,
         Action::Pf(PfAction::TaskResult {
             host: "h1".into(),
-            op: crate::app::port_forward_task::OpKind::Forward("h1".into(), spec.clone()),
+            op: crate::app::ssh::port_forward_task::OpKind::Forward("h1".into(), spec.clone()),
             ok: true,
             message: String::new(),
         }),
@@ -985,7 +985,7 @@ fn pf_task_result_marks_host_unreachable_on_master_failure() {
         &mut state,
         Action::Pf(PfAction::TaskResult {
             host: "h1".into(),
-            op: crate::app::port_forward_task::OpKind::Master("h1".into()),
+            op: crate::app::ssh::port_forward_task::OpKind::Master("h1".into()),
             ok: false,
             message: "connection refused".into(),
         }),

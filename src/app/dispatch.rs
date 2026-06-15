@@ -828,7 +828,7 @@ impl App {
                     // it) so the host stops occupying SSH state once detached.
                     let _ = self
                         .port_forward_tx
-                        .send(crate::app::port_forward_task::Op::StopHost { host: host.clone() });
+                        .send(crate::app::ssh::port_forward_task::Op::StopHost { host: host.clone() });
                     // Drop the per-host runtime state (PTY, conn status, active
                     // pointer) so a later re-add of the same host gets a fresh
                     // connection instead of inheriting stale `Failed` status.
@@ -921,7 +921,7 @@ impl App {
         overlay.status = Some("applying...".into());
         let _ = self
             .port_forward_tx
-            .send(crate::app::port_forward_task::Op::AddForward { host, spec });
+            .send(crate::app::ssh::port_forward_task::Op::AddForward { host, spec });
     }
 
     /// Cancel-then-remove. Spec semantics: remove from config regardless
@@ -973,6 +973,6 @@ impl App {
 
         let _ = self
             .port_forward_tx
-            .send(crate::app::port_forward_task::Op::CancelForward { host, spec });
+            .send(crate::app::ssh::port_forward_task::Op::CancelForward { host, spec });
     }
 }

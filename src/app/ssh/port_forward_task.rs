@@ -260,5 +260,5 @@ pub fn spawn(results: Sender<OpResult>) -> Sender<Op> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/app/port_forward_task.rs"]
+#[path = "../../../tests/unit/app/port_forward_task.rs"]
 mod tests;

@@ -1,5 +1,5 @@
 pub mod action;
-pub mod port_forward_task;
+pub mod ssh;
 
 mod dispatch;
 mod lifecycle;
@@ -7,8 +7,6 @@ mod new_session_flow;
 mod pty;
 mod refresh;
 mod reload;
-mod remote_conn;
-mod remote_spawn;
 mod render;
 mod run;
 pub mod settings;
@@ -60,7 +58,7 @@ impl TerminalPane {
     }
 }
 
-pub(super) use remote_conn::RemoteConnManager;
+pub(super) use ssh::remote_conn::RemoteConnManager;
 
 pub struct App {
     state: AppState,
@@ -70,7 +68,7 @@ pub struct App {
     /// remote host (status + attach PTY), the background PTY spawner, which
     /// host (if any) drives the main pane, the deferred-switch and
     /// switch-verify ledgers, and the per-host spawn-generation counter.
-    /// See `app/remote_conn.rs`.
+    /// See `app/ssh/remote_conn.rs`.
     remote: RemoteConnManager,
     warning_state: Option<WarningState>,
     plugin_instances: Vec<Option<TerminalPane>>,
@@ -93,9 +91,9 @@ pub struct App {
     /// terminal emulator leaves from the previous session.
     pub(super) needs_full_redraw: bool,
     /// Channel to the port-forward worker thread.
-    port_forward_tx: std::sync::mpsc::Sender<crate::app::port_forward_task::Op>,
+    port_forward_tx: std::sync::mpsc::Sender<crate::app::ssh::port_forward_task::Op>,
     /// Results coming back from the port-forward worker.
-    port_forward_rx: std::sync::mpsc::Receiver<crate::app::port_forward_task::OpResult>,
+    port_forward_rx: std::sync::mpsc::Receiver<crate::app::ssh::port_forward_task::OpResult>,
     /// Completion signals from remote agent-pane focus threads. Remote
     /// focus runs off-thread (ssh can stall), so `active_agent` is only
     /// committed when a `true` outcome lands here — see
@@ -245,7 +243,7 @@ impl App {
             .collect();
 
         let (pf_result_tx, pf_result_rx) = std::sync::mpsc::channel();
-        let port_forward_tx = crate::app::port_forward_task::spawn(pf_result_tx);
+        let port_forward_tx = crate::app::ssh::port_forward_task::spawn(pf_result_tx);
         let (focus_tx, focus_rx) = std::sync::mpsc::channel();
         let (active_pane_tx, active_pane_rx) = std::sync::mpsc::channel();
 
@@ -290,7 +288,7 @@ impl App {
         if !hosts.is_empty() {
             let _ = app
                 .port_forward_tx
-                .send(crate::app::port_forward_task::Op::Bootstrap { hosts });
+                .send(crate::app::ssh::port_forward_task::Op::Bootstrap { hosts });
         }
 
         Ok(app)
@@ -370,7 +368,7 @@ impl App {
     ///   re-grab focus);
     /// - drop the agent highlight if it belonged to this host (a gone host
     ///   shouldn't keep a footer line marked active).
-    pub(super) fn detach_host_view(&mut self, host: &str, detach: remote_conn::DetachOutcome) {
+    pub(super) fn detach_host_view(&mut self, host: &str, detach: ssh::remote_conn::DetachOutcome) {
         if detach.was_active {
             self.needs_full_redraw = true;
         }

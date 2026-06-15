@@ -55,7 +55,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use super::remote_spawn::{RemoteSpawnEvent, RemoteSpawner};
-use super::TerminalPane;
+use crate::app::TerminalPane;
 
 /// Liveness of the persistent `ssh -tt host tmux attach` PTY for a
 /// configured remote host. This is distinct from whether `list_sessions`
@@ -649,5 +649,5 @@ pub(crate) struct DetachOutcome {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/app/remote_conn.rs"]
+#[path = "../../../tests/unit/app/remote_conn.rs"]
 mod tests;

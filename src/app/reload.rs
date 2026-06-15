@@ -111,7 +111,7 @@ impl App {
             if !new_remotes.iter().any(|n| n.host == old.host) {
                 let _ = self
                     .port_forward_tx
-                    .send(crate::app::port_forward_task::Op::StopHost {
+                    .send(crate::app::ssh::port_forward_task::Op::StopHost {
                         host: old.host.clone(),
                     });
                 self.offboard_remote_host(&old.host);
@@ -138,13 +138,13 @@ impl App {
             for op in crate::config::diff_forwards(old_fwds, &n.forwards) {
                 let msg = match op {
                     crate::config::ForwardOp::Add(spec) => {
-                        crate::app::port_forward_task::Op::AddForward {
+                        crate::app::ssh::port_forward_task::Op::AddForward {
                             host: n.host.clone(),
                             spec,
                         }
                     }
                     crate::config::ForwardOp::Cancel(spec) => {
-                        crate::app::port_forward_task::Op::CancelForward {
+                        crate::app::ssh::port_forward_task::Op::CancelForward {
                             host: n.host.clone(),
                             spec,
                         }

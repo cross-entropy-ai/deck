@@ -45,7 +45,7 @@ impl App {
         }
         let _ = self
             .port_forward_tx
-            .send(crate::app::port_forward_task::Op::Probe { items });
+            .send(crate::app::ssh::port_forward_task::Op::Probe { items });
     }
 
     pub(super) fn apply_update(&mut self, update: RefreshUpdate) {

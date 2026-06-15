@@ -26,7 +26,7 @@ use portable_pty::PtySize;
 
 use crate::pty::Pty;
 
-use super::TerminalPane;
+use crate::app::TerminalPane;
 
 /// Allocates a process-unique id for each PTY (re)spawn so every
 /// connection gets its own client-tty marker file — see
@@ -44,7 +44,7 @@ fn next_marker_id() -> u64 {
 /// (~768 bytes) — keeping it inline made the `Failed` variant pay the
 /// same cost. The box is short-lived: the consumer unboxes immediately
 /// and moves the pane into `remote_terminals`.
-pub(super) enum RemoteSpawnEvent {
+pub(in crate::app) enum RemoteSpawnEvent {
     Spawned {
         host: String,
         pane: Box<TerminalPane>,
@@ -78,7 +78,7 @@ pub(super) enum RemoteSpawnEvent {
 
 impl RemoteSpawnEvent {
     /// The host this event is about, regardless of outcome.
-    pub(super) fn host(&self) -> &str {
+    pub(in crate::app) fn host(&self) -> &str {
         match self {
             RemoteSpawnEvent::Spawned { host, .. }
             | RemoteSpawnEvent::Failed { host, .. }
@@ -89,7 +89,7 @@ impl RemoteSpawnEvent {
     /// The spawn generation this event was stamped with — see the
     /// `Spawned.generation` doc and `RemoteConnManager` for how it gates
     /// stale events.
-    pub(super) fn generation(&self) -> u64 {
+    pub(in crate::app) fn generation(&self) -> u64 {
         match self {
             RemoteSpawnEvent::Spawned { generation, .. }
             | RemoteSpawnEvent::Failed { generation, .. }
@@ -102,7 +102,7 @@ impl RemoteSpawnEvent {
 /// worker threads, which finish on their own after delivering one
 /// event. Dropping this struct closes the channel; any still-pending
 /// worker's `send` will fail quietly.
-pub(super) struct RemoteSpawner {
+pub(in crate::app) struct RemoteSpawner {
     rx: Receiver<RemoteSpawnEvent>,
     /// Kept alive so additional hosts (added via hot-reload) can be
     /// spawned post-startup. Cloned per spawn so worker threads outlive

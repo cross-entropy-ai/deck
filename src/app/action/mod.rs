@@ -230,7 +230,7 @@ pub enum PfAction {
     AddInputKey(crossterm::event::KeyEvent),
     TaskResult {
         host: String,
-        op: crate::app::port_forward_task::OpKind,
+        op: crate::app::ssh::port_forward_task::OpKind,
         ok: bool,
         message: String,
     },

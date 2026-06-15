@@ -13,7 +13,7 @@ use super::{
     marker_retry_decision, reconcile_spawn_event, MarkerRetry, MarkerRetryAction, RemoteConn,
     RemoteConnStatus, SpawnDecision, MARKER_RETRY_BASE, MARKER_RETRY_MAX_ATTEMPTS,
 };
-use crate::app::remote_spawn::RemoteSpawnEvent;
+use crate::app::ssh::remote_spawn::RemoteSpawnEvent;
 
 /// A `Connected`/marker-ready connection on a given marker id — enough to
 /// drive the pure reconcile/stuck logic without a real PTY (`pane` stays

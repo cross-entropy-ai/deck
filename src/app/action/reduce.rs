@@ -1348,11 +1348,11 @@ fn humanize_forward_error(raw: &str) -> String {
 fn apply_pf_task_result(
     state: &mut AppState,
     host: &str,
-    op: &crate::app::port_forward_task::OpKind,
+    op: &crate::app::ssh::port_forward_task::OpKind,
     ok: bool,
     message: &str,
 ) -> SideEffect {
-    use crate::app::port_forward_task::OpKind;
+    use crate::app::ssh::port_forward_task::OpKind;
     let mut fx = SideEffect::default();
 
     // --- Side effects independent of overlay state ---
