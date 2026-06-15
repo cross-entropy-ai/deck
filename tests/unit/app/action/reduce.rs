@@ -698,17 +698,46 @@ fn settings_next_clamps_to_total_row_count() {
 }
 
 #[test]
-fn settings_system_row_fires_its_effect() {
-    // The appended system row (tmux's "Remotes") sits just past the core
-    // table; adjusting it pushes the system's Effect, not an Action.
+fn settings_provider_row_fires_its_effect() {
+    // The appended provider rows (ssh's) sit just past the core table;
+    // adjusting the first pushes the provider's Effect, not an Action.
     use crate::app::settings::SETTING_ROWS;
     let mut state = make_test_state(1);
-    state.settings.selected = SETTING_ROWS.len(); // first system row
+    state.settings.selected = SETTING_ROWS.len(); // first provider row
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(fx
         .effects()
         .iter()
         .any(|e| matches!(e, crate::effects::Effect::OpenAddRemotePicker)));
+}
+
+#[test]
+fn removing_a_remote_drops_its_forwards_and_prunes_health() {
+    use crate::config::RemoteConfig;
+    use crate::forwards::{ForwardHealth, ForwardKey, ForwardMode, ForwardSpec};
+
+    let spec = ForwardSpec {
+        mode: ForwardMode::Local,
+        bind_addr: None,
+        listen_port: 8080,
+        target_host: Some("localhost".into()),
+        target_port: Some(80),
+    };
+    let mut state = make_test_state(1);
+    state.config_remotes.push(RemoteConfig {
+        host: "prod".into(),
+        forwards: vec![spec.clone()],
+    });
+    state
+        .forward_health
+        .insert(ForwardKey::from_spec("prod", &spec), ForwardHealth::Up);
+
+    apply_action(&mut state, Action::RemoveRemoteFromList("prod".into()));
+
+    // The host is gone, so its nested forward rules go with it...
+    assert!(state.config_remotes.iter().all(|r| r.host != "prod"));
+    // ...and the orphaned liveness key is pruned, not left to accrete.
+    assert!(state.forward_health.is_empty());
 }
 
 fn rename_state(initial: &str) -> RenameState {

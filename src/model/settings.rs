@@ -18,17 +18,17 @@ pub struct SettingsCtx<'a> {
 }
 
 /// One settings row a provider contributes. Mirrors the app's core
-/// `SettingRow`, but `effect` yields an [`Effect`] (not an `Action`).
-/// `value`/`help` are computed from [`SettingsCtx`] at build time, so this
-/// carries plain strings.
+/// `SettingRow`, but the row yields [`Effect`]s (not an `Action`). `value`/
+/// `help` are computed from [`SettingsCtx`] at build time, so this carries
+/// plain strings.
 pub struct SettingDef {
     pub label: &'static str,
     pub value: String,
     pub help: String,
-    /// Direction (`+1` right / `-1` left; Enter is `+1`) → the row's effect.
-    // ponytail: fn-ptr like the core table — no captured payload. If a row ever
-    // needs to close over data (e.g. a per-host effect), widen to Box<dyn Fn>.
-    pub effect: fn(i32) -> Effect,
+    /// Direction (`+1` right / `-1` left; Enter is `+1`) → the effects the row
+    /// fires (empty = no-op). A boxed closure, so a provider can capture state
+    /// it read from [`SettingsCtx`] — e.g. the host an ssh row targets.
+    pub effect: Box<dyn Fn(i32) -> Vec<Effect>>,
 }
 
 /// The unified contract: a subsystem exposes one of these to add settings

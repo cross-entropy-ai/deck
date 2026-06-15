@@ -280,7 +280,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // Mirror `deck remote remove <host>` on the in-memory copy: drop
             // the host from config_remotes (save_config persists it) and clear
             // its session rows so the sidebar updates before the next refresh.
+            // The host's forward *rules* ride inside its `RemoteConfig`, so
+            // they're dropped here too; prune their now-orphaned liveness keys.
             state.config_remotes.retain(|r| r.host != host);
+            state.prune_forward_health();
             state
                 .entries
                 .retain(|e| e.host.as_deref() != Some(host.as_str()));
@@ -565,7 +568,9 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
                 let inner = apply_action(state, (row.adjust)(direction));
                 fx.merge(inner);
             } else if let Some(def) = provider_setting_defs(state).get(sel - SETTING_ROWS.len()) {
-                fx.push((def.effect)(direction));
+                for e in (def.effect)(direction) {
+                    fx.push(e);
+                }
             }
         }
         SettingsAction::CycleFrameRateLimit(direction) => {

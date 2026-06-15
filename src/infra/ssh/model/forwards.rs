@@ -6,6 +6,7 @@
 use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
+use crate::config::RemoteConfig;
 use crate::new_session::{make_textarea, textarea_line};
 
 // --- Persisted forward rule ---
@@ -178,6 +179,24 @@ impl ForwardBadge {
         };
         Some(Self { total, status })
     }
+}
+
+/// Roll a host's configured forwards + live health into a badge — the per-host
+/// `⇄N` summary a remote divider renders. Owned here (the ssh side) rather than
+/// by the tmux system: the tmux divider only maps the returned [`ForwardBadge`]
+/// to its own badge type. `None` when the host has no forwards.
+pub fn host_badge(
+    remotes: &[RemoteConfig],
+    health: &std::collections::HashMap<ForwardKey, ForwardHealth>,
+    host: &str,
+) -> Option<ForwardBadge> {
+    let remote = remotes.iter().find(|r| r.host == host)?;
+    ForwardBadge::rollup(remote.forwards.iter().map(|f| {
+        health
+            .get(&ForwardKey::from_spec(host, f))
+            .copied()
+            .unwrap_or(ForwardHealth::Probing)
+    }))
 }
 
 // --- Port forward overlay ---

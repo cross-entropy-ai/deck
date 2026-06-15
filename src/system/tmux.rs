@@ -6,7 +6,7 @@
 
 use crate::agent;
 use crate::effects::Effect;
-use crate::forwards::{ForwardBadge, ForwardBadgeStatus, ForwardHealth, ForwardKey};
+use crate::forwards::ForwardBadgeStatus;
 use crate::lane::LaneId;
 use crate::session::local::LocalControl;
 use crate::session::remote::RemoteControl;
@@ -65,15 +65,11 @@ pub fn lane(host: Option<&str>) -> LaneId {
     }
 }
 
-/// Roll a host's configured forwards + live health into a divider badge.
+/// Map ssh's per-host forward rollup (computed in `crate::forwards`) onto the
+/// divider [`Badge`] the shell renders. The forward logic lives on the ssh
+/// side; this only adapts its result to the System badge type.
 fn forward_badge(ctx: &SectionCtx, host: &str) -> Option<Badge> {
-    let remote = ctx.remotes.iter().find(|r| r.host == host)?;
-    let rollup = ForwardBadge::rollup(remote.forwards.iter().map(|f| {
-        ctx.forward_health
-            .get(&ForwardKey::from_spec(host, f))
-            .copied()
-            .unwrap_or(ForwardHealth::Probing)
-    }))?;
+    let rollup = crate::forwards::host_badge(ctx.remotes, ctx.forward_health, host)?;
     let status = match rollup.status {
         ForwardBadgeStatus::AllUp => BadgeStatus::Ok,
         ForwardBadgeStatus::AllDown => BadgeStatus::Err,
