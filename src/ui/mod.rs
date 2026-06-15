@@ -37,21 +37,13 @@ pub struct PluginView<'a> {
     pub status: PluginStatus,
 }
 
-/// Where a sidebar session lives. The sidebar renderer is otherwise
-/// origin-agnostic; it only consults this to drive group dividers and
-/// to dispatch row-level actions to the right backend.
-#[derive(Debug, Clone, Copy)]
-pub enum SessionOrigin<'a> {
-    Local,
-    Remote { host: &'a str },
-}
-
 /// The session-row abstraction the tabs-mode renderer consumes (the
 /// Expanded/Compact list builds rows from `SessionEntry` directly in `model`).
-/// Tabs mode reads only origin/name/unreachable; the renderer must not branch
-/// on concrete types.
+/// Tabs mode reads only host/name/unreachable; the renderer must not branch
+/// on concrete types. `host()` is `None` for a local session, `Some(host)`
+/// for a remote one — the renderer passes it straight to `tab_label`.
 pub trait SidebarSession {
-    fn origin(&self) -> SessionOrigin<'_>;
+    fn host(&self) -> Option<&str>;
     fn name(&self) -> &str;
     /// Reaching this session's source failed (timeout, auth, ...).
     /// Tab label is still drawn, just greyed out.
@@ -64,11 +56,8 @@ pub trait SidebarSession {
 // Some = remote); the placeholder kinds paint their label. The renderer
 // never asks "is this remote?".
 impl SidebarSession for SessionEntry {
-    fn origin(&self) -> SessionOrigin<'_> {
-        match &self.host {
-            None => SessionOrigin::Local,
-            Some(host) => SessionOrigin::Remote { host },
-        }
+    fn host(&self) -> Option<&str> {
+        self.host.as_deref()
     }
     fn name(&self) -> &str {
         // The placeholder display strings live here, derived from `kind`,

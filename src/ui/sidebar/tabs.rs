@@ -8,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::geometry::{TAB_INNER_PAD, TAB_LEADING_PAD, TAB_SEPARATOR};
 
 use super::super::text::pad_line;
-use super::super::{SessionOrigin, SidebarSession};
+use super::super::SidebarSession;
 use super::container::draw_sidebar_container;
 use super::{menu_span, SidebarRenderCtx, MENU_LABEL};
 
@@ -47,12 +47,7 @@ pub(super) fn draw_sidebar_tabs(
     for (i, session) in sessions.iter().enumerate() {
         let is_focused = i == focused;
 
-        let label = match session.origin() {
-            SessionOrigin::Local => crate::geometry::tab_label(None, session.name()),
-            SessionOrigin::Remote { host } => {
-                crate::geometry::tab_label(Some(host), session.name())
-            }
-        };
+        let label = crate::geometry::tab_label(session.host(), session.name());
 
         let bg = if is_focused { theme.surface } else { theme.bg };
         let name_fg = if session.unreachable() {
