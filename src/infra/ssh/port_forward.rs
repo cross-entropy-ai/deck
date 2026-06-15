@@ -40,23 +40,13 @@ pub fn build_master_cmd(host: &str) -> Command {
 /// the existing master. Fails with non-zero exit if master isn't up.
 pub fn build_forward_cmd(host: &str, spec: &ForwardSpec) -> Command {
     let (flag, value) = spec.ssh_flag_and_value();
-    let mut c = Command::new("ssh");
-    c.arg("-O").arg("forward").arg(flag).arg(value);
-    for a in ssh_args_for_host(host) {
-        c.arg(a);
-    }
-    c
+    ssh_with(host, &["-O", "forward", flag, value.as_str()])
 }
 
 /// `ssh -O cancel -L 8080:host:80 <opts> <host>` — remove a forward.
 pub fn build_cancel_cmd(host: &str, spec: &ForwardSpec) -> Command {
     let (flag, value) = spec.ssh_flag_and_value();
-    let mut c = Command::new("ssh");
-    c.arg("-O").arg("cancel").arg(flag).arg(value);
-    for a in ssh_args_for_host(host) {
-        c.arg(a);
-    }
-    c
+    ssh_with(host, &["-O", "cancel", flag, value.as_str()])
 }
 
 /// `ssh -O exit <opts> <host>` — tear down the master entirely.
