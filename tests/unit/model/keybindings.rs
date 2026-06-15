@@ -1,5 +1,6 @@
 use super::*;
 use crokey::key;
+use crossterm::event::{KeyCode, KeyModifiers};
 
 fn ev(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
     KeyEvent::new(code, mods)
@@ -184,7 +185,7 @@ fn unknown_command_silently_ignored_keeps_defaults() {
     );
 }
 
-// --- migrate_keybindings (renames + unknown sweep) ---
+// --- migrate_keybindings (unknown sweep) ---
 
 #[test]
 fn migrate_drops_unknown_command() {
@@ -203,91 +204,6 @@ fn migrate_leaves_valid_crokey_bindings_untouched() {
     assert!(!migrate_keybindings(&mut map));
     assert_eq!(map.len(), 1);
     assert!(map.contains_key("quit"));
-}
-
-#[test]
-fn migrate_renames_binding_to_new_name() {
-    let mut map = cfg(&[("old_quit", KeyBindingValue::Single("z".into()))]);
-    assert!(migrate_keybindings_with(&mut map, &[("old_quit", "quit")]));
-    assert!(!map.contains_key("old_quit"));
-    assert_eq!(map.get("quit"), Some(&KeyBindingValue::Single("z".into())));
-}
-
-#[test]
-fn migrate_rename_does_not_clobber_existing() {
-    let mut map = cfg(&[
-        ("old_quit", KeyBindingValue::Single("z".into())),
-        ("quit", KeyBindingValue::Single("q".into())),
-    ]);
-    assert!(migrate_keybindings_with(&mut map, &[("old_quit", "quit")]));
-    assert_eq!(map.get("quit"), Some(&KeyBindingValue::Single("q".into())));
-    assert!(!map.contains_key("old_quit"));
-}
-
-// --- migrate_keybinding_syntax (legacy deck DSL -> crokey) ---
-
-#[test]
-fn migrate_syntax_rewrites_legacy_modifiers() {
-    let mut map = cfg(&[
-        ("toggle_focus", KeyBindingValue::Single("C-s".into())),
-        ("reorder_up", KeyBindingValue::Single("A-Up".into())),
-    ]);
-    assert!(migrate_keybinding_syntax(&mut map));
-    // The rewritten strings parse, and resolve to the same chords the
-    // legacy strings denoted.
-    let toggle = match map.get("toggle_focus").unwrap() {
-        KeyBindingValue::Single(s) => s.clone(),
-        other => panic!("expected Single, got {other:?}"),
-    };
-    assert_ne!(toggle, "C-s");
-    assert_eq!(
-        parse_key(&toggle).unwrap(),
-        KeyCombination::from(ev(KeyCode::Char('s'), KeyModifiers::CONTROL)).normalized()
-    );
-    let reorder = match map.get("reorder_up").unwrap() {
-        KeyBindingValue::Single(s) => s.clone(),
-        other => panic!("expected Single, got {other:?}"),
-    };
-    assert_eq!(
-        parse_key(&reorder).unwrap(),
-        KeyCombination::from(ev(KeyCode::Up, KeyModifiers::ALT)).normalized()
-    );
-}
-
-#[test]
-fn migrate_syntax_is_idempotent() {
-    let mut map = cfg(&[
-        ("toggle_focus", KeyBindingValue::Single("C-s".into())),
-        (
-            "toggle_help",
-            KeyBindingValue::Multi(vec!["h".into(), "?".into()]),
-        ),
-    ]);
-    assert!(migrate_keybinding_syntax(&mut map));
-    // Second pass over already-migrated values changes nothing.
-    assert!(!migrate_keybinding_syntax(&mut map));
-}
-
-#[test]
-fn migrate_syntax_preserves_plain_keys() {
-    // Plain single-key bindings are already valid crokey syntax.
-    let mut map = cfg(&[("quit", KeyBindingValue::Single("q".into()))]);
-    assert!(!migrate_keybinding_syntax(&mut map));
-    assert_eq!(map.get("quit"), Some(&KeyBindingValue::Single("q".into())));
-}
-
-#[test]
-fn legacy_config_resolves_after_full_migration() {
-    // A config written in the old DSL must still bind correctly once
-    // run through the full migration that `Config::load` applies.
-    let mut map = cfg(&[("toggle_focus", KeyBindingValue::Single("C-s".into()))]);
-    migrate_keybindings(&mut map);
-    let (kb, warnings) = Keybindings::from_config(&map);
-    assert!(warnings.is_empty(), "warnings: {warnings:?}");
-    assert_eq!(
-        kb.lookup(&ev(KeyCode::Char('s'), KeyModifiers::CONTROL)),
-        Some(Command::ToggleFocus)
-    );
 }
 
 #[test]

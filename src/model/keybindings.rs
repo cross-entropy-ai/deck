@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::OnceLock;
 
 use crokey::{key, KeyCombination, KeyCombinationFormat};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::KeyEvent;
 
 use crate::config::KeyBindingValue;
 
@@ -108,74 +108,13 @@ impl Default for Keybindings {
     }
 }
 
-/// Command renames applied on load: `(old_name, new_name)`. List a renamed
-/// command here so an existing user binding migrates to the new name instead
-/// of being dropped as unknown. Plain removals need no entry (the unknown-key
-/// sweep discards them).
-const KEYBINDING_RENAMES: &[(&str, &str)] = &[];
-
-/// Migrate a raw keybindings map in place: apply command renames, rewrite
-/// legacy key strings into crokey syntax, then drop entries for commands the
-/// binary no longer recognizes. Returns `true` if the map changed, so the
-/// caller can rewrite the config to self-heal.
+/// Drop entries for command names the binary no longer recognizes, so a
+/// removed command self-heals out of the config on the next save. Returns
+/// `true` if the map changed.
 pub fn migrate_keybindings(map: &mut BTreeMap<String, KeyBindingValue>) -> bool {
-    let mut changed = migrate_keybindings_with(map, KEYBINDING_RENAMES);
-    changed |= migrate_keybinding_syntax(map);
-    changed
-}
-
-/// Rewrite legacy deck key strings (`C-x`, `A-Up`, `S-Tab`) into crokey
-/// syntax (`ctrl-x`, `alt-up`, `shift-tab`) in place. Idempotent: a crokey-form
-/// value either fails the legacy parse or formats back to itself, so re-running
-/// changes nothing. Returns `true` if any value was rewritten.
-pub fn migrate_keybinding_syntax(map: &mut BTreeMap<String, KeyBindingValue>) -> bool {
-    fn convert(s: &mut String, changed: &mut bool) {
-        if let Some(new) = parse_legacy(s).map(|kc| format_key(&kc)) {
-            if &new != s {
-                *s = new;
-                *changed = true;
-            }
-        }
-    }
-    let mut changed = false;
-    for value in map.values_mut() {
-        match value {
-            KeyBindingValue::Single(s) => convert(s, &mut changed),
-            KeyBindingValue::Multi(list) => {
-                for s in list.iter_mut() {
-                    convert(s, &mut changed);
-                }
-            }
-            KeyBindingValue::Unbind => {}
-        }
-    }
-    changed
-}
-
-fn migrate_keybindings_with(
-    map: &mut BTreeMap<String, KeyBindingValue>,
-    renames: &[(&str, &str)],
-) -> bool {
-    let mut changed = false;
-
-    // Renames: move the old name's value to the new name, unless the user
-    // already bound the new name explicitly (then the explicit one wins
-    // and the old entry is dropped).
-    for &(old, new) in renames {
-        if let Some(value) = map.remove(old) {
-            map.entry(new.to_string()).or_insert(value);
-            changed = true;
-        }
-    }
-
-    // Drop entries for command names the binary no longer recognizes.
     let before = map.len();
     map.retain(|name, _| Command::from_name(name).is_some());
-    if map.len() != before {
-        changed = true;
-    }
-
-    changed
+    map.len() != before
 }
 
 /// Parse a command's bound key strings into chords, dropping duplicates and
@@ -284,53 +223,6 @@ pub fn parse_key(s: &str) -> Result<KeyChord, String> {
     crokey::parse(s)
         .map(|kc| kc.normalized())
         .map_err(|e| e.to_string())
-}
-
-/// Parse a *legacy* deck key string (`C-x`, `A-Up`, `S-Tab`, `J`, `j`,
-/// named keys, `F1`..`F12`, single chars) into a [`KeyChord`], or `None`.
-/// Used only by the one-time syntax migration; new config uses [`parse_key`].
-fn parse_legacy(s: &str) -> Option<KeyChord> {
-    if s.is_empty() {
-        return None;
-    }
-
-    // A lone character is taken literally (lets `-` or ` ` bind cleanly, and
-    // keeps a bare uppercase letter shifted rather than lowercased the way
-    // crokey would).
-    let mut chars = s.chars();
-    if let (Some(only), None) = (chars.next(), chars.next()) {
-        return Some(chord_from_event(&KeyEvent::new(
-            KeyCode::Char(only),
-            KeyModifiers::NONE,
-        )));
-    }
-
-    // Rewrite `C-`/`A-`/`S-` modifier prefixes (any order) into crokey
-    // syntax, then hand the rest to crokey — it already knows every key name
-    // deck's legacy DSL used, bar a few aliases normalized below.
-    let mut out = String::new();
-    let mut rest = s;
-    loop {
-        match rest.get(..2).map(str::to_ascii_uppercase).as_deref() {
-            Some("C-") => out.push_str("ctrl-"),
-            Some("A-") => out.push_str("alt-"),
-            Some("S-") => out.push_str("shift-"),
-            _ => break,
-        }
-        rest = &rest[2..];
-    }
-    if rest.is_empty() {
-        return None;
-    }
-    let lower = rest.to_ascii_lowercase();
-    out.push_str(match lower.as_str() {
-        "return" => "enter",
-        "escape" => "esc",
-        "pgup" => "pageup",
-        "pgdown" | "pgdn" => "pagedown",
-        other => other,
-    });
-    parse_key(&out).ok()
 }
 
 /// Fill the raw keybindings map with defaults for every command that the
