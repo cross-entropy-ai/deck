@@ -25,7 +25,6 @@ impl LocalControl {
 
 impl SessionControl for LocalControl {
     fn switch_to(&self, name: &str) {
-        // Target deck's own client by tty when known; bare switch otherwise.
         if self.client_tty.is_empty() {
             tmux::switch_session(name);
         } else {

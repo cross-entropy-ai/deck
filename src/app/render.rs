@@ -5,7 +5,7 @@ use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
-use ratatui::DefaultTerminal;
+use ratatui::{DefaultTerminal, Frame};
 
 use crate::bridge;
 use crate::state::{FocusMode, LayoutMode, MainView};
@@ -313,92 +313,26 @@ impl App {
                 main_area
             };
 
-            // Empty-state placeholder for a dead local pane (no sessions to
-            // attach to). deck stays open instead of quitting; the user can
-            // create a session from the sidebar (or `q` to quit).
+            // deck stays open on a dead local pane instead of quitting.
             if warning_state.is_none() && main_view == MainView::Terminal && local_active_dead {
-                let lines = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "No local sessions",
-                        Style::default().fg(theme.text),
-                    )),
-                    Line::from(Span::styled(
-                        "Create one from the sidebar to attach here",
-                        Style::default().fg(theme.dim),
-                    )),
-                ];
-                let placeholder = Paragraph::new(lines)
-                    .alignment(Alignment::Center)
-                    .wrap(Wrap { trim: true });
-                frame.render_widget(placeholder, main_inner);
+                draw_center_message(
+                    frame,
+                    main_inner,
+                    "No local sessions",
+                    "Create one from the sidebar to attach here",
+                    theme,
+                );
             }
 
             if warning_state.is_none() && main_view == MainView::Terminal {
                 if let Some((title, detail)) = remote_placeholder.as_ref() {
-                    let lines = vec![
-                        Line::from(""),
-                        Line::from(Span::styled(
-                            title.as_str(),
-                            Style::default().fg(theme.text),
-                        )),
-                        Line::from(Span::styled(
-                            detail.as_str(),
-                            Style::default().fg(theme.dim),
-                        )),
-                    ];
-                    let placeholder = Paragraph::new(lines)
-                        .alignment(Alignment::Center)
-                        .wrap(Wrap { trim: true });
-                    frame.render_widget(placeholder, main_inner);
+                    draw_center_message(frame, main_inner, title, detail, theme);
                 }
             }
 
-            // Built only when the Settings page is actually showing —
-            // it allocates the update-check help string, which would
-            // otherwise be thrown away every other frame.
+            // Built lazily — the row closures allocate help strings each frame.
             if warning_state.is_none() && main_view == MainView::Settings {
-                // Reduce the descriptor table to display strings here, where
-                // we still hold `&AppState`: the value/help closures read it,
-                // but `draw_settings_page` is a pure `ui` fn that only sees
-                // the resulting `Vec<SettingRowView>`.
-                let mut rows: Vec<SettingRowView> = SETTING_ROWS
-                    .iter()
-                    .map(|row| SettingRowView {
-                        label: row.label,
-                        value: (row.value)(s),
-                        help: (row.help)(s),
-                    })
-                    .collect();
-                // Append each registered provider's rows (e.g. ssh's
-                // "Remotes"), so the page is core rows + provider rows.
-                rows.extend(
-                    super::settings::provider_setting_defs(s)
-                        .into_iter()
-                        .map(|d| SettingRowView {
-                            label: d.label,
-                            value: d.value,
-                            help: d.help,
-                        }),
-                );
-                let settings_view = SettingsView {
-                    selected: s.settings.selected,
-                    rows,
-                    exclude_editor: s.overlay.exclude_editor.as_ref().map(|e| {
-                        ui::ExcludeEditorView {
-                            patterns: &s.prefs.exclude_patterns,
-                            selected: e.selected,
-                            adding: e.adding,
-                            input: &e.input,
-                            error: e.error.as_deref(),
-                        }
-                    }),
-                    keybindings: &s.keybindings,
-                    keybindings_view_open: s.settings.keybindings_view_open,
-                    keybindings_view_scroll: s.settings.keybindings_view_scroll,
-                    summary_lang_input: s.overlay.summary_lang_input.as_ref(),
-                };
-                ui::draw_settings_page(frame, main_inner, &settings_view, theme);
+                ui::draw_settings_page(frame, main_inner, &self.build_settings_view(), theme);
             }
 
             // Theme picker — standalone overlay over the main pane whenever
@@ -515,4 +449,55 @@ impl App {
 
         Ok(())
     }
+
+    /// Core `SETTING_ROWS` reduced to display strings, then each provider's
+    /// rows appended (e.g. ssh's "Remotes"). Done here, holding `&AppState`, so
+    /// `draw_settings_page` stays a pure `ui` fn over `Vec<SettingRowView>`.
+    fn build_settings_view(&self) -> SettingsView<'_> {
+        let s = &self.state;
+        let mut rows: Vec<SettingRowView> = SETTING_ROWS
+            .iter()
+            .map(|row| SettingRowView {
+                label: row.label,
+                value: (row.value)(s),
+                help: (row.help)(s),
+            })
+            .collect();
+        rows.extend(
+            super::settings::provider_setting_defs(s)
+                .into_iter()
+                .map(|d| SettingRowView {
+                    label: d.label,
+                    value: d.value,
+                    help: d.help,
+                }),
+        );
+        SettingsView {
+            selected: s.settings.selected,
+            rows,
+            exclude_editor: s.overlay.exclude_editor.as_ref().map(|e| ui::ExcludeEditorView {
+                patterns: &s.prefs.exclude_patterns,
+                selected: e.selected,
+                adding: e.adding,
+                input: &e.input,
+                error: e.error.as_deref(),
+            }),
+            keybindings: &s.keybindings,
+            keybindings_view_open: s.settings.keybindings_view_open,
+            keybindings_view_scroll: s.settings.keybindings_view_scroll,
+            summary_lang_input: s.overlay.summary_lang_input.as_ref(),
+        }
+    }
+}
+
+fn draw_center_message(frame: &mut Frame, area: Rect, title: &str, detail: &str, theme: &crate::theme::Theme) {
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(title, Style::default().fg(theme.text))),
+        Line::from(Span::styled(detail, Style::default().fg(theme.dim))),
+    ];
+    let placeholder = Paragraph::new(lines)
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true });
+    frame.render_widget(placeholder, area);
 }

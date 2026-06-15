@@ -145,51 +145,57 @@ impl App {
     }
 
     pub(super) fn confirm_new_session(&mut self) -> Option<crate::state::CreateSessionRequest> {
-        use crate::new_session::expand_path;
-
-        // Read name + target first (immutable borrow on overlay).
         let (name, remote_host) = {
             let ns = self.state.overlay.new_session.as_ref()?;
             (ns.name_str().trim().to_string(), ns.remote_host.clone())
         };
-
-        // Remote: validate the name against the host's sessions, trust
-        // the browsed path (it can't be stat'd locally — tmux fails
-        // loudly if it's bad), and let the remote shell expand `~`.
-        if let Some(host) = remote_host {
-            let existing = crate::state::attachable_on_host(&self.state.entries, Some(&host))
-                .map(|e| e.name.as_str());
-            let err = validate_unique_session_name(&name, existing);
-            if let Some(err) = err {
-                if let Some(ns) = self.state.overlay.new_session.as_mut() {
-                    ns.picker.error = Some(err.to_string());
-                }
-                return None;
-            }
-            let dir = self.state.overlay.new_session.as_ref()?.input_str().trim();
-            // Empty path (user cleared it) → remote home, so `-c` is never
-            // blank.
-            let dir = if dir.is_empty() { "~" } else { dir }.to_string();
-            self.state.overlay.new_session = None;
-            return Some(crate::state::CreateSessionRequest {
-                name,
-                dir,
-                host: Some(host),
-            });
+        match remote_host {
+            Some(host) => self.confirm_remote_new_session(name, host),
+            None => self.confirm_local_new_session(name),
         }
+    }
 
-        // Validate name (local).
+    fn set_new_session_error(&mut self, err: impl Into<String>) -> Option<crate::state::CreateSessionRequest> {
+        if let Some(ns) = self.state.overlay.new_session.as_mut() {
+            ns.picker.error = Some(err.into());
+        }
+        None
+    }
+
+    /// Validate against the host's sessions but trust the browsed path: it
+    /// can't be stat'd locally, and tmux fails loudly if it's bad. The remote
+    /// shell expands `~`; an empty path falls back to `~` so `-c` is never blank.
+    fn confirm_remote_new_session(
+        &mut self,
+        name: String,
+        host: String,
+    ) -> Option<crate::state::CreateSessionRequest> {
+        let existing = crate::state::attachable_on_host(&self.state.entries, Some(&host))
+            .map(|e| e.name.as_str());
+        if let Some(err) = validate_unique_session_name(&name, existing) {
+            return self.set_new_session_error(err);
+        }
+        let dir = self.state.overlay.new_session.as_ref()?.input_str().trim();
+        let dir = if dir.is_empty() { "~" } else { dir }.to_string();
+        self.state.overlay.new_session = None;
+        Some(crate::state::CreateSessionRequest {
+            name,
+            dir,
+            host: Some(host),
+        })
+    }
+
+    fn confirm_local_new_session(
+        &mut self,
+        name: String,
+    ) -> Option<crate::state::CreateSessionRequest> {
         let existing_names: Vec<String> =
             self.state.local_entries().map(|e| e.name.clone()).collect();
         let existing = existing_names.iter().map(String::as_str);
         if let Some(err) = validate_unique_session_name(&name, existing) {
-            if let Some(ns) = self.state.overlay.new_session.as_mut() {
-                ns.picker.error = Some(err.to_string());
-            }
-            return None;
+            return self.set_new_session_error(err);
         }
 
-        // Now resolve and validate dir.
         let input = self
             .state
             .overlay
@@ -197,7 +203,7 @@ impl App {
             .as_ref()?
             .input_str()
             .to_string();
-        let resolved = expand_path(&input, &crate::config::home_dir());
+        let resolved = crate::new_session::expand_path(&input, &crate::config::home_dir());
         match std::fs::metadata(&resolved) {
             Ok(m) if m.is_dir() => {
                 let dir = resolved.to_string_lossy().to_string();
@@ -208,22 +214,12 @@ impl App {
                     host: None,
                 })
             }
-            Ok(_) => {
-                if let Some(ns) = self.state.overlay.new_session.as_mut() {
-                    ns.picker.error = Some("not a directory".into());
-                }
-                None
-            }
-            Err(e) => {
-                if let Some(ns) = self.state.overlay.new_session.as_mut() {
-                    ns.picker.error = Some(match e.kind() {
-                        std::io::ErrorKind::NotFound => "not found".into(),
-                        std::io::ErrorKind::PermissionDenied => "permission denied".into(),
-                        _ => "cannot stat".into(),
-                    });
-                }
-                None
-            }
+            Ok(_) => self.set_new_session_error("not a directory"),
+            Err(e) => self.set_new_session_error(match e.kind() {
+                std::io::ErrorKind::NotFound => "not found",
+                std::io::ErrorKind::PermissionDenied => "permission denied",
+                _ => "cannot stat",
+            }),
         }
     }
 
