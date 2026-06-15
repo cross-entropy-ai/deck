@@ -11,11 +11,11 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
+use crate::geometry::BadgeStatus;
 use crate::state::{
     AgentEntry, AgentHit, AgentTarget, BuiltLayout, DividerHit, FocusTarget, SummaryHits,
     SummaryState,
 };
-use crate::system::BadgeStatus;
 
 /// Braille spinner frames for the Summary card's "Generating…" state.
 pub(super) const SUMMARY_SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];

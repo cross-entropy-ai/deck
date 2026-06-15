@@ -1,33 +1,30 @@
 //! The built-in tmux [`System`]: local and remote tmux servers exposed as one
 //! mounted backend. Each configured remote host is a lane, plus the always-on
-//! local lane. This is where the old hardcoded `@local`/`@host` dividers,
-//! `DividerButton` semantics, port-forward badge rollup, and the
-//! local-vs-remote control/snapshot split now live.
+//! local lane. It owns the `@local`/`@host` dividers and the local-vs-remote
+//! control/snapshot split; the remote divider's ssh-specific buttons and
+//! `⇄N` badge are registered by `crate::ssh::divider`, not hardcoded here.
 
 use crate::agent;
 use crate::effects::Effect;
-use crate::forwards::ForwardBadgeStatus;
+use crate::geometry::SectionButton;
 use crate::lane::LaneId;
 use crate::session::local::LocalControl;
 use crate::session::remote::RemoteControl;
 use crate::session::SessionControl;
 use crate::{remote_tmux, tmux};
 
-use super::{
-    Badge, BadgeStatus, ControlCtx, LaneSnapshot, SectionButton, SectionCtx, SectionDef, System,
-};
+use super::{ControlCtx, LaneSnapshot, SectionCtx, SectionDef, System};
 
 /// This system's id — the `system` half of every [`LaneId`] it produces.
 pub const TMUX: &str = "tmux";
 /// The in-system lane name for the local tmux server.
 const LOCAL: &str = "local";
 
-/// Button command ids this system declares on its dividers and handles in
-/// [`System::on_button`].
+/// Button command ids this system declares on its own dividers (the generic
+/// `…` menu, on both local and remote). Remote-only buttons (reconnect,
+/// forwards) live in `crate::ssh::divider::cmd`.
 mod cmd {
     pub const MENU: &str = "menu";
-    pub const RECONNECT: &str = "reconnect";
-    pub const FORWARDS: &str = "forwards";
 }
 
 /// The tmux backend. Stateless: all per-call runtime state arrives via
@@ -65,59 +62,36 @@ pub fn lane(host: Option<&str>) -> LaneId {
     }
 }
 
-/// Map ssh's per-host forward rollup (computed in `crate::forwards`) onto the
-/// divider [`Badge`] the shell renders. The forward logic lives on the ssh
-/// side; this only adapts its result to the System badge type.
-fn forward_badge(ctx: &SectionCtx, host: &str) -> Option<Badge> {
-    let rollup = crate::forwards::host_badge(ctx.remotes, ctx.forward_health, host)?;
-    let status = match rollup.status {
-        ForwardBadgeStatus::AllUp => BadgeStatus::Ok,
-        ForwardBadgeStatus::AllDown => BadgeStatus::Err,
-        ForwardBadgeStatus::Mixed => BadgeStatus::Warn,
-        ForwardBadgeStatus::Probing => BadgeStatus::Idle,
-    };
-    Some(Badge {
-        label: format!("⇄{}", rollup.total),
-        status,
-    })
+/// The generic `…` divider menu button this system owns (both lanes).
+fn menu_button() -> SectionButton {
+    SectionButton {
+        glyph: "…".to_string(),
+        command: cmd::MENU.to_string(),
+    }
 }
 
-/// Build one lane's [`SectionDef`]. The local lane is flush with a single
-/// `[…]` menu button; a remote lane takes the host accent, an optional `[⇄N]`
-/// forward badge (leftmost), then `[⟳]` reconnect and `[…]` menu.
+/// Build one lane's [`SectionDef`]. The local lane is flush with just the menu
+/// button; a remote lane takes the host accent, the ssh-registered buttons +
+/// `⇄N` badge (from `crate::ssh::divider`), then the menu button. This fn
+/// doesn't know which remote buttons exist — ssh decides.
 fn section_def(ctx: &SectionCtx, lane: &LaneId) -> SectionDef {
     match TmuxSystem::host_of(lane) {
         None => SectionDef {
             lane: lane.clone(),
             title: "@local".to_string(),
             accent: usize::MAX, // sentinel → base accent (see shell mapping)
-            buttons: vec![SectionButton {
-                glyph: "…".to_string(),
-                command: cmd::MENU.to_string(),
-            }],
+            buttons: vec![menu_button()],
             badge: None,
             top_margin: false,
         },
         Some(host) => {
             let accent = ctx.remotes.iter().position(|r| r.host == host).unwrap_or(0);
-            let badge = forward_badge(ctx, host);
-            // Badge button (if any) is leftmost, then reconnect, then menu —
-            // the order the divider hit-tester zips against.
-            let mut buttons = Vec::with_capacity(3);
-            if let Some(b) = &badge {
-                buttons.push(SectionButton {
-                    glyph: b.label.clone(),
-                    command: cmd::FORWARDS.to_string(),
-                });
-            }
-            buttons.push(SectionButton {
-                glyph: "⟳".to_string(),
-                command: cmd::RECONNECT.to_string(),
-            });
-            buttons.push(SectionButton {
-                glyph: "…".to_string(),
-                command: cmd::MENU.to_string(),
-            });
+            // ssh registers the remote-only buttons (forwards, reconnect) and
+            // the badge; the menu button is appended last (rightmost), the
+            // order the divider hit-tester zips against.
+            let (mut buttons, badge) =
+                crate::ssh::divider::divider(ctx.remotes, ctx.forward_health, host);
+            buttons.push(menu_button());
             SectionDef {
                 lane: lane.clone(),
                 title: format!("@{host}"),
@@ -175,20 +149,18 @@ impl System for TmuxSystem {
     fn on_button(&self, lane: &LaneId, command: &str, x: u16, y: u16) -> Vec<Effect> {
         let host = TmuxSystem::host_of(lane);
         match command {
+            // The generic menu button this system owns.
             cmd::MENU => vec![Effect::OpenDividerMenu {
                 host: host.map(str::to_string),
                 x,
                 y,
             }],
-            cmd::RECONNECT => match host {
-                Some(h) => vec![Effect::ReconnectHost(h.to_string())],
+            // Everything else on a remote divider is ssh-registered; route it
+            // back to ssh, which owns those commands' semantics.
+            _ => match host {
+                Some(h) => crate::ssh::divider::on_button(command, h),
                 None => vec![],
             },
-            cmd::FORWARDS => match host {
-                Some(h) => vec![Effect::OpenForwardOverlay(h.to_string())],
-                None => vec![],
-            },
-            _ => vec![],
         }
     }
 }

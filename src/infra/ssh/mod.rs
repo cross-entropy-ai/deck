@@ -6,6 +6,7 @@
 //! `crate::ssh::config_hosts`, etc. resolve directly off the module.
 
 pub mod client;
+pub mod divider;
 pub mod listeners;
 pub mod model;
 pub mod port_forward;

@@ -581,9 +581,10 @@ use crate::forwards::{ForwardMode, ForwardSpec};
 fn forward_badge_rolls_up_per_host_health() {
     use crate::config::RemoteConfig;
 use crate::forwards::{ForwardMode, ForwardSpec};
+    use crate::geometry::BadgeStatus;
     use crate::state::{ForwardHealth, ForwardKey};
+    use crate::system::System;
     use crate::system::tmux::TmuxSystem;
-    use crate::system::{BadgeStatus, System};
 
     // The badge now comes from the tmux System, styled per lane.
     let badge = |state: &AppState, host: &str| {

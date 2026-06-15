@@ -35,6 +35,7 @@ use crate::agent::DetectedAgent;
 use crate::config::RemoteConfig;
 use crate::effects::Effect;
 use crate::forwards::{ForwardHealth, ForwardKey};
+use crate::geometry::{Badge, SectionButton};
 use crate::lane::LaneId;
 use crate::session::SessionControl;
 use crate::tmux::SessionInfo;
@@ -114,32 +115,6 @@ pub struct SectionDef {
     pub badge: Option<Badge>,
     /// Give this section's header a 1-row top margin (vs. flush).
     pub top_margin: bool,
-}
-
-/// One divider button. Open-ended: `glyph` is drawn, `command` is an id only
-/// the owning system understands and the shell echoes back to
-/// [`System::on_button`].
-#[derive(Debug, Clone)]
-pub struct SectionButton {
-    pub glyph: String,
-    pub command: String,
-}
-
-/// A divider status badge — a label plus a status the shell maps to a theme
-/// color. Generalizes the old `ForwardBadge`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Badge {
-    pub label: String,
-    pub status: BadgeStatus,
-}
-
-/// Coarse badge status; the shell picks the color.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BadgeStatus {
-    Ok,
-    Warn,
-    Err,
-    Idle,
 }
 
 /// One lane's refresh result. Returned inside `Option` — `None` from

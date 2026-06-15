@@ -10,13 +10,38 @@ use ratatui::style::Color;
 use unicode_width::UnicodeWidthStr;
 
 use crate::lane::LaneId;
-use crate::system::{Badge, SectionButton};
 
 use unicode_width::UnicodeWidthChar;
 
 use crate::menu::MenuItem;
 use crate::state::SidebarTab;
 use crate::theme::Theme;
+
+/// One divider button. Open-ended: `glyph` is drawn, `command` is an id only
+/// the registering backend understands and the shell echoes back to its
+/// button handler (`System::on_button`).
+#[derive(Debug, Clone)]
+pub struct SectionButton {
+    pub glyph: String,
+    pub command: String,
+}
+
+/// A divider status badge — a label plus a status the shell maps to a theme
+/// color (e.g. the `⇄N` port-forward rollup).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Badge {
+    pub label: String,
+    pub status: BadgeStatus,
+}
+
+/// Coarse badge status; the shell picks the color.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BadgeStatus {
+    Ok,
+    Warn,
+    Err,
+    Idle,
+}
 
 /// Truncate `s` to at most `max_width` display columns, appending an
 /// ellipsis on overflow. Kept in the leaf geometry module so `model`
@@ -308,8 +333,7 @@ pub enum AgentEntryKind {
 pub struct DividerHit {
     pub lane: LaneId,
     pub rect: Rect,
-    /// The system-defined button command (see
-    /// [`SectionButton::command`](crate::system::SectionButton::command)).
+    /// The backend-defined button command (see [`SectionButton::command`]).
     pub command: String,
 }
 
