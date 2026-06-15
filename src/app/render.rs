@@ -98,7 +98,6 @@ impl App {
             // order (local rows first, then remotes) and `SessionEntry` impls
             // `SidebarSession`, so the sidebar reads straight from storage —
             // no per-frame borrowed-view shells.
-            let local_count = self.state.local_count();
             let sessions_dyn: Vec<&dyn ui::SidebarSession> = self
                 .state
                 .entries
@@ -200,7 +199,6 @@ impl App {
                 sidebar_area,
                 ui::SidebarProps {
                     sessions: &sessions_dyn,
-                    local_count,
                     built: &layout,
                     focus_target,
                     sidebar_active,

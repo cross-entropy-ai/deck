@@ -31,11 +31,9 @@ use tabs::{draw_sidebar_tabs, TabsProps};
 ///
 /// `sessions` is one slice of trait objects: all rows in flat layout order
 /// (local first, then remote). The renderer never branches on concrete types —
-/// per-row data goes through `SidebarSession`. `local_count` is only for
-/// callers needing the local-only subset (header banner, tabs mode).
+/// per-row data goes through `SidebarSession`.
 pub struct SidebarProps<'a> {
     pub sessions: &'a [&'a dyn SidebarSession],
-    pub local_count: usize,
     pub built: &'a BuiltLayout,
     pub focus_target: Option<FocusTarget>,
     pub sidebar_active: bool,
@@ -205,21 +203,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
     ])
     .areas(content);
 
-    // The header counts *detected* agents, not entries: an empty section
-    // contributes a focusable placeholder entry but no agent to the `(N)` tally.
-    let agent_total = props
-        .agent_entries
-        .iter()
-        .filter(|e| e.agent().is_some())
-        .count();
-    let tab_rects = draw_header(
-        frame,
-        header_area,
-        props.local_count,
-        agent_total,
-        props.sidebar_tab,
-        props.theme,
-    );
+    let tab_rects = draw_header(frame, header_area, props.sidebar_tab, props.theme);
     let agents_tab = matches!(props.sidebar_tab, SidebarTab::Agents);
     let mut kill_hits: Option<KillConfirmHits> = None;
     let (divider_hits, agent_hits, summary_hits) = if props.show_help {

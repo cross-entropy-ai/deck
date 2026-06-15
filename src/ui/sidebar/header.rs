@@ -8,14 +8,12 @@ use unicode_width::UnicodeWidthStr;
 use crate::state::{SidebarTab, TabRects};
 use crate::theme::Theme;
 
-/// Draws the sidebar header: a `Projects (N)` / `Agents (M)` tab selector.
+/// Draws the sidebar header: a `Projects` / `Agents` tab selector.
 /// The active tab is rendered in the accent color and bold; the inactive
 /// one is dimmed. Returns each label's click rect for hit-testing.
 pub(super) fn draw_header(
     frame: &mut Frame,
     area: Rect,
-    project_count: usize,
-    agent_count: usize,
     active: SidebarTab,
     theme: &Theme,
 ) -> TabRects {
@@ -36,8 +34,8 @@ pub(super) fn draw_header(
     };
 
     // Each tab carries a glyph.
-    let projects_label = format!("\u{e795} Projects ({project_count})");
-    let agents_label = format!("\u{f085} Agents ({agent_count})");
+    let projects_label = "\u{e795} Projects".to_string();
+    let agents_label = "\u{f085} Agents".to_string();
     let gap = "   ";
 
     // Lay out `  <projects>   <agents>` left to right, recording each
