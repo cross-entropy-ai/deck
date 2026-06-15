@@ -14,7 +14,7 @@ use crate::session::SessionControl;
 use crate::{remote_tmux, tmux};
 
 use super::{
-    Badge, BadgeStatus, LaneSnapshot, SectionButton, SectionDef, System, SystemCtx,
+    Badge, BadgeStatus, ControlCtx, LaneSnapshot, SectionButton, SectionCtx, SectionDef, System,
 };
 
 /// This system's id — the `system` half of every [`LaneId`] it produces.
@@ -66,8 +66,8 @@ pub fn lane(host: Option<&str>) -> LaneId {
 }
 
 /// Roll a host's configured forwards + live health into a divider badge.
-fn forward_badge(ctx: &SystemCtx, host: &str) -> Option<Badge> {
-    let remote = ctx.config.remotes.iter().find(|r| r.host == host)?;
+fn forward_badge(ctx: &SectionCtx, host: &str) -> Option<Badge> {
+    let remote = ctx.remotes.iter().find(|r| r.host == host)?;
     let rollup = ForwardBadge::rollup(remote.forwards.iter().map(|f| {
         ctx.forward_health
             .get(&ForwardKey::from_spec(host, f))
@@ -86,16 +86,13 @@ fn forward_badge(ctx: &SystemCtx, host: &str) -> Option<Badge> {
     })
 }
 
-impl System for TmuxSystem {
-    fn id(&self) -> &str {
-        TMUX
-    }
-
-    fn sections(&self, ctx: &SystemCtx) -> Vec<SectionDef> {
-        let mut out = Vec::with_capacity(ctx.config.remotes.len() + 1);
-        // The local lane: flush at the top, a single `[…]` menu button.
-        out.push(SectionDef {
-            lane: TmuxSystem::local_lane(),
+/// Build one lane's [`SectionDef`]. The local lane is flush with a single
+/// `[…]` menu button; a remote lane takes the host accent, an optional `[⇄N]`
+/// forward badge (leftmost), then `[⟳]` reconnect and `[…]` menu.
+fn section_def(ctx: &SectionCtx, lane: &LaneId) -> SectionDef {
+    match TmuxSystem::host_of(lane) {
+        None => SectionDef {
+            lane: lane.clone(),
             title: "@local".to_string(),
             accent: usize::MAX, // sentinel → base accent (see shell mapping)
             buttons: vec![SectionButton {
@@ -104,10 +101,9 @@ impl System for TmuxSystem {
             }],
             badge: None,
             top_margin: false,
-        });
-        // One lane per configured remote host, in config order.
-        for (idx, remote) in ctx.config.remotes.iter().enumerate() {
-            let host = &remote.host;
+        },
+        Some(host) => {
+            let accent = ctx.remotes.iter().position(|r| r.host == host).unwrap_or(0);
             let badge = forward_badge(ctx, host);
             // Badge button (if any) is leftmost, then reconnect, then menu —
             // the order the divider hit-tester zips against.
@@ -126,16 +122,34 @@ impl System for TmuxSystem {
                 glyph: "…".to_string(),
                 command: cmd::MENU.to_string(),
             });
-            out.push(SectionDef {
-                lane: TmuxSystem::host_lane(host),
+            SectionDef {
+                lane: lane.clone(),
                 title: format!("@{host}"),
-                accent: idx,
+                accent,
                 buttons,
                 badge,
                 top_margin: true,
-            });
+            }
+        }
+    }
+}
+
+impl System for TmuxSystem {
+    fn id(&self) -> &str {
+        TMUX
+    }
+
+    fn sections(&self, ctx: &SectionCtx) -> Vec<SectionDef> {
+        let mut out = Vec::with_capacity(ctx.remotes.len() + 1);
+        out.push(section_def(ctx, &TmuxSystem::local_lane()));
+        for remote in ctx.remotes {
+            out.push(section_def(ctx, &TmuxSystem::host_lane(&remote.host)));
         }
         out
+    }
+
+    fn section_for(&self, lane: &LaneId, ctx: &SectionCtx) -> SectionDef {
+        section_def(ctx, lane)
     }
 
     fn snapshot(&self, lane: &LaneId) -> Option<LaneSnapshot> {
@@ -151,7 +165,7 @@ impl System for TmuxSystem {
         }
     }
 
-    fn control(&self, lane: &LaneId, ctx: &SystemCtx) -> Box<dyn SessionControl + Send> {
+    fn control(&self, lane: &LaneId, ctx: &ControlCtx) -> Box<dyn SessionControl + Send> {
         match TmuxSystem::host_of(lane) {
             None => Box::new(LocalControl::new(ctx.local_tty.to_string())),
             Some(host) => {

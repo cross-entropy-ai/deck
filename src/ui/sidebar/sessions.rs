@@ -12,9 +12,10 @@ use unicode_width::UnicodeWidthStr;
 use crate::theme::Theme;
 
 use crate::state::{
-    AgentEntry, AgentHit, AgentTarget, BuiltLayout, DividerHit, FocusTarget, ForwardBadgeStatus,
-    SummaryHits, SummaryState,
+    AgentEntry, AgentHit, AgentTarget, BuiltLayout, DividerHit, FocusTarget, SummaryHits,
+    SummaryState,
 };
+use crate::system::BadgeStatus;
 
 /// Braille spinner frames for the Summary card's "Generating…" state.
 pub(super) const SUMMARY_SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -61,21 +62,22 @@ fn recolor_agent_dot(
     text
 }
 
-/// Traffic-light color for a divider's port-forward badge: green all up, red
-/// all down, orange mixed, muted while still probing.
-fn forward_badge_color(status: ForwardBadgeStatus, theme: &Theme) -> Color {
+/// Traffic-light color for a divider's status badge: green ok, red error,
+/// orange warn, muted while idle/probing. The shell owns the palette; the
+/// system only reports a coarse [`BadgeStatus`].
+fn badge_color(status: BadgeStatus, theme: &Theme) -> Color {
     match status {
-        ForwardBadgeStatus::AllUp => theme.success,
-        ForwardBadgeStatus::AllDown => theme.error,
-        ForwardBadgeStatus::Mixed => theme.warning,
-        ForwardBadgeStatus::Probing => theme.muted,
+        BadgeStatus::Ok => theme.success,
+        BadgeStatus::Err => theme.error,
+        BadgeStatus::Warn => theme.warning,
+        BadgeStatus::Idle => theme.muted,
     }
 }
 
-/// Retint the `[⇄N]` port-forward badge span on a remote divider to its
-/// traffic-light `color`, leaving the rest of the bar in the host accent.
-/// `basic_style` paints each header button as its own span, so the badge —
-/// the leftmost button, prefixed `[⇄` — is a single span to recolor.
+/// Retint the `[⇄N]` badge span on a divider to its traffic-light `color`,
+/// leaving the rest of the bar in the host accent. `basic_style` paints each
+/// header button as its own span, so the badge — the leftmost button, prefixed
+/// `[⇄` — is a single span to recolor.
 fn recolor_forward_badge(mut text: Text<'static>, color: Color) -> Text<'static> {
     for line in &mut text.lines {
         for span in &mut line.spans {
@@ -142,16 +144,16 @@ pub(super) fn draw_sessions(
     let theme = ctx.theme;
     let agents_tab = props.agents_tab;
     let agent_entries = props.agent_entries;
-    // Per-host badge color, keyed by the divider's `@host` (sans `@`) so the
-    // closure can recolor the `[⇄N]` span without re-deriving forward health.
+    // Per-divider badge color, keyed by the divider title so the closure can
+    // recolor the `[⇄N]` span (matched against `item.data.title`) without
+    // re-deriving the system's state.
     let badge_colors: std::collections::HashMap<&str, Color> = props
         .built
         .sections
         .iter()
         .filter_map(|m| {
-            let host = m.host.as_deref()?;
-            let badge = m.forward_badge?;
-            Some((host, forward_badge_color(badge.status, theme)))
+            let badge = m.badge.as_ref()?;
+            Some((m.title.as_str(), badge_color(badge.status, theme)))
         })
         .collect();
     let widget = SectionedListWidget::new(layout, move |item, item_ctx| {
@@ -168,12 +170,7 @@ pub(super) fn draw_sessions(
             return text;
         }
         if matches!(item.kind, ItemKind::Header) {
-            if let Some(color) = item
-                .data
-                .title
-                .strip_prefix('@')
-                .and_then(|host| badge_colors.get(host).copied())
-            {
+            if let Some(color) = badge_colors.get(item.data.title.as_str()).copied() {
                 return recolor_forward_badge(text, color);
             }
         }
@@ -209,10 +206,10 @@ pub(super) fn draw_sessions(
                     continue;
                 }
                 let ranges = header_button_ranges(area.width, &v.item.data.buttons);
-                for (range, kind) in ranges.into_iter().zip(meta.buttons.iter()) {
+                for (range, button) in ranges.into_iter().zip(meta.buttons.iter()) {
                     dividers.push(DividerHit {
-                        host: meta.host.clone().unwrap_or_default(),
-                        kind: *kind,
+                        lane: meta.lane.clone(),
+                        command: button.command.clone(),
                         rect: Rect {
                             x: area.x + range.start,
                             y: area.y + bar_y,

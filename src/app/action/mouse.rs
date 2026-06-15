@@ -1,6 +1,6 @@
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
-use crate::state::{AppState, DividerButton, FocusTarget, HitKind, LayoutMode, MainView, Modal};
+use crate::state::{AppState, FocusTarget, HitKind, LayoutMode, MainView, Modal};
 
 use super::{Action, MenuAction, PfAction, SettingsAction, SummaryAction};
 
@@ -127,22 +127,29 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         match hit {
             Some(HitKind::Divider(i)) => {
                 let dh = &state.hit_regions.dividers[i];
-                return match dh.kind {
+                let host = crate::system::tmux::TmuxSystem::host_of(&dh.lane).map(str::to_string);
+                // The system declares each button's `command`; the shell maps
+                // it to a shell action. (Decision A moves this routing into
+                // `System::on_button` in a later step.)
+                return match dh.command.as_str() {
                     // The `[⇄N]` badge opens the host's port-forward overlay —
                     // the same destination as the divider menu's "Port forward".
-                    DividerButton::ForwardBadge => Action::Pf(PfAction::Open(dh.host.clone())),
-                    DividerButton::Reconnect => Action::ReconnectHost {
-                        host: dh.host.clone(),
+                    "forwards" => Action::Pf(PfAction::Open(host.unwrap_or_default())),
+                    "reconnect" => Action::ReconnectHost {
+                        host: host.unwrap_or_default(),
                     },
-                    DividerButton::More => Action::Menu(MenuAction::OpenHostDivider {
-                        host: dh.host.clone(),
-                        x: dh.rect.x,
-                        y: dh.rect.y + 1, // open just below the button
-                    }),
-                    DividerButton::LocalMore => Action::Menu(MenuAction::OpenLocalDivider {
-                        x: dh.rect.x,
-                        y: dh.rect.y + 1, // open just below the button
-                    }),
+                    "menu" => match host {
+                        Some(h) => Action::Menu(MenuAction::OpenHostDivider {
+                            host: h,
+                            x: dh.rect.x,
+                            y: dh.rect.y + 1, // open just below the button
+                        }),
+                        None => Action::Menu(MenuAction::OpenLocalDivider {
+                            x: dh.rect.x,
+                            y: dh.rect.y + 1, // open just below the button
+                        }),
+                    },
+                    _ => Action::None,
                 };
             }
             Some(HitKind::Agent(i)) => {

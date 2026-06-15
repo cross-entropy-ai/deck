@@ -39,12 +39,12 @@ impl LaneId {
 
     /// The owning system's id.
     pub fn system(&self) -> &str {
-        self.0.split(SEP).next().unwrap_or(&self.0)
+        self.0.split_once(SEP).map_or(&self.0, |(sys, _)| sys)
     }
 
     /// The in-system lane name.
     pub fn lane(&self) -> &str {
-        self.0.splitn(2, SEP).nth(1).unwrap_or("")
+        self.0.split_once(SEP).map_or("", |(_, lane)| lane)
     }
 
     /// The full encoded key, for allocation-free map lookups

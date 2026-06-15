@@ -442,7 +442,10 @@ fn sidebar_layout_adds_local_header_in_expanded() {
     assert_eq!(built.layout.row_count(), 2);
     // The `@local` section carries the local-divider menu button.
     assert_eq!(
-        built.sections.first().map(|s| s.host.clone()),
+        built
+            .sections
+            .first()
+            .map(|s| crate::system::tmux::TmuxSystem::host_of(&s.lane)),
         Some(None),
         "first section is @local",
     );
@@ -576,7 +579,20 @@ fn sync_remote_forward_health_mirrors_host_status() {
 #[test]
 fn forward_badge_rolls_up_per_host_health() {
     use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
-    use crate::state::{ForwardBadgeStatus, ForwardHealth, ForwardKey};
+    use crate::state::{ForwardHealth, ForwardKey};
+    use crate::system::tmux::TmuxSystem;
+    use crate::system::{BadgeStatus, System};
+
+    // The badge now comes from the tmux System, styled per lane.
+    let badge = |state: &AppState, host: &str| {
+        let ctx = crate::system::SectionCtx {
+            remotes: &state.config_remotes,
+            forward_health: &state.forward_health,
+        };
+        TmuxSystem
+            .section_for(&TmuxSystem::host_lane(host), &ctx)
+            .badge
+    };
 
     let spec = |port: u16| ForwardSpec {
         mode: ForwardMode::Local,
@@ -609,28 +625,28 @@ fn forward_badge_rolls_up_per_host_health() {
     };
 
     // A host with no forwards never shows a badge.
-    assert_eq!(state.forward_badge("nofwd"), None);
+    assert_eq!(badge(&state, "nofwd"), None);
     // An unknown host (not in config) likewise.
-    assert_eq!(state.forward_badge("ghost"), None);
+    assert_eq!(badge(&state, "ghost"), None);
 
-    // total always counts every configured forward; status is the rollup.
+    // The label counts every configured forward; status is the rollup.
     set(&mut state, ForwardHealth::Up, ForwardHealth::Up);
-    let b = state.forward_badge("h1").unwrap();
-    assert_eq!((b.total, b.status), (2, ForwardBadgeStatus::AllUp));
+    let b = badge(&state, "h1").unwrap();
+    assert_eq!((b.label.as_str(), b.status), ("⇄2", BadgeStatus::Ok));
 
     set(&mut state, ForwardHealth::Down, ForwardHealth::Down);
-    assert_eq!(state.forward_badge("h1").unwrap().status, ForwardBadgeStatus::AllDown);
+    assert_eq!(badge(&state, "h1").unwrap().status, BadgeStatus::Err);
 
     set(&mut state, ForwardHealth::Up, ForwardHealth::Down);
-    assert_eq!(state.forward_badge("h1").unwrap().status, ForwardBadgeStatus::Mixed);
+    assert_eq!(badge(&state, "h1").unwrap().status, BadgeStatus::Warn);
 
     // A probing forward alongside an up one is still "mixed", not all-up.
     set(&mut state, ForwardHealth::Up, ForwardHealth::Probing);
-    assert_eq!(state.forward_badge("h1").unwrap().status, ForwardBadgeStatus::Mixed);
+    assert_eq!(badge(&state, "h1").unwrap().status, BadgeStatus::Warn);
 
-    // Nothing confirmed either way yet → neutral "probing".
+    // Nothing confirmed either way yet → neutral "idle".
     set(&mut state, ForwardHealth::Probing, ForwardHealth::Probing);
-    assert_eq!(state.forward_badge("h1").unwrap().status, ForwardBadgeStatus::Probing);
+    assert_eq!(badge(&state, "h1").unwrap().status, BadgeStatus::Idle);
 }
 
 #[test]

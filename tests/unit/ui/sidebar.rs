@@ -258,7 +258,8 @@ fn remote_divider_buttons_register_below_their_top_margin() {
     // earlier they were published at the block top (the inert margin row), so
     // the bar's buttons resolved to nothing and a click fell through to
     // collapse the section instead of reconnecting / opening the menu.
-    use crate::state::{AppState, DividerButton, SidebarTab, ViewMode};
+    use crate::state::{AppState, SidebarTab, ViewMode};
+    use crate::system::tmux::TmuxSystem;
 
     let theme = &crate::theme::THEMES[0];
     let keybindings = Keybindings::default();
@@ -320,12 +321,12 @@ fn remote_divider_buttons_register_below_their_top_margin() {
     let h1: Vec<&crate::state::DividerHit> = captured
         .dividers
         .iter()
-        .filter(|h| h.host == "h1")
+        .filter(|h| TmuxSystem::host_of(&h.lane) == Some("h1"))
         .collect();
-    let kinds: Vec<DividerButton> = h1.iter().map(|h| h.kind).collect();
+    let cmds: Vec<&str> = h1.iter().map(|h| h.command.as_str()).collect();
     assert_eq!(
-        kinds,
-        vec![DividerButton::Reconnect, DividerButton::More],
+        cmds,
+        vec!["reconnect", "menu"],
         "remote `@h1` divider must register its reconnect + more buttons"
     );
 
@@ -339,14 +340,14 @@ fn remote_divider_buttons_register_below_their_top_margin() {
         assert!(
             matches!(captured.hit(h.rect.x, h.rect.y), Some(HitKind::Divider(_))),
             "{:?} button rect {:?} must resolve to a divider hit",
-            h.kind,
+            h.command,
             h.rect
         );
         assert_eq!(
             buf[pos].symbol(),
             "[",
             "{:?} button rect {:?} must sit on the painted `[icon]`",
-            h.kind,
+            h.command,
             h.rect
         );
     }
@@ -358,7 +359,8 @@ fn remote_divider_shows_colored_forward_badge() {
     // its divider: N counts the forwards, the color is the health rollup, and
     // a click opens that host's port-forward overlay (not a collapse).
     use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
-    use crate::state::{AppState, DividerButton, ForwardHealth, ForwardKey, SidebarTab, ViewMode};
+    use crate::state::{AppState, ForwardHealth, ForwardKey, SidebarTab, ViewMode};
+    use crate::system::tmux::TmuxSystem;
 
     let theme = &crate::theme::THEMES[0];
     let keybindings = Keybindings::default();
@@ -438,16 +440,15 @@ fn remote_divider_shows_colored_forward_badge() {
         .unwrap();
 
     // Buttons register left→right as badge, reconnect, more.
-    let h1: Vec<&crate::state::DividerHit> =
-        captured.dividers.iter().filter(|h| h.host == "h1").collect();
-    let kinds: Vec<DividerButton> = h1.iter().map(|h| h.kind).collect();
+    let h1: Vec<&crate::state::DividerHit> = captured
+        .dividers
+        .iter()
+        .filter(|h| TmuxSystem::host_of(&h.lane) == Some("h1"))
+        .collect();
+    let cmds: Vec<&str> = h1.iter().map(|h| h.command.as_str()).collect();
     assert_eq!(
-        kinds,
-        vec![
-            DividerButton::ForwardBadge,
-            DividerButton::Reconnect,
-            DividerButton::More
-        ],
+        cmds,
+        vec!["forwards", "reconnect", "menu"],
         "the forward badge must be the leftmost divider button"
     );
     let badge = h1[0];

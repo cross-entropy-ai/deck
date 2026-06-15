@@ -20,11 +20,11 @@ pub use crate::effects::{
     CreateSessionRequest, Effect, KillRequest, RemoteSwitchRequest, RenameRequest, SideEffect,
 };
 pub use crate::forwards::{
-    ForwardBadge, ForwardBadgeStatus, ForwardHealth, ForwardKey, PfAddForm, PfField,
+    ForwardHealth, ForwardKey, PfAddForm, PfField,
     PortForwardOverlay,
 };
 pub use crate::geometry::{
-    AgentEntry, AgentEntryKind, AgentHit, AgentTarget, BuiltLayout, DividerButton, DividerHit,
+    AgentEntry, AgentEntryKind, AgentHit, AgentTarget, BuiltLayout, DividerHit,
     HitKind, HitRegions, KillConfirmHits, SectionLayoutOpts, SectionMeta, SidebarLayout,
     SummaryHits, TabRects,
 };
@@ -878,7 +878,7 @@ impl AppState {
         let section_idx = built.layout.header_at_y(viewport_y, scroll)?;
         let meta = built.sections.get(section_idx)?;
         if meta.divider {
-            Some(meta.host.clone())
+            Some(crate::system::tmux::TmuxSystem::host_of(&meta.lane).map(str::to_string))
         } else {
             None
         }
@@ -1067,41 +1067,6 @@ impl AppState {
         }
     }
 
-    /// `@local` divider: accent fill + a single `[…]` menu button.
-    fn local_divider(&self) -> BasicItem {
-        BasicItem::new("@local")
-            .separator("─")
-            .color(self.active_theme().accent)
-            .button("…")
-    }
-
-    /// `@host` divider: per-host accent fill, an optional `[⇄N]` port-forward
-    /// badge (leftmost, only when the host has forwards), then `[⟳]` reconnect
-    /// and `[…]` menu buttons.
-    fn remote_divider(&self, host: &str, host_idx: usize, badge: Option<ForwardBadge>) -> BasicItem {
-        let mut item = BasicItem::new(format!("@{host}"))
-            .separator("─")
-            .color(host_accent(self.active_theme(), host_idx));
-        if let Some(badge) = badge {
-            item = item.button(format!("⇄{}", badge.total));
-        }
-        item.button("⟳").button("…")
-    }
-
-    /// Port-forward rollup for a host's divider badge, or `None` with no
-    /// configured forwards. Each forward's liveness comes from `forward_health`
-    /// (`Probing` until first probed), so the badge color and the port-forward
-    /// overlay always agree.
-    pub fn forward_badge(&self, host: &str) -> Option<ForwardBadge> {
-        let remote = self.config_remotes.iter().find(|r| r.host == host)?;
-        ForwardBadge::rollup(remote.forwards.iter().map(|f| {
-            self.forward_health
-                .get(&ForwardKey::from_spec(host, f))
-                .copied()
-                .unwrap_or(ForwardHealth::Probing)
-        }))
-    }
-
     /// Shared skeleton behind both sidebar tabs: a local section then one per
     /// remote host (in `remote_hosts_in_order`). Each gets its `@local`/`@host`
     /// divider plus matching [`SectionMeta`] (when `opts.show_headers`), then
@@ -1116,81 +1081,64 @@ impl AppState {
         &self,
         opts: SectionLayoutOpts,
         collapsed: &HashSet<LaneId>,
-        mut push_rows: impl FnMut(&mut SidebarLayout, &mut Vec<SectionMeta>, Option<&str>),
+        mut push_rows: impl FnMut(&mut SidebarLayout, &mut Vec<SectionMeta>, &LaneId),
     ) -> BuiltLayout {
+        use crate::system::tmux::TmuxSystem;
+        use crate::system::System;
+
         let mut layout = SidebarLayout::new();
         let mut sections: Vec<SectionMeta> = Vec::new();
         layout.set_collapsible(opts.collapsible);
 
-        // Each divider header's (section_idx, key) in push order, so collapse
-        // flags can be flipped after the list is built; section_idx counts
-        // pushed headers, matching the crate's section numbering (`sections`).
+        // Section headers in push order: (section_idx, lane), so collapse flags
+        // can be flipped once the list is built.
         let mut group_headers: Vec<(usize, LaneId)> = Vec::new();
 
-        // Push one section's divider header + `SectionMeta`. `first` (the local
-        // section) stays flush at the top; later remote sections take a 1-row
-        // top margin when `opts.remote_header_margin` is set.
-        let push_divider = |layout: &mut SidebarLayout,
-                                sections: &mut Vec<SectionMeta>,
-                                group_headers: &mut Vec<(usize, LaneId)>,
-                                header: BasicItem,
-                                meta: SectionMeta,
-                                key: LaneId,
-                                first: bool| {
-            if !opts.show_headers {
-                return;
-            }
-            group_headers.push((sections.len(), key));
-            if first || !opts.remote_header_margin {
-                layout.push_header_auto(header);
-            } else {
-                layout.push_header_margin(header, 1);
-            }
-            sections.push(meta);
+        // Lanes to lay out, in display order: the local lane, then each remote
+        // host as it first appears in `entries` (config order). The *shell*
+        // enumerates the lanes — not the system — so every session row keeps a
+        // section even before the system would list that lane.
+        let mut lanes = vec![TmuxSystem::local_lane()];
+        lanes.extend(self.remote_hosts_in_order_ref().map(TmuxSystem::host_lane));
+
+        let theme = self.active_theme();
+        let ctx = crate::system::SectionCtx {
+            remotes: &self.config_remotes,
+            forward_health: &self.forward_health,
         };
 
-        push_divider(
-            &mut layout,
-            &mut sections,
-            &mut group_headers,
-            self.local_divider(),
-            SectionMeta {
-                host: None,
-                buttons: vec![DividerButton::LocalMore],
-                divider: true,
-                forward_badge: None,
-            },
-            lane(None),
-            true,
-        );
-        push_rows(&mut layout, &mut sections, None);
-
-        for (host_idx, host) in self.remote_hosts_in_order().into_iter().enumerate() {
-            let badge = self.forward_badge(&host);
-            // The badge button is leftmost (drawn before `[⟳]`/`[…]`), so its
-            // `DividerButton` entry must lead `buttons` to stay parallel with
-            // the `BasicItem` button order the hit-tester zips against.
-            let mut buttons = Vec::with_capacity(3);
-            if badge.is_some() {
-                buttons.push(DividerButton::ForwardBadge);
-            }
-            buttons.push(DividerButton::Reconnect);
-            buttons.push(DividerButton::More);
-            push_divider(
-                &mut layout,
-                &mut sections,
-                &mut group_headers,
-                self.remote_divider(&host, host_idx, badge),
-                SectionMeta {
-                    host: Some(host.clone()),
-                    buttons,
+        for lane_id in &lanes {
+            // The system styles the divider: title, accent, buttons, badge.
+            let def = TmuxSystem.section_for(lane_id, &ctx);
+            if opts.show_headers {
+                let color = if def.accent == usize::MAX {
+                    theme.accent
+                } else {
+                    host_accent(theme, def.accent)
+                };
+                let mut header = BasicItem::new(def.title.clone())
+                    .separator("─")
+                    .color(color);
+                for b in &def.buttons {
+                    header = header.button(b.glyph.clone());
+                }
+                group_headers.push((sections.len(), def.lane.clone()));
+                // The local section stays flush; remote sections take a 1-row
+                // top margin when the tab asks for it.
+                if def.top_margin && opts.remote_header_margin {
+                    layout.push_header_margin(header, 1);
+                } else {
+                    layout.push_header_auto(header);
+                }
+                sections.push(SectionMeta {
+                    lane: def.lane.clone(),
+                    title: def.title,
+                    buttons: def.buttons,
                     divider: true,
-                    forward_badge: badge,
-                },
-                lane(Some(&host)),
-                false,
-            );
-            push_rows(&mut layout, &mut sections, Some(&host));
+                    badge: def.badge,
+                });
+            }
+            push_rows(&mut layout, &mut sections, lane_id);
         }
 
         // Flip each header's collapsed flag (from the caller's collapse set:
@@ -1222,9 +1170,10 @@ impl AppState {
                 remote_header_margin: show_headers,
             },
             &self.collapsed_sections,
-            |layout, _sections, host| {
+            |layout, _sections, lane_id| {
                 // `entries` is grouped by host and contiguous, so filtering by
-                // host yields each section's rows in flat-index (focus) order.
+                // the lane's host yields each section's rows in flat-index order.
+                let host = crate::system::tmux::TmuxSystem::host_of(lane_id);
                 for e in self.entries.iter().filter(|e| e.host.as_deref() == host) {
                     layout.push_row_auto(self.session_item(e, view_mode));
                 }
@@ -1232,18 +1181,10 @@ impl AppState {
         )
     }
 
-    /// Distinct remote hosts in first-appearance order in `entries` (the
-    /// refresh worker emits hosts in config order, one contiguous block each).
-    /// Shared by `agent_entries` and `agents_layout` so both walk sections alike.
-    fn remote_hosts_in_order(&self) -> Vec<String> {
-        self.remote_hosts_in_order_ref()
-            .map(str::to_string)
-            .collect()
-    }
-
-    /// Borrowing twin of [`remote_hosts_in_order`](Self::remote_hosts_in_order):
-    /// each distinct remote host as `&str` in first-appearance order, no per-host
-    /// `String` clone. Hot callers that only read the name take this path.
+    /// Distinct remote hosts as `&str` in first-appearance order in `entries`
+    /// (the refresh worker emits hosts in config order, one contiguous block
+    /// each). Shared by `build_sections` and `build_agent_entries` so the
+    /// sidebar sections and the flattened agent list walk hosts identically.
     fn remote_hosts_in_order_ref(&self) -> impl Iterator<Item = &str> {
         let mut seen: HashSet<&str> = HashSet::new();
         self.entries
@@ -1410,7 +1351,8 @@ impl AppState {
                 remote_header_margin: true,
             },
             &self.collapsed_agent_sections,
-            |layout, _sections, host| {
+            |layout, _sections, lane_id| {
+                let host = crate::system::tmux::TmuxSystem::host_of(lane_id);
                 for entry in self
                     .agent_entries
                     .iter()

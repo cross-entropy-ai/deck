@@ -15,7 +15,7 @@ pub mod tmux;
 use std::collections::HashMap;
 
 use crate::agent::DetectedAgent;
-use crate::config::Config;
+use crate::config::RemoteConfig;
 use crate::effects::Effect;
 use crate::forwards::{ForwardHealth, ForwardKey};
 use crate::lane::LaneId;
@@ -33,7 +33,13 @@ pub trait System {
     /// The lanes this system currently exposes, in display order. Each becomes
     /// one sidebar section (divider header + its rows). The shell concatenates
     /// the sections of all registered systems.
-    fn sections(&self, ctx: &SystemCtx) -> Vec<SectionDef>;
+    fn sections(&self, ctx: &SectionCtx) -> Vec<SectionDef>;
+
+    /// The [`SectionDef`] for a single lane. Used while the shell still
+    /// enumerates the lanes to lay out from its own session list (so every
+    /// session row keeps a section); [`sections`](System::sections) is the
+    /// enumerate-from-system path the refresh worker will drive later.
+    fn section_for(&self, lane: &LaneId, ctx: &SectionCtx) -> SectionDef;
 
     /// Snapshot one lane's sessions + detected agents. Run off the UI thread by
     /// the refresh worker. `None` means the lane was unreachable this round
@@ -44,7 +50,7 @@ pub trait System {
     /// run on the executor's per-lane worker thread. `ctx` carries the shell
     /// runtime state a backend may need to construct it (e.g. tmux reads the
     /// local client tty and a remote's reconnect marker id).
-    fn control(&self, lane: &LaneId, ctx: &SystemCtx) -> Box<dyn SessionControl + Send>;
+    fn control(&self, lane: &LaneId, ctx: &ControlCtx) -> Box<dyn SessionControl + Send>;
 
     /// Handle a click on a button this system declared on `lane`'s divider,
     /// identified by the button's [`command`](SectionButton::command). Returns
@@ -53,14 +59,17 @@ pub trait System {
     fn on_button(&self, lane: &LaneId, command: &str) -> Vec<Effect>;
 }
 
-/// Read-only shell runtime state a [`System`] may consult when building its
-/// sections or control handles. A grab-bag of what the shell can lend a
-/// backend; a system ignores the fields it doesn't need. (tmux derives the
-/// port-forward badge from `config` + `forward_health`, and builds remote
-/// control handles from `local_tty` + `marker_ids`.)
-pub struct SystemCtx<'a> {
-    pub config: &'a Config,
+/// Read-only state a [`System`] consults to build its [`sections`](System::sections).
+/// (tmux derives lanes from `remotes` and each `⇄N` badge from `forward_health`.)
+pub struct SectionCtx<'a> {
+    pub remotes: &'a [RemoteConfig],
     pub forward_health: &'a HashMap<ForwardKey, ForwardHealth>,
+}
+
+/// Runtime state a [`System`] needs to build a [`control`](System::control)
+/// handle. (tmux builds the local handle from `local_tty`, a remote one from
+/// the host's `marker_ids` entry.)
+pub struct ControlCtx<'a> {
     /// The local tmux client's tty, stable for the process.
     pub local_tty: &'a str,
     /// Per-host reconnect marker ids (remote connection generation), so a
@@ -98,7 +107,7 @@ pub struct SectionButton {
 
 /// A divider status badge — a label plus a status the shell maps to a theme
 /// color. Generalizes the old `ForwardBadge`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Badge {
     pub label: String,
     pub status: BadgeStatus,

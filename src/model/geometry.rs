@@ -9,7 +9,8 @@ use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
 use unicode_width::UnicodeWidthStr;
 
-use crate::forwards::ForwardBadge;
+use crate::lane::LaneId;
+use crate::system::{Badge, SectionButton};
 
 use unicode_width::UnicodeWidthChar;
 
@@ -200,22 +201,26 @@ pub type SidebarLayout =
 /// divider click to a host (collapse / reconnect / menu).
 #[derive(Debug, Clone)]
 pub struct SectionMeta {
-    /// Host this divider heads (`None` = `@local`). `None` for a
-    /// non-divider placeholder header too — read `divider` to tell them apart.
-    pub host: Option<String>,
+    /// Lane this divider heads. The hit-tester resolves clicks against it and
+    /// the owning [`System`](crate::system::System) routes button commands by
+    /// it. For a non-divider placeholder header it's still set; read `divider`
+    /// to tell them apart.
+    pub lane: LaneId,
+    /// Divider title (e.g. `@local`, `@host`), the System-defined header text.
+    /// Lets the renderer key the badge recolor by title.
+    pub title: String,
     /// Buttons on this divider, left→right, matching the `BasicItem`
     /// `.button()` order. Empty for placeholder headers (empty-local /
     /// no-agents / detecting).
-    pub buttons: Vec<DividerButton>,
+    pub buttons: Vec<SectionButton>,
     /// Whether the bar is a real, clickable group divider (toggles collapse,
     /// carries buttons). `false` for placeholder rows that occupy a header
     /// slot but aren't interactive.
     pub divider: bool,
-    /// Port-forward rollup for this host's divider. Drives the colored
-    /// `[⇄N]` badge; `None` = no badge (no forwards, or non-host divider).
-    /// Carried here so the renderer colors the badge without re-deriving
-    /// health from config.
-    pub forward_badge: Option<ForwardBadge>,
+    /// Status badge for this divider (e.g. the `⇄N` port-forward rollup).
+    /// Drives the badge color; `None` = no badge. Carried here so the renderer
+    /// colors it without re-deriving the system's state.
+    pub badge: Option<Badge>,
 }
 
 /// Switches distinguishing the two sidebar tabs built through the shared
@@ -295,29 +300,17 @@ pub enum AgentEntryKind {
     Placeholder { probed: bool },
 }
 
-/// Which button on a divider a `DividerHit` targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DividerButton {
-    /// `[⇄N]` — the port-forward status badge (leftmost). Click opens the
-    /// host's port-forward overlay. Present only when the host has forwards.
-    ForwardBadge,
-    /// `[⟳]` — force-refresh (reconnect) the host.
-    Reconnect,
-    /// `[…]` — open the host-divider menu.
-    More,
-    /// `[…]` on the `@local` divider — opens the local-divider menu. Carries
-    /// no host (the `DividerHit.host` is unused for this kind).
-    LocalMore,
-}
-
-/// Click-region for one button (`[⟳]` or `[…]`) on a remote-host
-/// divider. The sidebar renderer fills `HitRegions.dividers` after each
-/// render; mouse hit-testing resolves it before `focus_at_row()`.
+/// Click-region for one divider button. The sidebar renderer fills
+/// `HitRegions.dividers` after each render; mouse hit-testing resolves it
+/// before `focus_at_row()`, then dispatches the button's system `command` on
+/// its `lane`.
 #[derive(Debug, Clone)]
 pub struct DividerHit {
-    pub host: String,
+    pub lane: LaneId,
     pub rect: Rect,
-    pub kind: DividerButton,
+    /// The system-defined button command (see
+    /// [`SectionButton::command`](crate::system::SectionButton::command)).
+    pub command: String,
 }
 
 /// A detected agent's switch target, keyed by host (`None` = local).
