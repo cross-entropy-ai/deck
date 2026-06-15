@@ -406,7 +406,7 @@ dependencies = [
 
 [[package]]
 name = "deck"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "agent-detect",
  "argh",
