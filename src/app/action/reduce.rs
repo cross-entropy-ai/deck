@@ -1,4 +1,4 @@
-use crate::app::settings::SETTING_ROWS;
+use crate::app::settings::{provider_setting_defs, total_setting_rows, SETTING_ROWS};
 use crate::forwards::ForwardMode;
 use crate::new_session::textarea_line;
 use crate::state::{
@@ -543,10 +543,12 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
             state.settings.theme_picker_open = false;
         }
         SettingsAction::Next => {
-            state.settings.selected = step_clamped(state.settings.selected, SETTING_ROWS.len(), 1);
+            state.settings.selected =
+                step_clamped(state.settings.selected, total_setting_rows(state), 1);
         }
         SettingsAction::Prev => {
-            state.settings.selected = step_clamped(state.settings.selected, SETTING_ROWS.len(), -1);
+            state.settings.selected =
+                step_clamped(state.settings.selected, total_setting_rows(state), -1);
         }
         SettingsAction::Adjust | SettingsAction::AdjustPrev => {
             let direction = if matches!(action, SettingsAction::AdjustPrev) {
@@ -554,14 +556,17 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
             } else {
                 1
             };
-            // Look up the selected row in the descriptor table and fire its
-            // adjust action. The table is the single source of which row maps
-            // to which action — no positional match to keep in lockstep.
-            let inner = match SETTING_ROWS.get(state.settings.selected) {
-                Some(row) => apply_action(state, (row.adjust)(direction)),
-                None => SideEffect::default(),
-            };
-            fx.merge(inner);
+            // Look up the selected row and fire its adjust. Core rows live in
+            // the descriptor table (→ an `Action`); rows past it are
+            // provider-contributed (→ an `Effect`, pushed directly). Either way
+            // the row, not a positional match, is the source of truth.
+            let sel = state.settings.selected;
+            if let Some(row) = SETTING_ROWS.get(sel) {
+                let inner = apply_action(state, (row.adjust)(direction));
+                fx.merge(inner);
+            } else if let Some(def) = provider_setting_defs(state).get(sel - SETTING_ROWS.len()) {
+                fx.push((def.effect)(direction));
+            }
         }
         SettingsAction::CycleFrameRateLimit(direction) => {
             state.cycle_frame_rate_limit(direction);

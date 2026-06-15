@@ -2,8 +2,8 @@ use super::{
     apply_action, Action, MenuAction, NewSessionAction, PfAction, SettingsAction, SummaryAction,
 };
 use crate::state::{
-    AppState, FocusMode, LayoutMode, MainView, RenameState, SessionEntry, SessionEntryKind, ViewMode,
-    NO_SESSIONS_LABEL,
+    AppState, FocusMode, LayoutMode, MainView, RenameState, SessionEntry, SessionEntryKind,
+    ViewMode, NO_SESSIONS_LABEL,
 };
 
 fn make_session(name: &str) -> SessionEntry {
@@ -684,17 +684,31 @@ fn settings_adjust_keybindings_opens_view_after_exclude_row() {
 }
 
 #[test]
-fn settings_next_clamps_to_descriptor_table_length() {
-    // The descriptor table is the single source for the row count: Next
-    // must clamp at its last index, and the by-index tests above (rows
-    // 0–7) must stay inside it.
-    use crate::app::settings::SETTING_ROWS;
+fn settings_next_clamps_to_total_row_count() {
+    // Next clamps at the last row of the whole page — core descriptor rows
+    // plus the system-contributed rows appended after them.
+    use crate::app::settings::total_setting_rows;
     let mut state = make_test_state(1);
     state.settings.selected = 0;
-    for _ in 0..(SETTING_ROWS.len() + 5) {
+    let total = total_setting_rows(&state);
+    for _ in 0..(total + 5) {
         apply_action(&mut state, Action::Settings(SettingsAction::Next));
     }
-    assert_eq!(state.settings.selected, SETTING_ROWS.len() - 1);
+    assert_eq!(state.settings.selected, total - 1);
+}
+
+#[test]
+fn settings_system_row_fires_its_effect() {
+    // The appended system row (tmux's "Remotes") sits just past the core
+    // table; adjusting it pushes the system's Effect, not an Action.
+    use crate::app::settings::SETTING_ROWS;
+    let mut state = make_test_state(1);
+    state.settings.selected = SETTING_ROWS.len(); // first system row
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    assert!(fx
+        .effects()
+        .iter()
+        .any(|e| matches!(e, crate::effects::Effect::OpenAddRemotePicker)));
 }
 
 fn rename_state(initial: &str) -> RenameState {

@@ -364,7 +364,7 @@ impl App {
                 // we still hold `&AppState`: the value/help closures read it,
                 // but `draw_settings_page` is a pure `ui` fn that only sees
                 // the resulting `Vec<SettingRowView>`.
-                let rows: Vec<SettingRowView> = SETTING_ROWS
+                let mut rows: Vec<SettingRowView> = SETTING_ROWS
                     .iter()
                     .map(|row| SettingRowView {
                         label: row.label,
@@ -372,6 +372,17 @@ impl App {
                         help: (row.help)(s),
                     })
                     .collect();
+                // Append each registered provider's rows (e.g. ssh's
+                // "Remotes"), so the page is core rows + provider rows.
+                rows.extend(
+                    super::settings::provider_setting_defs(s)
+                        .into_iter()
+                        .map(|d| SettingRowView {
+                            label: d.label,
+                            value: d.value,
+                            help: d.help,
+                        }),
+                );
                 let settings_view = SettingsView {
                     selected: s.settings.selected,
                     rows,
