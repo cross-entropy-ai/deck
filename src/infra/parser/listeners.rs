@@ -1,28 +1,42 @@
 //! Pure parsers for local TCP listener enumeration output.
 //!
-//! `netstat` (macOS) and `ss` (Linux) print listening sockets in different
+//! `lsof` (macOS) and `ss` (Linux) print listening sockets in different
 //! shapes; both reduce to "the set of local ports in LISTEN state". The
 //! shelling-out + platform dispatch lives in `infra::listeners`.
+//!
+//! macOS used to parse `netstat -an`, but modern macOS (Darwin 27+) dropped
+//! the TCP/IPv4/IPv6 section from `netstat` output entirely — it now prints
+//! only Multipath and UNIX-domain sockets — so a netstat-based probe always
+//! came back empty and every `-L`/`-D` forward read as Down. `lsof` still
+//! enumerates TCP listeners reliably across macOS versions.
 
-// parse_netstat/parse_ss are platform-split: local_listen_ports only calls
+// parse_lsof/parse_ss are platform-split: local_listen_ports only calls
 // one of them per OS (cfg-gated), so the other is "unused" in a non-test
 // build on that platform. The module-level allow covers that.
 #![allow(dead_code)]
 
 use std::collections::HashSet;
 
-/// Parse macOS `netstat -an -p tcp` output into the set of local ports in
-/// LISTEN state. Local address is the 4th column; the port is the text after
-/// the final `.` (e.g. `127.0.0.1.8080`, `*.1080`, `::1.8080`).
-pub fn parse_netstat(output: &str) -> HashSet<u16> {
+/// Parse macOS `lsof -nP -iTCP -sTCP:LISTEN` output into the set of local
+/// ports in LISTEN state. The `NAME` field holds `address:port` with a
+/// trailing `(LISTEN)` token, e.g. `*:54322 (LISTEN)`, `[::1]:54323 (LISTEN)`,
+/// `127.0.0.1:54324 (LISTEN)`. The port is the text after the address's final
+/// `:`, which also handles the bracketed IPv6 form.
+pub fn parse_lsof(output: &str) -> HashSet<u16> {
     let mut ports = HashSet::new();
     for line in output.lines() {
         let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.last() != Some(&"LISTEN") {
+        // The address:port is the token immediately before the `(LISTEN)`
+        // marker; skip any line that isn't a LISTEN socket.
+        let Some(addr) = cols
+            .iter()
+            .position(|c| *c == "(LISTEN)")
+            .and_then(|i| i.checked_sub(1))
+            .and_then(|i| cols.get(i))
+        else {
             continue;
-        }
-        let Some(local) = cols.get(3) else { continue };
-        if let Some((_, port)) = local.rsplit_once('.') {
+        };
+        if let Some((_, port)) = addr.rsplit_once(':') {
             if let Ok(p) = port.parse::<u16>() {
                 ports.insert(p);
             }
