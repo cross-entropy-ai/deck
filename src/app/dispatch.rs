@@ -393,42 +393,27 @@ impl App {
         if self.state.summary.state == crate::state::SummaryState::Generating {
             return;
         }
-        // Snapshot the panes now so the worker doesn't touch shared state
-        // off-thread. Agents tab: each detected agent's pane. Projects tab:
-        // each live session's active pane (by session name, which tmux
-        // resolves to that pane).
-        let panes: Vec<crate::summary::SummaryPane> = if self.state.agents_tab_active() {
-            self.state
-                .agent_entries
-                .iter()
-                .filter_map(|entry| {
-                    let agent = entry.agent()?;
-                    Some(crate::summary::SummaryPane {
-                        host: entry.host.clone(),
-                        id: agent.location(),
-                        target: agent.pane_id.clone(),
-                    })
+        // Summary is an Agents-tab feature; the only Generate affordance lives
+        // on that tab's card, so there's nothing to do off it.
+        if !self.state.agents_tab_active() {
+            return;
+        }
+        // Snapshot each detected agent's pane now so the worker doesn't touch
+        // shared state off-thread.
+        let panes: Vec<crate::summary::SummaryPane> = self
+            .state
+            .agent_entries
+            .iter()
+            .filter_map(|entry| {
+                let agent = entry.agent()?;
+                Some(crate::summary::SummaryPane {
+                    host: entry.host.clone(),
+                    id: agent.location(),
+                    target: agent.pane_id.clone(),
                 })
-                .collect()
-        } else {
-            self.state
-                .entries
-                .iter()
-                .filter(|e| e.is_attachable())
-                .map(|e| crate::summary::SummaryPane {
-                    host: e.host.clone(),
-                    id: e.name.clone(),
-                    target: e.name.clone(),
-                })
-                .collect()
-        };
-        // Each tab has its own prompt: agent-framed on Agents, session-framed
-        // on Projects.
-        let template = if self.state.agents_tab_active() {
-            self.state.prefs.summary_prompt.clone()
-        } else {
-            self.state.prefs.summary_prompt_projects.clone()
-        };
+            })
+            .collect();
+        let template = self.state.prefs.summary_prompt.clone();
         let model = self.state.prefs.summary_model.clone();
         let language = self.state.prefs.summary_language.clone();
 

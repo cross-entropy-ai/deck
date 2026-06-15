@@ -346,9 +346,6 @@ pub struct Prefs {
     /// with the agent panes at generation time. Seeded in `App::new` and
     /// refreshed on config reload.
     pub summary_prompt: String,
-    /// The Projects-tab summary prompt (session-framed), used when Generate is
-    /// triggered on the Projects tab; `summary_prompt` is used on Agents.
-    pub summary_prompt_projects: String,
     /// Model passed to `claude --model` for the summary (from config); empty
     /// follows the user's Claude Code default.
     pub summary_model: String,
@@ -385,7 +382,6 @@ impl Prefs {
             exclude_patterns: cfg.exclude_patterns.clone(),
             update_check_mode: cfg.update_check,
             summary_prompt: cfg.summary_prompt.clone(),
-            summary_prompt_projects: cfg.summary_prompt_projects.clone(),
             summary_model: cfg.summary_model.clone(),
             summary_height: cfg
                 .summary_height
@@ -424,9 +420,6 @@ impl Prefs {
             collapsed_agent_sections: collapsed_agents,
             summary_prompt: self.summary_prompt.clone(),
             summary_prompt_version: crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION,
-            summary_prompt_projects: self.summary_prompt_projects.clone(),
-            summary_prompt_projects_version:
-                crate::summary::DEFAULT_SUMMARY_PROMPT_PROJECTS_VERSION,
             summary_model: self.summary_model.clone(),
             summary_height: self.summary_height,
             summary_language: self.summary_language.clone(),
@@ -806,8 +799,8 @@ impl AppState {
             return None;
         }
         // The list viewport sits above the Summary card (pinned to the bottom
-        // of both tabs, between the list and the footer, not part of the
-        // sectioned list).
+        // of the Agents tab, between the list and the footer, not part of the
+        // sectioned list; `summary_card_height` is 0 elsewhere).
         let list_bottom = sessions_bottom.saturating_sub(self.summary_card_height());
         if row < sessions_top || row >= list_bottom {
             return None;

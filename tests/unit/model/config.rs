@@ -217,11 +217,6 @@ fn load_self_heals_a_valid_file_without_dropping_user_data() {
         cfg.summary_prompt_version,
         crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION
     );
-    assert_eq!(
-        cfg.summary_prompt_projects_version,
-        crate::summary::DEFAULT_SUMMARY_PROMPT_PROJECTS_VERSION,
-        "the Projects-tab prompt migrates alongside the agent one"
-    );
     // The rewrite on disk kept the remote too.
     let reloaded = Config::try_load_from(&path).unwrap();
     assert_eq!(reloaded.remotes.len(), 1);

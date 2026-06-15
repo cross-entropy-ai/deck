@@ -96,11 +96,6 @@ pub struct Config {
     /// never seeded (fresh config or one predating this field); the
     /// migration treats it as stale and refreshes.
     pub summary_prompt_version: u32,
-    /// The Projects-tab summary prompt template, the session-framed twin of
-    /// `summary_prompt` (which is agent-framed). Same migration rules.
-    pub summary_prompt_projects: String,
-    /// Default-template version `summary_prompt_projects` was seeded from.
-    pub summary_prompt_projects_version: u32,
     /// Model passed to `claude --model` when generating the summary. Empty
     /// follows the user's Claude Code default; defaults to a fast, cheap
     /// model since summarizing buffers doesn't need a strong one.
@@ -115,9 +110,9 @@ pub struct Config {
     /// How often the Agents tab probes for agents and their status, in
     /// seconds (one of 1/2/5/10). Set from the settings page.
     pub agents_probe_interval: u64,
-    /// Whether the inline Summary card (and its Generate action) is shown at
-    /// all. Off hides the card on both tabs and reclaims its rows for the
-    /// session/agent list. Set from the settings page; defaults to on.
+    /// Whether the inline Agents-tab Summary card (and its Generate action) is
+    /// shown. Off hides the card and reclaims its rows for the agent list. Set
+    /// from the settings page; defaults to on.
     pub summary_enabled: bool,
     /// Use the terminal's default (transparent) background instead of the
     /// theme's solid background color.
@@ -145,8 +140,6 @@ impl Default for Config {
             // stamps the real version and persists the prompt to disk.
             summary_prompt: crate::summary::DEFAULT_SUMMARY_PROMPT.to_string(),
             summary_prompt_version: 0,
-            summary_prompt_projects: crate::summary::DEFAULT_SUMMARY_PROMPT_PROJECTS.to_string(),
-            summary_prompt_projects_version: 0,
             summary_model: crate::summary::DEFAULT_SUMMARY_MODEL.to_string(),
             summary_height: crate::state::DEFAULT_SUMMARY_HEIGHT,
             summary_language: String::new(),
@@ -285,16 +278,6 @@ impl Config {
         {
             self.summary_prompt = crate::summary::DEFAULT_SUMMARY_PROMPT.to_string();
             self.summary_prompt_version = crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION;
-            changed = true;
-        }
-        if self.summary_prompt_projects_version
-            < crate::summary::DEFAULT_SUMMARY_PROMPT_PROJECTS_VERSION
-            || self.summary_prompt_projects.trim().is_empty()
-        {
-            self.summary_prompt_projects =
-                crate::summary::DEFAULT_SUMMARY_PROMPT_PROJECTS.to_string();
-            self.summary_prompt_projects_version =
-                crate::summary::DEFAULT_SUMMARY_PROMPT_PROJECTS_VERSION;
             changed = true;
         }
         changed

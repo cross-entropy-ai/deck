@@ -254,7 +254,9 @@ impl AppState {
     /// Ready text scrolls inside it rather than growing the card; the user
     /// resizes by dragging the handle.
     pub fn summary_card_height(&self) -> u16 {
-        if !self.prefs.summary_enabled {
+        // The Summary card is an Agents-tab feature (agents only exist in the
+        // Horizontal layout). On the Projects tab the list reclaims its rows.
+        if !self.prefs.summary_enabled || !self.agents_tab_active() {
             return 0;
         }
         3 + self.prefs.summary_height

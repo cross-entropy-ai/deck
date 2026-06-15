@@ -1015,8 +1015,6 @@ fn prefs_config_round_trip_is_identity() {
         collapsed_agent_sections: Vec::new(),
         summary_prompt: "prompt".to_string(),
         summary_prompt_version: crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION,
-        summary_prompt_projects: "projects prompt".to_string(),
-        summary_prompt_projects_version: crate::summary::DEFAULT_SUMMARY_PROMPT_PROJECTS_VERSION,
         summary_model: "model".to_string(),
         summary_height: 12,
         summary_language: "English".to_string(),
