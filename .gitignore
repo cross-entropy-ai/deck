@@ -3,3 +3,5 @@ error.log
 .DS_Store
 .cursor/
 .claude/
+scripts/*.png
+__pycache__/
