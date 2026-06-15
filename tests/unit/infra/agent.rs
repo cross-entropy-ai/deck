@@ -147,11 +147,79 @@ fn excluded_session_agents_are_filtered_out() {
 
 #[test]
 fn claude_classifier_reads_traffic_light_from_buffer() {
-    // Working spinner: the "<verb>ing… (" status line.
+    // Working spinner: the "<verb>ing… (… esc to interrupt)" status line.
     let working = "✶ Cogitating… (12s · ↑ 3.2k tokens · esc to interrupt)";
     assert_eq!(
         classify_status(AgentKind::Claude, working),
         AgentStatus::Working
+    );
+
+    // Working spinner with a description between the verb and the tail — the
+    // old "ing… (" marker missed this; the interrupt hint catches it.
+    let described = "✱ Distilling findings into ai-patterns.md… (5m 21s · esc to interrupt)";
+    assert_eq!(
+        classify_status(AgentKind::Claude, described),
+        AgentStatus::Working
+    );
+
+    // Working spinner whose interrupt hint is wrapped off — the live timer
+    // tail "… (30s" still reads as working.
+    let timer = "* Brewing… (30s · ↑ 1.2k tokens";
+    assert_eq!(
+        classify_status(AgentKind::Claude, timer),
+        AgentStatus::Working
+    );
+
+    // Same, with ASCII "..." instead of the "…" glyph and the hint truncated.
+    let ascii_dots = "* Distilling findings into ai-patterns.md... (5m 21s   17.6k toke";
+    assert_eq!(
+        classify_status(AgentKind::Claude, ascii_dots),
+        AgentStatus::Working
+    );
+
+    // A bare thinking spinner (glyph + gerund + ellipsis, no parenthetical),
+    // e.g. just after a turn starts before the timer renders.
+    let spinner = "· Crunching…";
+    assert_eq!(
+        classify_status(AgentKind::Claude, spinner),
+        AgentStatus::Working
+    );
+
+    // A spinner glyph leading a non-gerund, non-ellipsis status line — the
+    // glyph alone signals an in-flight turn.
+    let workflow = "✻ Waiting for 1 dynamic workflow to finish";
+    assert_eq!(
+        classify_status(AgentKind::Claude, workflow),
+        AgentStatus::Working
+    );
+
+    // Realistic layout: the spinner sits a few lines above the input box, with
+    // blank rows in between. Blank rows don't count toward the live-tail
+    // window, so the glyph is still seen.
+    let with_box = "✻ Waiting for 1 dynamic workflow to finish\n\n╭──────────────────────╮\n│ >                    │\n╰──────────────────────╯\n\n  ? for shortcuts";
+    assert_eq!(
+        classify_status(AgentKind::Claude, with_box),
+        AgentStatus::Working
+    );
+
+    // A spinner glyph beyond the live-tail window (too far above the bottom)
+    // is stale transcript, not the current state → idle.
+    let stale_spinner = format!("✻ Cogitating\n{}\n│ >", "x\n".repeat(14));
+    assert_eq!(
+        classify_status(AgentKind::Claude, &stale_spinner),
+        AgentStatus::Idle
+    );
+
+    // A bare tool line in flight (no parenthetical) on the bottom line.
+    let tool = "some earlier output\nRunning command…";
+    assert_eq!(classify_status(AgentKind::Claude, tool), AgentStatus::Working);
+
+    // A "… (ctrl+o to expand)" tool-result tail is NOT a live timer → not
+    // working on its own (no interrupt hint, paren isn't a duration).
+    let collapsed = "⏺ Read(config.yaml)\n  ⎿ Read 1 file… (ctrl+o to expand)\n│ > │\n? for shortcuts";
+    assert_eq!(
+        classify_status(AgentKind::Claude, collapsed),
+        AgentStatus::Idle
     );
 
     // Idle at the prompt, nothing pending.

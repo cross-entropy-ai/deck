@@ -10,6 +10,7 @@
 //! subtree.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentKind {
@@ -111,21 +112,90 @@ impl StatusClassifier for UnknownClassifier {
     }
 }
 
-/// Claude Code's pane is classified by reading it **bottom-up**: the lowest
-/// status-bearing line reflects the current state (lines above it are stale
-/// transcript). Per line:
-/// - a working spinner like "Cogitating… (12s · esc to interrupt)" — tell
-///   is `ing… (` → `Working` (red);
+/// Claude Code's pane is classified by reading the **bottom slice** of the
+/// capture **bottom-up**: the lowest status-bearing line reflects the current
+/// state (lines above it are stale transcript). Per line:
+/// - an in-flight turn → `Working` (green), detected by verb-independent
+///   tells so it survives Claude's rotating spinner verbs (see
+///   [`CLAUDE_INTERRUPT_HINT`] / [`working_timer_tail`] / [`working_spinner_glyph`]
+///   / [`working_spinner_tail`] / [`working_tool_tail`]);
 /// - a permission/confirmation dialog ("Do you want to proceed?") →
 ///   `Waiting` (yellow), the user's input is needed;
 /// - a finished-turn summary "…ed for <number>…" (e.g. "Cogitated for 5s")
-///   → `Idle` (green), the task is done;
+///   → `Idle` (red), the task is done;
 /// - nothing recognized → idle at the prompt; an empty capture → `Unknown`.
 pub struct ClaudeClassifier;
 
-/// Substring that marks an in-flight turn: Claude Code's "<verb>ing… ("
-/// status line (e.g. "Cogitating… (3s · …").
-const CLAUDE_WORKING_MARKER: &str = "ing\u{2026} (";
+/// How many lines up from the bottom to consider at all — the capture is
+/// roughly one screen, but cap it so a busy transcript can't sway the verdict.
+const MAX_SCAN_LINES: usize = 40;
+
+/// A live spinner / tool line sits near the bottom of the pane, a few lines
+/// above the input box. Tells that could otherwise match completed transcript
+/// (the bare-spinner / bare-tool tiers) are gated to this many bottom lines —
+/// counting only **non-blank** lines, so the blank rows around the input box
+/// don't push the spinner out of the window.
+const LIVE_TAIL_LINES: usize = 12;
+
+/// The phrase Claude Code prints only while a turn is interruptible (in
+/// flight): "… · esc to interrupt)". The single most reliable "working" tell
+/// — verb-, glyph-, and description-independent, and it does not survive in
+/// the transcript once the turn completes, so it can be matched anywhere in
+/// the scanned tail without picking up stale lines.
+const CLAUDE_INTERRUPT_HINT: &str = "esc to interrupt";
+
+/// Spinner progress tail carrying a live timer: "… (5m 21s", "… (30s)". A
+/// secondary tell for spinner lines whose interrupt hint is truncated or
+/// wrapped off. Requiring a leading *duration* after "(" rejects completed
+/// tool lines like "Reading 1 file… (ctrl+o to expand)" and stray prose
+/// ("… (see above)").
+fn working_timer_tail() -> &'static regex::Regex {
+    static R: OnceLock<regex::Regex> = OnceLock::new();
+    R.get_or_init(|| regex::Regex::new(r"(?:\u{2026}|\.\.\.)\s*\(\s*\d+\s*[hms]").unwrap())
+}
+
+/// A line led by one of Claude Code's animated spinner glyphs — the rotating
+/// sparkle/star frames (NOT the ambiguous "* · •", which double as markdown
+/// bullets and are left to the gated gerund/timer tells). The spinner glyph is
+/// shown while a turn runs whatever follows it — "✻ Waiting for 1 dynamic
+/// workflow to finish" — so the leading glyph alone signals work. The caller
+/// gates it to the bottom [`LIVE_TAIL_LINES`] non-blank lines (a real spinner
+/// sits a few lines above the input box) and runs it only after the
+/// completed-turn check, since the finished summary ("✶ Cogitated for 8s")
+/// reuses the same glyph.
+fn working_spinner_glyph() -> &'static regex::Regex {
+    static R: OnceLock<regex::Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        regex::Regex::new(
+            r"^\s*[\u{2722}\u{2726}\u{2727}\u{2731}\u{2733}\u{2734}\u{2735}\u{2736}\u{2737}\u{2738}\u{2739}\u{273a}\u{273b}\u{273d}\u{2749}\u{274b}]",
+        )
+        .unwrap()
+    })
+}
+
+/// A bare thinking spinner whose glyph isn't in [`working_spinner_glyph`]'s
+/// set, keyed on structure instead: a leading symbol and a gerund "…ing" right
+/// before the trailing ellipsis (e.g. "⟳ Frobnicating…"). Also caller-gated to
+/// the bottom [`LIVE_TAIL_LINES`].
+fn working_spinner_tail() -> &'static regex::Regex {
+    static R: OnceLock<regex::Regex> = OnceLock::new();
+    R.get_or_init(|| regex::Regex::new(r"(?i)^\s*[^\w\s].*ing(?:\u{2026}|\.\.\.)\s*$").unwrap())
+}
+
+/// A tool call in flight with no parenthetical, e.g. "Reading 1 file…",
+/// "Running command…". Tool verbs are a stable, finite set (unlike the
+/// thinking spinner's whimsical verbs), so a whitelist is safe here and wards
+/// off matching stray prose. Requires the live trailing ellipsis a completed
+/// tool line lacks; the caller gates it to the bottom [`LIVE_TAIL_LINES`].
+fn working_tool_tail() -> &'static regex::Regex {
+    static R: OnceLock<regex::Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        regex::Regex::new(
+            r"(?i)^\s*(?:reading|writing|editing|updating|running|executing|searching|grepping|fetching|building|testing|installing|committing|pushing|analyzing|checking)\b.*(?:\u{2026}|\.\.\.)\s*$",
+        )
+        .unwrap()
+    })
+}
 
 /// Markers of a permission/confirmation dialog awaiting the user's choice.
 const CLAUDE_WAITING_MARKERS: &[&str] = &["do you want", "\u{276f} 1."];
@@ -145,16 +215,37 @@ impl StatusClassifier for ClaudeClassifier {
         if pane.buffer.trim().is_empty() {
             return AgentStatus::Unknown;
         }
-        for line in pane.buffer.lines().rev() {
+        let lines: Vec<&str> = pane.buffer.lines().collect();
+        let scanned = &lines[lines.len().saturating_sub(MAX_SCAN_LINES)..];
+        // Count non-blank lines from the bottom so the blank rows around the
+        // input box don't shrink the live-tail window.
+        let mut content_seen = 0usize;
+        for line in scanned.iter().rev() {
             let lower = line.to_ascii_lowercase();
-            if lower.contains(CLAUDE_WORKING_MARKER) {
+            // Strong, high-precision tells — matchable anywhere in the tail.
+            if lower.contains(CLAUDE_INTERRUPT_HINT) || working_timer_tail().is_match(line) {
                 return AgentStatus::Working;
             }
             if CLAUDE_WAITING_MARKERS.iter().any(|m| lower.contains(m)) {
                 return AgentStatus::Waiting;
             }
+            // A finished-turn summary ("✶ Cogitated for 8s") reuses a spinner
+            // glyph, so rule it out before the bare-spinner tells below.
             if completed_line(&lower) {
                 return AgentStatus::Idle;
+            }
+            if !line.trim().is_empty() {
+                content_seen += 1;
+            }
+            // Bare in-flight tells (no parenthetical), only within the bottom
+            // LIVE_TAIL_LINES non-blank lines where a live spinner / tool line
+            // sits.
+            if content_seen <= LIVE_TAIL_LINES
+                && (working_spinner_glyph().is_match(line)
+                    || working_spinner_tail().is_match(line)
+                    || working_tool_tail().is_match(line))
+            {
+                return AgentStatus::Working;
             }
         }
         // No status line recognized → sitting at the prompt.
