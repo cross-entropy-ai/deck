@@ -33,7 +33,6 @@ pub use crate::summary_card::{
     SummaryCard, SummaryState, DEFAULT_SUMMARY_HEIGHT, SUMMARY_MAX_HEIGHT, SUMMARY_MIN_HEIGHT,
 };
 
-
 mod focus;
 mod layout;
 
@@ -580,26 +579,12 @@ impl AppState {
             session_order: Vec::new(),
             main_view: MainView::Terminal,
             focus_mode: FocusMode::Main,
-            prefs: Prefs {
-                theme_index: 0,
-                layout_mode: LayoutMode::default(),
-                show_borders: true,
-                transparent_bg: false,
-                sidebar_tab: SidebarTab::default(),
-                sidebar_width: 28,
-                sidebar_height: SIDEBAR_HEIGHT,
-                view_mode: ViewMode::default(),
-                frame_rate_limit: 5,
-                exclude_patterns: Vec::new(),
-                update_check_mode: UpdateCheckMode::default(),
-                summary_prompt: String::new(),
-                summary_prompt_projects: String::new(),
-                summary_model: String::new(),
-                summary_height: DEFAULT_SUMMARY_HEIGHT,
-                summary_language: String::new(),
-                agents_probe_interval_secs: DEFAULT_AGENTS_PROBE_INTERVAL,
-                summary_enabled: true,
-            },
+            // Mirror `Config::default()` through the single config→prefs
+            // mapping rather than re-listing every default here (which had
+            // already drifted — e.g. `transparent_bg`). `apply_config` resets
+            // this from the loaded config before any read in production; tests
+            // that build a bare state override the fields they care about.
+            prefs: Prefs::from_config(&crate::config::Config::default(), 0),
             settings: SettingsState::default(),
             agent_focused: 0,
             summary: SummaryCard::default(),
@@ -1005,7 +990,6 @@ impl AppState {
         &crate::theme::THEMES[self.prefs.theme_index]
     }
 
-
     /// Drop health entries whose forward no longer exists in config (after a
     /// reload that removed forwards), so the map doesn't accrete dead keys.
     pub fn prune_forward_health(&mut self) {
@@ -1054,7 +1038,6 @@ impl AppState {
             self.forward_health.insert(key, health);
         }
     }
-
 
     /// Clamp and set sidebar width. Returns true if it changed.
     pub fn resize_sidebar(&mut self, new_width: u16) -> bool {
