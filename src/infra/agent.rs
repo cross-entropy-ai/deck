@@ -1,13 +1,10 @@
 //! Detect coding agents (Claude Code, Codex) running *interactively* in
-//! tmux panes, with no hooks installed — by walking the process tree
-//! under each pane's pid and matching the agent's `argv`, recording which
-//! tmux session/window/pane each one sits in.
+//! tmux panes, no hooks: walk each pane pid's process tree, match the
+//! agent's `argv`, record its session/window/pane.
 //!
-//! See `docs/agent-integration.md` for the research behind the
-//! signatures. In short: `pane_current_command` is unreliable (it shows
-//! Claude Code's version string, and flips while the agent runs a
-//! subprocess), so we look for an agent process anywhere in each pane's
-//! subtree.
+//! `pane_current_command` is unreliable (shows Claude Code's version
+//! string, flips while a subprocess runs), so we search the whole pane
+//! subtree. See `docs/agent-integration.md` for signature research.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::OnceLock;
@@ -19,10 +16,8 @@ pub enum AgentKind {
 }
 
 /// One tmux pane's identity, fed to `detect_agents`. `session`/`window`/
-/// `pane` are display fields (`session_name`, `window_index`,
-/// `pane_index`); `pane_id` is the stable `%N` handle used for switching
-/// (indices renumber as panes/windows come and go, so they must not be
-/// the switch target — see the adversarial review).
+/// `pane` are display fields; `pane_id` is the stable `%N` switch handle
+/// (indices renumber as panes/windows churn, so they can't be the target).
 #[derive(Debug, Clone)]
 pub struct PaneInfo {
     pub pid: u32,
@@ -41,19 +36,17 @@ pub struct DetectedAgent {
     pub pane: String,
     /// Stable `%N` pane id — the switch/focus target.
     pub pane_id: String,
-    /// Traffic-light health, classified from the pane buffer (see
-    /// [`StatusClassifier`]). `Unknown` until a buffer is captured and
-    /// classified — `detect_agents` itself has no buffer, so it leaves this
-    /// `Unknown` for the gathering layer to fill in.
+    /// Traffic-light health from the pane buffer (see [`StatusClassifier`]).
+    /// `detect_agents` has no buffer, so it leaves this `Unknown` for the
+    /// gathering layer to fill in.
     pub status: AgentStatus,
 }
 
-/// Traffic-light health shown as a colored dot before each agent row:
-/// green = actively working, red = not working (idle), yellow = waiting for
-/// user input, default/uncolored = unknown (not captured, or an agent kind
-/// whose classifier isn't implemented yet). Color mapping lives in the
-/// renderer (`ui::sidebar::sessions::recolor_agent_dot`), keyed off this
-/// status (not the glyph); these stay semantic.
+/// Traffic-light health shown as a colored dot per agent row: green =
+/// working, red = idle, yellow = waiting for input, default = unknown (not
+/// captured, or no classifier yet). The renderer
+/// (`ui::sidebar::sessions::recolor_agent_dot`) maps color off this status,
+/// not the glyph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AgentStatus {
     Working,
@@ -79,9 +72,9 @@ pub struct PaneSnapshot<'a> {
 }
 
 /// Decides an agent's [`AgentStatus`] from its pane. One implementor per
-/// agent kind — deck ships Claude Code today; Codex / pi / opencode each
-/// get their own as their TUIs are characterized. Implementations are pure
-/// (no IO) so they run cheaply every refresh and are trivial to unit-test.
+/// agent kind (only Claude Code today; others added as their TUIs are
+/// characterized). Pure (no IO) so it runs cheaply every refresh and is
+/// trivial to unit-test.
 pub trait StatusClassifier {
     fn classify(&self, pane: &PaneSnapshot) -> AgentStatus;
 }
@@ -113,57 +106,50 @@ impl StatusClassifier for UnknownClassifier {
     }
 }
 
-/// Claude Code's pane is classified by reading the **bottom slice** of the
-/// capture **bottom-up**: the lowest status-bearing line reflects the current
-/// state (lines above it are stale transcript). Per line:
-/// - an in-flight turn → `Working` (green), detected by verb-independent
-///   tells so it survives Claude's rotating spinner verbs (see
-///   [`CLAUDE_INTERRUPT_HINT`] / [`working_timer_tail`] / [`working_spinner_glyph`]
-///   / [`working_spinner_tail`] / [`working_tool_tail`]);
-/// - a permission/confirmation dialog ("Do you want to proceed?") →
-///   `Waiting` (yellow), the user's input is needed;
-/// - a finished-turn summary "…ed for <number>…" (e.g. "Cogitated for 5s")
-///   → `Idle` (red), the task is done;
-/// - nothing recognized → idle at the prompt; an empty capture → `Unknown`.
+/// Classify Claude Code's pane by scanning the capture's bottom slice
+/// bottom-up; the lowest status-bearing line wins (lines above are stale
+/// transcript). Per line:
+/// - in-flight turn → `Working`, via verb-independent tells that survive
+///   Claude's rotating spinner verbs ([`CLAUDE_INTERRUPT_HINT`],
+///   [`working_timer_tail`], [`working_spinner_glyph`],
+///   [`working_spinner_tail`], [`working_tool_tail`]);
+/// - permission/confirmation dialog ("Do you want to proceed?") → `Waiting`;
+/// - finished-turn summary "…ed for <number>…" ("Cogitated for 5s") → `Idle`;
+/// - nothing recognized → `Idle` at prompt; empty capture → `Unknown`.
 pub struct ClaudeClassifier;
 
 /// How many lines up from the bottom to consider at all — the capture is
 /// roughly one screen, but cap it so a busy transcript can't sway the verdict.
 const MAX_SCAN_LINES: usize = 40;
 
-/// A live spinner / tool line sits near the bottom of the pane, a few lines
-/// above the input box. Tells that could otherwise match completed transcript
-/// (the bare-spinner / bare-tool tiers) are gated to this many bottom lines —
-/// counting only **non-blank** lines, so the blank rows around the input box
-/// don't push the spinner out of the window.
+/// A live spinner/tool line sits a few lines above the input box. The
+/// bare-spinner/bare-tool tells (which could match completed transcript) are
+/// gated to this many bottom **non-blank** lines, so blank rows around the
+/// input box don't push the spinner out of the window.
 const LIVE_TAIL_LINES: usize = 12;
 
-/// The phrase Claude Code prints only while a turn is interruptible (in
-/// flight): "… · esc to interrupt)". The single most reliable "working" tell
-/// — verb-, glyph-, and description-independent, and it does not survive in
-/// the transcript once the turn completes, so it can be matched anywhere in
-/// the scanned tail without picking up stale lines.
+/// The phrase Claude Code prints only while a turn is interruptible:
+/// "… · esc to interrupt)". Most reliable "working" tell (verb-, glyph-,
+/// description-independent) and gone from the transcript once the turn ends,
+/// so it can match anywhere in the scanned tail without hitting stale lines.
 const CLAUDE_INTERRUPT_HINT: &str = "esc to interrupt";
 
-/// Spinner progress tail carrying a live timer: "… (5m 21s", "… (30s)". A
-/// secondary tell for spinner lines whose interrupt hint is truncated or
-/// wrapped off. Requiring a leading *duration* after "(" rejects completed
-/// tool lines like "Reading 1 file… (ctrl+o to expand)" and stray prose
-/// ("… (see above)").
+/// Spinner progress tail with a live timer: "… (5m 21s", "… (30s)". Backup
+/// tell for spinner lines whose interrupt hint is truncated/wrapped off.
+/// Requiring a *duration* right after "(" rejects completed tool lines
+/// ("Reading 1 file… (ctrl+o to expand)") and stray prose ("… (see above)").
 fn working_timer_tail() -> &'static regex::Regex {
     static R: OnceLock<regex::Regex> = OnceLock::new();
     R.get_or_init(|| regex::Regex::new(r"(?:\u{2026}|\.\.\.)\s*\(\s*\d+\s*[hms]").unwrap())
 }
 
-/// A line led by one of Claude Code's animated spinner glyphs — the rotating
-/// sparkle/star frames (NOT the ambiguous "* · •", which double as markdown
-/// bullets and are left to the gated gerund/timer tells). The spinner glyph is
-/// shown while a turn runs whatever follows it — "✻ Waiting for 1 dynamic
-/// workflow to finish" — so the leading glyph alone signals work. The caller
-/// gates it to the bottom [`LIVE_TAIL_LINES`] non-blank lines (a real spinner
-/// sits a few lines above the input box) and runs it only after the
-/// completed-turn check, since the finished summary ("✶ Cogitated for 8s")
-/// reuses the same glyph.
+/// A line led by a Claude Code animated spinner glyph (rotating sparkle/star
+/// frames; NOT "* · •", which double as markdown bullets — left to the gated
+/// gerund/timer tells). The glyph shows while a turn runs ("✻ Waiting for 1
+/// dynamic workflow to finish"), so the leading glyph alone signals work.
+/// Caller gates it to the bottom [`LIVE_TAIL_LINES`] non-blank lines and runs
+/// it only after the completed-turn check, since the finished summary
+/// ("✶ Cogitated for 8s") reuses the same glyph.
 fn working_spinner_glyph() -> &'static regex::Regex {
     static R: OnceLock<regex::Regex> = OnceLock::new();
     R.get_or_init(|| {
@@ -175,19 +161,17 @@ fn working_spinner_glyph() -> &'static regex::Regex {
 }
 
 /// A bare thinking spinner whose glyph isn't in [`working_spinner_glyph`]'s
-/// set, keyed on structure instead: a leading symbol and a gerund "…ing" right
-/// before the trailing ellipsis (e.g. "⟳ Frobnicating…"). Also caller-gated to
-/// the bottom [`LIVE_TAIL_LINES`].
+/// set, keyed on structure: leading symbol + gerund "…ing" before the trailing
+/// ellipsis ("⟳ Frobnicating…"). Caller-gated to the bottom [`LIVE_TAIL_LINES`].
 fn working_spinner_tail() -> &'static regex::Regex {
     static R: OnceLock<regex::Regex> = OnceLock::new();
     R.get_or_init(|| regex::Regex::new(r"(?i)^\s*[^\w\s].*ing(?:\u{2026}|\.\.\.)\s*$").unwrap())
 }
 
-/// A tool call in flight with no parenthetical, e.g. "Reading 1 file…",
-/// "Running command…". Tool verbs are a stable, finite set (unlike the
-/// thinking spinner's whimsical verbs), so a whitelist is safe here and wards
-/// off matching stray prose. Requires the live trailing ellipsis a completed
-/// tool line lacks; the caller gates it to the bottom [`LIVE_TAIL_LINES`].
+/// A tool call in flight with no parenthetical ("Reading 1 file…", "Running
+/// command…"). Tool verbs are a stable finite set, so a whitelist is safe and
+/// avoids matching stray prose. Requires the live trailing ellipsis a completed
+/// tool line lacks; caller gates it to the bottom [`LIVE_TAIL_LINES`].
 fn working_tool_tail() -> &'static regex::Regex {
     static R: OnceLock<regex::Regex> = OnceLock::new();
     R.get_or_init(|| {
@@ -269,11 +253,10 @@ fn classify(args: &str) -> Option<AgentKind> {
             (!headless).then_some(AgentKind::Claude)
         }
         "codex" => {
-            // Interactive by default — bare `codex`, `codex [PROMPT]`,
-            // `resume`/`fork`. Only a known non-interactive subcommand (the
-            // first non-flag token) disqualifies it; defaulting to
-            // interactive avoids misreading a prompt or a flag value as a
-            // subcommand.
+            // Interactive by default (bare `codex`, `codex [PROMPT]`,
+            // `resume`/`fork`). Only a known non-interactive subcommand (first
+            // non-flag token) disqualifies it; defaulting to interactive avoids
+            // misreading a prompt or flag value as a subcommand.
             let sub = tokens.iter().skip(1).find(|t| !t.starts_with('-')).copied();
             let non_interactive = matches!(
                 sub,
@@ -307,12 +290,11 @@ fn classify(args: &str) -> Option<AgentKind> {
 
 /// Locate the interactive agent (if any) in each pane.
 ///
-/// `ps_output` is `ps -axo pid=,ppid=,args=` (local, or via `ssh <host>
-/// ps …`). For each pane we take the *shallowest* matching agent
-/// (breadth-first from the pane pid), so a parent agent's sub-agent
-/// children don't double-count and a pane yields at most one agent.
-/// Agent processes not under any pane (e.g. IDE-extension headless
-/// instances) are never reached, so they're excluded.
+/// `ps_output` is `ps -axo pid=,ppid=,args=` (local or via ssh). Per pane,
+/// take the *shallowest* matching agent (breadth-first from the pane pid), so
+/// sub-agent children don't double-count and a pane yields at most one agent.
+/// Processes under no pane (e.g. IDE-extension headless instances) are never
+/// reached, so they're excluded.
 pub fn detect_agents(panes: &[PaneInfo], ps_output: &str) -> Vec<DetectedAgent> {
     let mut args_of: HashMap<u32, String> = HashMap::new();
     let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
@@ -357,11 +339,10 @@ pub fn detect_agents(panes: &[PaneInfo], ps_output: &str) -> Vec<DetectedAgent> 
 }
 
 /// Snapshot of the process table for agent detection: `ps -axo
-/// pid=,ppid=,args=`. Empty string on failure (→ no agents).
-///
-/// Runs through the bounded `CommandRunner` — this is called from the
-/// single refresh worker thread, where an unbounded spawn that wedges
-/// would freeze the whole status pipeline (see `infra::command`).
+/// pid=,ppid=,args=`. Empty string on failure (→ no agents). Runs through the
+/// bounded `CommandRunner` since the refresh worker thread calls it, where an
+/// unbounded spawn that wedges would freeze the status pipeline (see
+/// `infra::command`).
 pub fn ps_snapshot() -> String {
     // A full process-table dump can be slower than a tmux IPC call on a
     // busy box; give it more headroom than `TMUX_TIMEOUT` while still

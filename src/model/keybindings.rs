@@ -16,10 +16,10 @@ fn chord_from_event(key: &KeyEvent) -> KeyChord {
     KeyCombination::from(*key).normalized()
 }
 
-/// Shared display/serialization formatter, used for both the help footer
-/// and config values, so its output must round-trip through `crokey::parse`.
-/// No implicit shift: crokey reads a bare uppercase letter as the plain
-/// key, so a shifted letter must serialize explicitly as `shift-x`.
+/// Shared display/serialization formatter for the help footer and config
+/// values, so its output must round-trip through `crokey::parse`. No implicit
+/// shift: a bare uppercase letter is the plain key, so a shifted letter
+/// serializes explicitly as `shift-x`.
 fn formatter() -> &'static KeyCombinationFormat {
     static FMT: OnceLock<KeyCombinationFormat> = OnceLock::new();
     FMT.get_or_init(|| KeyCombinationFormat::default().with_lowercase_modifiers())
@@ -108,18 +108,16 @@ impl Default for Keybindings {
     }
 }
 
-/// Keybinding command renames applied on load: `(old_name, new_name)`.
-/// When a command is renamed, list it here so an existing user binding
-/// migrates to the new name instead of being dropped as unknown. Empty
-/// until the first rename lands — plain removals need no entry (the
-/// unknown-key sweep below discards them).
+/// Command renames applied on load: `(old_name, new_name)`. List a renamed
+/// command here so an existing user binding migrates to the new name instead
+/// of being dropped as unknown. Plain removals need no entry (the unknown-key
+/// sweep discards them).
 const KEYBINDING_RENAMES: &[(&str, &str)] = &[];
 
-/// Migrate a raw keybindings map in place: apply known command renames,
-/// rewrite legacy key strings into crokey syntax, then drop every entry
-/// whose command name the binary no longer recognizes. Returns `true` if
-/// the map changed, so the caller can rewrite the config to self-heal.
-/// Commands the binary no longer defines are silently discarded by the sweep.
+/// Migrate a raw keybindings map in place: apply command renames, rewrite
+/// legacy key strings into crokey syntax, then drop entries for commands the
+/// binary no longer recognizes. Returns `true` if the map changed, so the
+/// caller can rewrite the config to self-heal.
 pub fn migrate_keybindings(map: &mut BTreeMap<String, KeyBindingValue>) -> bool {
     let mut changed = migrate_keybindings_with(map, KEYBINDING_RENAMES);
     changed |= migrate_keybinding_syntax(map);
@@ -127,10 +125,9 @@ pub fn migrate_keybindings(map: &mut BTreeMap<String, KeyBindingValue>) -> bool 
 }
 
 /// Rewrite legacy deck key strings (`C-x`, `A-Up`, `S-Tab`) into crokey
-/// syntax (`ctrl-x`, `alt-up`, `shift-tab`) in place. Idempotent: a value
-/// already in crokey form either fails the legacy parse (modifier chords)
-/// or formats back to itself (plain keys), so re-running changes nothing.
-/// Returns `true` if any value was rewritten.
+/// syntax (`ctrl-x`, `alt-up`, `shift-tab`) in place. Idempotent: a crokey-form
+/// value either fails the legacy parse or formats back to itself, so re-running
+/// changes nothing. Returns `true` if any value was rewritten.
 pub fn migrate_keybinding_syntax(map: &mut BTreeMap<String, KeyBindingValue>) -> bool {
     fn convert(s: &mut String, changed: &mut bool) {
         if let Some(new) = parse_legacy(s).map(|kc| format_key(&kc)) {
@@ -212,18 +209,17 @@ impl Keybindings {
             reverse.insert(cmd, cmd.default_keys());
         }
 
-        // 2. Apply user overrides. Replace semantics: whatever the user writes
-        // for a command becomes the full set of bindings for that command.
-        // Sort entries by command name so the order of "same key bound to two
-        // commands" conflicts is deterministic (see step 3).
+        // 2. Apply user overrides (replace semantics: a command's written
+        // bindings become its full set). Sort by command name so conflict
+        // resolution in step 3 is deterministic.
         let mut entries: Vec<(&String, &KeyBindingValue)> = raw.iter().collect();
         entries.sort_by(|a, b| a.0.cmp(b.0));
 
         for (name, value) in entries {
             let Some(cmd) = Command::from_name(name) else {
                 // Unknown command names are stripped on load by
-                // migrate_keybindings; silently ignore any straggler so the
-                // user never sees a warning for an obsolete or mistyped key.
+                // migrate_keybindings; ignore any straggler so the user
+                // sees no warning for an obsolete/mistyped key.
                 continue;
             };
 
@@ -314,9 +310,8 @@ pub fn parse_key(s: &str) -> Result<KeyChord, String> {
 }
 
 /// Parse a *legacy* deck key string (`C-x`, `A-Up`, `S-Tab`, `J`, `j`,
-/// named keys, `F1`..`F12`, single chars) into a [`KeyChord`], or `None`
-/// if it isn't valid legacy syntax. Used only by the one-time syntax
-/// migration; new config is parsed by [`parse_key`].
+/// named keys, `F1`..`F12`, single chars) into a [`KeyChord`], or `None`.
+/// Used only by the one-time syntax migration; new config uses [`parse_key`].
 fn parse_legacy(s: &str) -> Option<KeyChord> {
     if s.is_empty() {
         return None;

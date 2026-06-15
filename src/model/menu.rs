@@ -3,21 +3,19 @@
 
 use crate::state::{attachable_on_host, FocusTarget, SessionEntry};
 
-// One list for local and remote rows. There's no "Switch" item — focus
-// already triggers the switch. On a remote row Rename/Kill map to
-// `ssh <host> tmux <cmd>` and MoveUp/MoveDown reorder *within the host group*
-// (hosts can't interleave), persisted to that server's `@deck_order` — same
-// labels, different backend.
+// One list for local and remote rows. No "Switch" item — focus already
+// switches. On a remote row Rename/Kill map to `ssh <host> tmux <cmd>` and
+// MoveUp/MoveDown reorder within the host group (hosts can't interleave),
+// persisted to that server's `@deck_order`.
 const SESSION_MENU_ITEMS: &[MenuItem] = &[
     MenuItem::Rename,
     MenuItem::Kill,
     MenuItem::MoveUp,
     MenuItem::MoveDown,
 ];
-// Items shown but greyed-out / unselectable when the right-clicked row
-// is a synthetic placeholder (a remote host with no sessions, or an
-// unreachable one): there's no real session to Rename/Kill/reorder —
-// i.e. every session item.
+// Greyed-out when the right-clicked row is a synthetic placeholder (remote
+// host with no sessions, or unreachable): no real session to
+// Rename/Kill/reorder, i.e. every session item.
 const PLACEHOLDER_DISABLED_ITEMS: &[MenuItem] = SESSION_MENU_ITEMS;
 // Only Kill is greyed when the row is the last live session on a remote
 // host: killing it would tear down that host's tmux server. Rename is
@@ -30,10 +28,9 @@ const HOST_DIVIDER_MENU_ITEMS: &[MenuItem] = &[
     MenuItem::PortForward,
     MenuItem::RemoveFromList,
 ];
-// The `@local` divider reuses the host divider's item list so the menu
-// reads consistently, but PortForward and RemoveFromList are remote-
-// only concepts: they're shown greyed out, leaving just NewSession
-// (which creates a local session).
+// The `@local` divider reuses the host divider's item list for consistency,
+// but PortForward and RemoveFromList are remote-only: they're greyed out,
+// leaving just NewSession (creates a local session).
 const LOCAL_DIVIDER_DISABLED: &[MenuItem] = &[MenuItem::PortForward, MenuItem::RemoveFromList];
 // Right-click on blank sidebar space. NewSession is intentionally
 // absent — creating a local session lives on the `@local` divider's
@@ -46,10 +43,10 @@ const GLOBAL_MENU_ITEMS: &[MenuItem] = &[
     MenuItem::Quit,
 ];
 
-/// One entry in a sidebar context menu. Carries its own display text via
-/// [`MenuItem::label`], so the renderer, the enabled/disabled subsets, and
-/// the dispatch in `reduce.rs` all key off the variant instead of the label
-/// string — renaming an item's text can't silently detach its action.
+/// One entry in a sidebar context menu. Carries its display text via
+/// [`MenuItem::label`]; renderer, enabled/disabled subsets, and dispatch
+/// key off the variant, not the label, so renaming an item's text can't
+/// silently detach its action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuItem {
     Rename,
@@ -92,9 +89,8 @@ pub enum MenuKind {
     /// list (`SESSION_MENU_ITEMS`); only the greyed subset is per-row.
     Session {
         focus: FocusTarget,
-        /// Subset of the items shown greyed-out and not selectable (e.g.
-        /// Rename/Kill on a synthetic placeholder row). Empty for a real
-        /// session, where every item is actionable.
+        /// Items shown greyed-out and unselectable (e.g. Rename/Kill on a
+        /// placeholder row). Empty for a real session.
         disabled: &'static [MenuItem],
     },
     Global,
@@ -130,14 +126,10 @@ impl MenuKind {
     }
 }
 
-/// Menu items to grey out / disable for a right-clicked row.
-///
-/// - A synthetic remote placeholder (no sessions / unreachable) isn't a
-///   real session, so both Rename and Kill are disabled.
-/// - The last live session on a remote host disables Kill — killing it
-///   would tear down that host's tmux server. Rename stays available.
-/// - Everything else (a local session, or a remote host with more than
-///   one session) has every item enabled.
+/// Menu items to grey out for a right-clicked row: a placeholder (no
+/// sessions / unreachable) disables Rename and Kill; the last live session
+/// on a remote host disables Kill (killing it tears down the host's tmux
+/// server), Rename stays; everything else has every item enabled.
 pub fn session_menu_disabled(
     entry: &SessionEntry,
     entries: &[SessionEntry],

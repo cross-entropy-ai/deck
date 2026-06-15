@@ -70,9 +70,8 @@ const NO_LABEL: &str = "[No]";
 const YES_LABEL: &str = "[Yes]";
 
 /// Place the `[No]` / `[Yes]` buttons within the kill prompt. `[No]`
-/// (cancel/safe) leads on the left; `[Yes]` (destructive) is right-aligned
-/// so the two sit as far apart as the column allows, but never overlap on
-/// a very narrow sidebar.
+/// (cancel/safe) leads left; `[Yes]` (destructive) is right-aligned, as far
+/// apart as the column allows but never overlapping on a narrow sidebar.
 pub(super) fn kill_button_rects(area: Rect) -> KillConfirmHits {
     let btn_row = area.y.saturating_add(3);
     let no_w = NO_LABEL.len() as u16;

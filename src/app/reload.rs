@@ -11,10 +11,10 @@ use crate::tmux;
 use super::App;
 
 impl App {
-    /// Seed per-host runtime state for a newly-added host (UI add or
-    /// hot-reload). The placeholder row gives the sidebar an immediate
-    /// `(connecting...)` section instead of waiting one full refresh
-    /// tick; the spawner kicks off the persistent ssh+tmux PTY.
+    /// Seed per-host runtime state for a newly-added host (UI add or reload).
+    /// The placeholder row gives the sidebar an immediate `(connecting...)`
+    /// section without waiting a full refresh tick; the spawner kicks off the
+    /// persistent ssh+tmux PTY.
     pub(super) fn onboard_remote_host(&mut self, host: &str) {
         self.respawn_remote_host(host);
         // Avoid duplicating a placeholder if one is already there
@@ -34,13 +34,13 @@ impl App {
         }
     }
 
-    /// Tear down per-host runtime state for a removed host. The manager
-    /// drops the connection (PTY reaped), clears the host's pending switch
-    /// and switch-verify entry by construction (bug #20 — offboard is the
-    /// sole host-removal path), and bumps its spawn generation so a stale
-    /// in-flight spawn event can't resurrect it after a re-add. The shared
-    /// `detach_host_view` (D7) then runs the view-side choreography (snap to
-    /// local if active, drop agent highlight, supersede focus).
+    /// Tear down per-host runtime state for a removed host. The manager drops
+    /// the connection (PTY reaped), clears the host's pending switch and
+    /// switch-verify entry (bug #20 — offboard is the sole host-removal path),
+    /// and bumps its spawn generation so a stale in-flight spawn can't
+    /// resurrect it after a re-add. `detach_host_view` (D7) then runs the
+    /// view-side choreography (snap to local if active, drop agent highlight,
+    /// supersede focus).
     pub(super) fn offboard_remote_host(&mut self, host: &str) {
         let detach = self.remote.offboard(host);
         // Reap the host's executor FIFO lane so a removed host doesn't leak
@@ -50,11 +50,10 @@ impl App {
         self.detach_host_view(host, detach);
     }
 
-    /// Reload `~/.config/deck/config.yaml` and apply it in place. On
-    /// failure the previous in-memory state is left untouched and the
-    /// error string is stored in `state.reload_status` for the sidebar
-    /// to display. On success, any plugin instances are killed (PTYs
-    /// dropped) and must be re-launched by the user.
+    /// Reload `~/.config/deck/config.yaml` and apply it in place. On failure
+    /// in-memory state is left untouched and the error goes to
+    /// `state.reload_status` for the sidebar. On success, plugin instances are
+    /// killed (PTYs dropped) and must be re-launched by the user.
     pub(super) fn reload_config(&mut self) {
         let mut cfg = match Config::try_load() {
             Ok(c) => c,

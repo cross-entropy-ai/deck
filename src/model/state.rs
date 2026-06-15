@@ -48,10 +48,9 @@ const SIDEBAR_HEIGHT_MAX_BORDERED: u16 = 6;
 const MIN_MAIN_WIDTH: u16 = 10;
 const MIN_MAIN_HEIGHT: u16 = 1;
 
-/// At or below this terminal width a side-by-side (Horizontal) split leaves
-/// the main pane too cramped, so the layout is forced to the stacked
-/// (Vertical) tab-bar regardless of the stored preference. See
-/// [`AppState::effective_layout_mode`].
+/// At or below this width, Horizontal split cramps the main pane, so layout
+/// is forced to the stacked (Vertical) tab-bar regardless of stored pref.
+/// See [`AppState::effective_layout_mode`].
 pub const NARROW_LAYOUT_MAX_WIDTH: u16 = 80;
 
 // --- Enums ---
@@ -86,11 +85,10 @@ pub enum ViewMode {
     Compact,
 }
 
-/// Which sidebar tab is active. `Projects` lists tmux sessions (the
-/// default view); `Agents` lists the detected coding agents as the
-/// primary, navigable list. Persisted to config so the choice survives
-/// a restart. Agent detection in the refresh worker runs only while the
-/// `Agents` tab is active (see `AppState::agents_tab_active`).
+/// Active sidebar tab. `Projects` lists tmux sessions (default); `Agents`
+/// lists detected coding agents as the navigable list. Persisted to config.
+/// Agent detection in the refresh worker runs only while `Agents` is active
+/// (see `AppState::agents_tab_active`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SidebarTab {
@@ -124,10 +122,9 @@ pub fn agents_probe_interval_label(secs: u64) -> &'static str {
     }
 }
 
-/// Step `delta` positions through `options` from `current`, wrapping at
-/// both ends. A `current` not in the slice steps from the first option.
-/// Shared by the settings cyclers and the port-forward form's field/mode
-/// cycling so the wrap-around arithmetic lives once.
+/// Step `delta` positions through `options` from `current`, wrapping at both
+/// ends; a `current` not in the slice steps from the first option. Shared by
+/// the settings cyclers and the port-forward form's field/mode cycling.
 pub fn cycle_option<T: Copy + PartialEq>(options: &[T], current: T, delta: i32) -> T {
     let i = options.iter().position(|&o| o == current).unwrap_or(0) as i32;
     let n = options.len() as i32;
@@ -135,9 +132,8 @@ pub fn cycle_option<T: Copy + PartialEq>(options: &[T], current: T, delta: i32) 
 }
 
 /// Step `current` by `direction` (+1/-1) within `0..len`, clamped at both
-/// ends (no wrap). `len == 0` yields 0. Shared by the bounded list cursors
-/// (settings rows, theme picker, exclude editor, port-forward focus,
-/// new-session / add-remote pickers) so the saturating arithmetic lives once.
+/// ends (no wrap); `len == 0` yields 0. Shared by the bounded list cursors
+/// (settings rows, theme picker, exclude editor, port-forward focus, pickers).
 pub fn step_clamped(current: usize, len: usize, direction: i32) -> usize {
     if len == 0 {
         return 0;
@@ -191,11 +187,10 @@ pub fn frame_rate_limit_label(fps: u16) -> &'static str {
 
 // --- Session data ---
 
-/// One row in the unified sidebar session store. Local and remote sessions
-/// share this single shape, keyed by `host` the deck way (`None` = the local
-/// tmux server, `Some(host)` = a remote one over ssh), applying the repo's
-/// "one data type, key by `Option<String>` host" rule. `kind` carries the
-/// liveness / placeholder distinction — see [`SessionEntryKind`].
+/// One row in the unified sidebar session store. Local and remote share this
+/// shape, keyed by `host` (`None` = local tmux server, `Some(host)` = remote
+/// over ssh) per the "one data type, key by `Option<String>` host" rule.
+/// `kind` carries the liveness/placeholder distinction — see [`SessionEntryKind`].
 #[derive(Debug, Clone)]
 pub struct SessionEntry {
     /// `None` = local tmux server; `Some(host)` = a remote host over ssh.
@@ -205,12 +200,11 @@ pub struct SessionEntry {
     pub kind: SessionEntryKind,
 }
 
-/// What a [`SessionEntry`] represents. A `Live` row is a real attachable
-/// tmux session; the other variants are the synthetic status placeholders
-/// the sidebar shows for a remote group (one row per host) before/while a
-/// real session list is available. The variant — not a magic session name —
-/// is what distinguishes a placeholder, so a real session literally named
-/// `(no sessions)` is never mistaken for one.
+/// What a [`SessionEntry`] represents. `Live` is a real attachable tmux
+/// session; the other variants are synthetic status placeholders shown for a
+/// remote group (one row per host) before/while its real session list arrives.
+/// The variant (not a magic session name) marks a placeholder, so a real
+/// session named `(no sessions)` is never mistaken for one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionEntryKind {
     /// A real tmux session deck can attach to. `is_current` is tracked for
@@ -233,10 +227,9 @@ pub const NO_SESSIONS_LABEL: &str = "(no sessions)";
 pub const UNREACHABLE_LABEL: &str = "(unreachable)";
 
 impl SessionEntry {
-    /// Whether deck can attach a PTY to this entry — i.e. it is a real
-    /// (`Live`) session, not a synthetic Connecting/Unreachable/NoSessions
-    /// placeholder. The attach/respawn machinery must skip placeholders;
-    /// otherwise it spins forever trying to `tmux attach` a host with
+    /// Whether deck can attach a PTY: a real `Live` session, not a synthetic
+    /// Connecting/Unreachable/NoSessions placeholder. Attach/respawn must skip
+    /// placeholders, else it spins forever trying to `tmux attach` a host with
     /// nothing to attach to, leaving the row stuck on "connecting…".
     pub fn is_attachable(&self) -> bool {
         matches!(self.kind, SessionEntryKind::Live { .. })
@@ -273,12 +266,9 @@ pub fn attachable_on_host<'a>(
         .filter(move |e| e.host.as_deref() == host && e.is_attachable())
 }
 
-/// Identifies a focused sidebar row by its flat index.
-///
-/// The flat index walks the visible row list in render order, which is
-/// exactly the order of `state.entries` (local entries first, then each
-/// remote host's rows). `AppState::entry_at` decodes this back into the
-/// entry for action dispatch.
+/// Identifies a focused sidebar row by its flat index. The index walks rows
+/// in render order, exactly the order of `state.entries` (locals first, then
+/// each remote host's rows). `AppState::entry_at` decodes it back to the entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FocusTarget(pub usize);
 
@@ -306,9 +296,8 @@ fn host_status_of(e: &SessionEntry) -> HostStatus {
 // --- Settings page state ---
 
 /// UI state for the settings page and its sub-popovers (theme picker,
-/// keybindings viewer). Update-check fields stay on `AppState` because
-/// they are read and written from many code paths outside the settings
-/// page (refresh loop, banner rendering, mouse hit-testing).
+/// keybindings viewer). Update-check fields stay on `AppState` since many
+/// paths outside settings touch them (refresh loop, banner, hit-testing).
 #[derive(Debug, Default)]
 pub struct SettingsState {
     /// Selected row in the settings page.
@@ -325,18 +314,16 @@ pub struct SettingsState {
 
 // --- Prefs ---
 
-/// The round-trippable persisted preferences, grouped into one unit so the
-/// config↔state mapping lives in exactly two places ([`Prefs::from_config`]
-/// and [`Prefs::to_config`]) instead of being re-enumerated at every call
-/// site. Each field mirrors a `Config` field (with the same default) and is
-/// read widely across the UI/render/dispatch layers via `state.prefs.<f>`.
+/// The round-trippable persisted preferences in one unit, so the config↔state
+/// mapping lives in exactly two places ([`Prefs::from_config`] /
+/// [`Prefs::to_config`]). Each field mirrors a `Config` field (same default),
+/// read widely as `state.prefs.<f>`.
 ///
-/// Deliberately NOT here (stay direct `AppState` / `App` fields):
+/// Deliberately NOT here (stay direct `AppState`/`App` fields):
 /// - `keybindings` (compiled) / `raw_keybindings` (serializable, on `App`);
-/// - `collapsed_sections` — runtime state seeded from config *once* at
-///   startup and deliberately not re-applied on hot-reload (bug #14);
-/// - `config_remotes` and the `summary_prompt_version` constant — App/runtime,
-///   not user prefs.
+/// - `collapsed_sections` — runtime state seeded from config *once* at startup,
+///   not re-applied on hot-reload (bug #14);
+/// - `config_remotes` and the `summary_prompt_version` constant — App/runtime.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Prefs {
     pub theme_index: usize,
@@ -381,13 +368,11 @@ pub struct Prefs {
 }
 
 impl Prefs {
-    /// Build prefs from a loaded `Config`, applying the load-time
-    /// clamps/normalizations. `theme_index` is resolved by the caller (the
-    /// theme name → index lookup lives outside config). This is one of the
-    /// two config↔prefs mapping sites; its inverse is [`Prefs::to_config`].
-    ///
-    /// `summary_height` is normalized via the same clamp `set_summary_height`
-    /// uses (`SUMMARY_MIN_HEIGHT..=SUMMARY_MAX_HEIGHT`).
+    /// Build prefs from a loaded `Config`, applying load-time clamps/normalizations.
+    /// `theme_index` is resolved by the caller (theme name → index lives outside
+    /// config). One of the two config↔prefs mapping sites; inverse is
+    /// [`Prefs::to_config`]. `summary_height` clamps to
+    /// `SUMMARY_MIN_HEIGHT..=SUMMARY_MAX_HEIGHT`, same as `set_summary_height`.
     pub fn from_config(cfg: &crate::config::Config, theme_index: usize) -> Self {
         Self {
             theme_index,
@@ -414,10 +399,9 @@ impl Prefs {
         }
     }
 
-    /// Map the prefs back into a `Config`, filling the App/runtime-level
-    /// fields that don't live in `Prefs` from the caller-supplied arguments
-    /// (`keybindings`, `remotes`, `collapsed`) and the
-    /// `summary_prompt_version` constant. The inverse of [`Prefs::from_config`];
+    /// Map prefs back into a `Config`, filling the App/runtime fields not in
+    /// `Prefs` from the caller args (`keybindings`, `remotes`, `collapsed`) and
+    /// the `summary_prompt_version` constant. Inverse of [`Prefs::from_config`];
     /// `from_config(to_config(p)) == p` holds on the prefs fields.
     pub fn to_config(
         &self,
@@ -460,11 +444,10 @@ impl Prefs {
 
 pub struct AppState {
     // Session data
-    /// The single unified session store: local entries first (`host ==
-    /// None`), then each remote host's rows in config order — exactly the
-    /// sidebar render/flat order. The `FocusTarget` flat index is a direct
-    /// index into this vec, and per-row dispatch reads `entry.host` /
-    /// `entry.kind`.
+    /// Unified session store: local entries first (`host == None`), then each
+    /// remote host's rows in config order — exactly the sidebar render/flat
+    /// order. The `FocusTarget` flat index indexes this vec directly; per-row
+    /// dispatch reads `entry.host` / `entry.kind`.
     pub entries: Vec<SessionEntry>,
     pub focused: usize,
     /// Name of the current (attached) *local* session. Remote current-
@@ -477,10 +460,9 @@ pub struct AppState {
     // UI state
     pub main_view: MainView,
     pub focus_mode: FocusMode,
-    /// The round-trippable persisted preferences (theme, layout, sidebar
-    /// geometry, summary settings, …). See [`Prefs`]. Read widely as
-    /// `state.prefs.<field>`; loaded via [`AppState::apply_config`] and
-    /// written back via [`Prefs::to_config`].
+    /// Persisted preferences (theme, layout, sidebar geometry, summary, …).
+    /// See [`Prefs`]. Read widely as `state.prefs.<field>`; loaded via
+    /// [`AppState::apply_config`], written back via [`Prefs::to_config`].
     pub prefs: Prefs,
     /// Settings page navigation + theme picker / keybindings viewer
     /// overlays. See `SettingsState`.
@@ -513,10 +495,10 @@ pub struct AppState {
     pub update_available: Option<UpdateStatus>,
     pub update_last_checked_secs: Option<u64>,
 
-    /// Every clickable region the sidebar publishes, captured whole by the
-    /// render loop each frame and consulted by mouse dispatch through
-    /// [`HitRegions::hit`]. One field, not a dozen — geometry can't drift
-    /// across the rect tests because they all decode from here.
+    /// Every clickable region the sidebar publishes, captured whole each frame
+    /// by the render loop and consulted by mouse dispatch via [`HitRegions::hit`].
+    /// One field, not a dozen — geometry can't drift since all rect tests decode
+    /// from here.
     pub hit_regions: HitRegions,
 
     /// Result of the most recent manual config reload. Rendered in the
@@ -525,10 +507,10 @@ pub struct AppState {
     pub reload_status: Option<ReloadStatus>,
     pub reload_status_at: Option<Instant>,
 
-    /// The agent deck last switched to (via an agent-line click). Its
-    /// footer line renders highlighted as "you are here". Identified by
-    /// `(host, pane_id)` so the highlight is uniform for local and remote
-    /// — never branches on origin. Cleared by any non-agent switch.
+    /// The agent deck last switched to (via an agent-line click); its footer
+    /// renders highlighted as "you are here". Identified by `(host, pane_id)`
+    /// so the highlight is uniform local/remote (never branches on origin).
+    /// Cleared by any non-agent switch.
     pub active_agent: Option<AgentTarget>,
 
     /// Mirror of `Config.remotes` so reducers can read per-host forwards
@@ -540,36 +522,31 @@ pub struct AppState {
     /// worker. Keyed by `ForwardKey`. Missing key = `Probing` (not yet seen).
     pub forward_health: HashMap<ForwardKey, ForwardHealth>,
 
-    /// Interactive coding agents (Claude Code / Codex) detected per
-    /// sidebar section, keyed by host the same way the rest of deck keys
-    /// local-vs-remote: `None` = the local tmux server, `Some(host)` = a
-    /// remote one. A key absent from the map hasn't been probed yet
-    /// (rendered "claude …, codex …"). The layout/render just look a
-    /// section up by key — they never branch on local vs remote. Each
-    /// value lists the located agents (count + session/window/pane).
+    /// Interactive coding agents (Claude Code / Codex) detected per sidebar
+    /// section, keyed by host (`None` = local, `Some(host)` = remote). An
+    /// absent key hasn't been probed yet (rendered "claude …, codex …").
+    /// Layout/render look a section up by key, never branching on local vs
+    /// remote. Each value lists located agents (count + session/window/pane).
     /// See `crate::agent`.
     pub agents: HashMap<HostKey, Vec<crate::agent::DetectedAgent>>,
 
-    /// The flattened Agents-tab list, the twin of `entries` — stored, not
-    /// derived per frame. Built from `agents` + the host order (see
-    /// `rebuild_agent_entries`) whenever a refresh round settles, so the
-    /// renderer, layout, and focus all index a stable list. Local section
-    /// first, then each remote host in `remote_hosts_in_order`, each section a
-    /// run of detected agents or a single placeholder when empty.
+    /// The flattened Agents-tab list, twin of `entries` — stored, not derived
+    /// per frame. Built from `agents` + host order (`rebuild_agent_entries`)
+    /// when a refresh round settles, so renderer/layout/focus index a stable
+    /// list. Local section first, then each remote host in
+    /// `remote_hosts_in_order`; each section a run of agents or one placeholder.
     pub agent_entries: Vec<AgentEntry>,
 
     /// Sidebar groups the user has collapsed (Expanded view only).
-    /// `HostKey::local()` is the `@local` group; `HostKey::remote(host)`
-    /// is a remote `@host` group. A collapsed group renders as just its
-    /// divider — its session rows are hidden by the layout. Persisted to
-    /// config (`collapsed_sections`) and restored at startup.
+    /// `HostKey::local()` = `@local`, `HostKey::remote(host)` = a `@host` group.
+    /// A collapsed group renders as just its divider (rows hidden by the layout).
+    /// Persisted to config (`collapsed_sections`), restored at startup.
     pub collapsed_sections: HashSet<HostKey>,
 
-    /// Agents-tab twin of `collapsed_sections`, keyed the same way. Kept
-    /// separate so a host collapsed on the Projects tab doesn't hide its
-    /// agent rows (and vice versa) — the two tabs fold independently.
-    /// Persisted to config (`collapsed_agent_sections`) and restored at
-    /// startup, just like `collapsed_sections`.
+    /// Agents-tab twin of `collapsed_sections`, keyed the same way. Separate so
+    /// a host collapsed on Projects doesn't hide its agent rows (and vice versa)
+    /// — the two tabs fold independently. Persisted to config
+    /// (`collapsed_agent_sections`), restored at startup.
     pub collapsed_agent_sections: HashSet<HostKey>,
 }
 
@@ -651,14 +628,14 @@ impl AppState {
     }
 
     /// Apply every config-derived field shared by startup (`App::new`) and
-    /// hot-reload (`reload_config`). One list, so a new config field can't
-    /// be applied at startup but silently missed on reload (or vice versa).
+    /// hot-reload (`reload_config`). One list, so a new config field can't be
+    /// applied at startup but silently missed on reload (or vice versa).
     ///
     /// Deliberately NOT covered here:
-    /// - `config_remotes` — reload diffs old vs new forwards/hosts around
-    ///   this call and commits the new list itself;
-    /// - `collapsed_sections` — runtime state seeded from config once at
-    ///   startup; a reload must not stomp the user's live collapse state.
+    /// - `config_remotes` — reload diffs old vs new forwards/hosts around this
+    ///   call and commits the new list itself;
+    /// - `collapsed_sections` — runtime state seeded from config once at startup;
+    ///   a reload must not stomp the user's live collapse state.
     pub fn apply_config(
         &mut self,
         cfg: &crate::config::Config,
@@ -702,12 +679,11 @@ impl AppState {
         );
     }
 
-    /// Whether the Agents tab is the active sidebar view. The tab selector
-    /// only exists in the Horizontal layout (the Vertical layout is a
-    /// session tab-bar with no header), so the Agents view is gated to
-    /// Horizontal — everything stays the Projects view in Vertical even if
-    /// `sidebar_tab` happens to be `Agents`. Gates agent detection in the
-    /// refresh worker and selects the agents layout / focus space.
+    /// Whether the Agents tab is the active sidebar view. The tab selector only
+    /// exists in Horizontal layout (Vertical is a session tab-bar with no
+    /// header), so Agents is gated to Horizontal — Vertical stays Projects even
+    /// if `sidebar_tab` is `Agents`. Gates agent detection in the refresh worker
+    /// and selects the agents layout / focus space.
     pub fn agents_tab_active(&self) -> bool {
         self.prefs.sidebar_tab == SidebarTab::Agents
             && self.effective_layout_mode() == LayoutMode::Horizontal
@@ -733,13 +709,13 @@ impl AppState {
         }
     }
 
-    /// The layout actually used for rendering, sizing, and hit-testing — as
-    /// opposed to `prefs.layout_mode`, the user's stored choice. On a narrow
-    /// terminal ([`NARROW_LAYOUT_MAX_WIDTH`] columns or fewer) it's forced to
-    /// [`LayoutMode::Vertical`]; the preference is left untouched and applies
-    /// again once the terminal is wide enough. Every layout-dependent branch
-    /// (the renderer, `pty_size`, the mouse hit-testers) must read this, not
-    /// the raw pref, or the rendered split and the click geometry will drift.
+    /// The layout actually used for rendering, sizing, and hit-testing — vs
+    /// `prefs.layout_mode`, the user's stored choice. On a narrow terminal
+    /// ([`NARROW_LAYOUT_MAX_WIDTH`] columns or fewer) it's forced to
+    /// [`LayoutMode::Vertical`], leaving the pref untouched (it reapplies once
+    /// wide enough). Every layout-dependent branch (renderer, `pty_size`, mouse
+    /// hit-testers) must read this, not the raw pref, or split and click
+    /// geometry drift apart.
     pub fn effective_layout_mode(&self) -> LayoutMode {
         if self.term_width <= NARROW_LAYOUT_MAX_WIDTH {
             LayoutMode::Vertical
@@ -749,10 +725,9 @@ impl AppState {
     }
 
     pub fn effective_sidebar_height(&self) -> u16 {
-        // Vertical layout is a single tab-switching row — there is no
-        // second detail row to resize into, so the sidebar is pinned to
-        // exactly the tab bar (plus top/bottom border when shown) and
-        // the stored `sidebar_height` is ignored.
+        // Vertical layout is a single tab-switching row with no second detail
+        // row to resize into, so the sidebar is pinned to exactly the tab bar
+        // (plus border when shown) and the stored `sidebar_height` is ignored.
         if self.effective_layout_mode() == LayoutMode::Vertical {
             return if self.prefs.show_borders { 3 } else { 1 };
         }
@@ -815,11 +790,10 @@ impl AppState {
         }
     }
 
-    /// Height of the sidebar footer in rows, for mouse hit-testing. The
-    /// formula itself lives in `crate::geometry::sidebar_footer_height`,
-    /// shared with the renderer (`ui::sidebar::draw_sidebar`) so the two
-    /// can't drift — when they did, the bottom visible session row was
-    /// click-dead.
+    /// Height of the sidebar footer in rows, for mouse hit-testing. The formula
+    /// lives in `crate::geometry::sidebar_footer_height`, shared with the
+    /// renderer (`ui::sidebar::draw_sidebar`) so the two can't drift — when they
+    /// did, the bottom visible session row was click-dead.
     pub fn sidebar_footer_height(&self) -> u16 {
         let b = if self.prefs.show_borders { 2u16 } else { 0 };
         let content_width = match self.effective_layout_mode() {
@@ -832,11 +806,10 @@ impl AppState {
         )
     }
 
-    /// Resolve a screen row inside the sidebar's scrollable session area
-    /// into `(layout, viewport_y, scroll, visible_height)`. `None` when
-    /// the row falls in the header banner, the footer, or outside the
-    /// sidebar. Shared by the row and divider hit-testers so they agree
-    /// on geometry and the scroll offset the renderer applied.
+    /// Resolve a screen row in the scrollable session area into
+    /// `(layout, viewport_y, scroll, visible_height)`. `None` when the row is in
+    /// the header banner, footer, or outside the sidebar. Shared by the row and
+    /// divider hit-testers so they agree on geometry and the applied scroll offset.
     fn session_row_hit(&self, row: u16) -> Option<(BuiltLayout, u16, u16, u16)> {
         let b = if self.prefs.show_borders { 1u16 } else { 0 };
         let sidebar_h = match self.effective_layout_mode() {
@@ -893,11 +866,10 @@ impl AppState {
         hit
     }
 
-    /// Map a screen row on a group divider to that group's section key
-    /// (`None` = `@local`, `Some(host)` = a remote `@host`). Returns
-    /// `None` when the row isn't on a real group divider (e.g. a no-agents
-    /// placeholder header, which isn't a collapse target). Used by the
-    /// mouse layer to toggle a group when its divider is clicked.
+    /// Map a screen row on a group divider to its section key (`None` =
+    /// `@local`, `Some(host)` = remote `@host`). `None` when the row isn't on a
+    /// real divider (e.g. a no-agents placeholder header, not a collapse target).
+    /// Used by the mouse layer to toggle a group when its divider is clicked.
     pub fn divider_section_key_at(&self, row: u16) -> Option<Option<String>> {
         let (built, viewport_y, scroll, _) = self.session_row_hit(row)?;
         // header_at_y returns the 0-based header section index, which is a
@@ -936,11 +908,10 @@ impl AppState {
         None
     }
 
-    /// The entry at flat focus index `idx`, or `None` if out of range. The
-    /// `FocusTarget` numbering is a direct index into `entries` (local rows
-    /// first, then remotes), so this is the single decode the reducers /
-    /// action layer use for per-row dispatch — they read `entry.host` /
-    /// `entry.kind` instead of taking apart the index.
+    /// The entry at flat focus index `idx`, or `None` if out of range.
+    /// `FocusTarget` numbering indexes `entries` directly (locals first, then
+    /// remotes), so this is the single decode the reducers/action layer use for
+    /// per-row dispatch — they read `entry.host` / `entry.kind`, not the index.
     pub fn entry_at(&self, target: FocusTarget) -> Option<&SessionEntry> {
         self.entries.get(target.0)
     }
@@ -970,13 +941,11 @@ impl AppState {
         }
     }
 
-    /// Flat focusable index of the row for `session` on `host` (`None` =
-    /// local), or `None` if no such row is currently listed. Lets the
-    /// sidebar move its single highlight onto a session switched to
-    /// out-of-band — e.g. an agent-footer click — so the highlight tracks
-    /// the viewed session the same way keyboard navigation does (j/k moves
-    /// the cursor *and* switches). Mirrors the `FocusTarget` numbering:
-    /// local rows first, then remotes.
+    /// Flat focusable index of the row for `session` on `host` (`None` = local),
+    /// or `None` if not currently listed. Lets the sidebar move its highlight
+    /// onto a session switched to out-of-band (e.g. an agent-footer click), so
+    /// the highlight tracks the viewed session like keyboard nav does (j/k moves
+    /// cursor *and* switches). Mirrors `FocusTarget` numbering: locals, then remotes.
     pub fn focusable_index_for(&self, host: Option<&str>, session: &str) -> Option<usize> {
         self.entries
             .iter()
@@ -1004,11 +973,10 @@ impl AppState {
     }
 
     /// Fold a remote refresh round's agent detection into `agents`.
-    /// `covered_hosts` is every host the round queried; `fresh` is the
-    /// per-host result for hosts whose probe succeeded. A host covered
-    /// this round but missing from `fresh` had a failed probe, so its
-    /// stale list is dropped (otherwise dead pane ids keep rendering as
-    /// clickable footer lines). The local `None` key is untouched, and
+    /// `covered_hosts` = every host queried; `fresh` = per-host result for
+    /// hosts whose probe succeeded. A covered host missing from `fresh` had a
+    /// failed probe, so its stale list is dropped (else dead pane ids keep
+    /// rendering as clickable footer lines). The local `None` key is untouched;
     /// hosts no longer configured are pruned.
     pub fn apply_remote_agents(
         &mut self,
@@ -1032,14 +1000,10 @@ impl AppState {
             .retain(|k, _| k.host().is_none_or(|h| configured.contains(h)));
     }
 
-    /// Build the unified sidebar layout: a flat list of header /
-    /// session items in render order. Renderers and the mouse
-    /// hit-tester share this so they can't disagree about which row
-    /// lives where.
-    /// The active theme, resolved from the saved index. The layout builders
-    /// bake divider accents and row marker colors into their `BasicItem`s, so
-    /// they read the theme here rather than taking it as a parameter (the
-    /// hit-test call sites build the same layout and don't carry a theme).
+    /// The active theme, resolved from the saved index. Layout builders bake
+    /// divider accents and row marker colors into their `BasicItem`s, so they
+    /// read the theme here rather than taking it as a parameter (hit-test call
+    /// sites build the same layout and don't carry a theme).
     pub fn active_theme(&self) -> &'static crate::theme::Theme {
         &crate::theme::THEMES[self.prefs.theme_index]
     }
@@ -1075,15 +1039,14 @@ impl AppState {
         }
     }
 
-    /// `BasicItem` for one Agents-tab row, the twin of `session_item`. A real
-    /// agent shows a status glyph (`●` working / `○` idle / `◐` waiting / `●`
-    /// unknown) before its location; the renderer tints that glyph by the
-    /// agent's `AgentStatus` (`recolor_agent_dot`) — color is keyed off the
-    /// status, not the glyph, so two statuses may reuse a glyph.
-    /// The pane deck currently shows isn't marked here: the row highlight
-    /// (the cursor follows the active pane, see `steer_marker_to_pane`)
-    /// already carries "you are here". An empty section's placeholder shows
-    /// `detecting…` (not yet probed) or `no agents` (probed, none found).
+    /// `BasicItem` for one Agents-tab row, twin of `session_item`. A real agent
+    /// shows a status glyph (`●` working / `○` idle / `◐` waiting / `○` unknown)
+    /// before its location; the renderer tints the glyph by `AgentStatus`
+    /// (`recolor_agent_dot`) — color keys off status, not glyph, so two statuses
+    /// may reuse a glyph. The current pane isn't marked here: the row highlight
+    /// (cursor follows the active pane, see `steer_marker_to_pane`) carries "you
+    /// are here". Empty-section placeholder shows `detecting…` (not yet probed)
+    /// or `no agents` (probed, none found).
     fn agent_item(&self, entry: &AgentEntry) -> BasicItem {
         match &entry.kind {
             AgentEntryKind::Agent(agent) => {
@@ -1122,10 +1085,10 @@ impl AppState {
         item.button("⟳").button("…")
     }
 
-    /// Port-forward rollup for a remote host's divider badge, or `None` when
-    /// the host has no configured forwards. Each forward's liveness comes from
-    /// `forward_health` (defaulting to `Probing` until first probed), so the
-    /// badge color and the port-forward overlay always agree.
+    /// Port-forward rollup for a host's divider badge, or `None` with no
+    /// configured forwards. Each forward's liveness comes from `forward_health`
+    /// (`Probing` until first probed), so the badge color and the port-forward
+    /// overlay always agree.
     pub fn forward_badge(&self, host: &str) -> Option<ForwardBadge> {
         let remote = self.config_remotes.iter().find(|r| r.host == host)?;
         ForwardBadge::rollup(remote.forwards.iter().map(|f| {
@@ -1136,17 +1099,16 @@ impl AppState {
         }))
     }
 
-    /// Shared skeleton behind both sidebar tabs: a local section followed by
-    /// one section per remote host (in `remote_hosts_in_order`). Each section
-    /// gets its `@local` / `@host` divider plus the matching [`SectionMeta`]
-    /// (when `opts.show_headers`), then `push_rows` fills that section's body —
-    /// `host` is `None` for local, `Some(host)` for a remote. The two tabs are
-    /// structurally identical and differ only in the `opts` switches and what
-    /// rows `push_rows` emits.
+    /// Shared skeleton behind both sidebar tabs: a local section then one per
+    /// remote host (in `remote_hosts_in_order`). Each gets its `@local`/`@host`
+    /// divider plus matching [`SectionMeta`] (when `opts.show_headers`), then
+    /// `push_rows` fills the body (`host` `None` = local, `Some` = remote). The
+    /// tabs are structurally identical, differing only in `opts` and the rows
+    /// `push_rows` emits.
     ///
-    /// `push_rows` may also push its own placeholder header + `SectionMeta`
-    /// (the Agents tab does this for empty sections); those land after the
-    /// divider, keeping `sections` parallel to the crate's section numbering.
+    /// `push_rows` may also push its own placeholder header + `SectionMeta` (the
+    /// Agents tab does this for empty sections); those land after the divider,
+    /// keeping `sections` parallel to the crate's section numbering.
     fn build_sections(
         &self,
         opts: SectionLayoutOpts,
@@ -1228,10 +1190,10 @@ impl AppState {
             push_rows(&mut layout, &mut sections, Some(&host));
         }
 
-        // Flip each group header's collapsed flag so the widget hides its rows
-        // and the geometry/scroll/hit-test all honor the collapse, using the
-        // caller's collapse set (`collapsed_sections` for Projects,
-        // `collapsed_agent_sections` for Agents — each tab folds independently).
+        // Flip each header's collapsed flag (from the caller's collapse set:
+        // `collapsed_sections` for Projects, `collapsed_agent_sections` for
+        // Agents — folds independently) so the widget hides its rows and
+        // geometry/scroll/hit-test all honor the collapse.
         if opts.collapsible {
             for (section_idx, key) in group_headers {
                 layout.set_collapsed(section_idx, collapsed.contains(&key));
@@ -1242,10 +1204,9 @@ impl AppState {
     }
 
     /// Build the unified Projects-tab layout: a flat `BasicItem` list of
-    /// `@local` / `@host` dividers (Expanded only) interleaved with session
-    /// rows, plus the per-divider [`SectionMeta`] the hit-tester resolves
-    /// clicks against. Renderer and hit-tester share this so they can't
-    /// disagree about which row lives where.
+    /// `@local`/`@host` dividers (Expanded only) interleaved with session rows,
+    /// plus the per-divider [`SectionMeta`] the hit-tester resolves clicks
+    /// against. Renderer and hit-tester share this so they can't disagree.
     pub fn sidebar_layout(&self, view_mode: ViewMode) -> BuiltLayout {
         // Group dividers (`@local`, `@host`) are an Expanded-view adornment;
         // Compact rows already carry an origin prefix. Collapse is likewise an
@@ -1268,10 +1229,9 @@ impl AppState {
         )
     }
 
-    /// Distinct remote hosts in the order their rows first appear in
-    /// `entries` (the refresh worker emits hosts in config order, one
-    /// contiguous block each). Shared by `agent_entries` and `agents_layout`
-    /// so both walk sections identically.
+    /// Distinct remote hosts in first-appearance order in `entries` (the
+    /// refresh worker emits hosts in config order, one contiguous block each).
+    /// Shared by `agent_entries` and `agents_layout` so both walk sections alike.
     fn remote_hosts_in_order(&self) -> Vec<String> {
         self.remote_hosts_in_order_ref()
             .map(str::to_string)
@@ -1279,9 +1239,8 @@ impl AppState {
     }
 
     /// Borrowing twin of [`remote_hosts_in_order`](Self::remote_hosts_in_order):
-    /// yields each distinct remote host as `&str` in first-appearance order,
-    /// without the per-host `String` clone. Hot callers (`agent_entries`,
-    /// `agent_count`) that only read the host name take this path.
+    /// each distinct remote host as `&str` in first-appearance order, no per-host
+    /// `String` clone. Hot callers that only read the name take this path.
     fn remote_hosts_in_order_ref(&self) -> impl Iterator<Item = &str> {
         let mut seen: HashSet<&str> = HashSet::new();
         self.entries
@@ -1290,13 +1249,12 @@ impl AppState {
             .filter(move |host| seen.insert(host))
     }
 
-    /// The Agents-tab entries for one section (`None` = local): one
+    /// Agents-tab entries for one section (`None` = local): one
     /// [`AgentEntryKind::Agent`] per detected agent, or a single
-    /// [`AgentEntryKind::Placeholder`] when the section is empty (probed and
-    /// found none) or not yet probed (`detecting…`). Every section yields at
-    /// least one entry — like a Projects host always carrying at least a
-    /// `NoSessions` row — so it always occupies a focus slot. `agent_entries`
-    /// and the layout both walk this, so they can't disagree.
+    /// [`AgentEntryKind::Placeholder`] when empty (probed, none found) or not
+    /// yet probed (`detecting…`). Every section yields at least one entry — like
+    /// a Projects host always carrying a `NoSessions` row — so it always holds a
+    /// focus slot. `agent_entries` and the layout both walk this.
     fn agent_entries_for(&self, host: Option<&str>) -> Vec<AgentEntry> {
         let mk = |kind| AgentEntry {
             host: host.map(str::to_string),
@@ -1315,11 +1273,10 @@ impl AppState {
     }
 
     /// Recompute the stored [`agent_entries`](Self::agent_entries) from the
-    /// `agents` map and the current host order. Called when a refresh round
-    /// settles (see `App::apply_update`) — the one point where both the agent
-    /// detection and the host order are fresh — mirroring how `entries` is
-    /// rebuilt there. Cheap, but not per-frame: the layout/focus then read the
-    /// stored list directly.
+    /// `agents` map and current host order. Called when a refresh round settles
+    /// (`App::apply_update`) — the one point where both detection and host order
+    /// are fresh — mirroring how `entries` is rebuilt. Cheap, but not per-frame:
+    /// layout/focus then read the stored list directly.
     pub fn rebuild_agent_entries(&mut self) {
         self.agent_entries = self.build_agent_entries();
     }
@@ -1341,10 +1298,10 @@ impl AppState {
         self.agent_entries.len()
     }
 
-    /// Flat focusable index of the agent entry matching `target`, or `None`
-    /// if it isn't currently listed. Lets the Agents-tab cursor track the
-    /// pane switched to via a click, the way `focusable_index_for` does
-    /// for the Projects tab. Placeholder entries never match a real target.
+    /// Flat focusable index of the agent entry matching `target`, or `None` if
+    /// not listed. Lets the Agents-tab cursor track the pane switched to via a
+    /// click, like `focusable_index_for` does for Projects. Placeholder entries
+    /// never match a real target.
     pub fn agent_entry_index_for(&self, target: &AgentTarget) -> Option<usize> {
         self.agent_entries.iter().position(|entry| {
             entry.host.as_deref() == target.host.as_deref()
@@ -1352,10 +1309,10 @@ impl AppState {
         })
     }
 
-    /// Row height the Summary card reserves: title + blank + a
-    /// `summary_height` body area + a drag-handle row. A fixed-size window
-    /// for every state, so overflowing Ready text scrolls inside it rather
-    /// than growing the card; the user resizes it by dragging the handle.
+    /// Row height the Summary card reserves: title + blank + `summary_height`
+    /// body + a drag-handle row. Fixed-size for every state, so overflowing
+    /// Ready text scrolls inside it rather than growing the card; the user
+    /// resizes by dragging the handle.
     pub fn summary_card_height(&self) -> u16 {
         if !self.prefs.summary_enabled {
             return 0;
@@ -1374,11 +1331,11 @@ impl AppState {
         )
     }
 
-    /// Whether `pos` falls anywhere on the Summary card. Used by the wheel
-    /// path to route scroll events to the card text. Checked directly,
-    /// independent of `HitRegions::hit` priority, because the card rect
-    /// spans the whole Agents-tab viewport and the agent rows/dividers
-    /// drawn over it outrank the card for *clicks* but not for the wheel.
+    /// Whether `pos` falls anywhere on the Summary card. Used by the wheel path
+    /// to route scroll to the card text. Checked directly, not via
+    /// `HitRegions::hit` priority: the card rect spans the whole Agents-tab
+    /// viewport, and the rows/dividers over it outrank it for *clicks* but not
+    /// the wheel.
     pub fn summary_card_at(&self, col: u16, row: u16) -> bool {
         let pos = Position::new(col, row);
         self.hit_regions
@@ -1396,9 +1353,9 @@ impl AppState {
     }
 
     /// New body height implied by dragging the top handle to `row`. The card
-    /// bottom is anchored against the footer, so dragging the top up grows
-    /// the card: `body = (card_bottom - row) - chrome`, where chrome is the
-    /// handle, title, and blank rows. Clamped by `set_summary_height`.
+    /// bottom is anchored to the footer, so dragging the top up grows the card:
+    /// `body = (card_bottom - row) - chrome` (chrome = handle, title, blank).
+    /// Clamped by `set_summary_height`.
     pub fn summary_height_for_drag(&self, row: u16) -> u16 {
         let bottom = self
             .hit_regions
@@ -1415,11 +1372,10 @@ impl AppState {
             scroll_clamped(self.summary.scroll, delta, self.hit_regions.summary.max_scroll);
     }
 
-    /// Move the summary card off `Generating` back to the state it held
-    /// before generation started (Idle / a prior Ready / Error), used when
-    /// the user cancels mid-flight. The App side drops the worker (killing
-    /// the `claude` child); this is the pure state half. No-op unless
-    /// currently generating.
+    /// Move the summary card off `Generating` back to the pre-generation state
+    /// (Idle / prior Ready / Error), used on a mid-flight cancel. The App side
+    /// drops the worker (killing the `claude` child); this is the pure state
+    /// half. No-op unless currently generating.
     pub fn cancel_summary(&mut self) {
         if self.summary.state != SummaryState::Generating {
             return;
@@ -1434,19 +1390,16 @@ impl AppState {
             scroll_clamped(self.summary.popup_scroll, delta, self.summary.popup_max_scroll);
     }
 
-    /// Build the Agents-tab layout: an `@local` / `@host` divider per
-    /// section with that section's rows beneath it — a focusable row per
-    /// detected agent, or a single placeholder row when the section is empty
-    /// (`detecting…` / `no agents`). Every row maps 1:1 to a stored
+    /// Build the Agents-tab layout: an `@local`/`@host` divider per section with
+    /// its rows beneath — a focusable row per detected agent, or one placeholder
+    /// when empty (`detecting…` / `no agents`). Every row maps 1:1 to a stored
     /// `agent_entries` element so focus/scroll/hit-test stay in sync.
     pub fn agents_layout(&self) -> BuiltLayout {
-        // Sections fold independently of Projects via `collapsed_agent_sections`
-        // (a host collapsed here doesn't touch the Projects list). Remote
-        // sections take a 1-row top margin to set them off. The Summary card
-        // renders as a separate widget pinned above, so the list is pure
-        // `BasicItem`. The body mirrors `sidebar_layout` exactly: filter the
-        // stored list by host, build each entry into a `BasicItem` via the
-        // `agent_item` twin of `session_item`.
+        // Sections fold independently of Projects via `collapsed_agent_sections`.
+        // Remote sections take a 1-row top margin. The Summary card is a separate
+        // widget pinned above, so the list is pure `BasicItem`. Body mirrors
+        // `sidebar_layout`: filter the stored list by host, build each entry into
+        // a `BasicItem` via the `agent_item` twin of `session_item`.
         self.build_sections(
             SectionLayoutOpts {
                 show_headers: true,
@@ -1498,11 +1451,10 @@ impl AppState {
     }
 
     /// Refresh `-R` forward health from each host's connection status. A
-    /// remote-forward listener lives on the far side and can't be probed
-    /// locally, so it simply mirrors reachability: connected → Up, unreachable
-    /// → Down, still-connecting → Probing. `-L`/`-D` entries are owned by the
-    /// worker probe and left untouched. Called whenever remote status changes
-    /// so `-R` and the divider always agree.
+    /// remote-forward listener lives on the far side, can't be probed locally,
+    /// so it mirrors reachability: connected → Up, unreachable → Down,
+    /// connecting → Probing. `-L`/`-D` are owned by the worker probe and left
+    /// untouched. Called on remote status change so `-R` and the divider agree.
     pub fn sync_remote_forward_health(&mut self) {
         let updates: Vec<(ForwardKey, ForwardHealth)> = self
             .config_remotes
@@ -1527,10 +1479,9 @@ impl AppState {
         }
     }
 
-    /// Focused remote placeholder row, if any. These rows occupy normal
-    /// focus slots so users can land on a host with no attachable session,
-    /// but the main pane must render an explicit status instead of a stale
-    /// terminal screen.
+    /// Focused remote placeholder row, if any. These occupy normal focus slots
+    /// so users can land on a host with no attachable session, but the main pane
+    /// must render an explicit status instead of a stale terminal screen.
     pub fn focused_remote_placeholder(&self) -> Option<&SessionEntry> {
         if self.agents_tab_active() {
             return None;
@@ -1539,10 +1490,9 @@ impl AppState {
         (!entry.is_local() && !entry.is_attachable()).then_some(entry)
     }
 
-    /// Section key of the group the flat focus index `idx` lives in:
-    /// `None` for a local row, `Some(host)` for a remote one. Used by the
-    /// section-toggle keybinding and focus-skip logic. For an out-of-range
-    /// index this falls back to `None`.
+    /// Section key of the group flat focus index `idx` lives in: `None` local,
+    /// `Some(host)` remote. Used by the section-toggle keybinding and focus-skip
+    /// logic; out-of-range falls back to `None`.
     pub fn section_key_of_focus(&self, idx: usize) -> Option<String> {
         self.entries.get(idx).and_then(|e| e.host.clone())
     }
@@ -1583,12 +1533,11 @@ impl AppState {
         }
     }
 
-    /// Move both section-list cursors onto `target`: the Projects-tab
-    /// `focused` session and the Agents-tab `agent_focused` row, so the
-    /// highlighted item tracks whatever pane is active — whether deck drove
-    /// the switch (`commit_focus`) or it's following the real active pane
-    /// (`steer_marker_to_pane`). Each cursor moves only if the target is
-    /// present in that list.
+    /// Move both section cursors onto `target`: the Projects `focused` session
+    /// and the Agents `agent_focused` row, so the highlight tracks whatever pane
+    /// is active — whether deck drove the switch (`commit_focus`) or it follows
+    /// the real active pane (`steer_marker_to_pane`). Each cursor moves only if
+    /// the target is in that list.
     pub fn focus_cursors_on(&mut self, target: &AgentTarget) {
         if let Some(idx) = self.focusable_index_for(target.host.as_deref(), &target.session) {
             self.focused = idx;
@@ -1598,16 +1547,14 @@ impl AppState {
         }
     }
 
-    /// Track the active pane on `host` (`None` = local): set `active_agent`
-    /// to the agent occupying `pane_id`, or clear it when that pane holds no
-    /// agent — so the active-agent state follows the real active pane even
-    /// when the user switches panes outside Deck. When an agent is found the
-    /// section-list cursor follows it too (`focus_cursors_on`), so the row
-    /// highlight lands on the active pane; a pane with no agent only clears
-    /// `active_agent` and leaves the cursor where the user left it. No-op when
-    /// the host's agents haven't been probed yet, so a probe that races ahead
-    /// of detection can't blank a valid highlight (absence = "not known", not
-    /// "no agent here").
+    /// Track the active pane on `host` (`None` = local): set `active_agent` to
+    /// the agent occupying `pane_id`, or clear it when that pane has no agent —
+    /// so active-agent state follows the real active pane even when the user
+    /// switches panes outside Deck. When an agent is found the section cursor
+    /// follows it (`focus_cursors_on`); a pane with no agent only clears
+    /// `active_agent` and leaves the cursor put. No-op when the host's agents
+    /// aren't probed yet, so a probe racing ahead of detection can't blank a
+    /// valid highlight (absence = "not known", not "no agent here").
     pub fn steer_marker_to_pane(&mut self, host: Option<&str>, pane_id: &str) {
         let target = match self.agents.get(HostQuery::from_host(host)) {
             None => return,
@@ -1646,25 +1593,17 @@ impl AppState {
         }
     }
 
-    /// Name to show in the kill-confirmation overlay: the focused row's
-    /// session name, or `None` when no kill is pending or focus has no
-    /// valid target. The renderer gates the overlay on this being `Some`.
+    /// The highest-priority full-input modal currently open, or `None` when the
+    /// sidebar/PTY takes input directly. The order below is the source of truth
+    /// for input routing and **must mirror `keyboard::key_to_action`'s
+    /// early-return chain exactly** — both consult this first, so priority here
+    /// decides which overlay swallows a key/click when several flags are set.
     ///
-    /// Resolves through `entry_at` so a focused *remote* row reports its
-    /// name too — local and remote rows are treated the same here.
-    /// The highest-priority full-input modal currently open, or `None` when
-    /// the sidebar/PTY is free to take input directly.
-    ///
-    /// The order below is the single source of truth for input routing and
-    /// **must mirror `keyboard::key_to_action`'s early-return chain exactly**
-    /// — both mappers consult this first, so the priority here decides which
-    /// overlay swallows a key or click when more than one flag is set.
-    ///
-    /// The settings sub-modals (KeybindingsView / ExcludeEditor /
-    /// SummaryLang) only count while the settings page itself owns focus
-    /// (`MainView::Settings` + `FocusMode::Main`); elsewhere their backing
-    /// fields are stale and must not gate input. Everything above them is a
-    /// standalone overlay that can be opened straight from the sidebar.
+    /// The settings sub-modals (KeybindingsView / ExcludeEditor / SummaryLang)
+    /// count only while the settings page owns focus (`MainView::Settings` +
+    /// `FocusMode::Main`); elsewhere their backing fields are stale and must not
+    /// gate input. Everything above them is a standalone overlay openable from
+    /// the sidebar.
     pub fn active_modal(&self) -> Option<Modal> {
         if self.overlay.summary_popup {
             return Some(Modal::SummaryPopup);
@@ -1707,6 +1646,10 @@ impl AppState {
         None
     }
 
+    /// Session name for the kill-confirmation overlay: the focused row's name,
+    /// or `None` when no kill is pending or focus has no valid target (the
+    /// renderer gates the overlay on `Some`). Resolves via `entry_at`, so a
+    /// remote row reports its name too — local and remote treated alike.
     pub fn confirm_kill_name(&self) -> Option<String> {
         if !self.overlay.confirm_kill {
             return None;
@@ -1715,14 +1658,12 @@ impl AppState {
     }
 
     /// Why the focused kill `target` can't be killed, or `None` if it can.
-    /// Single source of truth shared by the `x`-key path (`KillSession` /
-    /// `ConfirmKill`) and the context menu's "Kill" greying so the two
-    /// can't drift:
+    /// Shared by the `x`-key path (`KillSession` / `ConfirmKill`) and the
+    /// context menu's "Kill" greying so they can't drift:
     ///  - a synthetic placeholder remote row (loading / unreachable /
-    ///    "(no sessions)") has no real session to kill — a kill would send
+    ///    "(no sessions)") has no real session — a kill would send
     ///    `ssh tmux kill-session` with a placeholder/empty name;
-    ///  - a host's last live session would tear that host's tmux server
-    ///    down;
+    ///  - a host's last live session would tear that host's tmux server down;
     ///  - the last local session would leave deck attached to nothing.
     pub fn kill_blocked_reason(&self, entry: &SessionEntry) -> Option<&'static str> {
         match &entry.host {
@@ -1764,11 +1705,10 @@ impl AppState {
     // --- Focus clamping and ordering ---
 
     /// Keep the Projects-tab cursor (`focused`) inside the current row range
-    /// (local sessions followed by remote rows) after that list changes —
-    /// e.g. focus was parked on a placeholder/session row that just
-    /// disappeared. Clamps against the Projects row space specifically (not
-    /// the tab-aware `focusable_count`, which would use the agent count when
-    /// the Agents tab is active and corrupt the Projects cursor).
+    /// (locals then remotes) after the list changes — e.g. a focused row
+    /// disappeared. Clamps against the Projects row space specifically, not the
+    /// tab-aware `focusable_count` (which would use the agent count on the
+    /// Agents tab and corrupt the Projects cursor).
     pub fn clamp_projects_focus(&mut self) {
         clamp_cursor(&mut self.focused, self.entries.len());
     }
@@ -1782,13 +1722,12 @@ impl AppState {
             .map(|e| (e.host.clone(), e.name.clone()))
     }
 
-    /// Re-point the Projects cursor at the session identified by `key` (its
-    /// position before `entries` was rebuilt), so the highlight keeps tracking
-    /// the same session across a refresh that reordered or grew/shrank the
-    /// list — instead of a bare clamp letting it slide onto a neighbor. Falls
-    /// back to clamping when the session is gone. The Projects twin of
-    /// `reanchor_agent_focus`; use it instead of `clamp_projects_focus` after
-    /// a refresh rebuilds the rows.
+    /// Re-point the Projects cursor at the session `key` (its position before
+    /// `entries` was rebuilt), so the highlight keeps tracking the same session
+    /// across a refresh that reordered/resized the list instead of sliding onto
+    /// a neighbor. Falls back to clamping when the session is gone. Projects twin
+    /// of `reanchor_agent_focus`; use instead of `clamp_projects_focus` after a
+    /// refresh rebuilds the rows.
     pub fn reanchor_projects_focus(&mut self, key: Option<(Option<String>, String)>) {
         match key.and_then(|(host, name)| self.focusable_index_for(host.as_deref(), &name)) {
             Some(idx) => self.focused = idx,
@@ -1803,9 +1742,9 @@ impl AppState {
         clamp_cursor(&mut self.agent_focused, total);
     }
 
-    /// Identity (host, `%N` pane id) of the agent under the Agents-tab
-    /// cursor. Captured *before* a refresh rebuilds the agent list so the
-    /// cursor can be re-anchored to the same agent afterwards — see
+    /// Identity (host, `%N` pane id) of the agent under the Agents-tab cursor.
+    /// Captured *before* a refresh rebuilds the agent list so the cursor can be
+    /// re-anchored afterwards — see
     /// [`reanchor_agent_focus`](Self::reanchor_agent_focus).
     pub fn focused_agent_key(&self) -> Option<(Option<String>, String)> {
         let entry = self.agent_entries.get(self.agent_focused)?;
@@ -1815,15 +1754,13 @@ impl AppState {
         }
     }
 
-    /// Re-point the Agents-tab cursor at the agent identified by `key` (its
-    /// position before the list was rebuilt), so the highlighted row keeps
-    /// tracking the same agent — and thus the pane shown on the right
-    /// (`active_agent`) — instead of whatever now sits at the old index.
-    /// `agent_focused` is a positional index, but the detected-agent list
-    /// reorders and gains/loses entries between refresh rounds, so a bare
-    /// `clamp_agent_focus` lets the cursor slide onto a different agent than
-    /// the one the pane is showing. Falls back to clamping when the agent is
-    /// gone (finished, went idle, or its host dropped). Use this instead of
+    /// Re-point the Agents-tab cursor at the agent `key` (its position before
+    /// the list was rebuilt), so the highlighted row keeps tracking the same
+    /// agent — and thus the pane shown on the right (`active_agent`). The
+    /// detected-agent list reorders and gains/loses entries between rounds, so a
+    /// bare `clamp_agent_focus` on the positional `agent_focused` would slide
+    /// onto a different agent than the pane shows. Falls back to clamping when
+    /// the agent is gone (finished, idle, or host dropped). Use instead of
     /// `clamp_agent_focus` after the agent list changes.
     pub fn reanchor_agent_focus(&mut self, key: Option<(Option<String>, String)>) {
         let found = key.and_then(|(host, pane_id)| {
@@ -1850,9 +1787,9 @@ impl AppState {
     }
 
     /// Reorder the local entries (the `host == None` prefix of `entries`) to
-    /// match `session_order`. Remote entries follow the local block in
-    /// `entries`, so sorting only the local prefix keeps the unified store's
-    /// "local first, then remotes (in config order)" invariant intact.
+    /// match `session_order`. Remotes follow the local block, so sorting only
+    /// the local prefix keeps the "locals first, then remotes (config order)"
+    /// invariant intact.
     pub fn apply_order(&mut self) {
         let order = &self.session_order;
         let rank = |e: &SessionEntry| -> usize {

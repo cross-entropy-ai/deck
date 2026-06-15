@@ -1,15 +1,13 @@
 //! Cross-process shutdown nudge.
 //!
-//! `deck --force` sends SIGTERM to the running instance. The handler
-//! installed here only flips an atomic flag — it does not do any
-//! shutdown work itself, which would be unsafe from a signal handler.
-//! The event loop in `App::run` polls the flag each tick and dispatches
-//! `Action::Quit`, so the old instance exits through the exact same
-//! path as the right-click "Quit" menu: terminal state restored,
-//! `InstanceGuard` drops, lock file removed.
+//! `deck --force` sends SIGTERM to the running instance. The handler here only
+//! flips an atomic flag (doing shutdown work in a signal handler would be
+//! unsafe). The `App::run` event loop polls the flag each tick and dispatches
+//! `Action::Quit`, so the old instance exits via the same path as the
+//! right-click "Quit": terminal restored, `InstanceGuard` drops, lock removed.
 //!
-//! Falling back to SIGKILL (in `instance_guard::real_kill`) stays as a
-//! safety net for a hung or signal-ignoring process.
+//! SIGKILL fallback (in `instance_guard::real_kill`) is the safety net for a
+//! hung or signal-ignoring process.
 
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};

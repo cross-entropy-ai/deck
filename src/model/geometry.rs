@@ -1,13 +1,9 @@
-//! Sidebar / hit-region geometry, plus the pure layout helpers shared by
-//! the UI (drawing) and the model/action (hit-testing) layers.
-//!
-//! These constants and pure functions live in `model` (not `ui`), so `ui`
-//! and `app` depend on the model for geometry, never the reverse.
-//!
-//! The tab bar's geometry (leading pad, inner pad, separator) is defined
-//! here as the single source of truth. Renderer and hit-tester both read
-//! from these constants/helpers, so tweaking the tab visual width
-//! automatically keeps click-target math in sync.
+//! Sidebar / hit-region geometry plus pure layout helpers shared by the UI
+//! (drawing) and model/action (hit-testing) layers. They live in `model`
+//! (not `ui`), so `ui` and `app` depend on the model for geometry, never the
+//! reverse. The tab bar's geometry (leading/inner pad, separator) is the
+//! single source of truth here: renderer and hit-tester both read it, so
+//! changing tab width keeps click-target math in sync.
 
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
@@ -22,9 +18,8 @@ use crate::state::SidebarTab;
 use crate::theme::Theme;
 
 /// Truncate `s` to at most `max_width` display columns, appending an
-/// ellipsis when it overflows. A pure string helper kept here (in the
-/// leaf geometry module) so `model` doesn't have to reach up into `ui`
-/// for it; `ui::text` re-exports this name for its own call sites.
+/// ellipsis on overflow. Kept in the leaf geometry module so `model`
+/// needn't reach up into `ui`; `ui::text` re-exports it.
 pub fn truncate(s: &str, max_width: usize) -> String {
     if s.width() <= max_width {
         return s.to_string();
@@ -58,13 +53,11 @@ pub fn truncate(s: &str, max_width: usize) -> String {
 /// 13 columns (6 + ":" + 6), an ellipsis taking over past that.
 pub const TAB_REMOTE_SIDE_MAX: usize = 6;
 
-/// Visible label for a session tab in the vertical/tabs layout.
-///
-/// Local sessions (`host == None`) show their bare name. Remote sessions
-/// show `host:session`, each side truncated to `TAB_REMOTE_SIDE_MAX`; a
-/// loading placeholder (empty name) shows just the host. Shared by the
-/// tab renderer and the click hit-tester so tab widths and click targets
-/// can't drift apart.
+/// Visible label for a session tab in the vertical/tabs layout. Local
+/// (`host == None`) shows the bare name; remote shows `host:session`, each
+/// side truncated to `TAB_REMOTE_SIDE_MAX`; a loading placeholder (empty
+/// name) shows just the host. Shared by tab renderer and hit-tester so
+/// widths and click targets can't drift apart.
 pub fn tab_label(host: Option<&str>, name: &str) -> String {
     match host {
         None => name.to_string(),
@@ -96,11 +89,10 @@ pub fn banner_visible(has_update: bool, content_width: u16) -> bool {
     has_update && content_width >= BANNER_MIN_WIDTH
 }
 
-/// Height of the sidebar footer in rows: `2` fixed rows (the top
-/// separator and the menu/version line) plus the update banner (when
-/// shown) plus the plugin block. Shared by the renderer and mouse
-/// hit-testing so the two can't drift (when they did, the bottom visible
-/// session row went click-dead).
+/// Sidebar footer height in rows: `2` fixed (top separator + menu/version
+/// line) plus the update banner (when shown) plus the plugin block. Shared
+/// by renderer and hit-testing so they can't drift (when they did, the
+/// bottom session row went click-dead).
 pub fn sidebar_footer_height(banner_visible: bool, plugin_count: usize) -> u16 {
     2 + banner_visible as u16 + plugin_block_rows(plugin_count)
 }
@@ -122,11 +114,10 @@ pub fn context_menu_rect(
     Rect::new(x, y, w, h)
 }
 
-/// Rows the plugin status block takes in the sidebar footer: title +
-/// one row per plugin + trailing separator. Zero when no plugins are
-/// configured so the sidebar keeps its original layout for users
-/// without any extensions. Shared so mouse hit-testing in
-/// `AppState::focus_at_row` stays in sync with the sidebar renderer.
+/// Rows the plugin status block takes in the footer: title + one row per
+/// plugin + trailing separator. Zero with no plugins so the layout is
+/// unchanged for users without extensions. Shared so hit-testing in
+/// `AppState::focus_at_row` stays in sync with the renderer.
 pub const fn plugin_block_rows(count: usize) -> u16 {
     if count == 0 {
         0
@@ -197,19 +188,16 @@ pub fn context_menu_width(items: &[MenuItem]) -> u16 {
 /// Sidebar layout — a `SectionedList` of the crate's `BasicItem` preset.
 /// Headers carry an `@local` / `@host` divider (separator fill, accent
 /// color, `[⟳]`/`[…]` buttons); rows carry a session/agent title plus dim
-/// secondary lines. Geometry, focus-driven scroll, and mouse hit-testing
-/// are shared across the renderer (`SectionedListWidget::basic`) and the
-/// action layer via this one type.
+/// secondary lines. Geometry, focus-driven scroll, and hit-testing are
+/// shared across renderer and action layer via this one type.
 pub type SidebarLayout =
     ratatui_sectioned_list::SectionedList<ratatui_sectioned_list::widget::BasicItem>;
 
-/// Metadata for one header in a [`SidebarLayout`], in push order — parallel
-/// to the crate's section numbering, so a `header_at_y` index resolves
-/// straight back to the host it divides and the buttons drawn on it.
-///
-/// `BasicItem` headers carry only text/buttons, not identity, so this
-/// side-table is what lets the hit-tester map a divider click to a host
-/// (collapse / reconnect / menu).
+/// Metadata for one header in a [`SidebarLayout`], in push order parallel
+/// to the crate's section numbering, so a `header_at_y` index resolves back
+/// to the host it divides and its buttons. `BasicItem` headers carry only
+/// text/buttons, not identity, so this side-table lets the hit-tester map a
+/// divider click to a host (collapse / reconnect / menu).
 #[derive(Debug, Clone)]
 pub struct SectionMeta {
     /// Host this divider heads (`None` = `@local`). `None` for a
@@ -223,17 +211,16 @@ pub struct SectionMeta {
     /// carries buttons). `false` for placeholder rows that occupy a header
     /// slot but aren't interactive.
     pub divider: bool,
-    /// Port-forward rollup for this host's divider, when it has forwards.
-    /// Drives the colored `[⇄N]` badge; `None` = no badge (no forwards, or
-    /// a non-host divider). Carried here so the renderer can color the badge
-    /// without re-deriving health from config.
+    /// Port-forward rollup for this host's divider. Drives the colored
+    /// `[⇄N]` badge; `None` = no badge (no forwards, or non-host divider).
+    /// Carried here so the renderer colors the badge without re-deriving
+    /// health from config.
     pub forward_badge: Option<ForwardBadge>,
 }
 
-/// The switches that distinguish the two sidebar tabs when they're built
-/// through the shared `build_sections` skeleton. The section structure (a
-/// local section then one per remote host) is identical; only these toggles
-/// and the per-row content differ.
+/// Switches distinguishing the two sidebar tabs built through the shared
+/// `build_sections` skeleton. The section structure (local then one per
+/// remote host) is identical; only these toggles and per-row content differ.
 #[derive(Debug, Clone, Copy)]
 pub struct SectionLayoutOpts {
     /// Push `@local` / `@host` divider headers. Projects omits them in Compact
@@ -267,25 +254,17 @@ impl Default for BuiltLayout {
     }
 }
 
-/// One focusable entry in the Agents-tab list, the twin of `SessionEntry`:
-/// in display order, the local section first then each remote host's in
-/// section order. The renderer and the layout items both index into the `Vec`
-/// this produces (`AppState::agent_entries`), so they can't disagree about
-/// which entry points where.
-///
-/// Its [`kind`](AgentEntry::kind) is either a detected `Agent` or the
-/// synthetic `Placeholder` standing in for an empty section — mirroring how a
-/// `SessionEntry`'s `SessionEntryKind` is `Live` or a synthetic
-/// `NoSessions` / `Unreachable`. Both are focusable and occupy a flat-index
-/// slot, so `agent_entries`, `agent_count`, the layout, and focus all walk the
-/// same sequence; activating a placeholder is a guarded no-op (`focused_agent`
-/// returns `None`).
-///
-/// Owns its data (like `SessionEntry`) rather than borrowing out of
-/// `AppState.agents`, so it carries no lifetime — at the cost of a per-entry
-/// `DetectedAgent` clone each time `agent_entries()` runs. The lists are small
-/// and the build is cheap, so the symmetry with `SessionEntry` is worth more
-/// than the saved copies.
+/// One focusable entry in the Agents-tab list, the twin of `SessionEntry`,
+/// in display order (local section first, then each remote host). Renderer
+/// and layout both index into the `Vec` it produces
+/// (`AppState::agent_entries`), so they agree on which entry points where.
+/// Its [`kind`](AgentEntry::kind) is a detected `Agent` or a synthetic
+/// `Placeholder` for an empty section (mirroring `SessionEntryKind`'s `Live`
+/// vs `NoSessions`/`Unreachable`); both are focusable and occupy a flat-index
+/// slot, so entries, count, layout, and focus walk the same sequence and
+/// activating a placeholder is a guarded no-op. Owns its data (no lifetime)
+/// at the cost of a per-entry `DetectedAgent` clone per `agent_entries()`
+/// run — the lists are small, so the symmetry is worth the copies.
 #[derive(Debug, Clone)]
 pub struct AgentEntry {
     pub host: Option<String>,
@@ -310,9 +289,9 @@ impl AgentEntry {
 pub enum AgentEntryKind {
     /// A detected agent — the switch target.
     Agent(crate::agent::DetectedAgent),
-    /// An empty section's placeholder. `probed` is `true` once detection has
-    /// run and the section came back empty (`no agents`), `false` while the
-    /// first probe is still pending (`detecting…`). Not switchable.
+    /// An empty section's placeholder. `probed` = `true` once detection ran
+    /// and came back empty (`no agents`), `false` while the first probe is
+    /// pending (`detecting…`). Not switchable.
     Placeholder { probed: bool },
 }
 
@@ -341,10 +320,9 @@ pub struct DividerHit {
     pub kind: DividerButton,
 }
 
-/// A detected agent's switch target, keyed by host the usual way
-/// (`None` = local). `pane_id` is the stable `%N` handle used to focus
-/// the exact pane; `session` is the `switch-client` target (which only
-/// renames — not renumbers).
+/// A detected agent's switch target, keyed by host (`None` = local).
+/// `pane_id` is the stable `%N` handle that focuses the exact pane;
+/// `session` is the `switch-client` target (renames, doesn't renumber).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentTarget {
     pub host: Option<String>,
@@ -371,9 +349,9 @@ pub struct KillConfirmHits {
 }
 
 /// Click rects for the two sidebar tab labels (`Projects` / `Agents`),
-/// published by the header renderer so mouse dispatch can switch tabs on
-/// a click. Each rect is clamped to the header area so a narrow sidebar
-/// can't leak a tab's click target into the PTY pane (bug #16).
+/// published by the header renderer so mouse dispatch can switch tabs.
+/// Clamped to the header area so a narrow sidebar can't leak a click
+/// target into the PTY pane (bug #16).
 #[derive(Debug, Clone, Copy)]
 pub struct TabRects {
     pub projects: Rect,
@@ -393,14 +371,11 @@ pub struct SummaryHits {
     pub max_scroll: usize,
 }
 
-/// Every clickable region the sidebar publishes for one frame: the
-/// renderer captures it whole and `AppState` stores it as a single field.
-/// `HitRegions::hit` is the one resolver mouse dispatch consults for every
-/// rect-based button/region test, so hit-test priority lives in one place
-/// and geometry can't drift across the layers.
-///
-/// Rects are clamped to the sidebar content area at capture time, so a
-/// narrow sidebar can never publish a button that overlaps the PTY pane.
+/// Every clickable region the sidebar publishes for one frame; the renderer
+/// captures it whole and `AppState` stores it in one field. `HitRegions::hit`
+/// is the single resolver mouse dispatch consults, so hit-test priority lives
+/// in one place. Rects are clamped to the sidebar content area at capture
+/// time, so a narrow sidebar can't publish a button overlapping the PTY pane.
 #[derive(Debug, Clone, Default)]
 pub struct HitRegions {
     /// The footer banner's clickable "upgrade" span.
@@ -421,9 +396,8 @@ pub struct HitRegions {
 }
 
 /// What a `(col, row)` click resolves to among the sidebar's rect-based
-/// regions. Vecs are carried by index so the caller reads the matched
-/// `DividerHit` / `AgentHit` straight out of the registry — keeping the
-/// hit data (host, kind, target, rect) in one place.
+/// regions. Vec hits are carried by index so the caller reads the matched
+/// `DividerHit` / `AgentHit` from the registry, keeping hit data in one place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HitKind {
     /// The kill-confirmation `[Yes]` button.
@@ -450,11 +424,10 @@ pub enum HitKind {
 }
 
 impl HitRegions {
-    /// Resolve a click at `(col, row)` to the region it lands on, if any.
-    /// The match order encodes hit-test priority: the kill buttons,
-    /// banner, tabs, and summary buttons take precedence over the menu
-    /// button, then dividers (whose buttons sit on a group header row),
-    /// then agent rows. Uses `Rect::contains` throughout.
+    /// Resolve a click at `(col, row)` to the region it lands on. Match
+    /// order encodes priority: kill buttons, banner, tabs, summary buttons,
+    /// then menu, then dividers (on group header rows), then agent rows.
+    /// Uses `Rect::contains` throughout.
     pub fn hit(&self, col: u16, row: u16) -> Option<HitKind> {
         let pos = Position::new(col, row);
         if let Some(kill) = self.kill {

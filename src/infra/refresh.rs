@@ -1,18 +1,14 @@
 //! Background session-refresh worker.
 //!
-//! The UI thread owns a `RefreshWorker` and communicates with a single
-//! background thread via mpsc channels. Requests carry the per-refresh
-//! context (slave tty, exclude patterns); the worker replies with a
-//! `SessionSnapshot` that the UI applies wholesale.
+//! The UI thread owns a `RefreshWorker` talking to one background thread via
+//! mpsc channels. Requests carry per-refresh context (slave tty, exclude
+//! patterns); the worker replies with a snapshot the UI applies wholesale.
 //!
-//! If the UI enqueues faster than the worker can process, excess
-//! requests are coalesced: the worker always picks up the most recent
-//! request after it finishes the current one.
-//!
-//! Snapshots are fire-and-forget: each one is self-contained, so the UI
-//! can safely drop intermediate snapshots under burst load. If the
-//! worker thread dies (e.g. panic), the worker is marked dead and
-//! further requests are no-ops rather than silently queuing forever.
+//! Excess requests are coalesced: the worker picks up the most recent request
+//! after finishing the current one. Snapshots are self-contained and
+//! fire-and-forget, so intermediate ones can be dropped under burst load. A
+//! dead worker thread (e.g. panic) is marked dead; further requests are no-ops
+//! rather than queuing forever.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -46,10 +42,10 @@ pub struct SnapshotRow {
     pub order: Option<u32>,
 }
 
-/// One row from a remote host. Mirrors the subset of `SnapshotRow`
-/// fields we can cheaply produce over ssh — no Claude status. `kind`
-/// is `Live` for a real session, or a `Unreachable` / `NoSessions`
-/// placeholder; `apply_remote` maps it straight onto a `SessionEntry`.
+/// One row from a remote host: the subset of `SnapshotRow` fields cheaply
+/// producible over ssh (no Claude status). `kind` is `Live`, or an
+/// `Unreachable`/`NoSessions` placeholder; `apply_remote` maps it onto a
+/// `SessionEntry`.
 pub struct RemoteSnapshotRow {
     pub host: String,
     pub name: String,
@@ -57,12 +53,11 @@ pub struct RemoteSnapshotRow {
     pub kind: crate::state::SessionEntryKind,
 }
 
-/// An update from the refresh worker. Decoupled into Local + Remote
-/// because remote queries can take seconds (ssh + tmux roundtrip) and
-/// must not stall the local refresh that's expected to tick every 1s.
-/// Each request the worker receives produces exactly one `Local`
-/// update synchronously and at most one `Remote` update (sent
-/// asynchronously from a detached thread when its queries finish).
+/// An update from the refresh worker, split Local + Remote because remote
+/// queries can take seconds (ssh + tmux roundtrip) and must not stall the ~1s
+/// local tick. Each request produces exactly one synchronous `Local` update
+/// and at most one `Remote` update (sent async from a detached thread when its
+/// queries finish).
 pub enum RefreshUpdate {
     Local {
         current_session: String,
@@ -128,16 +123,15 @@ impl RefreshWorker {
 }
 
 fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate>) {
-    // Single-flight gate for remote queries: each remote round can
-    // take up to N hosts × 5s. If new refresh ticks arrive while a
-    // remote round is still running, we skip dispatching another so
-    // we don't pile up threads racing to update the same state.
+    // Single-flight gate for remote queries (each round can take N hosts ×
+    // 5s): ticks arriving while a round runs skip dispatching another, so
+    // threads don't pile up racing to update the same state.
     let remote_in_flight = Arc::new(AtomicBool::new(false));
 
-    // Compiled exclude patterns, memoized across ticks: the raw strings
-    // change only on a config edit, so recompiling every regex on every
-    // 1 Hz tick would be pure churn. The empty initial cache is already the
-    // compiled form of no patterns.
+    // Compiled exclude patterns, memoized across ticks: raw strings change
+    // only on a config edit, so recompiling every regex on each 1 Hz tick
+    // would be churn. The empty initial cache is the compiled form of no
+    // patterns.
     let mut cached_raw: Vec<String> = Vec::new();
     let mut compiled: Vec<ExcludePattern> = Vec::new();
 
@@ -167,10 +161,9 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
             break;
         }
 
-        // Remote update asynchronously — runs in a detached thread,
-        // gated by `remote_in_flight` so back-to-back refresh ticks
-        // don't dispatch overlapping ssh storms. The next tick that
-        // arrives after this finishes is free to start its own round.
+        // Remote update async in a detached thread, gated by
+        // `remote_in_flight` so back-to-back ticks don't dispatch overlapping
+        // ssh storms. The next tick after this finishes starts its own round.
         if !req.remotes.is_empty() && !remote_in_flight.swap(true, Ordering::Acquire) {
             let remotes = req.remotes.clone();
             let probe_agents = req.show_agents;
@@ -210,12 +203,10 @@ fn collect_local(
         })
         .collect();
 
-    // Agent detection: walk each pane's process subtree for an
-    // interactive Claude Code / Codex. No hooks. Cheap enough to run
-    // every refresh round. Apply the SAME exclude filter as the session
-    // rows above — an agent in a hidden session must not surface (or be
-    // clickable) in the sidebar footer. Skipped (no `ps`/subtree walk)
-    // when the user turned agents off.
+    // Agent detection: walk each pane's process subtree for an interactive
+    // Claude Code / Codex (no hooks, cheap per round). Apply the SAME exclude
+    // filter as the rows above, so an agent in a hidden session doesn't
+    // surface in the footer. Skipped (no `ps`/subtree walk) when agents off.
     let agents = if req.show_agents {
         let mut agents =
             crate::agent::detect_agents(&tmux::agent_panes(), &crate::agent::ps_snapshot());
@@ -236,11 +227,10 @@ fn collect_local(
     (current, rows, agents)
 }
 
-/// Query each remote host for its tmux sessions in parallel: one thread
-/// per host, all spawned up front, then joined in order. N concurrent
-/// TCP roundtrips beat serializing the few-hundred-ms-each SSH calls.
-/// Each join is bounded by `remote_tmux`'s 5s ssh timeout, so one dead
-/// host stalls this call by at most that much.
+/// Query each remote host's tmux sessions in parallel: one thread per host,
+/// spawned up front then joined in order, since N concurrent roundtrips beat
+/// serializing the few-hundred-ms SSH calls. Each join is bounded by
+/// `remote_tmux`'s 5s ssh timeout, so one dead host stalls this by at most that.
 fn collect_remotes(
     remotes: &[String],
     probe_agents: bool,
@@ -259,12 +249,11 @@ fn collect_remotes(
                 .name(format!("deck-remote-{host}"))
                 .spawn(move || {
                     let sessions = remote_tmux::list_sessions(&host);
-                    // Probe agents ONLY when agents are enabled AND the host
-                    // is reachable (`list_sessions` returned `Some`, incl. a
-                    // no-server host). An unreachable host already spent one
-                    // 5s ssh timeout here; running `agent_probe` too would
-                    // double the stall and hold the single-flight gate ~10s,
-                    // suppressing every other host's refresh.
+                    // Probe agents ONLY when enabled AND the host is reachable
+                    // (`list_sessions` returned `Some`, incl. no-server). An
+                    // unreachable host already spent one 5s ssh timeout;
+                    // probing too would double the stall and hold the
+                    // single-flight gate ~10s, suppressing other hosts.
                     let agents = if probe_agents && sessions.is_some() {
                         remote_tmux::agent_probe(&host)
                     } else {
@@ -298,10 +287,10 @@ fn collect_remotes(
         }
         match sessions {
             Some(mut sessions) if !sessions.is_empty() => {
-                // Honor the per-session @deck_order set by a remote reorder:
-                // ranked sessions first (by rank), never-reordered ones after
-                // in tmux's listing order. remote_sessions is rebuilt every
-                // refresh, so sorting here is what makes the order stick.
+                // Honor per-session @deck_order from a remote reorder: ranked
+                // sessions first (by rank), never-reordered ones after in
+                // tmux's order. remote_sessions is rebuilt every refresh, so
+                // sorting here is what makes the order stick.
                 sessions.sort_by_key(|s| (s.order.is_none(), s.order.unwrap_or(0)));
                 for s in sessions {
                     out.push(RemoteSnapshotRow {

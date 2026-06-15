@@ -18,12 +18,10 @@ use super::App;
 impl App {
     pub(super) fn render(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         if self.needs_full_redraw {
-            // On a session switch the host terminal emulator can leave
-            // stale characters from the previous session on screen.
-            // `terminal.clear()` issues an ANSI clear-screen to the
-            // host terminal AND resets ratatui's previous-frame buffer,
-            // forcing the next draw to emit every cell — a clean repaint
-            // that wipes any residue.
+            // A session switch can leave stale characters on screen.
+            // `terminal.clear()` issues an ANSI clear-screen AND resets
+            // ratatui's previous-frame buffer, forcing the next draw to emit
+            // every cell — a clean repaint that wipes any residue.
             terminal.clear()?;
             self.needs_full_redraw = false;
         }
@@ -96,10 +94,10 @@ impl App {
         let mut captured_hits = crate::state::HitRegions::default();
         let mut captured_summary_popup_max_scroll: usize = 0;
         terminal.draw(|frame| {
-            // Unified slice the sidebar consumes: `entries` is already in
-            // render/flat order (local rows first, then remotes), and
-            // `SessionEntry` impls `SidebarSession`, so the sidebar reads
-            // straight from storage — no per-frame borrowed-view shells.
+            // Unified slice for the sidebar: `entries` is already in render
+            // order (local rows first, then remotes) and `SessionEntry` impls
+            // `SidebarSession`, so the sidebar reads straight from storage —
+            // no per-frame borrowed-view shells.
             let local_count = self.state.local_count();
             let sessions_dyn: Vec<&dyn ui::SidebarSession> = self
                 .state
@@ -110,10 +108,10 @@ impl App {
 
             let full = frame.area();
             let reload_height = ui::reload_row_count(reload_status, full.width);
-            // Paint the reload bar as an overlay after everything else,
-            // not as its own layout slot. Keeping the content area at
-            // full height means PTY sizing (see `AppState::pty_size`)
-            // and mouse routing stay stable when the bar pops in.
+            // Paint the reload bar as an overlay, not its own layout slot:
+            // keeping the content area full-height means PTY sizing (see
+            // `AppState::pty_size`) and mouse routing stay stable when the bar
+            // pops in.
             let reload_area = if reload_height > 0 {
                 Some(Rect {
                     x: full.x,
@@ -394,11 +392,10 @@ impl App {
                 ui::draw_settings_page(frame, main_inner, &settings_view, theme);
             }
 
-            // Theme picker — a standalone overlay drawn over the main pane
-            // whenever it's open, on top of the settings page if that's
-            // showing or directly over the terminal when opened from the
-            // sidebar (`t`). Decoupled from the settings page so it can
-            // bypass it entirely.
+            // Theme picker — standalone overlay over the main pane whenever
+            // open (atop the settings page, or directly over the terminal when
+            // opened from the sidebar via `t`). Decoupled from the settings
+            // page so it can bypass it entirely.
             if warning_state.is_none() && s.settings.theme_picker_open {
                 let theme_names: Vec<&str> = THEMES.iter().map(|t| t.name).collect();
                 ui::draw_theme_picker(
@@ -494,10 +491,10 @@ impl App {
                     ui::draw_summary_popup(frame, frame.area(), text, summary_popup_scroll, theme);
             }
 
-            // Overlay the reload bar last so it sits on top of the sidebar
-            // footer, main pane, warning popup, and context menu. The
-            // underlying layouts keep their full area, so PTY sizing and
-            // mouse routing are unaffected by the bar's presence.
+            // Overlay the reload bar last so it sits atop the sidebar footer,
+            // main pane, warning popup, and context menu. Underlying layouts
+            // keep their full area, so PTY sizing and mouse routing are
+            // unaffected.
             if let (Some(status), Some(area)) = (reload_status, reload_area) {
                 frame.render_widget(Clear, area);
                 ui::draw_reload_bar(frame, area, status, theme);

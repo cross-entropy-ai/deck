@@ -21,9 +21,9 @@ pub(super) fn pad_line<'a>(
     line
 }
 
-/// Inline/line style of a run produced by `wrap_markdown`. The summary is
-/// rendered from a tiny markdown subset: `**bold**`, `` `code` ``, and
-/// `#`-prefixed headings (code fences / tables are disallowed by prompt).
+/// Inline/line style of a run from `wrap_markdown`. The summary uses a tiny
+/// markdown subset: `**bold**`, `` `code` ``, `#`-prefixed headings (code
+/// fences / tables disallowed by prompt).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum MdStyle {
     Plain,
@@ -36,9 +36,8 @@ pub(super) enum MdStyle {
 pub(super) type MdRun = (String, MdStyle);
 
 /// Word-wrap `text` to `width` columns, parsing the markdown subset above.
-/// Returns one entry per display line; each line is a list of styled runs.
-/// Markers (`**`, `` ` ``, leading `#`s) are consumed, not rendered, and
-/// hard `\n`s force breaks.
+/// Returns one entry per display line (a list of styled runs). Markers (`**`,
+/// `` ` ``, leading `#`s) are consumed, not rendered; hard `\n`s force breaks.
 // The `flush_word!` macro resets `line_w`/`word_w` on its final expansion
 // where the resets are dead — expected, not a bug.
 #[allow(unused_assignments)]
@@ -136,11 +135,9 @@ pub(super) fn wrap_markdown(text: &str, width: usize) -> Vec<Vec<MdRun>> {
         }};
     }
 
-    // Leading spaces on a *logical* line (the start of `text` or just after
-    // a hard `\n`) are indentation, not word separators — preserve them so
-    // nested/indented list items in summaries keep their indent. Spaces that
-    // separate words mid-line, and any space at a *wrap*-induced break, still
-    // collapse the usual way.
+    // Leading spaces on a *logical* line (start of `text` or just after a hard
+    // `\n`) are indentation, not separators — preserve them so indented list
+    // items keep their indent. Mid-line and wrap-break spaces still collapse.
     let mut at_line_start = true;
     for (c, st) in styled {
         if c == '\n' {

@@ -27,15 +27,12 @@ use header::draw_header;
 use sessions::{draw_sessions, draw_summary_card, SessionsProps, SummaryCardProps};
 use tabs::{draw_sidebar_tabs, TabsProps};
 
-/// Inputs needed to draw the sidebar. Grouping these into one props
-/// object keeps the public API readable as the sidebar gains display
-/// modes and optional adornments.
+/// Inputs to draw the sidebar, grouped into one props object.
 ///
-/// `sessions` is a single slice of trait objects: all rows the sidebar
-/// will render, in flat layout order (local first, then remote). The
-/// renderer never branches on concrete types — anything per-row goes
-/// through `SidebarSession`. `local_count` exists only for callers
-/// that need the local-only subset (the header banner, tabs mode).
+/// `sessions` is one slice of trait objects: all rows in flat layout order
+/// (local first, then remote). The renderer never branches on concrete types —
+/// per-row data goes through `SidebarSession`. `local_count` is only for
+/// callers needing the local-only subset (header banner, tabs mode).
 pub struct SidebarProps<'a> {
     pub sessions: &'a [&'a dyn SidebarSession],
     pub local_count: usize,
@@ -86,11 +83,10 @@ pub(super) fn menu_span(theme: &Theme) -> Span<'static> {
     )
 }
 
-/// Clamp a captured rect to `area`, returning `None` if the intersection
-/// is empty. Belt-and-suspenders with the per-rect clamps in `header.rs`
-/// and `sessions.rs`: published rects can never extend past the sidebar
-/// into the PTY pane (bug #16/#17), so a click outside the sidebar can't
-/// resolve to a sidebar button.
+/// Clamp a captured rect to `area`, `None` if the intersection is empty.
+/// Belt-and-suspenders with the per-rect clamps in `header.rs`/`sessions.rs`:
+/// published rects can't extend past the sidebar into the PTY pane (bug
+/// #16/#17), so a click outside the sidebar can't hit a sidebar button.
 fn clamp_rect(rect: Rect, area: Rect) -> Option<Rect> {
     let r = rect.intersection(area);
     (r.width > 0 && r.height > 0).then_some(r)
@@ -165,12 +161,10 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
                 show_borders: props.show_borders,
             },
         );
-        // A pending kill confirmation must render and stay clickable in
-        // tabs mode too: the mouse guard swallows every click while
-        // `confirm_kill` is set, so without drawing the prompt here the
-        // user would face an invisible modal that only y/n could clear.
-        // Overlay it on the inner content (covering the tab row), which
-        // matches the modal "kill prompt owns the sidebar" behavior.
+        // A pending kill confirmation must render and stay clickable in tabs
+        // mode too: the mouse guard swallows clicks while `confirm_kill` is set,
+        // so without drawing it the user faces an invisible modal only y/n can
+        // clear. Overlay it on the inner content (covering the tab row).
         let kill_hits = props.confirm_kill.and_then(|name| {
             let content = draw_sidebar_container(
                 frame,
@@ -238,11 +232,10 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
         draw_rename_input(frame, sessions_area, props.theme, textarea);
         (Vec::new(), Vec::new(), SummaryHits::default())
     } else {
-        // The Summary card is pinned at the bottom of both tabs, between the
-        // list and the footer/menu. Carve it off the bottom of the session
-        // area; the rows above hold the sectioned list. The hit-tester
-        // (`session_row_hit`) reserves the same strip. The Agents tab
-        // summarizes agent panes, Projects sessions.
+        // The Summary card is pinned at the bottom of both tabs, between list
+        // and footer/menu. Carve it off the bottom of the session area; rows
+        // above hold the list. The hit-tester (`session_row_hit`) reserves the
+        // same strip. Agents tab summarizes agent panes, Projects sessions.
         let (summary_strip, list_area) = {
             let h = props.summary_card_height.min(sessions_area.height);
             (

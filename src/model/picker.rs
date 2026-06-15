@@ -1,13 +1,10 @@
-//! A generic filter-picker: a text input over a fixed list of string
-//! items, a derived `filtered` index list, a clamped selection, and a
-//! pending error. The new-session dir browser and the add-remote host
-//! picker both embed one of these; each supplies its own filter
-//! predicate (`filter_entries` / `filter_hosts`) so the filtering stays
-//! identical, only the recompute + clamp + step plumbing is shared.
-//!
-//! The exclude-pattern editor deliberately does *not* use this: it has no
-//! live filter (its items live in `Prefs::exclude_patterns`, not here) and
-//! an `adding` sub-mode, so it stays bespoke — see `overlay::ExcludeEditorState`.
+//! A generic filter-picker: a text input over a fixed list of string items,
+//! a derived `filtered` index list, a clamped selection, and a pending error.
+//! The new-session dir browser and add-remote host picker both embed one,
+//! each supplying its own filter predicate (`filter_entries` / `filter_hosts`)
+//! so only the recompute + clamp + step plumbing is shared. The exclude-pattern
+//! editor doesn't use this (no live filter, an `adding` sub-mode) — see
+//! `overlay::ExcludeEditorState`.
 
 use ratatui_textarea::TextArea;
 

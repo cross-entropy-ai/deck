@@ -40,13 +40,11 @@ pub enum UpdateResult {
     Err(String),
 }
 
-/// Background GitHub release checker. A thin wrapper over the generic
-/// [`Worker`] service: `Check` requests run an HTTP probe and reply with an
-/// [`UpdateResult`]; dropping the checker ends the loop.
-///
-/// Dropping it is **non-blocking** — `Worker`'s drop signals the thread and
-/// detaches rather than `join()`ing a possibly mid-HTTP worker on the UI
-/// thread. An in-flight request just finishes and its reply goes unread.
+/// Background GitHub release checker wrapping the generic [`Worker`] service:
+/// `Check` requests run an HTTP probe and reply with an [`UpdateResult`];
+/// dropping the checker ends the loop. Drop is **non-blocking** — `Worker`'s
+/// drop signals and detaches rather than `join()`ing a possibly mid-HTTP
+/// worker on the UI thread; an in-flight request just finishes unread.
 pub struct UpdateChecker {
     worker: Worker<UpdateRequest, UpdateResult>,
 }

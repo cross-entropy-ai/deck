@@ -38,12 +38,10 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
         Style::default().fg(theme.muted),
     ));
 
-    // Window the entries so the selected row stays visible on a short
-    // terminal (#15). Each entry is variable-height (marker+label+value,
-    // 1–2 help lines, blank), so size the window by how many *whole*
-    // entries fit in the space left after the header and footer, then
-    // window by entry index around `selected`. No persisted scroll state:
-    // the offset is derived from `selected` each frame.
+    // Window the entries so the selected row stays visible on a short terminal
+    // (#15). Each entry is variable-height; size the window by how many *whole*
+    // entries fit after header/footer, then window by entry index around
+    // `selected`. No persisted scroll state: offset derives from `selected`.
     let entries = &settings.rows;
     let entry_height = |row: &super::SettingRowView| 1 + row.help.lines().count() + 1;
     let body_rows = (area.height as usize)
@@ -110,10 +108,9 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
         area,
     );
 
-    // The theme picker is drawn by the render loop, not here: it's a
-    // standalone overlay that can be opened from the sidebar (`t`)
-    // without entering this page, so it renders over whatever main view
-    // is active. See `App::render`.
+    // The theme picker is drawn by the render loop, not here: it's a standalone
+    // overlay openable from the sidebar (`t`) without entering this page, so it
+    // renders over whatever main view is active. See `App::render`.
 
     if let Some(ref editor) = settings.exclude_editor {
         draw_exclude_editor(frame, area, editor, theme);
@@ -231,9 +228,8 @@ fn draw_keybindings_view(
 }
 
 /// Draw the theme picker overlay centered in `area`. Decoupled from the
-/// settings page so it can also be opened standalone from the sidebar
-/// (`t`) — the render loop calls this whenever the picker is open,
-/// regardless of which main view is showing.
+/// settings page so it can be opened standalone from the sidebar (`t`); the
+/// render loop calls this whenever the picker is open, over any main view.
 pub fn draw_theme_picker(
     frame: &mut Frame,
     area: Rect,
@@ -252,10 +248,9 @@ pub fn draw_theme_picker(
     let popup_height = clamp_popup_height(area, theme_names.len() as u16 + 2, 3);
     let popup_area = centered_rect(area, popup_width, popup_height);
 
-    // Pad the popup background by one cell on the left and right (not top
-    // or bottom) so the overlay floats with a little horizontal breathing
-    // room instead of sitting flush on the content behind it. Clamped to
-    // `area` so the padding never spills past the pane it's drawn in.
+    // Pad the popup background one cell left and right (not top/bottom) so the
+    // overlay floats with horizontal breathing room instead of sitting flush.
+    // Clamped to `area` so padding never spills past the pane it's drawn in.
     let left = popup_area.x.saturating_sub(1).max(area.x);
     let right = (popup_area.right() + 1).min(area.right());
     let halo = Rect {
@@ -480,11 +475,9 @@ mod tests {
     use ratatui::{backend::TestBackend, Terminal};
 
     fn sample_rows() -> Vec<super::super::SettingRowView> {
-        // A representative page of rows with long help text, so the
-        // windowing math is exercised the way the real page exercises it.
-        // Self-contained on purpose: the renderer only consumes
-        // `SettingRowView`, so the test must not reach back into the
-        // `app`-layer descriptor table to build its fixtures.
+        // Representative rows with long help text to exercise the windowing
+        // math. Self-contained on purpose: the renderer only consumes
+        // `SettingRowView`, so the test doesn't reach into the `app`-layer table.
         [
             "Theme",
             "Transparent",

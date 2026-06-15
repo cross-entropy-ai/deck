@@ -1,7 +1,6 @@
-//! The `Effect` enum and `SideEffect` collector — deck's app-level
-//! vocabulary for "what the reducer wants done" — plus the request DTOs the
-//! effects carry. Reducers stay IO-free by pushing `Effect`s; `app::dispatch`
-//! iterates them in order and performs the actual tmux/ssh/PTY work.
+//! The `Effect` enum and `SideEffect` collector — "what the reducer wants
+//! done" — plus the request DTOs they carry. Reducers stay IO-free by pushing
+//! `Effect`s; `app::dispatch` iterates them in order and does the tmux/ssh/PTY work.
 
 use crate::geometry::AgentTarget;
 
@@ -178,10 +177,9 @@ pub struct KillRequest {
     /// `Some(host)` targets the remote tmux server on that host;
     /// `None` targets the local tmux server.
     pub host: Option<String>,
-    /// LOCAL session to switch to after the kill (only meaningful
-    /// when killing the user's currently attached local session).
-    /// For remote kills, dispatch returns the user to the local view
-    /// instead, and this field is `None`.
+    /// LOCAL session to switch to after the kill (only meaningful when
+    /// killing the currently attached local session). For remote kills,
+    /// dispatch returns to the local view and this is `None`.
     pub switch_to: Option<String>,
 }
 

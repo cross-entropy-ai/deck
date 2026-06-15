@@ -21,10 +21,9 @@ pub enum ForwardHealth {
     Down,
 }
 
-/// Stable identity of a configured forward, used to key liveness across config
-/// reloads and reorders. A local listen port is unique per host, but `mode` and
-/// `bind_addr` are included so an `-L` and an `-R` sharing a port number (one
-/// local, one remote) don't collide.
+/// Stable identity of a configured forward, keying liveness across config
+/// reloads and reorders. `mode` and `bind_addr` are included alongside the
+/// listen port so an `-L` and `-R` sharing a port number don't collide.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ForwardKey {
     pub host: String,
@@ -55,9 +54,8 @@ pub struct ForwardBadge {
     pub status: ForwardBadgeStatus,
 }
 
-/// The traffic-light state of a [`ForwardBadge`]: green when every forward is
-/// up, red when every one is down, orange when some are up and some aren't,
-/// and "probing" (neutral) while none has been confirmed either way yet.
+/// Traffic-light state of a [`ForwardBadge`]: green = all up, red = all down,
+/// orange = mixed, "probing" (neutral) = none confirmed either way yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForwardBadgeStatus {
     AllUp,
@@ -117,11 +115,9 @@ pub struct PfAddForm {
     pub listen_port: TextArea<'static>,
     pub target_host: TextArea<'static>,
     pub target_port: TextArea<'static>,
-    /// True while a validated spec is in flight to the worker. The
-    /// form stays rendered (read-only) until `PfTaskResult` for this
-    /// host's Forward op clears or fails the submission. Lazy
-    /// persist: config is only written when the worker reports
-    /// success.
+    /// True while a validated spec is in flight to the worker; the form stays
+    /// rendered read-only until `PfTaskResult` clears or fails it. Lazy
+    /// persist: config is written only when the worker reports success.
     pub submitting: bool,
 }
 
@@ -179,11 +175,9 @@ impl PfAddForm {
 
     pub fn validate(&self) -> Result<crate::config::ForwardSpec, PfFormError> {
         use crate::config::{ForwardMode, ForwardSpec};
-        // Belt-and-braces: input filtering already blocks whitespace, but
-        // trim defensively so any value that somehow made it through is
-        // persisted clean. Port range is 0..=65535 — `u16::parse` already
-        // enforces the upper bound; port 0 means "let kernel pick" and is
-        // accepted.
+        // Trim defensively even though input filtering already blocks
+        // whitespace, so any value is persisted clean. `u16::parse` enforces
+        // the 0..=65535 range; port 0 ("let kernel pick") is accepted.
         let listen_port: u16 = self
             .field_text(PfField::ListenPort)
             .trim()

@@ -1,14 +1,11 @@
 //! Unified session control plane behind one trait.
 //!
-//! A single [`SessionControl`] trait implemented by a local and a remote
-//! backend, keyed the way the rest of deck keys things: `Option<String>`
-//! host, `None` = local, `Some(host)` = remote. See
-//! `docs/session-abstraction.md`.
-//!
-//! Scope is the control plane only — the stateless tmux/ssh CLI wrappers the
-//! executor runs off the UI thread (switch / rename / kill / new /
-//! persist-order / list-dir). PTY lifecycle and the polling refresh stay
-//! with their existing workers.
+//! One [`SessionControl`] trait, local and remote backends, keyed as deck keys
+//! things: `Option<String>` host (`None` = local). See
+//! `docs/session-abstraction.md`. Scope is the control plane only — the
+//! stateless tmux/ssh wrappers the executor runs off the UI thread (switch /
+//! rename / kill / new / persist-order / list-dir). PTY lifecycle and the
+//! polling refresh stay with their existing workers.
 
 pub mod executor;
 pub mod local;
@@ -17,11 +14,9 @@ pub mod remote;
 /// The session control plane, shared by local and remote backends.
 ///
 /// One impl per transport: [`local::LocalControl`] (in-process tmux) and
-/// [`remote::RemoteControl`] (ssh+tmux). The trait surface never mentions
-/// ssh, ttys, or markers — those are implementation-private.
-///
-/// Methods are sync and run on the executor's per-backend worker threads, so
-/// slow tmux/ssh calls stay off the UI thread.
+/// [`remote::RemoteControl`] (ssh+tmux). The trait surface never mentions ssh,
+/// ttys, or markers — those are private. Methods are sync and run on the
+/// executor's per-backend worker threads, keeping slow calls off the UI thread.
 pub trait SessionControl {
     /// Switch this backend's own client to `name`.
     fn switch_to(&self, name: &str);

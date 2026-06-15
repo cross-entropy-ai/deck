@@ -105,11 +105,10 @@ impl App {
     }
 
     /// Drain one PTY's events into `parser`; returns whether a redraw is
-    /// needed. `osc52_active` forwards clipboard escapes (only for the
-    /// on-screen pane, so a background pane can't hijack the clipboard);
-    /// `view_active` is whether this pane is shown — background output is
-    /// still processed (so its pipe can't fill and block the child) but
-    /// doesn't force a render.
+    /// needed. `osc52_active` forwards clipboard escapes (on-screen pane only,
+    /// so a background pane can't hijack the clipboard). `view_active` = pane
+    /// shown; background output is still processed (pipe can't fill and block
+    /// the child) but doesn't force a render.
     pub(super) fn drain_pane(
         pty: &mut Pty,
         parser: &mut vt100::Parser,

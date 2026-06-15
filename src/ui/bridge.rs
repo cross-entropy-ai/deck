@@ -25,17 +25,12 @@ pub fn render_screen(
             };
 
             if cell.is_wide_continuation() {
-                // The previous column rendered a 2-cell wide glyph that
-                // covers this position. Mark skip=true so ratatui's diff
-                // knows this cell is owned by the wide glyph and
-                // (critically) so the diff can correctly overwrite this
-                // position when the previous frame had different content
-                // here.
-                //
-                // Without this, residue appears in two cases:
-                // - Session switch (covered by terminal.clear() in
-                //   render.rs).
-                // - Sidebar resize (skip=true is the only guard).
+                // Previous column holds a 2-cell wide glyph covering this
+                // position. skip=true marks the cell as owned by that glyph so
+                // ratatui's diff overwrites it when the prior frame differed
+                // here. Without it, residue leaks on session switch (covered by
+                // terminal.clear() in render.rs) and sidebar resize (skip=true
+                // is the only guard).
                 target.set_skip(true);
                 continue;
             }
@@ -103,10 +98,9 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_screen(parser.screen(), area, &mut buf, Color::White, Color::Black);
 
-        // Column 0 holds the wide char itself; column 1 is its
-        // continuation. Without the skip flag, ratatui's diff cannot
-        // tell column 1 is "owned by" column 0, and residue from a
-        // previous frame can leak through.
+        // Column 0 holds the wide char; column 1 is its continuation. Without
+        // the skip flag, ratatui's diff can't tell column 1 is owned by column
+        // 0, and residue from a previous frame can leak through.
         let col_0 = buf.cell((0, 0)).unwrap();
         let col_1 = buf.cell((1, 0)).unwrap();
         assert_eq!(col_0.symbol(), "中");

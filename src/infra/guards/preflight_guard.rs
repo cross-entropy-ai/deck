@@ -49,9 +49,9 @@ fn ensure_config_valid() -> Result<(), String> {
 
 /// Resolve the session requested on the command line before the app starts.
 ///
-/// - `deck new <name>` (`create_new`): the session must not already exist —
-///   a duplicate name is a hard error so we don't silently coalesce with an
-///   unrelated session that happens to share the name.
+/// - `deck new <name>` (`create_new`): the session must not already exist; a
+///   duplicate name is a hard error so we don't coalesce with an unrelated
+///   session sharing the name.
 /// - `deck <name>`: attach to the existing session, or create it if absent.
 fn ensure_requested_session(name: Option<&str>, create_new: bool) -> Result<(), String> {
     let Some(name) = name else {

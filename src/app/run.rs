@@ -1,20 +1,17 @@
 //! The event-loop run pumps and timers.
 //!
-//! `App::run` drains roughly nine asynchronous sources (the local PTY, the
-//! remote-spawn events, every remote PTY, plugin PTYs, the upgrade PTY, the
-//! refresh worker, the session executor, the port-forward worker, the
-//! remote-focus completions, the summary worker) and ticks roughly six
-//! periodic timers (frame-rate render gate, refresh interval, config-file
-//! watcher, marker-retry backoff, blink, summary spinner). Each drain block
-//! is extracted into a `pump_*` method returning a [`Redraw`] so the
-//! `needs_render`/`force_render` bookkeeping lives in one place; the
-//! periodic timers use a tiny [`Ticker`].
+//! `App::run` drains ~nine async sources (local PTY, remote-spawn events,
+//! remote PTYs, plugin PTYs, upgrade PTY, refresh worker, session executor,
+//! port-forward worker, remote-focus completions, summary worker) and ticks
+//! ~six periodic timers (render gate, refresh, config watcher, marker-retry,
+//! blink, summary spinner). Each drain is a `pump_*` method returning a
+//! [`Redraw`] so `needs_render`/`force_render` bookkeeping lives in one place;
+//! timers use a tiny [`Ticker`].
 //!
-//! **Ordering is load-bearing.** The render gate sits in the *middle* of the
-//! loop — after the input/PTY/state drains, before the worker-result drains
-//! and timers — so a render reflects the latest PTY output and dispatched
-//! action within the same iteration. The pump call order is load-bearing for
-//! the same reason and must not be reordered.
+//! **Ordering is load-bearing.** The render gate sits mid-loop — after the
+//! input/PTY/state drains, before the worker-result drains and timers — so a
+//! render reflects the latest PTY output and dispatched action in the same
+//! iteration. The pump call order must not be reordered for the same reason.
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -29,9 +26,8 @@ use super::{render_min_interval, App, CONFIG_POLL_INTERVAL, POLL_MS, REFRESH_INT
 
 /// Whether a loop iteration needs to repaint, and how urgently. `Soft`
 /// schedules a render but lets the frame-rate gate throttle it; `Force`
-/// bypasses the gate (used for discrete state changes — a dispatched action,
-/// a resize, a worker result — that must show immediately rather than wait
-/// out the per-frame floor).
+/// bypasses the gate (for discrete state changes — action, resize, worker
+/// result — that must show immediately, not wait out the per-frame floor).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Redraw {
     No,
@@ -52,9 +48,8 @@ impl Redraw {
     }
 
     /// Fold this verdict into the loop's `needs_render`/`force_render` flags.
-    /// `Soft` ⇒ `needs_render`; `Force` ⇒ `needs_render` *and* `force_render`
-    /// (so it bypasses the frame-rate gate). Never clears a flag — flags only
-    /// reset when a render actually happens.
+    /// `Soft` ⇒ `needs_render`; `Force` ⇒ both (bypasses the frame-rate gate).
+    /// Never clears a flag — flags reset only when a render happens.
     fn apply(self, needs_render: &mut bool, force_render: &mut bool) {
         match self {
             Redraw::No => {}
@@ -67,11 +62,10 @@ impl Redraw {
     }
 }
 
-/// A fixed-interval timer. `due(now)` returns true once `interval` has
-/// elapsed since the last firing and advances `last` to `now` when it does,
-/// so callers don't thread a loose `last_*: Instant` local. The trigger
-/// *condition* (e.g. "only while generating") stays at the call site; this
-/// only owns the cadence.
+/// A fixed-interval timer. `due(now)` returns true once `interval` elapsed
+/// since the last firing and advances `last` to `now`, so callers don't thread
+/// a loose `last_*: Instant`. The trigger *condition* (e.g. "only while
+/// generating") stays at the call site; this owns only the cadence.
 pub(super) struct Ticker {
     last: Instant,
     interval: Duration,
@@ -103,11 +97,10 @@ impl Ticker {
         }
     }
 
-    /// Like `due`, but the interval is supplied per call and `now` is read
-    /// inside. Used for the two timers whose interval is recomputed each loop
-    /// iteration — the frame-rate render gate (depends on `frame_rate_limit`)
-    /// and the periodic refresh (the Agents tab uses a slower cadence). The
-    /// struct's own `interval` field is ignored for these.
+    /// Like `due`, but interval is supplied per call and `now` is read inside.
+    /// Used for the two timers whose interval is recomputed each iteration: the
+    /// render gate (depends on `frame_rate_limit`) and refresh (Agents tab uses
+    /// a slower cadence). The struct's own `interval` is ignored for these.
     fn due_with_interval(&mut self, interval: Duration) -> bool {
         if self.last.elapsed() >= interval {
             self.last = Instant::now();
@@ -138,12 +131,12 @@ impl App {
         }
     }
 
-    /// Pull any newly-spawned remote PTYs into the map. The manager gates
-    /// each event by spawn generation (bug #20) — a stale in-flight
-    /// `Spawned`/`Failed`/`MarkerReady` from a spawn started before the host
-    /// was offboarded (or before a newer respawn) is dropped, so it can't
-    /// resurrect a removed host's pane or clobber a fresh connection. A
-    /// `MarkerReady` may also hand back a held switch to fire here.
+    /// Pull newly-spawned remote PTYs into the map. The manager gates each
+    /// event by spawn generation (bug #20): a stale in-flight
+    /// `Spawned`/`Failed`/`MarkerReady` from before an offboard or a newer
+    /// respawn is dropped, so it can't resurrect a removed host's pane or
+    /// clobber a fresh connection. A `MarkerReady` may hand back a held switch
+    /// to fire here.
     fn pump_remote_events(&mut self) -> Redraw {
         let mut redraw = Redraw::No;
         while let Some(ev) = self.remote.try_recv() {
@@ -155,15 +148,14 @@ impl App {
         redraw
     }
 
-    /// Drain every remote terminal too, even the inactive ones. tmux on the
-    /// remote keeps producing output (status bar ticks, idle redraws); if we
-    /// stopped reading, the kernel pipe buffer would fill and block the
-    /// child. A pane that exits is collected into `died_hosts`, then reaped
-    /// after the loop via the shared `detach_host_view` (D7): the manager
-    /// drops the dead pane (reaping its child) and surfaces a Failed status;
-    /// refresh auto-recovery respawns it once the host is reachable, and
-    /// `detach_host_view` snaps the view back to local if we were watching it
-    /// and clears its agent highlight.
+    /// Drain every remote terminal, even inactive ones: remote tmux keeps
+    /// producing output (status ticks, idle redraws), and not reading would
+    /// fill the pipe buffer and block the child. An exited pane is collected
+    /// into `died_hosts`, then reaped after the loop via `detach_host_view`
+    /// (D7): the manager drops the dead pane and surfaces a Failed status;
+    /// refresh auto-recovery respawns it once reachable, and `detach_host_view`
+    /// snaps the view back to local if we were watching it and clears its
+    /// agent highlight.
     fn pump_remote_ptys(&mut self) -> Redraw {
         let mut redraw = Redraw::No;
         let active_host = self.remote.active().cloned();
@@ -327,10 +319,9 @@ impl App {
     }
 
     /// The summary job finished — show its text, or the failure. A cancelled
-    /// run still reports `Err("summary cancelled")`; the reducer already
-    /// moved the card off `Generating` when the user cancelled, so we ignore
-    /// that specific message here rather than overwriting the restored state
-    /// with an error card.
+    /// run still reports `Err("summary cancelled")`, but the reducer already
+    /// moved the card off `Generating`, so that message is ignored rather than
+    /// overwriting the restored state with an error card.
     fn pump_summary(&mut self) -> Redraw {
         if let Some(result) = self.summary_worker.as_ref().and_then(|w| w.try_recv()) {
             self.summary_worker = None;
@@ -365,11 +356,11 @@ impl App {
         // (the Agents tab uses a slower probe cadence), so the Ticker's own
         // interval is unused for the gate — we drive it manually below.
         let mut refresh = Ticker::new(REFRESH_INTERVAL);
-        // Watcher for ~/.config/deck/config.yaml: poll its mtime every ~2s so
-        // an out-of-band `deck remote add/remove` (or a manual edit) takes
-        // effect without the user pressing reload. deck's own saves refresh
-        // `self.config_mtime_seen` (see `save_config`) so they don't read
-        // back as external edits.
+        // Watcher for ~/.config/deck/config.yaml: poll mtime every ~2s so an
+        // out-of-band `deck remote add/remove` or manual edit takes effect
+        // without pressing reload. deck's own saves refresh
+        // `self.config_mtime_seen` (see `save_config`) so they don't read back
+        // as external edits.
         let mut config_poll = Ticker::new(CONFIG_POLL_INTERVAL);
 
         loop {
@@ -381,11 +372,11 @@ impl App {
             redraw = redraw.merge(self.pump_upgrade_pty());
             redraw = redraw.merge(self.pump_foreground_exits());
 
-            // Bounded marker-confirmation retry (bug #11): a host that's
-            // Connected but never got its `MarkerReady` (cold/slow shell)
-            // gets a few backed-off re-arms, then flips to a recoverable
-            // "stuck" state the divider surfaces via its reconnect button. A
-            // newly-stuck host forces a redraw so the affordance appears.
+            // Bounded marker-confirmation retry (bug #11): a Connected host
+            // that never got its `MarkerReady` (cold/slow shell) gets a few
+            // backed-off re-arms, then flips to a recoverable "stuck" state the
+            // divider surfaces via its reconnect button. A newly-stuck host
+            // forces a redraw so the affordance appears.
             if self.remote.tick_marker_retry(Instant::now()) {
                 redraw = Redraw::Force;
             }
@@ -516,11 +507,10 @@ impl App {
 
             if config_poll.due(Instant::now()) {
                 let current = crate::config::config_mtime();
-                // Only fire on a real change. First-run None→Some
-                // (user just wrote a config) and any later mtime bump
-                // both count; transient Some→None (file briefly gone
-                // during an atomic replace) is ignored so we don't
-                // double-fire.
+                // Only fire on a real change. First-run None→Some and any
+                // later mtime bump both count; transient Some→None (file
+                // briefly gone during an atomic replace) is ignored to avoid
+                // double-firing.
                 if current.is_some() && current != self.config_mtime_seen {
                     self.config_mtime_seen = current;
                     self.dispatch(Action::ReloadConfig);
@@ -544,11 +534,10 @@ impl App {
             }
 
             // Re-attaching a dead local PTY is driven by the refresh cycle
-            // (see `apply_local`): it re-attaches when a local session
-            // reappears and otherwise leaves the pane dead, rendered as an
-            // empty state. deck does not quit when the local tmux server
-            // empties out — it may still have remote hosts, and the user can
-            // create a new session. (Quit is only the explicit `q`.)
+            // (see `apply_local`): re-attaches when a local session reappears,
+            // else leaves the pane dead as an empty state. deck doesn't quit
+            // when the local server empties (it may have remote hosts, and the
+            // user can create a session); quit is only the explicit `q`.
         }
 
         Ok(())

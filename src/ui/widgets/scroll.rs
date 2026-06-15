@@ -7,9 +7,8 @@ use ratatui::text::Span;
 use crate::theme::Theme;
 
 /// Per-row scrollbar glyphs for a `rows`-tall track showing `total` items
-/// scrolled to `scroll`. `None` = no bar on that row (content fits);
-/// `Some("█")` = thumb, `Some("░")` = track. Shared by the inline summary
-/// card and the summary popup so the two scrollbars can't diverge.
+/// scrolled to `scroll`. `None` = no bar (content fits); `Some("█")` = thumb,
+/// `Some("░")` = track. Shared by the inline summary card and the popup.
 fn scrollbar_cells(rows: usize, total: usize, scroll: usize) -> Vec<Option<&'static str>> {
     if total <= rows || rows == 0 {
         return vec![None; rows];
@@ -32,14 +31,12 @@ fn scrollbar_cells(rows: usize, total: usize, scroll: usize) -> Vec<Option<&'sta
 
 /// Paint one scrollable markdown window into per-row span lists.
 ///
-/// Wraps `text` to `content_w` columns, windows the lines around `scroll`
-/// for `rows` rows, and renders each row's runs (`**bold**` etc.) over `bg`,
-/// padding short/empty lines out to `content_w` and appending the matching
-/// scrollbar glyph (track/thumb in `theme.dim`). Returns one span list per
-/// row (length `rows`) plus the clamped `max_scroll`, so callers just wrap
-/// each row with their own indent/`pad_line` and clamp scroll input. Shared
-/// by the inline Summary card and the big Summary popup so their windowing,
-/// padding, and scrollbar can't diverge.
+/// Wraps `text` to `content_w`, windows lines around `scroll` for `rows` rows,
+/// renders each row's runs (`**bold**` etc.) over `bg`, pads short lines to
+/// `content_w`, and appends the scrollbar glyph (in `theme.dim`). Returns
+/// `rows` span lists plus clamped `max_scroll` — callers add their own
+/// indent/`pad_line` and clamp scroll. Shared by the Summary card and popup so
+/// windowing/padding/scrollbar can't diverge.
 pub fn markdown_window(
     text: &str,
     rows: usize,

@@ -1,11 +1,10 @@
 //! Parser for `~/.ssh/config` host aliases. The file read lives in
 //! `infra::ssh`; this extracts the concrete `Host` aliases for the picker.
 
-/// Parse `~/.ssh/config` text into the list of concrete `Host` aliases.
-/// Each `Host` line may list several patterns; we keep those without
-/// wildcard/negation characters (`*`, `?`, `!`), de-duped, first-seen order.
-/// Effective per-host options are irrelevant here — the picker only needs the
-/// alias to add to deck (later resolved via `ssh -G`).
+/// Parse `~/.ssh/config` text into the list of concrete `Host` aliases. Keep
+/// patterns without wildcard/negation chars (`*`, `?`, `!`), de-duped, in
+/// first-seen order. Per-host options are irrelevant here — the picker only
+/// needs the alias (later resolved via `ssh -G`).
 pub fn parse_config_hosts(content: &str) -> Vec<String> {
     let mut hosts: Vec<String> = Vec::new();
     for line in content.lines() {

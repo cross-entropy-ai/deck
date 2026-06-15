@@ -1,22 +1,19 @@
 //! The host key shared by every per-host store.
 //!
-//! deck addresses local and remote uniformly by host: `None` = the local
-//! tmux server, `Some(host)` = a remote one (the local/remote rule in
-//! `CLAUDE.md`). A bare `Option<String>` key would allocate a fresh
-//! `String` on every per-host map lookup (`agents.get(&Some(host.to_string()))`),
-//! on a per-frame / per-keystroke path.
+//! deck addresses local and remote uniformly by host (`None` = local tmux
+//! server, `Some(host)` = remote; the `CLAUDE.md` rule). A bare
+//! `Option<String>` key would allocate a fresh `String` on every per-host
+//! lookup, on a per-frame / per-keystroke path.
 //!
-//! [`HostKey`] is a newtype over `Option<Arc<str>>`: cloning it bumps a
-//! refcount instead of deep-copying the host name, and lookups go through
-//! the borrowed [`HostQuery`] so `map.get(...)` never allocates. It also
-//! gives the "None = local, Some(host) = remote" convention one named home
-//! with constructors that read at the call site.
+//! [`HostKey`] is a newtype over `Option<Arc<str>>`: cloning bumps a refcount
+//! instead of deep-copying the name, and lookups go through the borrowed
+//! [`HostQuery`] so `map.get(...)` never allocates. It also gives the
+//! convention one named home with call-site-readable constructors.
 //!
-//! Scope: this newtype keys the in-memory stores only (`AppState.agents`,
-//! `AppState.collapsed_sections`, `SessionExecutor`'s sender lanes). The
-//! `Effect` / request DTOs, dispatch signatures, and `SessionEntry.host`
-//! deliberately stay `Option<String>` — converting them would churn many
-//! unrelated layers for no lookup win.
+//! Scope: keys the in-memory stores only (`AppState.agents`,
+//! `AppState.collapsed_sections`, `SessionExecutor` sender lanes). The
+//! `Effect`/request DTOs, dispatch signatures, and `SessionEntry.host` stay
+//! `Option<String>` — converting them would churn unrelated layers for no win.
 
 use std::borrow::Borrow;
 use std::sync::Arc;
@@ -83,15 +80,14 @@ impl From<Option<String>> for HostKey {
     }
 }
 
-/// Sentinel standing in for the local (`None`) key inside [`HostQuery`].
-/// Sound because a tmux/ssh host name never contains a NUL byte (they
-/// come from config and from tmux output, both NUL-free), so this string
-/// can never collide with a real `remote(host)`.
+/// Sentinel for the local (`None`) key inside [`HostQuery`]. Sound because a
+/// tmux/ssh host name (from config or tmux output) never contains a NUL byte,
+/// so this can never collide with a real `remote(host)`.
 const LOCAL_SENTINEL: &str = "\0local\0";
 
-/// Borrowed lookup key for a [`HostKey`] map. A `?Sized` newtype over
-/// `str` (like `std::path::Path`) so `HostKey: Borrow<HostQuery>` and
-/// `HashMap::get(query)` matches without allocating. Build one with
+/// Borrowed lookup key for a [`HostKey`] map. A `?Sized` newtype over `str`
+/// (like `std::path::Path`) so `HostKey: Borrow<HostQuery>` and
+/// `HashMap::get(query)` matches without allocating. Build via
 /// `HostQuery::from(host: Option<&str>)`.
 #[derive(PartialEq, Eq, Hash)]
 #[repr(transparent)]

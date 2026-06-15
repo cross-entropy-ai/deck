@@ -1,22 +1,17 @@
 //! Cross-platform self-upgrade detection.
 //!
-//! deck binaries reach users via several install paths — Homebrew on
-//! macOS / linuxbrew on Linux, `cargo install`, or just a direct
-//! tarball download from GitHub Releases. Each path needs a different
-//! upgrade mechanism.
+//! deck reaches users via several install paths (Homebrew/linuxbrew, `cargo
+//! install`, or a direct tarball from GitHub Releases), each needing a
+//! different upgrade mechanism. `detect_install_method()` returns the
+//! `InstallMethod` the dispatcher branches on:
 //!
-//! `detect_install_method()` figures out which path deck took to land
-//! on this machine and returns an `InstallMethod` the dispatcher can
-//! branch on:
-//!
-//! - `Brew`: the binary resolves under `brew --prefix`; let brew
-//!   manage the upgrade so its own metadata stays in sync.
-//! - `DirectDownload`: the binary lives in a user-writable directory
-//!   (e.g. `~/.cargo/bin`); deck downloads the right release tarball
-//!   and atomically replaces itself.
-//! - `Manual`: privileged path (root-owned, no brew) or an exotic
-//!   platform — deck prints a curl/tar one-liner tailored to the
-//!   running architecture instead of trying to write where it can't.
+//! - `Brew`: binary resolves under `brew --prefix`; let brew upgrade so its
+//!   metadata stays in sync.
+//! - `DirectDownload`: binary in a user-writable dir (e.g. `~/.cargo/bin`);
+//!   deck downloads the release tarball and atomically replaces itself.
+//! - `Manual`: privileged path (root-owned, no brew) or exotic platform —
+//!   deck prints a curl/tar one-liner for the running arch instead of writing
+//!   where it can't.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -105,12 +100,10 @@ fn is_dir_writable(dir: &Path) -> bool {
     }
 }
 
-/// Perform a direct (non-brew) self-upgrade to `version` via the
-/// `self_update` crate: fetch the GitHub release asset for `target`,
-/// extract the `deck` binary, and replace the running executable in place.
-///
-/// Runs in the upgrade PTY subprocess (`deck __upgrade-self`), so
-/// `show_download_progress` renders live in the pane. Blocks until done.
+/// Direct (non-brew) self-upgrade to `version` via the `self_update` crate:
+/// fetch the GitHub release asset for `target`, extract `deck`, and replace
+/// the running executable in place. Runs in the upgrade PTY subprocess
+/// (`deck __upgrade-self`), so `show_download_progress` renders live. Blocks.
 pub fn run_self_upgrade(version: &str) -> Result<(), String> {
     let target = target_triple().ok_or_else(|| {
         "no prebuilt binary ships for this platform; rebuild from source".to_string()

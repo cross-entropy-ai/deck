@@ -1,7 +1,6 @@
 //! Local (in-process) backend for the session control plane.
 //!
-//! Drives the local tmux server by running `tmux` in this process via
-//! `infra::tmux::local`.
+//! Drives the local tmux server via `infra::tmux::local`.
 
 use crate::tmux;
 

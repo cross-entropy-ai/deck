@@ -1,21 +1,16 @@
 //! Async session control-plane executor.
 //!
 //! Each backend key (`Option<String>` host, `None` = local) gets its own FIFO
-//! worker thread, so ops on one backend run in submission order while
-//! different backends run in parallel. Each op runs via the `SessionControl`
-//! backend captured at submit time on the UI thread, so it sees the current
-//! client tty / marker. Outcomes drain back to the UI thread, which runs any
-//! result-dependent completion effect (new-session -> switch, dir-listing ->
-//! picker overlay).
+//! worker thread: ops on one backend run in submission order, different
+//! backends run in parallel. The `SessionControl` backend is captured at
+//! submit time on the UI thread so it sees the current tty/marker. Outcomes
+//! drain back to the UI thread, which runs result-dependent effects
+//! (new-session -> switch, dir-listing -> picker).
 //!
-//! Session *listing* for the sidebar is not here — it stays in
-//! `infra::refresh` as a coalesced ~1s poll.
-//!
-//! The per-key FIFO guarantees a backend's ops apply in submission order. The
-//! refresh poll runs independently, so it can capture pre-op state and apply
-//! slightly stale rows; this self-corrects on the next tick, and the UI
-//! thread also requests a refresh when an outcome lands (see
-//! `apply_session_outcome`).
+//! Sidebar *listing* lives in `infra::refresh` as a coalesced ~1s poll, not
+//! here. That poll runs independently of the per-key FIFO, so it may apply
+//! slightly stale rows; it self-corrects next tick, and the UI thread also
+//! requests a refresh when an outcome lands (see `apply_session_outcome`).
 
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -83,23 +78,19 @@ impl SessionExecutor {
         }
     }
 
-    /// Enqueue `op` on `host`'s FIFO worker, running it via `backend`
-    /// (captured now so it sees the current tty/marker). Spawns the worker
-    /// lazily on first use. Fire-and-forget: a dead worker (channel send
-    /// error) is silently dropped — the next refresh tick reconciles.
+    /// Enqueue `op` on `host`'s FIFO worker, run via `backend` (captured now so
+    /// it sees the current tty/marker). Spawns the worker lazily on first use.
+    /// Fire-and-forget: a dead worker is silently dropped; next refresh reconciles.
     pub fn submit(
         &mut self,
         host: Option<String>,
         backend: Box<dyn SessionControl + Send>,
         op: SessionOp,
     ) {
-        // Only cache the sender once the thread actually started: a failed
-        // `thread::spawn` must not park a dead sender in the map, which would
-        // silently swallow every later op for this key. On spawn failure the
-        // op is dropped; the next refresh tick reconciles.
-        //
-        // The common path (worker exists) looks up via the borrowed
-        // `HostQuery` so it doesn't allocate; only first-use builds a `HostKey`.
+        // Cache the sender only after the thread starts, so a failed spawn
+        // can't park a dead sender that swallows later ops (the op is dropped;
+        // next refresh reconciles). Common path (worker exists) looks up via
+        // borrowed `HostQuery` to avoid allocating; first-use builds a `HostKey`.
         let tx = match self.senders.get(HostQuery::from_host(host.as_deref())) {
             Some(tx) => tx,
             None => {
@@ -125,9 +116,8 @@ impl SessionExecutor {
     }
 
     /// Drop `host`'s FIFO worker lane: removing its sender ends the worker's
-    /// `recv` loop and lets the parked thread exit. Called from the
-    /// host-offboard path so removing a host doesn't leak a parked worker
-    /// forever. A later op for a reaped key re-spawns a fresh worker.
+    /// `recv` loop and lets the parked thread exit. Called on host-offboard so
+    /// it doesn't leak a parked worker; a later op re-spawns a fresh one.
     pub fn remove(&mut self, key: &Option<String>) {
         self.senders.remove(HostQuery::from_host(key.as_deref()));
     }

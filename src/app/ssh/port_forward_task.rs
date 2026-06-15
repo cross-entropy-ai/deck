@@ -1,11 +1,10 @@
-//! Port-forward worker. Owns SSH process lifecycle: per-host
-//! ControlMaster bring-up and individual `-O forward / -O cancel`
-//! calls. UI thread sends `Op` messages on a channel; the worker
-//! returns `OpResult` per executed step.
+//! Port-forward worker. Owns SSH process lifecycle: per-host ControlMaster
+//! bring-up and individual `-O forward / -O cancel` calls. UI thread sends
+//! `Op` messages on a channel; the worker returns one `OpResult` per step.
 //!
-//! The I/O-bearing logic (process tracking, threading) is kept here,
-//! separate from `infra::ssh::port_forward`, so it's testable via the `Runner`
-//! trait without shelling out to real `ssh`.
+//! The I/O-bearing logic (process tracking, threading) lives here, separate
+//! from `infra::ssh::port_forward`, so it's testable via the `Runner` trait
+//! without shelling out to real `ssh`.
 
 use std::collections::HashSet;
 use std::sync::mpsc::{Receiver, Sender};
@@ -177,10 +176,9 @@ impl<R: Runner> Worker<R> {
                 use crate::config::ForwardMode;
                 use crate::state::ForwardHealth;
                 // Only -L/-D reach the worker: their listener is local, so we
-                // confirm them by enumerating local LISTEN ports. -R listens on
-                // the far side and can't be probed locally — its health mirrors
-                // host reachability, derived in the app layer — so any -R item
-                // is ignored here defensively.
+                // confirm them via local LISTEN ports. -R listens on the far
+                // side (its health mirrors host reachability, derived in the
+                // app layer), so any -R item is ignored here defensively.
                 let ports = self.runner.listening_ports();
                 items
                     .into_iter()

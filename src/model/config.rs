@@ -17,9 +17,9 @@ pub struct PluginConfig {
     pub key: char,
 }
 
-/// A remote host whose tmux sessions deck should surface alongside local ones.
-/// The host string must resolve to an entry in the user's `~/.ssh/config`
-/// (or a directly-resolvable hostname); deck shells out to `ssh <host> ...`.
+/// A remote host whose tmux sessions deck surfaces alongside local ones.
+/// `host` must resolve via `~/.ssh/config` or as a hostname; deck shells
+/// out to `ssh <host> ...`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RemoteConfig {
     pub host: String,
@@ -144,24 +144,22 @@ pub struct Config {
     pub keybindings: BTreeMap<String, KeyBindingValue>,
     pub update_check: UpdateCheckMode,
     pub remotes: Vec<RemoteConfig>,
-    /// Sidebar groups the user has collapsed (Expanded view only). `null`
-    /// is the `@local` group; a string is a remote `@host` group. Round-
-    /// trips as a JSON array like `[null, "host1"]`. Empty by default.
+    /// Sidebar groups collapsed (Expanded view only). `null` = `@local`,
+    /// a string = remote `@host`. Serializes as `[null, "host1"]`. Empty by default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collapsed_sections: Vec<Option<String>>,
-    /// Agents-tab groups the user has collapsed — the Agents twin of
-    /// `collapsed_sections`, kept separate so the two tabs fold
-    /// independently. Same `[null, "host1"]` shape. Empty by default.
+    /// Agents-tab twin of `collapsed_sections`, kept separate so the two
+    /// tabs fold independently. Same `[null, "host1"]` shape. Empty by default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collapsed_agent_sections: Vec<Option<String>>,
     /// The Agents-tab summary prompt template. `{{SESSIONS}}` is replaced
     /// with one `<session>` block per agent pane. Editable; reset to the
-    /// bundled default when `summary_prompt_version` falls behind the
-    /// shipped one — see `migrate_summary_prompt`.
+    /// bundled default when `summary_prompt_version` falls behind — see
+    /// `migrate_summary_prompt`.
     pub summary_prompt: String,
-    /// Default-template version `summary_prompt` was seeded from. `0` means
-    /// "never seeded" (a fresh config, or one predating this field), which
-    /// the migration treats as stale and refreshes.
+    /// Default-template version `summary_prompt` was seeded from. `0` =
+    /// never seeded (fresh config or one predating this field); the
+    /// migration treats it as stale and refreshes.
     pub summary_prompt_version: u32,
     /// The Projects-tab summary prompt template, the session-framed twin of
     /// `summary_prompt` (which is agent-framed). Same migration rules.
@@ -239,10 +237,9 @@ fn config_path() -> PathBuf {
     config_dir_for("deck").join("config.yaml")
 }
 
-/// Modification time of the on-disk config file, if present. Returns
-/// `None` if the file is missing or its mtime can't be read — callers
-/// treat that as "no change to react to", letting the watcher stay
-/// quiet when the user hasn't created a config yet.
+/// Mtime of the on-disk config file. `None` if missing or unreadable —
+/// callers treat that as "no change", keeping the watcher quiet when no
+/// config exists yet.
 pub fn config_mtime() -> Option<std::time::SystemTime> {
     fs::metadata(config_path())
         .ok()
@@ -277,17 +274,14 @@ impl Config {
 
     /// Load the config at `path`, self-healing migrations back to disk when
     /// the file parses (or is absent). A present-but-UNPARSEABLE file is
-    /// **never** overwritten: a single typo or one malformed entry would
-    /// otherwise replace the user's remotes, keybindings, and plugins with
-    /// defaults. In that case we keep defaults in memory only and leave the
-    /// file untouched — the preflight guard (`try_load`) surfaces the parse
-    /// error to the user separately.
+    /// **never** overwritten (one typo would wipe remotes/keybindings/plugins
+    /// to defaults): keep defaults in memory only, leave the file untouched.
+    /// `try_load` surfaces the parse error to the user separately.
     fn load_from(path: &std::path::Path) -> Self {
         if path.exists() {
-            // NOT `unwrap_or_default()`: that turned a parse error into
-            // defaults, which the migration below then "self-healed" onto
-            // disk — wiping the real config. On a parse failure, keep
-            // defaults in memory only and never write.
+            // NOT `unwrap_or_default()`: that turns a parse error into
+            // defaults the migration below self-heals onto disk, wiping the
+            // real config. On parse failure, keep defaults in memory, don't write.
             let mut config = match confy::load_path::<Config>(path) {
                 Ok(c) => c,
                 Err(_) => return Config::default(),
@@ -319,10 +313,9 @@ impl Config {
         config
     }
 
-    /// Strict loader used by the manual-reload path. Unlike `load()` this
-    /// surfaces parse errors instead of silently falling back to defaults,
-    /// so the caller can keep the previous in-memory state on failure.
-    /// A missing file is treated as success with defaults.
+    /// Strict loader for manual-reload. Unlike `load()` it surfaces parse
+    /// errors instead of falling back to defaults, so the caller keeps the
+    /// previous in-memory state on failure. A missing file = success with defaults.
     pub fn try_load() -> Result<Self, String> {
         Self::try_load_from(&config_path())
     }
@@ -336,10 +329,9 @@ impl Config {
         // the useful line/column info and omits the path.
         match confy::load_path::<Config>(path) {
             Ok(mut config) => {
-                // Clean obsolete/unknown keybindings in memory so a reload
-                // doesn't resurrect the warning; the file self-heals on the
-                // next launch via `load`. Resolve the summary prompt in
-                // memory too (no save here — reload is non-destructive).
+                // Clean unknown keybindings and resolve the summary prompt
+                // in memory only (no save — reload is non-destructive); the
+                // file self-heals on the next launch via `load`.
                 migrate_keybindings(&mut config.keybindings);
                 config.migrate_summary_prompt();
                 Ok(config)
@@ -348,11 +340,10 @@ impl Config {
         }
     }
 
-    /// Seed or refresh `summary_prompt` from the bundled default when its
-    /// stored version trails the shipped one (or the prompt is blank).
-    /// Returns whether anything changed, so the caller knows to persist.
-    /// A hand-edited prompt survives until the default template's version
-    /// is bumped, at which point it's reset to the new default.
+    /// Seed/refresh `summary_prompt` from the bundled default when its
+    /// stored version trails the shipped one (or it's blank); a hand-edited
+    /// prompt survives until the template version is bumped. Returns whether
+    /// anything changed, so the caller knows to persist.
     fn migrate_summary_prompt(&mut self) -> bool {
         let mut changed = false;
         if self.summary_prompt_version < crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION
@@ -387,10 +378,9 @@ impl Config {
     }
 }
 
-/// Difference between two `Vec<ForwardSpec>` slices: which to add and
-/// which to cancel. Order-insensitive; equal specs (by all fields) are
-/// considered the same. Used by both UI edits (single-item ops) and
-/// hot-reload (bulk).
+/// Difference between two `Vec<ForwardSpec>` slices: which to add, which
+/// to cancel. Order-insensitive; equal specs (all fields) are the same.
+/// Used by UI edits (single ops) and hot-reload (bulk).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ForwardOp {
     Add(ForwardSpec),

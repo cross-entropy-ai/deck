@@ -1,17 +1,13 @@
-//! The Agents-tab "Summary" card: its generation state plus the loose
-//! runtime fields that drive its rendering and interaction (scroll, drag,
-//! the in-popup scroll, and the pre-generation state kept for cancel).
-//!
-//! Grouped into one [`SummaryCard`] unit on `AppState` so these related
-//! fields travel together.
-//! The *persisted* summary settings (`summary_prompt` / `summary_model` /
-//! `summary_height` / `summary_language`) are user preferences and stay in
-//! [`crate::state::Prefs`] — only the per-run runtime state lives here.
+//! The Agents-tab "Summary" card: its generation state plus the runtime
+//! fields driving rendering and interaction (scroll, drag, in-popup scroll,
+//! pre-generation state kept for cancel), grouped into one [`SummaryCard`]
+//! unit on `AppState`. Persisted summary settings (`summary_prompt` /
+//! `summary_model` / `summary_height` / `summary_language`) are user prefs
+//! in [`crate::state::Prefs`]; only per-run runtime state lives here.
 
-/// State of the "Summary" card at the top of the Agents tab. `Idle` shows
-/// a "Generate Summary" button; clicking it kicks an async job and flips
-/// to `Generating` (an animated placeholder); when the job finishes the
-/// generated text lands and it becomes `Ready`.
+/// State of the Agents-tab "Summary" card. `Idle` shows a "Generate Summary"
+/// button; clicking kicks an async job and flips to `Generating` (animated
+/// placeholder); when the job finishes the text lands and it becomes `Ready`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum SummaryState {
     #[default]

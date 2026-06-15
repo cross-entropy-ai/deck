@@ -1,9 +1,8 @@
 //! SSH helpers for the remote-hosts feature.
 //!
-//! We rely on the system `ssh` client rather than re-implementing config
-//! parsing: `ssh -G <host>` prints the *effective* configuration after
-//! all `Host`/`Match` blocks (including `Host *` wildcards) have been
-//! applied, which is the only correct way to read SSH config.
+//! We use the system `ssh` client instead of re-parsing config: `ssh -G
+//! <host>` prints the *effective* configuration after all `Host`/`Match`
+//! blocks (including `Host *` wildcards) apply.
 
 use std::collections::HashMap;
 use std::fs::OpenOptions;
@@ -11,16 +10,14 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::Command;
 
-/// SSH options applied on *every* deck-initiated ssh invocation so all
-/// code paths (one-shot tmux calls, the attach PTY, port-forward control
-/// commands) multiplex onto a single ControlMaster socket per host, even
-/// when the user's `ssh_config` doesn't enable it. `BatchMode=yes` keeps
-/// ssh from blocking on an interactive prompt inside a background worker
-/// (a misconfigured host fails fast, surfacing as a disconnected remote).
+/// SSH options applied on *every* deck-initiated ssh invocation so all code
+/// paths (one-shot tmux calls, attach PTY, port-forward control commands)
+/// multiplex onto one ControlMaster socket per host, even when `ssh_config`
+/// doesn't enable it. `BatchMode=yes` keeps ssh from blocking on an
+/// interactive prompt in a background worker (a misconfigured host fails fast).
 ///
-/// Every code path MUST pass this exact block — diverging options open
-/// separate master connections and silently break connection sharing, so
-/// this is the single source of truth.
+/// Single source of truth: every code path MUST pass this exact block, or
+/// diverging options open separate masters and break connection sharing.
 pub const CONTROL_OPTS: &[&str] = &[
     "-o",
     "ControlMaster=auto",

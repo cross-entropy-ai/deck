@@ -18,18 +18,16 @@ pub fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
 
 /// Clamp a popup's height: at least `min_height`, at most the area minus a
 /// 1-row top/bottom margin. Shared by `popup_rect` and the settings popups
-/// (which need a different width margin) so the vertical-fit rule lives in
-/// one place.
+/// (which need a different width margin) so the vertical-fit rule lives once.
 pub fn clamp_popup_height(area: Rect, content_height: u16, min_height: u16) -> u16 {
     content_height
         .max(min_height)
         .min(area.height.saturating_sub(2))
 }
 
-/// Size and center a filter-picker popup: clamp `content_height` up to
-/// `min_height` and down to the available area (leaving a 1-row top/bottom
-/// and 2-col left/right margin), clamp `width` the same way, then center
-/// in `area`.
+/// Size and center a filter-picker popup: clamp `content_height` to
+/// `min_height`..area (1-row top/bottom, 2-col left/right margin), clamp
+/// `width` likewise, then center in `area`.
 pub fn popup_rect(area: Rect, width: u16, content_height: u16, min_height: u16) -> Rect {
     let height = clamp_popup_height(area, content_height, min_height);
     let width = width.min(area.width.saturating_sub(4));

@@ -1,22 +1,18 @@
 //! Async spawner for remote tmux PTYs.
 //!
-//! For each configured remote host, deck wants a long-lived
-//! `ssh -tt host tmux attach` PTY ready to be swapped into the main
-//! view when the user selects a remote session. Spawning that ssh +
-//! tmux can take a second or two on a cold connection — we don't want
-//! to block app startup on it, so each host gets its own worker
-//! thread that drops a result onto a shared channel when ready.
+//! For each remote host, deck wants a long-lived `ssh -tt host tmux attach`
+//! PTY ready to swap into the main view on selection. That spawn can take a
+//! second or two on a cold connection, so rather than block startup each host
+//! gets its own worker thread that drops a result onto a shared channel.
 //!
 //! Lifecycle:
-//! 1. `RemoteSpawner::start(hosts, size)` kicks off one thread per
-//!    host. The threads do not own any shared state beyond the
-//!    response channel.
-//! 2. Each tick the main loop calls `try_recv` to drain pending
-//!    events without blocking; the app inserts the `TerminalPane`
-//!    into `remote_terminals` or stamps a failure status.
-//! 3. Threads exit when their spawn is done. Respawns are triggered on
-//!    demand by `App::respawn_remote_host` — via the reconnect button,
-//!    refresh-driven auto-recovery, and host onboarding.
+//! 1. `RemoteSpawner::start(hosts, size)` kicks one thread per host; threads
+//!    own no shared state beyond the response channel.
+//! 2. Each tick the main loop calls `try_recv` to drain events without
+//!    blocking; the app inserts the `TerminalPane` or stamps a failure.
+//! 3. Threads exit when their spawn is done. Respawns are triggered on demand
+//!    by `App::respawn_remote_host` (reconnect button, refresh auto-recovery,
+//!    onboarding).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -28,11 +24,10 @@ use crate::pty::Pty;
 
 use crate::app::TerminalPane;
 
-/// Allocates a process-unique id for each PTY (re)spawn so every
-/// connection gets its own client-tty marker file — see
-/// `remote_tmux::client_marker_path` for why connection-scoping (not just
-/// process-scoping) closes the reconnect race. Starts at 1; `0` is
-/// reserved for the placeholder `RemoteConn` that has no live PTY yet.
+/// Allocates a process-unique id for each PTY (re)spawn so every connection
+/// gets its own client-tty marker file — see `remote_tmux::client_marker_path`
+/// for why connection-scoping (not just process-scoping) closes the reconnect
+/// race. Starts at 1; `0` is reserved for the placeholder `RemoteConn`.
 fn next_marker_id() -> u64 {
     static COUNTER: AtomicU64 = AtomicU64::new(1);
     COUNTER.fetch_add(1, Ordering::Relaxed)
@@ -40,10 +35,9 @@ fn next_marker_id() -> u64 {
 
 /// One result per spawn attempt.
 ///
-/// `pane` is boxed because `TerminalPane` carries a `vt100::Parser`
-/// (~768 bytes) — keeping it inline made the `Failed` variant pay the
-/// same cost. The box is short-lived: the consumer unboxes immediately
-/// and moves the pane into `remote_terminals`.
+/// `pane` is boxed because `TerminalPane` carries a `vt100::Parser` (~768
+/// bytes); inline, the `Failed` variant would pay the same cost. The box is
+/// short-lived: the consumer unboxes immediately into `remote_terminals`.
 pub(in crate::app) enum RemoteSpawnEvent {
     Spawned {
         host: String,
@@ -52,11 +46,10 @@ pub(in crate::app) enum RemoteSpawnEvent {
         /// stored on the `RemoteConn` so switch/focus read *this*
         /// connection's marker.
         marker_id: u64,
-        /// Spawn generation captured when this spawn was kicked off. A
-        /// later offboard (or a fresh respawn) bumps the host's generation;
-        /// the manager drops any event whose `generation` no longer matches
-        /// the host's current one, so a stale in-flight spawn started before
-        /// a host was removed-then-re-added can't clobber the fresh
+        /// Spawn generation captured when this spawn was kicked off. A later
+        /// offboard or respawn bumps the host's generation; the manager drops
+        /// any event whose `generation` no longer matches, so a stale spawn
+        /// started before a remove-then-re-add can't clobber the fresh
         /// connection (bug #20).
         generation: u64,
     },
@@ -64,11 +57,10 @@ pub(in crate::app) enum RemoteSpawnEvent {
         host: String,
         generation: u64,
     },
-    /// The connection's client-tty marker has been confirmed written on
-    /// the host (out of band — see `remote_tmux::wait_for_client_marker`).
-    /// Carries the `marker_id` so a stale confirmation from a prior
-    /// connection generation can be rejected. Until this arrives,
-    /// switch/focus stay deferred.
+    /// The connection's client-tty marker has been confirmed written on the
+    /// host (out of band — see `remote_tmux::wait_for_client_marker`). Carries
+    /// `marker_id` so a stale confirmation from a prior generation is
+    /// rejected. Until this arrives, switch/focus stay deferred.
     MarkerReady {
         host: String,
         marker_id: u64,
@@ -98,10 +90,9 @@ impl RemoteSpawnEvent {
     }
 }
 
-/// Owns the receiver end of the spawn channel. Senders live inside the
-/// worker threads, which finish on their own after delivering one
-/// event. Dropping this struct closes the channel; any still-pending
-/// worker's `send` will fail quietly.
+/// Owns the receiver end of the spawn channel. Senders live in the worker
+/// threads, which finish on their own after delivering one event. Dropping
+/// this closes the channel; any still-pending worker's `send` fails quietly.
 pub(in crate::app) struct RemoteSpawner {
     rx: Receiver<RemoteSpawnEvent>,
     /// Kept alive so additional hosts (added via hot-reload) can be
@@ -122,20 +113,20 @@ impl RemoteSpawner {
 
     /// Spawn a PTY for a host (startup, hot-reload, reconnect, or
     /// auto-recovery). `generation` is the host's current spawn generation,
-    /// stamped onto every event this spawn emits so the manager can reject
-    /// it once the host has moved on (offboard / a newer spawn).
+    /// stamped onto every event so the manager can reject it once the host has
+    /// moved on (offboard or a newer spawn).
     pub fn spawn(&self, host: &str, generation: u64) {
         spawn_one(host.to_string(), generation, self.tx.clone(), self.size);
     }
 
     /// Re-attempt *only* the client-tty marker confirmation for an
     /// already-live connection, without respawning its PTY. Used by the
-    /// bounded marker-retry (bug #11): if `Connected` but `marker_ready`
-    /// never arrived (the original `wait_for_client_marker` lost the race on
-    /// a cold shell), this kicks a fresh wait on a worker thread; a success
-    /// re-emits `MarkerReady` for the same `(host, marker_id, generation)`.
-    /// The PTY stays put, so this is cheap and idempotent — losing the race
-    /// again simply emits nothing and the caller retries on its own cadence.
+    /// bounded marker-retry (bug #11): if `Connected` but `marker_ready` never
+    /// arrived (the original `wait_for_client_marker` lost the race on a cold
+    /// shell), kick a fresh wait on a worker thread; success re-emits
+    /// `MarkerReady` for the same `(host, marker_id, generation)`. The PTY
+    /// stays put, so this is cheap and idempotent — losing the race again
+    /// emits nothing and the caller retries on its own cadence.
     pub fn rearm_marker(&self, host: &str, marker_id: u64, generation: u64) {
         let host = host.to_string();
         let tx = self.tx.clone();
@@ -162,29 +153,25 @@ fn spawn_one(host: String, generation: u64, tx: Sender<RemoteSpawnEvent>, size: 
         .name(format!("deck-pty-spawn-{host}"))
         .spawn(move || {
             let host_for_args = host.clone();
-            // The user is responsible for setting up passwordless auth
-            // (deck remote add nudges them toward ControlMaster + keys).
-            // `BatchMode=yes` keeps ssh from blocking on a hidden
-            // password prompt — we'd never see it from the spawn
-            // thread anyway, and it would deadlock the PTY.
-            // `-tt` forces TTY allocation (required for the remote tmux
-            // client). The multiplexing flags come from the shared
-            // `crate::ssh::CONTROL_OPTS` so this PTY lands on the same
-            // ControlMaster as the one-shot `remote_tmux` calls. The
-            // `PATH=...` prefix makes tmux discoverable when the remote
-            // user's tmux isn't on the default non-interactive PATH
-            // (e.g. Homebrew on macOS).
+            // Auth is the user's responsibility (deck remote add nudges
+            // toward ControlMaster + keys). `BatchMode=yes` (in CONTROL_OPTS)
+            // stops ssh blocking on a hidden password prompt we'd never see
+            // from this thread and that would deadlock the PTY. `-tt` forces
+            // TTY allocation for the remote tmux client; the multiplexing
+            // flags from `crate::ssh::CONTROL_OPTS` land this PTY on the same
+            // ControlMaster as the one-shot `remote_tmux` calls. The `PATH=`
+            // prefix makes tmux discoverable when it's off the default
+            // non-interactive PATH (e.g. Homebrew on macOS).
             //
-            // Before handing the terminal to tmux, record *this* client's
-            // tty (the `-tt` pty, which is exactly tmux's `#{client_tty}`)
-            // to a per-connection marker file (keyed by `marker_id`). Later
-            // one-shot `switch-client` calls read it back and target this
-            // client explicitly (`-c`), so they can't re-point some *other*
-            // attached client. The `rm` first clears any marker this Deck
-            // wrote for the host on a prior connection, so stale ttys don't
-            // linger. `tty`'s output is redirected to the file, so nothing
-            // dirties the terminal before tmux paints. The write is
-            // best-effort; readiness is confirmed out of band below.
+            // Before handing off to tmux, record *this* client's tty (the
+            // `-tt` pty = tmux's `#{client_tty}`) to a per-connection marker
+            // file keyed by `marker_id`. Later one-shot `switch-client` calls
+            // read it back and target this client (`-c`), never re-pointing
+            // some other attached client. The `rm` first clears any marker
+            // from a prior connection so stale ttys don't linger. `tty`'s
+            // output goes to the file, so nothing dirties the terminal before
+            // tmux paints. Best-effort; readiness is confirmed out of band
+            // below.
             let marker_id = next_marker_id();
             let remote_cmd = format!(
                 "mkdir -p {dir} 2>/dev/null ; rm -f {glob} 2>/dev/null ; tty > {marker} 2>/dev/null ; {path} tmux attach",
@@ -211,12 +198,11 @@ fn spawn_one(host: String, generation: u64, tx: Sender<RemoteSpawnEvent>, size: 
                 marker_id,
                 generation,
             });
-            // Confirm the marker actually got written before signaling
-            // readiness — switch/focus stay deferred until then, and never
-            // commit against an absent marker. The wait is one bounded ssh
-            // call on this same worker thread (the PTY is already live). If
-            // it loses the race (cold/slow shell) it emits nothing; the
-            // app-side bounded marker-retry (`rearm_marker`) re-attempts it.
+            // Confirm the marker got written before signaling readiness —
+            // switch/focus stay deferred until then, never committing against
+            // an absent marker. One bounded ssh call on this same worker
+            // thread (PTY already live). On a lost race (cold/slow shell) it
+            // emits nothing; the app-side `rearm_marker` re-attempts it.
             if crate::remote_tmux::wait_for_client_marker(&host, marker_id) {
                 let _ = tx.send(RemoteSpawnEvent::MarkerReady {
                     host,

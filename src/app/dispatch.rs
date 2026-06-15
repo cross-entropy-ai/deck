@@ -10,13 +10,10 @@ use super::new_session_flow::new_session_list_query;
 use super::App;
 
 impl App {
-    /// Where keyboard focus lands after a session switch. A switch must not
-    /// leave focus in the sidebar: users kept clicking a session on the
-    /// left, forgot focus was there, and typed into the sidebar by mistake
-    /// (keyboard `ToggleFocus` is the way to focus the sidebar). The
-    /// doomed-switch warning is the one case that keeps focus left so the
-    /// prompt stays actionable. One place, shared by every switch-shaped
-    /// action, so the arms can't drift.
+    /// Where keyboard focus lands after a session switch. A switch moves focus
+    /// to Main so the user doesn't accidentally type into the sidebar; the
+    /// doomed-switch warning is the one case that keeps focus in the sidebar so
+    /// the prompt stays actionable. Shared by every switch-shaped action.
     fn settle_focus_after_switch(&mut self) {
         self.state.focus_mode = if self.warning_state.is_some() {
             FocusMode::Sidebar
@@ -110,9 +107,9 @@ impl App {
                     return false;
                 };
                 // (program, args). For a direct download we re-exec our own
-                // binary in a hidden `__upgrade-self` mode that drives the
-                // `self_update` crate, so its progress bar renders live in
-                // the upgrade pane and it replaces the binary in place.
+                // binary in a hidden `__upgrade-self` mode driving the
+                // `self_update` crate, so its progress renders live in the
+                // upgrade pane and it replaces the binary in place.
                 let (program, args_owned): (String, Vec<String>) = match detect_install_method() {
                     InstallMethod::Brew => (
                         "brew".to_string(),
@@ -202,17 +199,14 @@ impl App {
         }
     }
 
-    /// Build the control-plane backend for a host: `None` -> the local
-    /// in-process tmux backend (seeded with deck's own client tty), `Some(h)`
-    /// -> the remote ssh backend for `h` (seeded with that connection's
-    /// client-tty marker id, `0` when unknown). Selection by `Option<&str>`
-    /// host is the same key the rest of deck uses; the App-level
-    /// orchestration (`active_remote`, the pending-switch marker dance, kill
-    /// pre-switch, rename order-patch) stays in App — only the leaf tmux/ssh
-    /// call runs, off the UI thread, via the executor.
-    ///
-    /// The backend is `Send` so it can be moved onto the executor's worker
-    /// thread; it captures the current tty/marker at build time.
+    /// Build the control-plane backend for a host: `None` -> local in-process
+    /// tmux backend (seeded with deck's own client tty), `Some(h)` -> remote ssh
+    /// backend for `h` (seeded with that connection's client-tty marker id, `0`
+    /// when unknown). Keyed by `Option<&str>` host like the rest of deck; only
+    /// the leaf tmux/ssh call runs here (off the UI thread via the executor),
+    /// while App-level orchestration (`active_remote`, pending-switch marker
+    /// dance, kill pre-switch, rename order-patch) stays in App. The backend is
+    /// `Send` and captures the current tty/marker at build time.
     fn control(&self, host: Option<&str>) -> Box<dyn SessionControl + Send> {
         match host {
             None => Box::new(LocalControl::new(self.local_terminal.pty.slave_tty.clone())),
@@ -224,9 +218,8 @@ impl App {
     }
 
     /// Build the backend for `host` and hand `op` to the executor's per-host
-    /// FIFO worker. Fire-and-forget from the UI thread's perspective: the
-    /// op runs off-thread and its outcome (if any completion effect is
-    /// needed) drains back through `apply_session_outcome`.
+    /// FIFO worker. Fire-and-forget from the UI thread: the op runs off-thread
+    /// and any completion effect drains back through `apply_session_outcome`.
     pub(super) fn submit_session(
         &mut self,
         host: Option<String>,
@@ -251,8 +244,8 @@ impl App {
                     self.post_create_switch(host, &name);
                 }
                 // The submit-time `refresh_sessions` likely ran before the
-                // create finished (it's async now), so refresh again to
-                // surface the new row promptly under its group.
+                // async create finished, so refresh again to surface the new
+                // row promptly under its group.
                 self.request_refresh();
             }
             OpOutcome::Renamed | OpOutcome::Killed => {
@@ -266,9 +259,8 @@ impl App {
                 error,
             } => {
                 // Apply only if the picker is still open on the same
-                // (host, parent); a listing for a parent the user has since
-                // edited is stale — drop it. Re-derive the expected key the
-                // same way the submit did.
+                // (host, parent); drop a listing for a parent the user has
+                // since edited. Re-derive the expected key like the submit did.
                 let still_current = self
                     .state
                     .overlay
@@ -300,9 +292,9 @@ impl App {
 
     pub(super) fn switch_client(&mut self, session: &str) {
         // Re-point the existing embedded tmux client at the target session.
-        // The local backend reproduces the tty-vs-bare `switch-client`
-        // choice exactly; it runs on the executor so a slow `switch-client`
-        // can't stall the UI thread (uniform with remote).
+        // Runs on the executor (uniform with remote) so a slow `switch-client`
+        // can't stall the UI thread; the local backend reproduces the
+        // tty-vs-bare `switch-client` choice exactly.
         self.submit_session(
             None,
             crate::session::executor::SessionOp::Switch {
@@ -313,60 +305,48 @@ impl App {
         // view if we were watching a remote one.
         self.remote.clear_active();
         self.supersede_agent_focus();
-        // No full redraw here: switching only re-points the existing
-        // tmux client at another session, so ratatui's per-cell diff
-        // against the new vt100 screen repaints what actually changed.
-        // Wide-char residue is handled in bridge.rs via `set_skip`.
+        // No full redraw: switching only re-points the tmux client, so
+        // ratatui's per-cell diff against the new vt100 screen repaints what
+        // changed. Wide-char residue is handled in bridge.rs via `set_skip`.
     }
 
-    /// (Re)establish the persistent `ssh -tt host tmux attach` PTY for a
-    /// host: drop any dead pane, mark the connection `Connecting`, and kick
-    /// the spawner. The PTY is otherwise spawned only once at startup, so
-    /// without this a host that blips (drops, then becomes reachable again)
-    /// stays unswitchable until deck restarts. Shared by initial onboard,
-    /// the reconnect button, and refresh-driven auto-recovery.
+    /// (Re)establish the persistent `ssh -tt host tmux attach` PTY for a host:
+    /// drop any dead pane, mark the connection `Connecting`, kick the spawner.
+    /// Without this a host that blips would stay unswitchable until restart
+    /// (the PTY is otherwise spawned only at startup). Shared by initial
+    /// onboard, the reconnect button, and refresh-driven auto-recovery.
     pub(super) fn respawn_remote_host(&mut self, host: &str) {
-        // The manager refuses to stack on an in-flight spawn (`Connecting`)
-        // — a second spawn could race and let a stale `Failed` from the
-        // older attempt clobber the newer pane — and bumps the host's spawn
-        // generation so the new spawn's events can be told apart from any
-        // still in flight (bug #20).
+        // The manager refuses to stack on an in-flight spawn (`Connecting`) —
+        // a second spawn could race and let a stale `Failed` clobber the newer
+        // pane — and bumps the host's spawn generation so the new spawn's
+        // events are distinguishable from any still in flight (bug #20).
         self.remote.respawn(host);
     }
 
-    /// Switch the main view to a session on a remote host.
-    ///
-    /// Cheap path: if the persistent ssh+tmux PTY for this host is alive
-    /// (status = Connected), fire an out-of-band `ssh host tmux
-    /// switch-client -t name` on a worker thread and flip `active_remote`;
-    /// the PTY stays put and its tmux client is re-pointed at the target.
-    ///
-    /// If the PTY isn't ready (Connecting or Failed) we don't switch yet —
-    /// recovery of a dropped PTY is handled by `respawn_remote_host`
-    /// (the reconnect button and refresh auto-recovery), so switching
-    /// starts working again once the pane reconnects.
+    /// Switch the main view to a session on a remote host. If the persistent
+    /// ssh+tmux PTY is alive, fire an out-of-band `switch-client` on a worker
+    /// and flip `active_remote`; the PTY stays put, its tmux client re-points
+    /// at the target. If it isn't ready (Connecting/Failed) we don't switch —
+    /// `respawn_remote_host` recovers it, and switching works once it reconnects.
     pub(super) fn switch_to_remote(&mut self, host: &str, name: &str) {
         if !self.remote.is_live(host) {
             return;
         }
-        // The marker-gated `switch_client` no-ops until the attach prelude
-        // has written the client tty (the connect race / unwritten marker).
-        // Committing `active_remote` then would lie: the UI would show the
-        // host switched while its tmux client stayed put, with no retry. So
-        // hold the switch as pending and let the readiness drain (first PTY
-        // output, or the bounded marker-retry) fire it once the marker
-        // exists.
+        // The marker-gated `switch_client` no-ops until the attach prelude has
+        // written the client tty. Committing `active_remote` before then would
+        // lie (UI shows switched, tmux client stayed put, no retry), so hold
+        // the switch as pending; readiness (first PTY output or bounded
+        // marker-retry) fires it once the marker exists.
         let marker_id = self.remote.live_marker_id(host);
         let Some(marker_id) = marker_id else {
             self.remote.set_pending_switch(host, name);
             return;
         };
-        // Run the actual `switch-client` on the executor's per-host FIFO
-        // worker instead of an ad-hoc thread. The call costs ~10–30 ms even
-        // over a warm ControlMaster — enough to stall j/k scrolling inline —
-        // and the per-host FIFO also keeps it ordered behind any rename/kill
-        // we just queued for this host. `control()` reads this connection's
-        // marker id; the readiness gate above guarantees it's written.
+        // Run `switch-client` on the executor's per-host FIFO worker: it costs
+        // ~10–30 ms even over a warm ControlMaster (enough to stall j/k inline),
+        // and the FIFO keeps it ordered behind any rename/kill queued for this
+        // host. `control()` reads this connection's marker id, which the
+        // readiness gate above guarantees is written.
         self.submit_session(
             Some(host.to_string()),
             crate::session::executor::SessionOp::Switch {
@@ -388,37 +368,33 @@ impl App {
         // host's vt100 screen.
     }
 
-    /// Confirm a remote `switch-client` submitted to the executor actually
-    /// targeted the live client, run when its `Switched` outcome drains. The
-    /// manager decides whether a re-fire is needed (host still active and
-    /// marker advanced since submit → the connection respawned while the op
-    /// sat in the FIFO and it no-op'd against a dead marker); if so we
-    /// re-fire to the intended session (which re-reads the current marker,
-    /// or holds via the pending switch if the new connection isn't ready).
+    /// Confirm a submitted remote `switch-client` hit the live client, run when
+    /// its `Switched` outcome drains. The manager decides if a re-fire is needed
+    /// (host still active and marker advanced since submit → connection
+    /// respawned mid-FIFO and the op no-op'd against a dead marker); if so we
+    /// re-fire (re-reading the current marker, or holding via pending switch).
     fn verify_remote_switch(&mut self, host: &str) {
         if let Some(fire) = self.remote.verify_switch(host) {
             self.switch_to_remote(&fire.host, &fire.name);
         }
     }
 
-    /// Switch to and focus the pane a clicked agent runs in. Local:
-    /// re-point the client at the session and select the exact
-    /// window/pane. Remote: switch to that host's session (pane focus on
-    /// remote is a follow-up).
-    /// Kick the Agents-tab summary generation. Flips to the animated
-    /// `Generating` state and spawns a worker that captures every detected
-    /// agent's pane buffer, builds the prompt from the configured template,
-    /// and runs `claude -p`. The result (text or error) comes back via the
-    /// one-shot `summary_worker`; the run loop drains it into
+    /// Switch to and focus the pane a clicked agent runs in. Local: re-point
+    /// the client and select the exact window/pane. Remote: switch to that
+    /// host's session (pane focus on remote is a follow-up).
+    /// Kick the Agents-tab summary generation: flip to the animated
+    /// `Generating` state and spawn a worker that captures each detected agent's
+    /// pane buffer, builds the prompt from the template, and runs `claude -p`.
+    /// The result drains back via the one-shot `summary_worker` into
     /// `Ready`/`Error`. No-op while a generation is already in flight.
     fn start_summary_generation(&mut self) {
         if self.state.summary.state == crate::state::SummaryState::Generating {
             return;
         }
-        // Snapshot the panes to capture now, so the worker doesn't touch
-        // shared state off-thread. The Agents tab summarizes each detected
-        // agent's pane; the Projects tab summarizes each live session's active
-        // pane (captured by session name, which tmux resolves to that pane).
+        // Snapshot the panes now so the worker doesn't touch shared state
+        // off-thread. Agents tab: each detected agent's pane. Projects tab:
+        // each live session's active pane (by session name, which tmux
+        // resolves to that pane).
         let panes: Vec<crate::summary::SummaryPane> = if self.state.agents_tab_active() {
             self.state
                 .agent_entries
@@ -468,9 +444,8 @@ impl App {
 
     /// Cancel an in-flight summary generation (Esc on the Agents tab, or a
     /// cancel click). Dropping the worker signals its `Cancel` flag so
-    /// `run_claude` kills the `claude` child, and we restore the card to
-    /// the state it would have shown had the user never pressed Generate.
-    /// No-op unless a generation is actually running.
+    /// `run_claude` kills the `claude` child, and the card is restored to its
+    /// pre-Generate state. No-op unless a generation is running.
     fn cancel_summary_generation(&mut self) {
         if self.state.summary.state != crate::state::SummaryState::Generating {
             return;
@@ -485,13 +460,12 @@ impl App {
         // from a prior click is now stale and won't commit.
         self.focus_seq += 1;
         self.warning_state = None;
-        // One path for both: the only local/remote difference is the
-        // transport + how we learn Deck's own client tty. Resolve that here,
-        // then run the *same* focus rule off-thread and commit via the same
-        // channel — local `sh` is instant, but routing it through the worker
-        // keeps a single code path (and remote ssh can stall, so it must be
-        // off-thread regardless). For remote we still gate on the marker being
-        // ready; without it the script would just bail server-side.
+        // One path for both: the only local/remote difference is the transport
+        // and how we learn Deck's own client tty. Resolve that here, then run
+        // the *same* focus rule off-thread (local routes through the worker too
+        // to keep one code path; remote ssh can stall so it must be off-thread).
+        // For remote we still gate on the marker being ready, else the script
+        // just bails server-side.
         let transport = match &target.host {
             None => crate::focus::FocusTransport::Local {
                 client_tty: self.local_terminal.pty.slave_tty.clone(),
@@ -529,14 +503,12 @@ impl App {
             .ok();
     }
 
-    /// Probe the pane Deck's main view currently shows and steer the
-    /// Agents-tab row highlight onto whatever agent lives there — so the
-    /// highlight tracks the *real* active pane even when the user switches
-    /// panes outside Deck. Resolves the displayed client's transport exactly
-    /// like `switch_to_agent_pane` (local tty vs remote marker), then runs the
-    /// query off-thread (remote ssh can stall). Single-flighted so a slow
-    /// probe can't pile up behind the periodic tick; only runs on the Agents
-    /// tab, where the highlight is shown.
+    /// Probe the pane Deck's main view shows and steer the Agents-tab row
+    /// highlight onto whatever agent lives there, so it tracks the *real* active
+    /// pane even when panes are switched outside Deck. Resolves the transport
+    /// like `switch_to_agent_pane` (local tty vs remote marker) and queries
+    /// off-thread (remote ssh can stall). Single-flighted so a slow probe can't
+    /// pile up behind the periodic tick; only runs on the Agents tab.
     pub(super) fn probe_active_pane(&mut self) {
         if !self.state.agents_tab_active() || self.active_pane_in_flight {
             return;
@@ -579,12 +551,11 @@ impl App {
         self.active_pane_in_flight = spawned;
     }
 
-    /// Apply an active-pane probe result (drained in the event loop). Steer
-    /// the highlight onto the agent in the now-active pane, or clear it if
-    /// that pane holds no agent. Dropped when stale — a newer focus/session
-    /// action bumped `focus_seq`, the displayed host changed, or (remote) the
-    /// connection generation rolled. A probe that read no pane id, or whose
-    /// host isn't probed yet, leaves the marker untouched.
+    /// Apply an active-pane probe result (drained in the event loop): steer the
+    /// highlight onto the agent in the now-active pane, or clear it if that pane
+    /// holds no agent. Dropped when stale — `focus_seq` bumped, displayed host
+    /// changed, or (remote) the connection generation rolled. A probe with no
+    /// pane id, or whose host isn't probed yet, leaves the marker untouched.
     pub(super) fn apply_active_pane_outcome(&mut self, outcome: super::ActivePaneOutcome) {
         self.active_pane_in_flight = false;
         if outcome.seq != self.focus_seq {
@@ -607,15 +578,13 @@ impl App {
             .steer_marker_to_pane(outcome.host.as_deref(), &pane_id);
     }
 
-    /// Apply a focus completion (drained in the event loop). Act on it only
-    /// when it's still valid: no newer focus action has happened (`seq`); for
-    /// a remote target, the connection is the *same generation* it was
-    /// spawned against (`marker_id` — a reconnect mints a new id, so an
-    /// outcome from a dropped/older PTY is rejected); and the agent is still
-    /// present. A slow focus that finishes after the user moved on — or after
-    /// a disconnect/reconnect — is dropped rather than clobbering the view.
-    /// `ExactPane` commits the switch and earns the agent highlight;
-    /// `Failed` commits nothing.
+    /// Apply a focus completion (drained in the event loop), only when still
+    /// valid: no newer focus action (`seq`); for remote, the same connection
+    /// generation it was spawned against (`marker_id` — a reconnect mints a new
+    /// id, rejecting an outcome from a dropped/older PTY); and the agent still
+    /// present. A focus that finishes after the user moved on (or after a
+    /// reconnect) is dropped rather than clobbering the view. `ExactPane`
+    /// commits the switch and earns the highlight; `Failed` commits nothing.
     pub(super) fn apply_focus_outcome(&mut self, outcome: super::FocusOutcome) {
         if outcome.seq != self.focus_seq {
             return;
@@ -639,9 +608,8 @@ impl App {
     }
 
     /// Whether a focus target is still actionable: a remote host must still be
-    /// connected, and the agent must still be detected on its host (`None` =
-    /// local). Guards stale completions whose host was removed or whose agent
-    /// has since exited.
+    /// connected and the agent still detected on its host (`None` = local).
+    /// Guards stale completions whose host was removed or agent has exited.
     fn agent_focus_target_live(&self, target: &crate::state::AgentTarget) -> bool {
         if let Some(host) = target.host.as_deref() {
             if !self.remote.is_live(host) {
@@ -656,24 +624,22 @@ impl App {
             .is_some_and(|list| list.iter().any(|a| a.pane_id == target.pane_id))
     }
 
-    /// Commit a focus result — local or remote, same path: point
-    /// `active_remote` at the target's host (`None` = local), show the main
-    /// pane, and highlight the agent row (we always focus its exact pane).
+    /// Commit a focus result (local or remote, same path): point `active_remote`
+    /// at the target's host (`None` = local), show the main pane, highlight the
+    /// agent row (its exact pane).
     ///
-    /// A plain session switch (local or remote) isn't an agent-pane focus:
-    /// drop the agent highlight and bump `focus_seq` so any in-flight
-    /// remote focus's late completion is treated as stale and can't
-    /// re-highlight an agent. Shared by `switch_client` / `switch_to_remote`.
+    /// A plain session switch isn't an agent-pane focus: drop the highlight and
+    /// bump `focus_seq` so an in-flight remote focus's late completion is stale
+    /// and can't re-highlight. Shared by `switch_client` / `switch_to_remote`.
     fn supersede_agent_focus(&mut self) {
         self.state.active_agent = None;
         self.focus_seq += 1;
     }
 
     fn commit_focus(&mut self, target: crate::state::AgentTarget) {
-        // Move both section-list cursors onto the agent we just switched to,
-        // so the highlight tracks the viewed pane like j/k does (which moves
-        // the cursor and switches together). An agent-footer click otherwise
-        // switches the view without touching the highlight.
+        // Move both section-list cursors onto the agent we switched to, so the
+        // highlight tracks the viewed pane like j/k does; an agent-footer click
+        // otherwise switches the view without touching the highlight.
         self.state.focus_cursors_on(&target);
         match target.host.as_deref() {
             Some(h) => self.remote.set_active(h),
@@ -731,11 +697,10 @@ impl App {
                     self.suppress_next_periodic_refresh = true;
                 }
                 Effect::RenameSession(rename) => {
-                    // The rename runs on the executor (off the UI thread). The local
-                    // `session_order` in-place patch stays in App and runs now: it
-                    // mutates App state, not tmux, and doesn't depend on the rename's
-                    // result — patching immediately keeps the manual order from
-                    // flickering while the async rename is in flight.
+                    // The rename runs on the executor. The local `session_order`
+                    // in-place patch stays in App and runs now (it touches App
+                    // state, not tmux, and doesn't depend on the rename result),
+                    // so the manual order doesn't flicker during the async rename.
                     if rename.host.is_none() {
                         if let Some(pos) = self
                             .state
@@ -755,10 +720,10 @@ impl App {
                     );
                 }
                 Effect::KillSession(kill) => {
-                    // App-level orchestration around the kill stays in App; only the
-                    // leaf kill call routes through the backend (local pre-switches
-                    // via `switch_to_session_if_safe`, remote via the
-                    // `active_remote` reset below).
+                    // App-level orchestration stays in App; only the leaf kill
+                    // call routes through the backend (local pre-switches via
+                    // `switch_to_session_if_safe`, remote via the `active_remote`
+                    // reset below).
                     match &kill.host {
                         None => {
                             if let Some(ref alt_name) = kill.switch_to {
@@ -766,13 +731,11 @@ impl App {
                             }
                         }
                         Some(host) => {
-                            // If the user was attached to this remote session,
-                            // snap them back to local first so the dying PTY
-                            // doesn't leave a frozen screen visible. The
-                            // persistent ssh PTY for this host stays open;
-                            // the remote tmux server will pick another
-                            // session for it on the next attach if any
-                            // remain.
+                            // If attached to this remote session, snap back to
+                            // local first so the dying PTY doesn't leave a frozen
+                            // screen. The host's ssh PTY stays open; the remote
+                            // tmux server picks another session on next attach if
+                            // any remain.
                             if self.remote.active_is(host) {
                                 self.remote.clear_active();
                                 self.needs_full_redraw = true;
@@ -863,20 +826,19 @@ impl App {
         }
     }
 
-    /// Surface a transient warning in the sidebar's reload strip. The TUI
-    /// owns the whole alternate screen, so a bare `eprintln!` from inside
-    /// the event loop is wiped invisibly; route operational warnings here
-    /// instead. Reuses the reload toast's auto-expiry (`RELOAD_STATUS_ERR_TTL`).
+    /// Surface a transient warning in the sidebar's reload strip. The TUI owns
+    /// the alternate screen, so a bare `eprintln!` is wiped invisibly; route
+    /// operational warnings here. Reuses the reload toast's auto-expiry
+    /// (`RELOAD_STATUS_ERR_TTL`).
     pub(super) fn show_warning(&mut self, msg: impl Into<String>) {
         self.state.reload_status = Some(crate::state::ReloadStatus::Err(msg.into()));
         self.state.reload_status_at = Some(std::time::Instant::now());
     }
 
-    /// Validate the add form. On validate-failure: set status, form stays
-    /// open, no worker call. On validate-success: send `AddForward` to
-    /// worker, mark form `submitting=true`, set status to "applying...".
-    /// **Lazy persist:** config is NOT modified here; the reducer for
-    /// `PfTaskResult` writes it on worker success.
+    /// Validate the add form. On failure: set status, form stays open, no
+    /// worker call. On success: send `AddForward`, mark `submitting=true`, set
+    /// status "applying...". **Lazy persist:** config is NOT modified here; the
+    /// `PfTaskResult` reducer writes it on worker success.
     fn pf_add_submit(&mut self) {
         let Some(overlay) = self.state.overlay.port_forward.as_mut() else {
             return;
@@ -896,9 +858,9 @@ impl App {
         };
         let host = overlay.host.clone();
         // Reject a forward whose listen identity (mode + bind addr + listen
-        // port) is already configured, before bothering ssh — otherwise the
-        // user just sees a cryptic "bind: Address already in use" from the
-        // worker, or a silent no-op when ssh treats it as idempotent.
+        // port) is already configured, before bothering ssh — else the user
+        // sees a cryptic "bind: Address already in use", or a silent no-op when
+        // ssh treats it as idempotent.
         let key = crate::state::ForwardKey::from_spec(&host, &spec);
         let already_exists = self
             .state

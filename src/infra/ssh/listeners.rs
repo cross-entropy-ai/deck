@@ -1,10 +1,9 @@
 //! Local TCP listener enumeration for port-forward liveness.
 //!
-//! Platform-dispatching `local_listen_ports()` that shells out to `lsof`
-//! (macOS) / `ss` (Linux) and parses via `infra::parser::listeners`. Returns
-//! `None` when enumeration is unavailable (unsupported OS or the command
-//! failed) so callers can distinguish "couldn't check" from "checked, port
-//! absent".
+//! Platform-dispatching `local_listen_ports()` shells out to `lsof` (macOS) /
+//! `ss` (Linux), parsing via `infra::parser::listeners`. `None` means
+//! enumeration was unavailable (unsupported OS or command failed), so callers
+//! can tell "couldn't check" from "checked, port absent".
 
 use std::collections::HashSet;
 
@@ -19,12 +18,10 @@ use crate::infra::parser::listeners::parse_ss;
 pub fn local_listen_ports() -> Option<HashSet<u16>> {
     #[cfg(target_os = "macos")]
     {
-        // `lsof` exits non-zero (1) both on error *and* when nothing matches
-        // the filter, so its status can't tell the two apart. Parse stdout
-        // regardless: an empty match yields an empty set ("checked, none
-        // listening"); only a failure to spawn at all returns `None`. We left
-        // `netstat` behind — modern macOS (Darwin 27+) no longer lists TCP
-        // sockets there, so it always probed empty.
+        // `lsof` exits non-zero both on error and when nothing matches, so
+        // status can't tell them apart. Parse stdout regardless (empty match
+        // = empty set); only a spawn failure returns `None`. We dropped
+        // `netstat`: modern macOS (Darwin 27+) no longer lists TCP sockets there.
         let out = std::process::Command::new("lsof")
             .args(["-nP", "-iTCP", "-sTCP:LISTEN"])
             .output()

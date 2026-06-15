@@ -214,10 +214,9 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
     // forwarding port N", or "applying...") — the form stays open on
     // failure, so this row is the only place the user sees why.
     if let Some(s) = status {
-        // "applying..." is an in-progress notice; everything else here is an
-        // error/rejection. Render into a rect inset 2 cells from each border so
-        // the message — and every wrapped continuation line — lines up with the
-        // form fields' indent instead of butting up against the frame.
+        // "applying..." is in-progress; everything else is an error/rejection.
+        // Inset the rect 2 cells from each border so the message (and wrapped
+        // lines) lines up with the form fields' indent, not the frame.
         let fg = if s.starts_with("applying") {
             theme.warning
         } else {

@@ -1,7 +1,6 @@
-//! The new-session creation flow: building and validating a
-//! `CreateSessionRequest`, opening the dir-browser picker (local, remote, and
-//! the add-remote-host picker), and the local + remote create paths with
-//! their post-create switch.
+//! The new-session creation flow: build/validate a `CreateSessionRequest`,
+//! open the dir-browser picker (local, remote, add-remote-host), and the
+//! local + remote create paths with their post-create switch.
 
 use super::App;
 
@@ -35,11 +34,10 @@ struct NewSessionTarget {
     existing_names: Vec<String>,
 }
 
-/// The `(host, list_path)` the new-session picker should list for its
-/// current input: `None` host = local with the `~`-expanded parent dir;
-/// `Some(host)` = remote with the raw parent (the remote shell expands the
-/// `~`). Used both to submit the `list_dir` op and, when the `DirListed`
-/// outcome lands, to re-derive the expected key and drop a stale listing.
+/// The `(host, list_path)` the picker should list for its current input:
+/// `None` host = local with `~`-expanded parent; `Some(host)` = remote with
+/// raw parent (remote shell expands `~`). Used to submit the `list_dir` op
+/// and, on `DirListed`, to re-derive the expected key and drop a stale listing.
 pub(super) fn new_session_list_query(
     ns: &crate::new_session::NewSessionState,
 ) -> (Option<String>, String) {
@@ -118,11 +116,10 @@ impl App {
         let existing: Vec<&str> = target.existing_names.iter().map(String::as_str).collect();
         let name_str = auto_session_name(&existing, target.existing_count);
 
-        // Open with an empty listing and fill it asynchronously: the
-        // `list_dir` runs on the executor and the `DirListed` outcome
-        // populates `entries`. Local listing is fast, but routing it through
-        // the executor keeps the picker uniform with the remote one and off
-        // the UI thread.
+        // Open empty and fill async: `list_dir` runs on the executor and
+        // `DirListed` populates `entries`. Local listing is fast but routed
+        // through the executor anyway, to keep the picker uniform with remote
+        // and off the UI thread.
         let mut picker = FilterPicker::new(vec![]);
         picker.input = make_textarea(&input_str);
         let mut ns = NewSessionState {
@@ -230,11 +227,10 @@ impl App {
         }
     }
 
-    /// Submit a `list_dir` for the new-session picker's current parent dir
-    /// to the executor (keyed by the picker's host). No-op if the picker is
-    /// closed. The `DirListed` outcome populates the overlay; it re-derives
-    /// this same `(host, path)` to drop a listing that arrives after the
-    /// user typed a different parent.
+    /// Submit a `list_dir` for the picker's current parent dir (keyed by the
+    /// picker's host); no-op if closed. `DirListed` populates the overlay and
+    /// re-derives this same `(host, path)` to drop a listing that arrives
+    /// after the user typed a different parent.
     pub(super) fn request_new_session_listing(&mut self) {
         let Some((host, path)) = self
             .state
@@ -264,12 +260,11 @@ impl App {
         );
     }
 
-    /// Create a session on a remote host (on the executor's per-host FIFO)
-    /// and switch to it once it's created. `dir` keeps its `~` for the
-    /// remote shell to expand. The accompanying `refresh_sessions` side
-    /// effect re-queries the host so the new row shows under its `@host`
-    /// group. The switch is wired in `post_create_switch`, run when the
-    /// `Created` outcome drains back.
+    /// Create a session on a remote host (executor's per-host FIFO) and switch
+    /// to it once created. `dir` keeps its `~` for the remote shell to expand.
+    /// The `refresh_sessions` side effect re-queries the host so the new row
+    /// shows under its `@host` group; the switch is wired in
+    /// `post_create_switch`, run when `Created` drains back.
     pub(super) fn create_remote_session(&mut self, host: &str, name: &str, dir: &str) {
         self.submit_session(
             Some(host.to_string()),
@@ -280,12 +275,10 @@ impl App {
         );
     }
 
-    /// Switch to a session just created via the executor, run when the
-    /// `Created` outcome drains. Local: re-point the client. Remote: if the
-    /// host's attach PTY is live, switch immediately; otherwise the host had
-    /// no tmux server (nothing was attachable), so reconnect now that a
-    /// session exists and defer the switch until the PTY comes up — the
-    /// spawner's `Spawned` event fires it.
+    /// Switch to a just-created session, run when `Created` drains. Local:
+    /// re-point the client. Remote: switch immediately if the attach PTY is
+    /// live; otherwise the host had no tmux server, so reconnect now and defer
+    /// the switch until the PTY comes up (the spawner's `Spawned` event fires it).
     pub(super) fn post_create_switch(&mut self, host: Option<String>, name: &str) {
         match host {
             None => self.switch_client(name),

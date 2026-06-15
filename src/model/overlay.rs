@@ -8,16 +8,13 @@ use crate::forwards::PortForwardOverlay;
 use crate::menu::ContextMenu;
 use crate::new_session::{make_textarea, textarea_line, NewSessionState};
 
-/// The full-input modal overlays, in the one order both input mappers
-/// consult them. `AppState::active_modal` resolves the highest-priority
-/// active overlay; the keyboard and mouse mappers route to it *before* any
-/// global keybinding or button-rect hit test, so a modal swallows every
-/// input behind it (bug #7). The single ordering here is the source of
-/// truth — do not re-derive it in either mapper.
-///
-/// NOTE: this is *not* the update-warning popup. That is a selective gate
-/// (`App::warning_state` + `warning_blocks_action`) that blocks only a few
-/// actions, not a swallow-everything modal, and stays out of this enum.
+/// The full-input modal overlays, in the one priority order both input
+/// mappers consult. `AppState::active_modal` resolves the highest-priority
+/// active overlay; keyboard and mouse mappers route to it *before* any global
+/// keybinding or button-rect test, so a modal swallows every input behind it
+/// (bug #7). This ordering is the source of truth — don't re-derive it.
+/// NOTE: not the update-warning popup, which is a selective gate
+/// (`App::warning_state` + `warning_blocks_action`) and stays out of this enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modal {
     SummaryPopup,
@@ -85,21 +82,19 @@ impl ExcludeEditorState {
     }
 }
 
-/// Modal warning banner shown over the main pane. Used by the
-/// self-update flow to surface "can't self-update from here" /
-/// "unsupported platform" messages. Lives on `App` (as
-/// `warning_state: Option<WarningState>`) rather than in `OverlayState`
-/// because the dispatch loop's "block actions while a warning is up"
-/// gate reads it from App directly.
+/// Modal warning banner over the main pane, used by the self-update flow
+/// ("can't self-update from here" / "unsupported platform"). Lives on `App`
+/// (`warning_state: Option<WarningState>`), not `OverlayState`, because the
+/// dispatch loop's "block actions while a warning is up" gate reads it from
+/// App directly.
 #[derive(Clone)]
 pub enum WarningState {
     Proactive { text: &'static str, detail: String },
 }
 
-/// UI state for transient sidebar overlays — help screen, kill-confirm
-/// prompt, in-progress rename, right-click context menu, and the
-/// exclude-pattern editor popup. Grouped so the renderer and key
-/// dispatcher have a single place to ask "is any overlay active?".
+/// UI state for transient sidebar overlays — help, kill-confirm, rename,
+/// context menu, exclude-pattern editor. Grouped so renderer and key
+/// dispatcher have one place to ask "is any overlay active?".
 #[derive(Debug, Default)]
 pub struct OverlayState {
     pub show_help: bool,

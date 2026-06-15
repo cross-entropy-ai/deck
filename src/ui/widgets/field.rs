@@ -1,7 +1,6 @@
 //! Form-field rendering: a label + single-line `TextArea` row, plus the
-//! filter-picker forms' standard label/field styling. The caller supplies
-//! the resolved label style (focus/enabled logic differs per form) and
-//! field colors.
+//! filter-picker forms' standard label/field styling. The caller supplies the
+//! resolved label style (focus/enabled logic differs per form) and colors.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -34,10 +33,9 @@ pub fn field_row(
     ta.render(cols[1], buf);
 }
 
-/// Render a `label` + `textarea` row with the filter-picker forms' standard
-/// styling: the label is `accent` when focused and `dim` otherwise, the field
-/// uses `theme.bg` as its background, and the cursor is an accent block. Used
-/// by the filter picker (new-session and add-remote).
+/// Render a `label` + `textarea` row with the filter-picker forms' styling:
+/// label `accent` when focused else `dim`, field background `theme.bg`, accent
+/// block cursor. Used by the filter picker (new-session and add-remote).
 pub fn labeled_field(
     buf: &mut Buffer,
     area: Rect,

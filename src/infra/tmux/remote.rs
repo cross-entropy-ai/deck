@@ -1,12 +1,9 @@
 //! Tmux operations against a remote host over SSH.
 //!
-//! This is a thin sibling of `infra::tmux`: same parsers, same shape of
-//! `SessionInfo`, but each call shells out to `ssh <host> tmux ...`
-//! instead of running tmux locally. Deck self-applies multiplexing
-//! options on every invocation so remote calls reuse a single TCP/SSH
-//! connection even if the user hasn't put a `ControlMaster` block in
-//! `~/.ssh/config` (the `deck remote add` flow strongly suggests they
-//! do, but this is the safety net).
+//! Thin sibling of `infra::tmux`: same parsers and `SessionInfo` shape, but
+//! each call shells out to `ssh <host> tmux ...`. Multiplexing options are
+//! applied on every invocation so calls reuse one SSH connection even
+//! without a `ControlMaster` block in `~/.ssh/config`.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -19,15 +16,13 @@ use crate::infra::parser::tmux::{
 };
 
 /// Marker separating the pane-pid list from the `ps` snapshot in the
-/// single combined ssh `agent_probe` runs. Must not start with `=` (zsh
-/// equals-expansion would treat it as a command path and eat it) nor with
-/// `-` (echo flag); plain underscores are safe in any remote shell.
+/// combined `agent_probe` ssh call. Must not start with `=` (zsh
+/// equals-expansion treats `=word` as a command path) nor `-` (echo flag);
+/// plain underscores are safe in any remote shell.
 const AGENT_PROBE_MARKER: &str = "__DECK_AGENT_PROBE__";
 
-/// Hard cap on a single remote ssh+tmux call. Generous compared to the
-/// local 1s budget because the first call to a host may have to wait
-/// for the SSH master to come up (if we got here before the master
-/// finished establishing).
+/// Hard cap on a single remote ssh+tmux call. Generous vs the local 1s
+/// budget because the first call may wait for the SSH master to come up.
 pub const REMOTE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// SSH options we apply on *every* remote call. See
@@ -37,17 +32,12 @@ pub(crate) fn base_ssh_args() -> Vec<&'static str> {
     crate::ssh::CONTROL_OPTS.to_vec()
 }
 
-/// Extra path prefix prepended to every remote command. SSH runs
-/// commands in a non-interactive shell, which on most setups means
-/// only `~/.zshenv` (zsh) or `~/.bashrc` for forced-load configs is
-/// sourced — `~/.zshrc` / `~/.profile` are skipped, so anything in a
-/// non-default location (Homebrew on macOS, linuxbrew on Linux,
-/// per-user installs) is invisible. Prepending these paths via
-/// `PATH=... cmd ...` makes deck work out-of-the-box without asking
-/// the user to edit remote shell startup files.
-///
-/// The trailing `$PATH` is expanded by the remote shell, so the
-/// user's existing path stays intact and just gets extended.
+/// Path prefix prepended to every remote command. SSH's non-interactive
+/// shell skips `~/.zshrc` / `~/.profile`, so non-default installs
+/// (Homebrew, linuxbrew, per-user) are invisible. Prepending these paths
+/// via `PATH=... cmd ...` makes deck work without editing remote startup
+/// files. The trailing `$PATH` (expanded by the remote shell) keeps the
+/// user's existing path intact.
 pub(crate) const REMOTE_PATH_PREFIX: &str =
     "PATH=/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$PATH";
 
@@ -67,60 +57,52 @@ pub(crate) fn run_ssh(
 
 /// List tmux sessions on `host`.
 ///
-/// - `None` — ssh couldn't reach the host (connection refused, timeout,
-///   auth, DNS); ssh reports these as its own exit status 255.
-/// - `Some(empty)` — ssh connected but the host has no tmux server up,
-///   so `tmux list-sessions` exited non-zero with "no server running".
-///   The host is reachable, it just has no sessions.
+/// - `None` — ssh couldn't reach the host (refused/timeout/auth/DNS, all
+///   reported as ssh's own exit 255).
+/// - `Some(empty)` — reachable but no tmux server (`list-sessions` exited
+///   non-zero with "no server running").
 /// - `Some(non-empty)` — the live session list.
 pub fn list_sessions(host: &str) -> Option<Vec<SessionInfo>> {
     list_sessions_with(default_runner(), host)
 }
 
 fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<SessionInfo>> {
-    // Wrap in `$'...'` (bash/zsh ANSI-C quoting) so the remote shell
-    // both treats `#` literally (no comment) AND interprets `\t` as a
-    // tab byte we can split on. Most remote shells deck talks to are
-    // bash/zsh; a POSIX-only remote shell would need a different
-    // escape, but that's an acceptable tradeoff today.
-    // Trailing `#{@deck_order}` carries deck's persisted display rank
-    // (empty when unset). See `persist_session_order`.
+    // `$'...'` (bash/zsh ANSI-C quoting) makes the remote shell treat `#`
+    // literally (no comment) and `\t` as a splittable tab byte; a
+    // POSIX-only shell would need a different escape. Trailing
+    // `#{@deck_order}` carries deck's persisted display rank (empty when
+    // unset). See `persist_session_order`.
     match run_ssh(
         runner,
         host,
         &["tmux", "list-sessions", "-F", SESSION_LIST_FORMAT_SSH],
     ) {
-        // No window-activity probe here, unlike the local path: nothing
-        // reads remote activity (the most-recently-active attach pick is
-        // local-only), so the extra `list-windows -a` ssh roundtrip per host
-        // per refresh tick would be pure waste. Rows parse with `activity = 0`.
+        // No window-activity probe (unlike local): nothing reads remote
+        // activity, so the extra `list-windows -a` roundtrip per host per
+        // tick would be waste. Rows parse with `activity = 0`.
         Ok(raw) => Some(parse_sessions(&raw, &HashMap::new())),
-        // ssh connected and tmux reported there's no server running: the
-        // host is reachable, it just has no sessions. This is the *only*
-        // failure we read as empty — other non-zero exits (tmux missing,
-        // permission, a PATH problem) and ssh connection failures stay
-        // unreachable rather than masquerading as "(no sessions)".
+        // "no server running" is the *only* failure read as empty: the host
+        // is reachable, just sessionless. Other non-zero exits (tmux
+        // missing, permission, PATH) and ssh failures stay unreachable.
         Err(err) if is_no_server_error(&err) => Some(Vec::new()),
         Err(_) => None,
     }
 }
 
-/// Probe `host` for interactive agents running in its tmux panes, in one
-/// ssh hop: list panes, then a `ps` snapshot, separated by a marker. The
-/// pure `crate::agent::detect_agents` does the rest — identical to the
-/// local path, just fed over ssh. `None` if the host is unreachable (the
-/// section then stays "probing"); `Some(empty)` for a reachable host with
-/// no agents (→ `claude 0, codex 0`).
+/// Probe `host` for interactive agents in its tmux panes, in one ssh hop:
+/// list panes, then a `ps` snapshot, separated by a marker; the pure
+/// `crate::agent::detect_agents` does the rest (same as local, fed over
+/// ssh). `None` if unreachable (section stays "probing"); `Some(empty)`
+/// for a reachable host with no agents.
 pub fn agent_probe(host: &str) -> Option<Vec<DetectedAgent>> {
     agent_probe_with(default_runner(), host)
 }
 
 fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<DetectedAgent>> {
-    // Two commands joined by a bare `;` (a shell separator, so the remote
-    // shell runs them in sequence). `$'…'` protects the `#`/tabs in the
-    // tmux format; `2>/dev/null` swallows tmux's "no server" noise so a
-    // server-less host still yields a clean ps. The marker must be
-    // shell-safe (see `AGENT_PROBE_MARKER`).
+    // Commands joined by a bare `;` (shell separator, run in sequence).
+    // `$'…'` protects the `#`/tabs in the tmux format; `2>/dev/null`
+    // swallows tmux's "no server" noise so a server-less host still yields
+    // a clean ps. Marker must be shell-safe (see `AGENT_PROBE_MARKER`).
     let format = format!(
         "$'{}'",
         crate::infra::parser::pane::PANE_FORMAT.replace('\t', "\\t")
@@ -176,9 +158,8 @@ pub(crate) fn capture_panes(host: &str, pane_ids: &[String]) -> HashMap<String, 
 }
 
 /// Capture several remote panes in a SINGLE ssh hop, returning `pane_id ->
-/// buffer`. Used to classify remote agents' status without one hop per
-/// pane. Pane ids are deck-known `%N` handles. Empty map on failure / no
-/// panes.
+/// buffer`. Classifies remote agents' status without one hop per pane;
+/// pane ids are deck-known `%N` handles. Empty map on failure / no panes.
 fn capture_panes_with(
     runner: &dyn CommandRunner,
     host: &str,
@@ -187,10 +168,10 @@ fn capture_panes_with(
     if pane_ids.is_empty() {
         return HashMap::new();
     }
-    // One remote shell command: export PATH (so a brew-installed tmux
-    // resolves, mirroring `run_ssh`'s prefix — a `for` loop can't take a
-    // leading `PATH=…` assignment, so it goes inside as `export`), then
-    // loop the panes printing a marker line and each buffer.
+    // One remote command: `export PATH` (a `for` loop can't take a leading
+    // `PATH=…` assignment, so it goes inside; mirrors `run_ssh`'s prefix so
+    // a brew tmux resolves), then loop panes printing a marker line + each
+    // buffer.
     let ids = pane_ids
         .iter()
         .map(|p| shell_single_quote(p))
@@ -240,10 +221,9 @@ fn parse_captures(raw: &str) -> HashMap<String, String> {
 /// server up" — as opposed to ssh not reaching the host, or tmux failing
 /// for some other reason we shouldn't paper over as "no sessions".
 ///
-/// ssh reports its *own* failures (refused, timeout, auth, DNS) as exit
-/// 255; tmux exits non-zero with a recognizable "no server" message when
-/// nothing is running. We require both: a non-255 remote exit AND a
-/// stderr that names the missing server.
+/// ssh reports its *own* failures (refused/timeout/auth/DNS) as exit 255;
+/// tmux exits non-zero with a "no server" message. Require both: a
+/// non-255 remote exit AND a stderr that names the missing server.
 fn is_no_server_error(err: &CommandError) -> bool {
     let CommandError::NonZero { status, stderr, .. } = err else {
         return false;
@@ -258,19 +238,18 @@ fn is_no_server_error(err: &CommandError) -> bool {
 }
 
 /// Single-quote a value so the remote shell treats it as one literal
-/// token. ssh concatenates the remote argv into a string that the login
-/// shell re-parses (argv boundaries are NOT preserved), so any
-/// user-supplied name or path must be quoted — both for correctness
-/// (spaces) and to keep shell metacharacters from being interpreted.
-/// Embedded single quotes are escaped as `'\''`.
+/// token. ssh re-joins the argv into a string the login shell re-parses
+/// (argv boundaries lost), so user-supplied names/paths must be quoted —
+/// for spaces and to neutralize shell metacharacters. Embedded single
+/// quotes are escaped as `'\''`.
 pub(crate) fn shell_single_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// Quote a remote path, preserving a leading `~` / `~/` as the remote
-/// `$HOME`. A single-quoted `~` would NOT expand, and tmux's `-c` won't
-/// expand `~` itself, so the home prefix is emitted as `"$HOME"` (the
-/// only unquoted part) and the rest is a single-quoted literal.
+/// Quote a remote path, preserving a leading `~` / `~/` as remote `$HOME`.
+/// A single-quoted `~` won't expand and tmux's `-c` won't expand it
+/// either, so the home prefix is emitted as `"$HOME"` (the only unquoted
+/// part) and the rest single-quoted.
 fn shell_quote_remote_path(path: &str) -> String {
     if path == "~" {
         return "\"$HOME\"".to_string();
@@ -281,15 +260,14 @@ fn shell_quote_remote_path(path: &str) -> String {
     shell_single_quote(path)
 }
 
-/// Remote-shell snippet that reads Deck's recorded client tty for this
-/// connection (`host` + `marker_id`) into shell variable `C`. Prefixed to
-/// the switch/focus command; both then run tmux **only** when `C` is
-/// non-empty and pass it as an explicit `-c "$C"` target — so a missing
-/// marker (the reconnect race before the attach wrapper writes it, or an
-/// unwritable `~/.cache`) results in no tmux command at all, rather than
-/// an untargeted operation that could move another attached client.
-/// Writing `-c "$C"` directly (two shell words) avoids the `${C:+…}`
-/// zsh word-splitting trap; the guarding `[ -n "$C" ]` is portable.
+/// Remote-shell snippet reading Deck's recorded client tty for this
+/// connection (`host` + `marker_id`) into shell var `C`. Prefixed to the
+/// switch/focus command; both run tmux **only** when `C` is non-empty,
+/// passing it as an explicit `-c "$C"` target. A missing marker (reconnect
+/// race, or unwritable `~/.cache`) yields no tmux command rather than an
+/// untargeted op that could move another client. Writing `-c "$C"` as two
+/// shell words avoids the zsh `${C:+…}` word-splitting trap; the guarding
+/// `[ -n "$C" ]` is portable.
 fn read_client_tty(host: &str, marker_id: u64) -> String {
     format!(
         "C=$(cat {marker} 2>/dev/null)",
@@ -312,18 +290,16 @@ fn marker_host_part(host: &str) -> String {
 }
 
 /// Logical remote path of the per-*connection* file where Deck's attach
-/// wrapper records the tty of *its* tmux client (the `ssh -tt` pty, which
-/// is exactly tmux's `#{client_tty}`). One-shot `switch-client` calls read
-/// it back and pass it as an explicit `-c` target so they re-point Deck's
-/// own client, not whatever tmux treats as current when several clients
-/// are attached.
+/// wrapper records the tty of *its* tmux client (the `ssh -tt` pty =
+/// tmux's `#{client_tty}`). `switch-client` calls read it back as an
+/// explicit `-c` target so they re-point Deck's own client, not whatever
+/// tmux treats as current when several clients are attached.
 ///
-/// Keyed by Deck's local pid + host + a per-spawn `marker_id` — the id is
-/// what makes it *connection*-scoped, not just process-scoped: each
-/// (re)connect allocates a fresh id, so a switch/focus issued during the
-/// reconnect race reads the *new* path (absent until the wrapper writes
-/// it → empty → safe fallback) and can never pick up the previous
-/// connection's stale tty. Lives under `~/.cache` so it's disposable.
+/// Keyed by Deck's local pid + host + per-spawn `marker_id`. The id makes
+/// it connection-scoped: each (re)connect allocates a fresh id, so a
+/// switch/focus during the reconnect race reads the *new* path (absent
+/// until the wrapper writes it → empty → safe fallback) and never picks up
+/// the previous connection's stale tty. Lives under `~/.cache` (disposable).
 fn client_marker_path(host: &str, marker_id: u64) -> String {
     let pid = std::process::id();
     format!(
@@ -341,10 +317,9 @@ pub(crate) fn client_marker_token(host: &str, marker_id: u64) -> String {
 
 /// Unquoted glob token matching *all* of this Deck process's marker files
 /// for `host` (any `marker_id`). The attach wrapper `rm`s these before
-/// writing the fresh one, so stale markers from prior connections don't
-/// accumulate. `$HOME` is expanded by the remote shell; the rest is
-/// shell-safe (digits + sanitized host), and the trailing `*` must stay
-/// unquoted to glob.
+/// writing the fresh one so stale markers don't accumulate. `$HOME` is
+/// shell-expanded; the rest is shell-safe (digits + sanitized host); the
+/// trailing `*` must stay unquoted to glob.
 pub(crate) fn client_marker_glob_token(host: &str) -> String {
     let pid = std::process::id();
     format!(
@@ -359,31 +334,28 @@ pub(crate) fn client_cache_dir_token() -> String {
     shell_quote_remote_path("~/.cache/deck")
 }
 
-/// Confirm — out of band from the PTY stream — that this connection's
-/// client-tty marker actually got written, so switch/focus only commit
-/// once the `-c` target they need really exists. Returns `true` iff the
-/// marker file is present and non-empty.
+/// Confirm out of band (not via the PTY stream) that this connection's
+/// client-tty marker got written, so switch/focus commit only once their
+/// `-c` target exists. Returns `true` iff the marker file is present and
+/// non-empty.
 ///
-/// Readiness is deliberately NOT inferred from PTY output: that stream can
-/// carry shell banners / forced-command noise / arbitrary chunking before
-/// (or instead of) any marker, so scanning it for a sentinel both misses
-/// real markers and accepts absent ones. A dedicated `[ -s marker ]` check
-/// answers exactly the question that matters. The brief connect race
-/// (the attach prelude writes the marker just after `ssh` connects) is
-/// covered by a couple of in-shell retries — the wait happens remotely in
-/// one bounded ssh call, so a stalled host is capped by the ssh timeout,
-/// not app-side polling.
+/// Not inferred from PTY output: that stream can carry banners /
+/// forced-command noise / arbitrary chunking before or instead of a
+/// marker, so scanning for a sentinel both misses real markers and accepts
+/// absent ones. A `[ -s marker ]` check answers exactly the question. The
+/// connect race (marker written just after `ssh` connects) is covered by a
+/// couple of in-shell retries — the wait runs remotely in one bounded ssh
+/// call, capped by the ssh timeout, not app-side polling.
 pub fn wait_for_client_marker(host: &str, marker_id: u64) -> bool {
     wait_for_client_marker_with(default_runner(), host, marker_id)
 }
 
 fn wait_for_client_marker_with(runner: &dyn CommandRunner, host: &str, marker_id: u64) -> bool {
     let marker = client_marker_token(host, marker_id);
-    // Check immediately, then retry twice at 1s steps (integer `sleep` for
-    // POSIX portability). The marker is written ~instantly by the PTY
-    // prelude so the first check usually wins; the retries cover the race.
-    // Starts with `[` (a simple command) so run_ssh's `PATH=…` prefix
-    // attaches cleanly. Total wait stays well under REMOTE_TIMEOUT.
+    // Check now, then retry twice at 1s steps (integer `sleep` for POSIX).
+    // The marker is written ~instantly so the first check usually wins; the
+    // retries cover the race. Starts with `[` (a simple command) so
+    // run_ssh's `PATH=…` prefix attaches cleanly; total wait < REMOTE_TIMEOUT.
     let cmd = format!(
         "[ -s {marker} ] || {{ sleep 1; [ -s {marker} ]; }} || {{ sleep 1; [ -s {marker} ]; }}"
     );
@@ -404,10 +376,9 @@ pub fn switch_client(host: &str, marker_id: u64, session: &str) {
 
 fn switch_client_with(runner: &dyn CommandRunner, host: &str, marker_id: u64, session: &str) {
     let target = shell_single_quote(&exact_target(session));
-    // No-op unless we can target Deck's OWN client: switch only when the
-    // recorded tty is known. An untargeted `switch-client` could re-point
-    // another attached client, so when the marker is missing we do nothing
-    // and let a later call (after the marker lands) switch.
+    // Switch only when the recorded tty is known, so we target Deck's OWN
+    // client. An untargeted `switch-client` could re-point another client,
+    // so a missing marker no-ops and a later call (after it lands) switches.
     let cmd = format!(
         "{read_c} ; [ -n \"$C\" ] && tmux switch-client -c \"$C\" -t {target}",
         read_c = read_client_tty(host, marker_id),
@@ -416,9 +387,9 @@ fn switch_client_with(runner: &dyn CommandRunner, host: &str, marker_id: u64, se
 }
 
 /// Test seam: run the unified focus rule over the remote (ssh) transport.
-/// Production focus goes through [`crate::focus::run_focus`]; this thin
-/// wrapper exists so the remote-transport tests below can drive the shared
-/// rule with a `FakeRunner` and assert the emitted ssh command's shape.
+/// Production focus goes through [`crate::focus::run_focus`]; this wrapper
+/// lets the remote-transport tests drive the shared rule with a
+/// `FakeRunner` and assert the emitted ssh command's shape.
 #[cfg(test)]
 fn focus_pane_with(
     runner: &dyn CommandRunner,
@@ -451,11 +422,10 @@ fn active_pane_with(runner: &dyn CommandRunner, host: &str, marker_id: u64) -> O
     )
 }
 
-/// Kill a session on the remote tmux server. The `(host, name)` tuple
-/// uniquely identifies the session — within a single tmux server
-/// `name` is unique by tmux's own constraint, and `host` picks the
-/// server. Errors are swallowed; the next refresh will surface the
-/// session's continued existence (or absence) regardless.
+/// Kill a session on the remote tmux server. `(host, name)` uniquely
+/// identifies it: `name` is unique within a server (tmux's constraint),
+/// `host` picks the server. Errors are swallowed; the next refresh
+/// surfaces the session's continued existence (or absence).
 pub fn kill_session(host: &str, name: &str) {
     let runner = default_runner();
     let target = shell_single_quote(&exact_target(name));
@@ -487,11 +457,10 @@ pub fn rename_session(host: &str, old_name: &str, new_name: &str) {
 }
 
 /// Persist the display order of `host`'s sessions onto the remote tmux
-/// server via the `@deck_order` user option (0-based rank), mirroring the
-/// local `tmux::persist_session_order`. Survives a deck restart/reconnect
-/// as long as the remote tmux server lives, with no config write. `order`
-/// lists the host's session names in their new display order. Best-effort,
-/// blocking ssh — runs on an explicit reorder the user is waiting on.
+/// server via the `@deck_order` user option (0-based rank), mirroring local
+/// `tmux::persist_session_order`. Survives a deck restart/reconnect as long
+/// as the server lives, no config write. `order` lists the session names in
+/// new display order. Best-effort, blocking ssh on an explicit reorder.
 pub fn persist_session_order(host: &str, order: &[String]) {
     persist_session_order_with(default_runner(), host, order)
 }
@@ -503,8 +472,7 @@ fn persist_session_order_with(runner: &dyn CommandRunner, host: &str, order: &[S
     // One ssh hop, one tmux invocation with `;`-separated set-option
     // commands. The remote shell re-parses the joined argv, so the
     // separator is single-quoted (`';'`) to reach tmux as its command
-    // separator rather than splitting the shell command; names are
-    // single-quoted the same way.
+    // separator, not split the shell command; names are quoted likewise.
     let mut argv: Vec<String> = vec!["tmux".to_string()];
     for (rank, name) in order.iter().enumerate() {
         if rank > 0 {
@@ -520,11 +488,10 @@ fn persist_session_order_with(runner: &dyn CommandRunner, host: &str, order: &[S
     let _ = run_ssh(runner, host, &argv_ref);
 }
 
-/// Create a detached session `name` on the remote tmux server, starting
-/// in `dir`. `dir` may contain `~` (expanded by the remote shell before
-/// tmux sees it). Returns whether the create succeeded so the caller can
-/// decide whether to switch to it. Blocking — runs on an explicit user
-/// action and the caller waits on the result.
+/// Create a detached session `name` on the remote tmux server in `dir`
+/// (`dir` may contain `~`, expanded by the remote shell). Returns whether
+/// the create succeeded so the caller can decide whether to switch to it.
+/// Blocking — runs on an explicit user action.
 pub fn new_session(host: &str, name: &str, dir: &str) -> bool {
     new_session_with(default_runner(), host, name, dir)
 }
@@ -548,15 +515,14 @@ fn new_session_with(runner: &dyn CommandRunner, host: &str, name: &str, dir: &st
     .is_ok()
 }
 
-/// List subdirectories under `path` on `host` for the remote new-session
-/// working-dir browser. `path` may contain `~`; the remote shell expands
-/// it. The returned `Option<String>` is an error message, `None` on
-/// success.
+/// List subdirectories under `path` on `host` for the new-session
+/// working-dir browser. `path` may contain `~` (remote shell expands it).
+/// The returned `Option<String>` is an error message, `None` on success.
 ///
-/// Mirrors the local `LocalControl::list_dir`: directories only, sorted,
-/// with dotfiles included (the picker's pure filter hides them unless the
-/// typed leaf starts with `.`). Blocking, but the host's ControlMaster
-/// connection is already warm so each call is a fast multiplexed hop.
+/// Mirrors local `LocalControl::list_dir`: directories only, sorted,
+/// dotfiles included (the picker's pure filter hides them unless the typed
+/// leaf starts with `.`). Blocking, but the warm ControlMaster connection
+/// makes each call a fast multiplexed hop.
 pub fn list_dir(host: &str, path: &str) -> (Vec<String>, Option<String>) {
     list_dir_with(default_runner(), host, path)
 }
@@ -566,10 +532,10 @@ fn list_dir_with(
     host: &str,
     path: &str,
 ) -> (Vec<String>, Option<String>) {
-    // `-1` one per line, `-p` suffixes directories with `/` (so we keep
-    // only those), `-A` includes dotfiles but not `.`/`..`. `--` guards a
-    // path that begins with `-`. The path is shell-quoted (preserving a
-    // leading `~`) so spaces / metacharacters in it stay literal.
+    // `-1` one per line, `-p` suffixes dirs with `/` (keep only those),
+    // `-A` includes dotfiles but not `.`/`..`. `--` guards a path starting
+    // with `-`. Path is shell-quoted (keeps leading `~`) so spaces /
+    // metacharacters stay literal.
     let path = shell_quote_remote_path(path);
     match run_ssh(runner, host, &["ls", "-1pA", "--", path.as_str()]) {
         Ok(raw) => {
@@ -749,9 +715,9 @@ mod tests {
         let calls = runner.calls();
         assert_eq!(calls.len(), 1, "one ssh hop");
         // Pane id and session single-quoted; `;` quoted so tmux (not the
-        // remote shell) treats it as its command separator. Deck always
-        // selects the exact window/pane, then `switch-client -c "$C"` scopes
-        // the client move to Deck's own client (a co-client follows along).
+        // shell) reads it as its command separator. Deck selects the exact
+        // window/pane, then `switch-client -c "$C"` scopes the move to its
+        // own client.
         assert!(
             calls[0].contains(
                 "select-window -t '%240' ';' select-pane -t '%240' ';' switch-client -c \"$C\" -t '=work'"
@@ -869,10 +835,9 @@ mod tests {
     #[test]
     fn focus_pane_fails_when_marker_missing() {
         // No recorded client tty (reconnect race / unwritable cache): the
-        // remote script bails (`[ -z "$C" ] && exit 0`) before any tmux
-        // command and echoes no marker, so focus_pane reports `Failed` and
-        // the caller commits nothing — never an untargeted select/switch.
-        // Empty stdout models that bail.
+        // remote script bails (`[ -z "$C" ] && exit 0`), echoing no marker,
+        // so focus_pane reports `Failed` and the caller commits nothing —
+        // never an untargeted select/switch. Empty stdout models that bail.
         let runner = FakeRunner::new(ok("")).with_other_stdout("");
         assert_eq!(
             focus_pane_with(&runner, "box", 7, "work", "%240"),

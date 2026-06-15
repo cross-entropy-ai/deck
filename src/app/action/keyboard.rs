@@ -8,11 +8,9 @@ use super::{
 };
 
 pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
-    // One modal source of truth (`active_modal`), consulted before the
-    // global-keybinding lookup: an open overlay captures *every* key, so a
-    // global hotkey can't fire behind help / confirm-kill / the settings
-    // input boxes (the keyboard half of bug #7). Each variant routes to its
-    // existing per-modal handler.
+    // Check `active_modal` before the global-keybinding lookup: an open overlay
+    // captures every key so a global hotkey can't fire behind it (keyboard half
+    // of bug #7). Each variant routes to its per-modal handler.
     if let Some(modal) = state.active_modal() {
         return modal_key_to_action(modal, key, state);
     }

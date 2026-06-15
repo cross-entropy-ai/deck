@@ -1,9 +1,7 @@
-//! Small shared render helpers for the popup/overlay UIs, grouped by
-//! concern: popup sizing/framing (`popup`), single-line text fields
-//! (`textarea`), label+field form rows (`field`), the shared filter picker
-//! (`picker`), list/row rendering (`list`), and scrollable text with
-//! scrollbars (`scroll`). Centralizing these keeps popups consistent
-//! (rounded corners, shared windowing).
+//! Small shared render helpers for popup/overlay UIs: popup sizing/framing
+//! (`popup`), text fields (`textarea`), label+field rows (`field`), the filter
+//! picker (`picker`), list/row rendering (`list`), and scrollable text
+//! (`scroll`). Centralizing keeps popups consistent (rounded corners, windowing).
 
 mod field;
 mod list;

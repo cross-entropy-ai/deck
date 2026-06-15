@@ -9,10 +9,10 @@ use crossterm::execute;
 
 /// Terminal-mode guard for the TUI lifetime.
 ///
-/// Entering the TUI enables mouse capture, bracketed paste, focus events,
-/// and keyboard enhancement flags. Dropping the guard best-effort restores
-/// those modes so early returns from the app loop don't leave the user's
-/// terminal in deck's interactive state.
+/// Entering the TUI enables mouse capture, bracketed paste, focus events, and
+/// keyboard enhancement flags. Dropping the guard best-effort restores them so
+/// early returns from the app loop don't leave the terminal in deck's
+/// interactive state.
 pub struct TerminalGuard;
 
 impl TerminalGuard {

@@ -3,29 +3,26 @@
 //!
 //! `Worker` fixes the lifecycle policy in one place:
 //!
-//! - **Drain, never block.** The UI thread reads results with
-//!   [`Worker::try_recv`] — a non-blocking `mpsc::try_recv`.
+//! - **Drain, never block.** The UI thread reads results with the
+//!   non-blocking [`Worker::try_recv`].
 //! - **Drop signals and detaches.** [`Worker`]'s `Drop` flips a shared
-//!   "cancelled" flag and drops the result receiver, then **returns
-//!   immediately**. It never `join()`s the worker thread, so tearing a
-//!   worker down can never stall the UI thread. The detached thread
-//!   observes the dropped receiver (its `send` errors) or polls
+//!   "cancelled" flag, drops the result receiver, and returns immediately —
+//!   never `join()`s, so teardown can't stall the UI thread. The detached
+//!   thread sees the dropped receiver (its `send` errors) or polls
 //!   [`Cancel::is_cancelled`] and exits on its own.
-//! - **Cooperative cancel + timeout live in the closure.** The harness
-//!   hands the job a [`Cancel`] handle; long jobs that own a child
-//!   process (e.g. summary generation) poll it and a deadline, and kill
-//!   the child when either trips. The harness deliberately does *not*
-//!   try to kill arbitrary work itself — only the job knows what cleanup
-//!   (killing a subprocess, aborting an ssh call) is correct.
+//! - **Cooperative cancel + timeout live in the closure.** The harness hands
+//!   the job a [`Cancel`] handle; long jobs owning a child process (e.g.
+//!   summary generation) poll it and a deadline and kill the child when either
+//!   trips. The harness doesn't kill arbitrary work itself — only the job
+//!   knows the right cleanup (kill a subprocess, abort an ssh call).
 //!
-//! Two constructors cover the cases deck needs:
+//! Two constructors cover deck's cases:
 //!
-//! - [`Worker::spawn_oneshot`] — run a closure once, deliver one `Res`.
-//!   Fits the summary generation and remote-focus one-shots.
-//! - [`Worker::spawn_service`] — a request/response loop: the closure
-//!   handles each `Req` and may emit `Res` values. Fits the update
-//!   checker (Check requests, `UpdateResult` replies; shutdown is just the
-//!   request channel dropping when the `Worker` is dropped).
+//! - [`Worker::spawn_oneshot`] — run a closure once, deliver one `Res` (summary
+//!   generation, remote-focus one-shots).
+//! - [`Worker::spawn_service`] — request/response loop: the closure handles
+//!   each `Req` and may emit `Res` values (the update checker; shutdown is the
+//!   request channel dropping when the `Worker` drops).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -67,9 +64,9 @@ pub struct Worker<Req, Res> {
 
 impl<Res: Send + 'static> Worker<(), Res> {
     /// Spawn a thread that runs `job` once and delivers its result via
-    /// [`Worker::try_recv`]. `job` receives a [`Cancel`] handle it should
-    /// poll if it can be interrupted (e.g. between steps, or while
-    /// waiting on a child process). The thread name aids debugging.
+    /// [`Worker::try_recv`]. `job` gets a [`Cancel`] handle to poll if it can
+    /// be interrupted (between steps, or while waiting on a child process). The
+    /// thread name aids debugging.
     pub fn spawn_oneshot<F>(name: impl Into<String>, job: F) -> Self
     where
         F: FnOnce(Cancel) -> Res + Send + 'static,
@@ -92,10 +89,10 @@ impl<Res: Send + 'static> Worker<(), Res> {
 }
 
 impl<Req: Send + 'static, Res: Send + 'static> Worker<Req, Res> {
-    /// Spawn a request/response service thread. `handle` is called once
-    /// per received `Req` and pushes any replies through the supplied
-    /// `Sender<Res>`; returning `false` ends the loop (e.g. on a Shutdown
-    /// request). The loop also ends when the request channel is dropped.
+    /// Spawn a request/response service thread. `handle` is called once per
+    /// received `Req` and pushes replies through the `Sender<Res>`; returning
+    /// `false` ends the loop (e.g. on Shutdown). The loop also ends when the
+    /// request channel is dropped.
     pub fn spawn_service<F>(name: impl Into<String>, mut handle: F) -> Self
     where
         F: FnMut(Req, &Sender<Res>) -> bool + Send + 'static,
@@ -133,10 +130,9 @@ impl<Req: Send + 'static, Res: Send + 'static> Worker<Req, Res> {
 }
 
 impl<Req, Res> Drop for Worker<Req, Res> {
-    /// Non-blocking teardown: flip the cancel flag and drop the channels
-    /// (the request `Sender` ends a service loop's `recv`; the result
-    /// `Receiver` makes a one-shot's final `send` error). **Never joins**
-    /// — see the module docs.
+    /// Non-blocking teardown: flip the cancel flag and drop the channels (the
+    /// request `Sender` ends a service loop's `recv`; the result `Receiver`
+    /// makes a one-shot's final `send` error). **Never joins** — see module docs.
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
     }

@@ -5,10 +5,9 @@ use std::time::{Duration, Instant};
 
 use crate::tmux;
 
-/// How long we wait for the old deck to quit after SIGTERM before
-/// falling back to SIGKILL. The signal handler flips a flag the event
-/// loop reads on its next ~16ms tick, so the old instance should exit
-/// well under this budget in the common case.
+/// How long we wait for the old deck to quit after SIGTERM before falling back
+/// to SIGKILL. The handler flips a flag the event loop reads on its next ~16ms
+/// tick, so the old instance normally exits well under this budget.
 const GRACEFUL_KILL_TIMEOUT: Duration = Duration::from_secs(2);
 const GRACEFUL_KILL_POLL: Duration = Duration::from_millis(50);
 
@@ -44,10 +43,9 @@ impl InstanceGuard {
         }
     }
 
-    /// Like [`acquire_for_current_process`], but on a contention error
-    /// (another instance running, or a force-kill denied) it prints the
-    /// user-facing diagnostic and exits the process. Genuine I/O errors are
-    /// returned for the caller to propagate.
+    /// Like [`acquire_for_current_process`], but on a contention error (another
+    /// instance running, or force-kill denied) it prints the diagnostic and
+    /// exits. Genuine I/O errors are returned for the caller to propagate.
     ///
     /// [`acquire_for_current_process`]: Self::acquire_for_current_process
     pub fn acquire_for_current_process_or_exit(force: bool) -> io::Result<Self> {
@@ -175,12 +173,10 @@ pub enum KillError {
 }
 
 fn real_kill(pid: u32) -> Result<(), KillError> {
-    // Ask politely first — the target deck installs a SIGTERM handler
-    // (see `infra::shutdown`) that flips a flag its event loop picks up
-    // and translates into the normal Action::Quit shutdown (terminal
-    // state restored, lock file removed via Drop). Only if the old
-    // process doesn't go away within the timeout do we fall back to
-    // SIGKILL as a last resort.
+    // Ask politely first: the target deck's SIGTERM handler (see
+    // `infra::shutdown`) flips a flag its event loop turns into the normal
+    // Action::Quit shutdown (terminal restored, lock removed via Drop). Fall
+    // back to SIGKILL only if it doesn't exit within the timeout.
     match send_signal(pid, libc::SIGTERM) {
         Ok(()) => {}
         Err(KillError::NoSuchProcess) => return Ok(()),

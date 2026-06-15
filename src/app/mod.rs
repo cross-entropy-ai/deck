@@ -37,10 +37,9 @@ fn render_min_interval(frame_rate_limit: u16) -> Duration {
     Duration::from_micros(1_000_000 / u64::from(fps))
 }
 
-/// A PTY-backed terminal view in the main pane. The local `tmux attach`,
-/// each remote `ssh -t host tmux attach`, plugin commands, and the
-/// upgrade pane are all modeled with this struct — the render / input /
-/// resize code doesn't care which is which.
+/// A PTY-backed terminal view in the main pane. The local `tmux attach`, each
+/// remote `ssh -t host tmux attach`, plugin commands, and the upgrade pane are
+/// all this struct — the render / input / resize code doesn't care which.
 pub(super) struct TerminalPane {
     pub pty: Pty,
     pub parser: vt100::Parser,
@@ -64,11 +63,10 @@ pub struct App {
     state: AppState,
     /// The always-present local tmux PTY.
     local_terminal: TerminalPane,
-    /// The remote-connection state machine: one connection per configured
-    /// remote host (status + attach PTY), the background PTY spawner, which
-    /// host (if any) drives the main pane, the deferred-switch and
-    /// switch-verify ledgers, and the per-host spawn-generation counter.
-    /// See `app/ssh/remote_conn.rs`.
+    /// The remote-connection state machine: one connection per configured host
+    /// (status + attach PTY), the background PTY spawner, which host drives the
+    /// main pane, the deferred-switch/switch-verify ledgers, and the per-host
+    /// spawn-generation counter. See `app/ssh/remote_conn.rs`.
     remote: RemoteConnManager,
     warning_state: Option<WarningState>,
     plugin_instances: Vec<Option<TerminalPane>>,
@@ -82,9 +80,9 @@ pub struct App {
     upgrade_instance: Option<TerminalPane>,
     last_update_request: Option<Instant>,
     /// Last config-file mtime deck itself wrote or the watcher accepted.
-    /// `save_config` refreshes this after writing so the ~2s config watcher
-    /// in `run` doesn't treat deck's own save as an external edit and fire a
-    /// self-reload. `None` = file absent / mtime unreadable.
+    /// `save_config` refreshes it after writing so the ~2s config watcher in
+    /// `run` doesn't treat deck's own save as an external edit and self-reload.
+    /// `None` = file absent / mtime unreadable.
     config_mtime_seen: Option<std::time::SystemTime>,
     /// Set to true after a session switch so the next render call
     /// wipes the host terminal before drawing — clears any residue the
@@ -94,22 +92,22 @@ pub struct App {
     port_forward_tx: std::sync::mpsc::Sender<crate::app::ssh::port_forward_task::Op>,
     /// Results coming back from the port-forward worker.
     port_forward_rx: std::sync::mpsc::Receiver<crate::app::ssh::port_forward_task::OpResult>,
-    /// Completion signals from remote agent-pane focus threads. Remote
-    /// focus runs off-thread (ssh can stall), so `active_agent` is only
-    /// committed when a `true` outcome lands here — see
-    /// `switch_to_agent_pane` / `apply_focus_outcome`.
+    /// Completion signals from remote agent-pane focus threads. Remote focus
+    /// runs off-thread (ssh can stall), so `active_agent` commits only when a
+    /// `true` outcome lands here — see `switch_to_agent_pane` /
+    /// `apply_focus_outcome`.
     focus_tx: std::sync::mpsc::Sender<FocusOutcome>,
     focus_rx: std::sync::mpsc::Receiver<FocusOutcome>,
     /// The in-flight Agents-tab summary generation, if any. A one-shot
-    /// [`Worker`](crate::worker::Worker) carrying `Ok(text)` on success or
-    /// `Err(reason)` on failure (no agents, `claude` missing, non-zero
-    /// exit, timeout, cancel). Dropping it (e.g. on cancel) signals the
-    /// job's `Cancel` flag and detaches — `run_claude` kills the child.
+    /// [`Worker`](crate::worker::Worker) carrying `Ok(text)` or `Err(reason)`
+    /// (no agents, `claude` missing, non-zero exit, timeout, cancel). Dropping
+    /// it signals the job's `Cancel` flag and detaches — `run_claude` kills the
+    /// child.
     summary_worker: Option<crate::worker::Worker<(), Result<String, String>>>,
     /// Monotonic id stamped on each focus-affecting action (agent click,
-    /// session switch). A remote focus worker captures the id at spawn;
-    /// its outcome is committed only if no newer action has bumped this
-    /// since — so a slow ssh focus can't clobber a later user action.
+    /// session switch). A remote focus worker captures it at spawn; its outcome
+    /// commits only if no newer action bumped this since, so a slow ssh focus
+    /// can't clobber a later user action.
     focus_seq: u64,
     /// Active-pane probe results (the pane Deck's main view shows). Drained
     /// each tick to steer the Agents-tab row highlight onto the active pane —
@@ -119,15 +117,15 @@ pub struct App {
     /// True while an active-pane probe thread is outstanding. Single-flights
     /// the periodic probe so a slow ssh roundtrip can't pile up threads.
     active_pane_in_flight: bool,
-    /// The tmux session deck is running inside (`$TMUX_PANE` → session), or
-    /// `None` when not under tmux. Switching the main pane to it would nest
-    /// tmux→deck→tmux, so that switch is blocked with a warning instead.
-    /// Resolved once at startup.
+    /// The tmux session deck runs inside (`$TMUX_PANE` → session), or `None`
+    /// when not under tmux. Switching the main pane to it would nest
+    /// tmux→deck→tmux, so that switch is blocked with a warning. Resolved once
+    /// at startup.
     own_session: Option<String>,
-    /// Set when selecting a synthetic remote placeholder. The next periodic
-    /// refresh tick is skipped so landing on "(no sessions)" doesn't
-    /// immediately force a global session refresh; explicit refresh-causing
-    /// actions still run, and the following periodic tick resumes normally.
+    /// Set when selecting a synthetic remote placeholder: skip the next periodic
+    /// refresh tick so landing on "(no sessions)" doesn't force a global
+    /// refresh. Explicit refresh-causing actions still run, and the following
+    /// periodic tick resumes normally.
     pub(super) suppress_next_periodic_refresh: bool,
 }
 
@@ -140,16 +138,15 @@ pub(super) struct FocusOutcome {
     pub result: crate::tmux::PaneFocus,
     /// `focus_seq` at spawn time — stale if it no longer matches.
     pub seq: u64,
-    /// The target connection's `client_marker_id` at spawn time. If the
-    /// host has since reconnected (new id) or dropped, the outcome is from
-    /// an older PTY generation and must not commit — see
-    /// `apply_focus_outcome`.
+    /// The target connection's `client_marker_id` at spawn time. If the host
+    /// reconnected (new id) or dropped, the outcome is from an older PTY
+    /// generation and must not commit — see `apply_focus_outcome`.
     pub marker_id: u64,
 }
 
-/// Result of an active-pane probe, sent back from the probe thread to the
-/// event loop. Carries the pane Deck's main view shows so the Agents-tab row
-/// highlight can follow the *real* active pane (see `probe_active_pane` /
+/// Result of an active-pane probe, sent from the probe thread to the event
+/// loop. Carries the pane Deck's main view shows so the Agents-tab row
+/// highlight follows the *real* active pane (see `probe_active_pane` /
 /// `apply_active_pane_outcome`).
 pub(super) struct ActivePaneOutcome {
     /// The displayed host at spawn (`None` = local). Dropped if the user
@@ -228,10 +225,10 @@ impl App {
         let pty_size = pty::pane_size(pty_rows, pty_cols);
         let remote = RemoteConnManager::start(&remotes, pty_size);
 
-        // Seed one placeholder per remote host so the sidebar shows a
-        // `@host` group with a "(connecting...)" row from the very
-        // first frame — no waiting for the slow ssh+tmux roundtrip on
-        // startup. The first remote refresh update overwrites these.
+        // Seed one placeholder per remote host so the sidebar shows a `@host`
+        // group with a "(connecting...)" row from the first frame, without
+        // waiting for the slow ssh+tmux roundtrip. The first remote refresh
+        // update overwrites these.
         state.entries = remotes
             .iter()
             .map(|host| crate::state::SessionEntry {
@@ -294,10 +291,9 @@ impl App {
         Ok(app)
     }
 
-    /// The terminal pane that owns the main view: local by default, or
-    /// the remote pane for the active host. Falls back to local if the
-    /// active host's pane has been dropped (e.g. connection died and
-    /// hasn't been re-spawned yet).
+    /// The terminal pane that owns the main view: local by default, or the
+    /// remote pane for the active host. Falls back to local if the active host's
+    /// pane has been dropped (e.g. connection died, not yet re-spawned).
     pub(super) fn active_terminal(&self) -> &TerminalPane {
         match self.remote.active() {
             Some(host) => self
@@ -332,10 +328,9 @@ impl App {
         }
     }
 
-    /// Write `bytes` to the PTY backing the active main view: the
-    /// foreground plugin, the upgrade pane, or the attached terminal.
-    /// `Settings` has no PTY, so it's a no-op there. Shared by key
-    /// forwarding, mouse forwarding, and bracketed paste.
+    /// Write `bytes` to the PTY backing the active main view: foreground plugin,
+    /// upgrade pane, or attached terminal. `Settings` has no PTY, so it's a
+    /// no-op there. Shared by key forwarding, mouse forwarding, bracketed paste.
     pub(super) fn write_to_active_pty(&mut self, bytes: &[u8]) {
         match self.state.main_view {
             MainView::Plugin(idx) => {
@@ -355,19 +350,15 @@ impl App {
         }
     }
 
-    /// The view-side half of detaching a host, shared by the dead-host reap
-    /// and offboard (D7). The connection-state half (drop pane / clear
-    /// active / clear pending) is done by the manager (`mark_died` /
-    /// `offboard`); this runs the `AppState`-touching choreography:
+    /// The view-side half of detaching a host (the connection-state half is the
+    /// manager's `mark_died`/`offboard`), shared by the dead-host reap and
+    /// offboard (D7). Runs the `AppState`-touching choreography:
     ///
     /// - if the host was the active pane (`detach.was_active`), force a full
-    ///   redraw so the snap back to local doesn't leave the dead host's
-    ///   frozen frame on screen;
+    ///   redraw so the snap back to local drops the dead host's frozen frame;
     /// - bump `focus_seq` so a slow in-flight `deck-focus-*` worker's late
-    ///   completion is treated as stale (a reconnect can't let it silently
-    ///   re-grab focus);
-    /// - drop the agent highlight if it belonged to this host (a gone host
-    ///   shouldn't keep a footer line marked active).
+    ///   completion is stale (a reconnect can't silently re-grab focus);
+    /// - drop the agent highlight if it belonged to this host.
     pub(super) fn detach_host_view(&mut self, host: &str, detach: ssh::remote_conn::DetachOutcome) {
         if detach.was_active {
             self.needs_full_redraw = true;

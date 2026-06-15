@@ -1,55 +1,47 @@
 //! The remote-connection state machine.
 //!
-//! deck keeps one long-lived `ssh -tt host tmux attach` PTY per configured
-//! remote host, ready to swap into the main pane when the user selects a
-//! remote session. That PTY arrives asynchronously (the spawn can take a
-//! second or two), can drop and need rebuilding, gates switches on a
-//! client-tty marker, and must survive the host being removed and re-added
-//! mid-flight. `RemoteConnManager` owns all of that state — the conn map,
-//! the spawner, which host is active, the deferred switch, the
-//! switch-verify ledger, and a per-host spawn-generation counter — so the
-//! `App` loop and dispatch deal with one field instead of five.
+//! deck keeps one long-lived `ssh -tt host tmux attach` PTY per remote host,
+//! ready to swap into the main pane on selection. That PTY arrives
+//! asynchronously, can drop and need rebuilding, gates switches on a
+//! client-tty marker, and must survive a host removed-then-re-added
+//! mid-flight. `RemoteConnManager` owns all that state (conn map, spawner,
+//! active host, deferred switch, switch-verify ledger, per-host spawn
+//! generation) so `App` deals with one field instead of five.
 //!
 //! ## Concurrency invariants
 //!
-//! - **One data type for local and remote** is *not* this module's job:
-//!   everything here is keyed by a real remote `host: String`. The
-//!   local/remote split lives above, in `App`.
-//! - **Spawn generation (bug #20).** Each host carries a monotonically
-//!   increasing generation, bumped on offboard and on each spawn/respawn.
-//!   Every `RemoteSpawnEvent` is stamped with the generation it was spawned
-//!   under; [`reconcile_spawn_event`] drops any event whose generation no
-//!   longer matches the host's current one. This closes the
-//!   remove→re-add race: a stale `Spawned`/`Failed` from a spawn started
-//!   before offboard can't clobber a freshly re-added host's connection.
+//! - **Keying.** Everything here is keyed by a real remote `host: String`;
+//!   the local/remote split lives above, in `App`.
+//! - **Spawn generation (bug #20).** Each host has a monotonic generation,
+//!   bumped on offboard and each spawn/respawn. Every `RemoteSpawnEvent` is
+//!   stamped with its spawn generation; [`reconcile_spawn_event`] drops any
+//!   event whose generation no longer matches the host's current one. This
+//!   closes the remove→re-add race: a stale `Spawned`/`Failed` from a spawn
+//!   started before offboard can't clobber a re-added host's connection.
 //!
-//!   Two invariants make this sound, and *both* must hold — a future
-//!   refactor that breaks either silently reintroduces bug #20:
+//!   Two invariants make this sound — both must hold, or bug #20 returns:
 //!   1. [`reconcile_spawn_event`] decides staleness **purely from the
-//!      generation table**, never from `state.config_remotes`. So whether a
-//!      removal path bumps the generation before or after it mutates
-//!      `config_remotes` doesn't matter (the `RemoveRemoteFromList` reducer
-//!      retains `config_remotes` first and offboards later, via the effect;
-//!      the reload diff offboards first). Don't make reconcile read
-//!      `config_remotes` — keying staleness off config gets the ordering
-//!      subtly wrong.
+//!      generation table**, never from `state.config_remotes`. So a removal
+//!      path may bump the generation before or after mutating
+//!      `config_remotes` (the `RemoveRemoteFromList` reducer retains config
+//!      first and offboards later; the reload diff offboards first). Don't
+//!      make reconcile read `config_remotes` — keying off config gets the
+//!      ordering subtly wrong.
 //!   2. Spawn events are drained only at the **top** of the run loop, never
-//!      mid-`dispatch`. So a removal path's "mutate `config_remotes` →
-//!      offboard (bump generation)" completes atomically w.r.t.
-//!      reconciliation: by the next drain the generation has already moved.
-//!      Don't drain spawn events from inside dispatch.
+//!      mid-`dispatch`. So "mutate `config_remotes` → offboard (bump
+//!      generation)" completes atomically w.r.t. reconciliation: by the next
+//!      drain the generation has moved. Don't drain inside dispatch.
 //! - **Marker gating.** `Spawned` fires the instant `ssh` connects, before
-//!   the remote `tty > marker; tmux attach` prelude runs, so for a brief
-//!   window the marker is absent and a marker-gated switch/focus would
-//!   silently no-op. Switches are held in `pending_switch` until the
-//!   `MarkerReady` event confirms the marker, then fired.
-//! - **Marker retry (bug #11).** `MarkerReady` is best-effort and fires at
-//!   most once per spawn. On a cold/slow shell `wait_for_client_marker` can
-//!   lose its race, leaving `marker_ready` false forever — every switch
-//!   would park in `pending_switch` and never fire, with no UI signal.
-//!   [`marker_retry_decision`] drives a bounded backoff: re-arm the marker
-//!   wait a few times, then surface a recoverable "stuck" state so the
-//!   divider's reconnect button is the obvious next step.
+//!   the remote `tty > marker; tmux attach` prelude runs, so briefly the
+//!   marker is absent and a marker-gated switch/focus would silently no-op.
+//!   Switches are held in `pending_switch` until `MarkerReady` confirms it.
+//! - **Marker retry (bug #11).** `MarkerReady` is best-effort, once per
+//!   spawn. On a cold/slow shell `wait_for_client_marker` can lose its race,
+//!   leaving `marker_ready` false forever — every switch parks in
+//!   `pending_switch` and never fires, with no UI signal.
+//!   [`marker_retry_decision`] drives a bounded backoff: re-arm a few times,
+//!   then surface a recoverable "stuck" state pointing at the divider's
+//!   reconnect button.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -57,10 +49,9 @@ use std::time::{Duration, Instant};
 use super::remote_spawn::{RemoteSpawnEvent, RemoteSpawner};
 use crate::app::TerminalPane;
 
-/// Liveness of the persistent `ssh -tt host tmux attach` PTY for a
-/// configured remote host. This is distinct from whether `list_sessions`
-/// over a one-shot ssh call succeeds — those use independent SSH
-/// channels (though both ride the same ControlMaster).
+/// Liveness of the persistent `ssh -tt host tmux attach` PTY for a remote
+/// host. Distinct from whether a one-shot `list_sessions` ssh call succeeds —
+/// those use independent SSH channels (both ride the same ControlMaster).
 #[derive(Debug, Clone)]
 pub(crate) enum RemoteConnStatus {
     /// The spawn thread hasn't reported back yet.
@@ -73,30 +64,28 @@ pub(crate) enum RemoteConnStatus {
     Failed,
 }
 
-/// One configured remote host's connection: its lifecycle `status` plus
-/// the live attach PTY (`pane`, present iff `status == Connected`).
-/// Single source of truth — the switchable pane and (via state derived
-/// from this) the sidebar both read from here, so the two can't drift.
+/// One remote host's connection: lifecycle `status` plus the live attach
+/// PTY (`pane`, present iff `status == Connected`). Single source of truth —
+/// the switchable pane and the sidebar (via derived state) both read here, so
+/// the two can't drift.
 pub(crate) struct RemoteConn {
     pub(crate) status: RemoteConnStatus,
     pub(crate) pane: Option<TerminalPane>,
     /// Id of the client-tty marker file this connection's attach wrapper
-    /// wrote (see `remote_spawn`). Switch/focus pass it to `remote_tmux`
-    /// so they read *this* connection's marker, never a prior one's. `0`
-    /// for a placeholder with no live PTY yet.
+    /// wrote (see `remote_spawn`). Switch/focus pass it to `remote_tmux` so
+    /// they read *this* connection's marker, never a prior one's. `0` for a
+    /// placeholder with no live PTY yet.
     pub(crate) client_marker_id: u64,
-    /// Whether this connection's attach prelude has confirmed writing its
-    /// client-tty marker. `Spawned` fires the instant `ssh` starts —
-    /// before the remote `tty > marker; tmux attach` prelude runs — so for
-    /// that window the marker is absent and a marker-gated switch/focus
-    /// would silently no-op. Set only once the marker is confirmed written
-    /// out of band (the `MarkerReady` event, from
-    /// `remote_tmux::wait_for_client_marker`); switches are held until then.
+    /// Whether the attach prelude has confirmed writing its client-tty
+    /// marker. `Spawned` fires before the remote `tty > marker; tmux attach`
+    /// prelude runs, so until then the marker is absent and a marker-gated
+    /// switch/focus would no-op. Set only once confirmed out of band (the
+    /// `MarkerReady` event from `remote_tmux::wait_for_client_marker`);
+    /// switches are held until then.
     pub(crate) marker_ready: bool,
-    /// State for the bounded marker-confirmation retry (bug #11). Tracks
-    /// how many re-arm attempts we've made and when the last fired, plus
-    /// whether we've exhausted them and surfaced the "stuck" state. `None`
-    /// once `marker_ready` is true (the happy path never touches this).
+    /// Bounded marker-confirmation retry state (bug #11): re-arm attempts so
+    /// far, when the last fired, and whether exhausted (stuck state
+    /// surfaced). `None` once `marker_ready` is true (happy path skips it).
     pub(crate) marker_retry: Option<MarkerRetry>,
 }
 
@@ -124,18 +113,16 @@ impl RemoteConn {
         }
     }
 
-    /// Whether this connection can serve a switch/focus right now: the
-    /// status says Connected AND the attach PTY is actually present (the
-    /// documented invariant is "pane present iff Connected"; checking both
-    /// keeps every call site honest if that ever wobbles).
+    /// Whether this connection can serve a switch/focus now: status Connected
+    /// AND the attach PTY present. The invariant is "pane present iff
+    /// Connected"; checking both keeps call sites honest if that wobbles.
     pub(crate) fn is_live(&self) -> bool {
         matches!(self.status, RemoteConnStatus::Connected) && self.pane.is_some()
     }
 
-    /// Whether the divider should offer "stuck connecting — reconnect?":
-    /// the PTY is live but its marker never confirmed and the bounded
-    /// retry has given up (bug #11). The host is reachable but unswitchable
-    /// until the user (or auto-recovery) respawns it.
+    /// Whether the divider should offer "stuck connecting — reconnect?": PTY
+    /// live but marker never confirmed and the bounded retry gave up (bug
+    /// #11). Host is reachable but unswitchable until respawned.
     pub(crate) fn is_marker_stuck(&self) -> bool {
         self.is_live()
             && !self.marker_ready
@@ -174,10 +161,9 @@ impl MarkerRetry {
 const MARKER_RETRY_MAX_ATTEMPTS: u32 = 3;
 
 /// Base backoff between marker re-arms. The Nth retry waits
-/// `MARKER_RETRY_BASE * (N + 1)` so a genuinely cold shell gets
-/// progressively longer to finish writing its marker before we give up.
-/// The initial in-spawn `wait_for_client_marker` already burns a couple of
-/// seconds, so the first re-arm is intentionally not instant.
+/// `MARKER_RETRY_BASE * (N + 1)`, giving a cold shell progressively longer to
+/// finish writing its marker. The initial in-spawn `wait_for_client_marker`
+/// already burns a couple of seconds, so the first re-arm isn't instant.
 const MARKER_RETRY_BASE: Duration = Duration::from_secs(2);
 
 /// What the marker-retry timer should do for a connection this tick. Pure
@@ -194,9 +180,9 @@ pub(crate) enum MarkerRetryAction {
 }
 
 /// Decide the marker-retry action from elapsed time and prior attempts.
-/// Pure: the manager supplies `elapsed`/`attempts` from `MarkerRetry` and
-/// applies the result. The backoff grows with `attempts`; once `attempts`
-/// reaches the cap we give up (surface the stuck state) exactly once.
+/// Pure: the manager supplies `elapsed`/`attempts` and applies the result.
+/// Backoff grows with `attempts`; at the cap we give up (surface the stuck
+/// state) exactly once.
 pub(crate) fn marker_retry_decision(elapsed: Duration, attempts: u32) -> MarkerRetryAction {
     if attempts >= MARKER_RETRY_MAX_ATTEMPTS {
         return MarkerRetryAction::GiveUp;
@@ -230,13 +216,12 @@ pub(crate) enum SpawnDecision {
 
 /// Decide what to do with a drained spawn event, without touching IO.
 ///
-/// The generation guard (bug #20) comes first: if the host's current
-/// generation has advanced past the event's, the event is from a spawn the
-/// host has since abandoned (offboard, or a newer respawn) and is dropped.
-/// `MarkerReady` additionally has to match the *live connection's* marker
-/// id — a reconnect within the same generation is impossible (a respawn
-/// bumps the generation), but a `Spawned` we dropped means there's no live
-/// marker to confirm.
+/// The generation guard (bug #20) comes first: if the host's generation has
+/// advanced past the event's, the event is from a spawn since abandoned
+/// (offboard or a newer respawn) and is dropped. `MarkerReady` must also
+/// match the *live connection's* marker id — a same-generation reconnect is
+/// impossible (a respawn bumps the generation), but a dropped `Spawned` means
+/// there's no live marker to confirm.
 pub(crate) fn reconcile_spawn_event(
     conns: &HashMap<String, RemoteConn>,
     generations: &HashMap<String, u64>,
@@ -287,11 +272,11 @@ pub(crate) struct RemoteConnManager {
     /// Set when creating a session on a host whose PTY isn't live yet, or
     /// when a switch is requested mid-connect; fired from `MarkerReady`.
     pending_switch: Option<crate::state::RemoteSwitchRequest>,
-    /// Per-host record of the last remote `switch-client` submitted:
-    /// `(target session, marker id at submit)`. When the `Switched` outcome
-    /// lands we re-read the host's marker; if it advanced (the connection
-    /// respawned while the switch sat in the FIFO) the switch ran against a
-    /// dead marker and no-op'd, so we re-fire. Removed when verified.
+    /// Per-host record of the last `switch-client` submitted: `(target
+    /// session, marker id at submit)`. On the `Switched` outcome we re-read
+    /// the marker; if it advanced (the connection respawned while the switch
+    /// sat in the FIFO) the switch no-op'd against a dead marker, so we
+    /// re-fire. Removed when verified.
     switch_verify: HashMap<String, (String, u64)>,
 }
 
@@ -408,10 +393,10 @@ impl RemoteConnManager {
     }
 
     /// (Re)establish the persistent ssh+tmux PTY for a host: mark
-    /// `Connecting`, bump the generation, and kick the spawner. Refuses to
-    /// stack on an in-flight spawn (`Connecting`) so a stale `Failed` from
-    /// the older attempt can't clobber the newer pane. Shared by initial
-    /// onboard, the reconnect button, and refresh auto-recovery.
+    /// `Connecting`, bump the generation, kick the spawner. Refuses to stack
+    /// on an in-flight spawn (`Connecting`) so a stale `Failed` from the older
+    /// attempt can't clobber the newer pane. Shared by onboard, the reconnect
+    /// button, and refresh auto-recovery.
     pub(crate) fn respawn(&mut self, host: &str) {
         if self.is_connecting(host) {
             return;
@@ -426,13 +411,12 @@ impl RemoteConnManager {
 
     // --- offboard / detach (bug #20 + D7) ---
 
-    /// Tear down all per-host runtime state for a removed host (bug #20).
-    /// This is the *only* path that removes a host, and it always clears
-    /// the host's pending switch and switch-verify entry — so a stale
-    /// in-flight switch can't survive a remove→re-add — and bumps the
-    /// generation so any spawn event still in flight is dropped on arrival.
-    /// Returns whether the host was the active one (so the caller can run
-    /// the shared view-detach choreography via [`detach_active`]).
+    /// Tear down all per-host runtime state for a removed host (bug #20). The
+    /// *only* host-removal path: always clears the host's pending switch and
+    /// switch-verify entry (so a stale in-flight switch can't survive a
+    /// remove→re-add) and bumps the generation so any in-flight spawn event
+    /// is dropped on arrival. Returns whether the host was active (so the
+    /// caller runs the shared view-detach choreography via [`detach_active`]).
     pub(crate) fn offboard(&mut self, host: &str) -> DetachOutcome {
         self.conns.remove(host);
         // Bump the generation so a `Spawned`/`Failed`/`MarkerReady` from a
@@ -465,10 +449,10 @@ impl RemoteConnManager {
         }
     }
 
-    /// Mark a host's connection dead (its PTY exited) and detach the view
-    /// if it was active (D7). The pending-switch cleanup is *not* done here
-    /// — a dropped PTY is auto-recovered by refresh, and any pending switch
-    /// should fire when it reconnects (only a true offboard clears it).
+    /// Mark a host's connection dead (PTY exited) and detach the view if it
+    /// was active (D7). Does *not* clear the pending switch: a dropped PTY is
+    /// auto-recovered by refresh and the pending switch should fire on
+    /// reconnect (only a true offboard clears it).
     pub(crate) fn mark_died(&mut self, host: &str) -> DetachOutcome {
         if let Some(conn) = self.conns.get_mut(host) {
             conn.status = RemoteConnStatus::Failed;
@@ -481,11 +465,10 @@ impl RemoteConnManager {
 
     // --- spawn events ---
 
-    /// Apply a drained spawn event through the pure
-    /// [`reconcile_spawn_event`] decision, doing the IO the decision
-    /// implies. Returns a [`SwitchToFire`] when a held switch should now
-    /// run (the caller owns `switch_to_remote`, so the manager can't call
-    /// it directly).
+    /// Apply a drained spawn event via the pure [`reconcile_spawn_event`]
+    /// decision, doing the IO it implies. Returns a [`SwitchToFire`] when a
+    /// held switch should now run (the caller owns `switch_to_remote`, so the
+    /// manager can't call it directly).
     pub(in crate::app) fn apply_spawn_event(
         &mut self,
         ev: RemoteSpawnEvent,
@@ -569,9 +552,9 @@ impl RemoteConnManager {
     }
 
     /// On a `Switched` outcome, decide whether the switch needs re-firing:
-    /// only when this host is still active and its marker advanced since
-    /// submit (the connection respawned while the op sat in the FIFO, so it
-    /// no-op'd against a dead marker). Removes the verify entry either way.
+    /// only when the host is still active and its marker advanced since submit
+    /// (the connection respawned while the op sat in the FIFO, so it no-op'd
+    /// against a dead marker). Removes the verify entry either way.
     pub(crate) fn verify_switch(&mut self, host: &str) -> Option<SwitchToFire> {
         let (name, submitted_marker) = self.switch_verify.remove(host)?;
         if !self.active_is(host) {
@@ -587,10 +570,10 @@ impl RemoteConnManager {
     // --- marker retry (bug #11) ---
 
     /// Drive the bounded marker-retry for every connection that's live but
-    /// not yet marker-ready. Returns whether any connection just flipped to
-    /// the stuck state (so the caller can force a redraw to show the
-    /// reconnect affordance). Pure timing via [`marker_retry_decision`];
-    /// this method only does the re-arm IO and the bookkeeping.
+    /// not yet marker-ready. Returns whether any just flipped to the stuck
+    /// state (so the caller can redraw to show the reconnect affordance). Pure
+    /// timing via [`marker_retry_decision`]; this only does re-arm IO and
+    /// bookkeeping.
     pub(crate) fn tick_marker_retry(&mut self, now: Instant) -> bool {
         let mut newly_stuck = false;
         // Collect the re-arms to fire after the borrow ends (the spawner
@@ -640,9 +623,9 @@ pub(crate) struct SwitchToFire {
     pub(crate) name: String,
 }
 
-/// Whether a detach/offboard removed the currently-viewed host. The caller
-/// runs the rest of the view-detach choreography (agent highlight, focus
-/// supersede, redraw) when `was_active` — kept on the App side because it
+/// Whether a detach/offboard removed the currently-viewed host. On
+/// `was_active` the caller runs the rest of the view-detach choreography
+/// (agent highlight, focus supersede, redraw) — kept App-side because it
 /// touches `AppState`, not connection state.
 pub(crate) struct DetachOutcome {
     pub(crate) was_active: bool,

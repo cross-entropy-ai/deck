@@ -12,12 +12,10 @@ use super::{
     Action, AddRemoteAction, MenuAction, NewSessionAction, PfAction, SettingsAction, SummaryAction,
 };
 
-/// Tear down the settings page and its sub-overlays, returning the main
-/// pane to the terminal. Called when focus moves to the sidebar while
-/// settings is open: the page shouldn't linger unfocused behind the
-/// session list, so leaving it for the sidebar closes it outright — the
-/// same end state as `Esc`, just with focus on the sidebar. A no-op when
-/// settings isn't showing (the sub-overlays can't be open without it).
+/// Tear down the settings page and its sub-overlays, returning the main pane
+/// to the terminal. Called when focus moves to the sidebar while settings is
+/// open: leaving the page for the sidebar closes it outright (same end state
+/// as `Esc`). No-op when settings isn't showing.
 fn close_settings_page(state: &mut AppState) {
     if state.main_view != MainView::Settings {
         return;
@@ -29,12 +27,10 @@ fn close_settings_page(state: &mut AppState) {
     state.overlay.summary_lang_input = None;
 }
 
-/// Fill the appropriate `SideEffect` field based on the currently
-/// focused row — `switch_session` for a local row, `switch_remote`
-/// for a remote one. Local-vs-remote dispatch reads `entry.host` off the
-/// focused `SessionEntry` (resolved via `AppState::entry_at`); every action
-/// that routes by origin reads the entry instead of taking apart the flat
-/// focus index itself.
+/// Fill the `SideEffect` field for the focused row — `switch_session` for a
+/// local row, `switch_remote` for a remote one. Local-vs-remote dispatch reads
+/// `entry.host` off the focused `SessionEntry` (via `AppState::entry_at`)
+/// rather than taking apart the flat focus index.
 fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) -> bool {
     let Some(target) = state.focus_target() else {
         return false;
@@ -44,11 +40,9 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) -> bool {
             fx.switch_session(entry.name.clone());
             true
         }
-        // These arms are only reached for non-local entries (the `is_local`
-        // arm above caught locals), and a non-local entry always has
-        // `host = Some` — locals are the only entries built as `host: None`.
-        // Synthetic placeholder rows (connecting, unreachable, or the
-        // "no sessions" marker) have no real session to switch to. Skip
+        // Reached only for non-local entries (the `is_local` arm caught
+        // locals), which always have `host = Some`. Synthetic placeholder rows
+        // (connecting, unreachable, "no sessions") have no real session — skip
         // silently so a click doesn't fire a doomed remote switch.
         Some(entry) if entry.is_attachable() => {
             fx.switch_remote(RemoteSwitchRequest {
@@ -65,10 +59,9 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) -> bool {
     }
 }
 
-/// Advance focus to the next visible row, skipping rows hidden inside a
-/// collapsed group. Clamps at the last visible row (no move if there's
-/// nothing visible below). Fills the switch effect when the selection
-/// actually moved.
+/// Advance focus to the next visible row, skipping rows hidden in a collapsed
+/// group. Clamps at the last visible row. Fills the switch effect when the
+/// selection actually moved.
 fn focus_next(state: &mut AppState, fx: &mut SideEffect) {
     let total = state.focusable_count();
     if total == 0 {
@@ -104,11 +97,10 @@ fn focus_prev(state: &mut AppState, fx: &mut SideEffect) {
     // No visible row above — stay put.
 }
 
-/// What a cursor move should switch to. Navigation switches the right
-/// pane to follow the cursor so the highlighted row always matches what's
-/// shown — sessions on the Projects tab, the agent's pane on the Agents
-/// tab (mirroring the Projects tab, which already switches even over ssh
-/// for remote rows).
+/// What a cursor move should switch to. The right pane follows the cursor so
+/// the highlighted row matches what's shown: sessions on the Projects tab, the
+/// agent's pane on the Agents tab (mirroring Projects, which switches even over
+/// ssh for remote rows).
 fn switch_on_navigate(state: &AppState, fx: &mut SideEffect) {
     if state.agents_tab_active() {
         fill_switch_agent_effect(state, fx);
@@ -132,11 +124,10 @@ fn fill_switch_agent_effect(state: &AppState, fx: &mut SideEffect) -> bool {
 
 /// Activate a sidebar tab. No-op if already active. Persists the choice.
 ///
-/// Arriving on the Agents tab also (a) kicks a refresh so detection —
-/// gated on the tab being active — starts at once, and (b) syncs the
-/// right pane to the focused agent so the panel highlight matches what's
-/// shown. If an agent is already active (a prior switch), the cursor
-/// lands on it first so returning to the tab restores the position.
+/// Arriving on the Agents tab also (a) kicks a refresh so detection (gated on
+/// the tab being active) starts at once, and (b) syncs the right pane to the
+/// focused agent. If an agent is already active, the cursor lands on it first
+/// so returning to the tab restores the position.
 fn switch_tab(state: &mut AppState, fx: &mut SideEffect, tab: SidebarTab) {
     if state.prefs.sidebar_tab == tab {
         return;
@@ -172,10 +163,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             focus_next(state, &mut fx);
         }
         Action::FocusIndex(idx) => {
-            // Mouse clicks pass a unified flat index (local rows then
-            // remotes); number-key shortcuts use the same action but
-            // their reachable values are always inside the local
-            // range. Either way `focusable_count` is the right bound.
+            // Mouse clicks pass a unified flat index (local rows then remotes);
+            // number-key shortcuts use the same action but stay inside the
+            // local range. Either way `focusable_count` is the right bound.
             if idx < state.focusable_count() {
                 state.set_cursor(idx);
             }
@@ -199,8 +189,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             };
             // Same policy the context menu uses to grey "Kill": no killing a
             // placeholder row, a host's last live session, or the last local
-            // session. Compute the verdict, then drop the borrow before
-            // mutating the overlay.
+            // session. Compute the verdict, then drop the borrow before mutating.
             let allowed = match state.entry_at(target) {
                 Some(entry) => state.can_kill(entry),
                 None => false,
@@ -214,10 +203,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             let Some(target) = state.focus_target() else {
                 return fx;
             };
-            // Defense in depth: the same policy that gates KillSession and
-            // greys the menu's "Kill" also gates the actual kill, so a stale
-            // or forced confirm can't fire on a placeholder, a host's last
-            // session, or the last local session.
+            // Defense in depth: the policy gating KillSession and the menu's
+            // greyed "Kill" also gates the actual kill, so a stale or forced
+            // confirm can't fire on a placeholder, a host's last session, or
+            // the last local session.
             let allowed = match state.entry_at(target) {
                 Some(entry) => state.can_kill(entry),
                 None => false,
@@ -243,10 +232,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                         state.focused.saturating_sub(1)
                     };
 
-                    // Pre-switch off the doomed session only when it's the
-                    // one deck is attached to. Killing a *non-current* row
-                    // must leave the main view (local or remote) where it is
-                    // — see KillRequest.switch_to.
+                    // Pre-switch off the doomed session only when deck is
+                    // attached to it. Killing a non-current row leaves the main
+                    // view where it is — see KillRequest.switch_to.
                     let switch_to = if killing_current {
                         let alt_idx = if state.focused + 1 < local_count {
                             Some(state.focused + 1)
@@ -289,10 +277,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.overlay.confirm_kill = false;
         }
         Action::RemoveRemoteFromList(host) => {
-            // Mirror `deck remote remove <host>` on the in-memory copy:
-            // drop the host from config_remotes (which save_config writes
-            // to disk) and clear any session rows for it so the sidebar
-            // updates before the next refresh round lands.
+            // Mirror `deck remote remove <host>` on the in-memory copy: drop
+            // the host from config_remotes (save_config persists it) and clear
+            // its session rows so the sidebar updates before the next refresh.
             state.config_remotes.retain(|r| r.host != host);
             state
                 .entries
@@ -308,11 +295,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if state.agents_tab_active() {
                 return fx;
             }
-            // Remote row: reorder only within the same host's contiguous
-            // block (hosts can't interleave). Swap with the adjacent row in
-            // `direction` if it's the same host and a real session; persist
-            // that host's new order to its tmux server over ssh. The flat
-            // `focused` index is a direct index into `entries`.
+            // Remote row: reorder only within the same host's contiguous block
+            // (hosts can't interleave). Swap with the adjacent row in
+            // `direction` if it's the same host and a real session, then persist
+            // that host's order over ssh. `focused` indexes `entries` directly.
             let idx = state.focused;
             let len = state.entries.len();
             let Some(entry) = state.entries.get(idx) else {
@@ -433,16 +419,12 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.save_config();
         }
         Action::ToggleSection(key) => {
-            // Flip the group's collapsed membership in the active tab's own
-            // set (the two tabs fold independently). Collapse is only
-            // meaningful in Expanded view, but the set is stored uniformly
-            // (the layout ignores it in Compact/Vertical where there are no
-            // dividers), so no view-mode gate is needed here.
-            //
-            // Collapsing the focused row's group does NOT move focus: the
-            // selection (and main pane) are unchanged — the highlight is just
-            // hidden until expand, and `j`/`k` step out to a visible row
-            // (focus_next/focus_prev skip hidden rows).
+            // Flip the group's collapsed membership in the active tab's own set
+            // (tabs fold independently). The set is stored uniformly even
+            // though collapse only matters in Expanded view (Compact/Vertical
+            // ignore it), so no view-mode gate is needed. Collapsing the
+            // focused row's group doesn't move focus: the highlight is just
+            // hidden until expand, and `j`/`k` step out to a visible row.
             let host_key = crate::host_key::HostKey::from(key);
             if state.agents_tab_active() {
                 if !state.collapsed_agent_sections.remove(&host_key) {
@@ -591,11 +573,10 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
             fx.save_config();
         }
         SettingsAction::OpenThemePicker => {
-            // Opens as a standalone overlay over the current view — from
-            // the sidebar (`t`) it does *not* enter the settings page,
-            // and from the settings page it simply layers on top. Leaving
-            // `main_view`/`focus_mode` untouched is what lets it do both:
-            // closing the picker returns to wherever it was opened from.
+            // Opens as a standalone overlay over the current view: from the
+            // sidebar (`t`) it doesn't enter the settings page, from settings
+            // it layers on top. Leaving `main_view`/`focus_mode` untouched lets
+            // closing the picker return to wherever it was opened from.
             state.settings.theme_picker_open = true;
             state.settings.theme_picker_selected =
                 state.prefs.theme_index.min(THEMES.len().saturating_sub(1));
@@ -1268,10 +1249,9 @@ fn set_mode(o: &mut Option<PortForwardOverlay>, delta: i32) {
     }
 }
 
-/// Feed a key event to the focused field. Filters non-digit input on
-/// port fields and whitespace on every field; rolls back input that
-/// would push a port outside `u16` range so the user never sees an
-/// invalid value sitting in the form.
+/// Feed a key event to the focused field. Filters non-digit input on port
+/// fields and whitespace on every field, and rolls back any input that would
+/// push a port outside `u16` range.
 fn handle_pf_input(f: &mut PfAddForm, key: crossterm::event::KeyEvent) {
     use crossterm::event::KeyCode;
     let port_field = matches!(f.focus, PfField::ListenPort | PfField::TargetPort);
@@ -1341,10 +1321,9 @@ fn humanize_forward_error(raw: &str) -> String {
     }
 }
 
-/// Finalize an in-flight `AddForward` (lazy persist: only on worker
-/// success). On success: append to `config_remotes`, request config
-/// save via SideEffect, close the form. On failure: keep form open,
-/// clear `submitting`, set status to error message.
+/// Finalize an in-flight `AddForward` (lazy persist: only on worker success).
+/// On success: append to `config_remotes`, request config save, close the form.
+/// On failure: keep the form open, clear `submitting`, set the error status.
 fn apply_pf_task_result(
     state: &mut AppState,
     host: &str,

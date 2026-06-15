@@ -11,10 +11,9 @@ use ratatui::widgets::{Paragraph, Widget};
 
 use crate::theme::Theme;
 
-/// One selectable list row as a two-span `Line`: a marker cell (`accent`
-/// when selected, else invisible) plus content, sharing the row
-/// background (`surface` when selected). `marker` and `content` are
-/// passed verbatim so callers keep their own glyph and padding.
+/// One selectable list row as a two-span `Line`: a marker cell (`accent` when
+/// selected, else invisible) plus content, sharing the row background
+/// (`surface` when selected). `marker`/`content` pass through verbatim.
 pub fn list_item_line<'a>(
     theme: &Theme,
     selected: bool,
@@ -33,10 +32,9 @@ pub fn list_item_line<'a>(
     ])
 }
 
-/// A full-width selectable row as a single styled span: `label`
-/// left-aligned in `width` columns with a 1-col leading pad. Shared by the
-/// context menu and the theme picker so their highlight rows fill the popup
-/// the same way (the caller picks `style` per selected/disabled state).
+/// A full-width selectable row as a single styled span: `label` left-aligned in
+/// `width` columns with a 1-col leading pad. Shared by the context menu and
+/// theme picker (caller picks `style` per selected/disabled state).
 pub fn full_width_row(label: &str, width: usize, style: Style) -> Line<'static> {
     Line::from(Span::styled(
         format!(" {:<w$}", label, w = width.saturating_sub(1)),
@@ -55,12 +53,10 @@ pub fn scroll_window(selected: usize, total: usize, window: usize) -> usize {
 
 /// Render a windowed, single-selection list into `rows`, one item per row.
 ///
-/// Used by the shared filter picker (`draw_filter_picker`): the list is
-/// scrolled by `scroll_window` so `selected` stays visible, each visible
-/// item gets a `▸` marker when selected, and `content(filtered[i])`
-/// supplies the row text. `rows` must hold at least `window` slots; any
-/// beyond the rendered items are left untouched (the caller reserves them
-/// as blanks).
+/// Used by the shared filter picker: scrolled by `scroll_window` so `selected`
+/// stays visible, selected item gets a `▸` marker, `content(filtered[i])`
+/// supplies row text. `rows` must hold at least `window` slots; any beyond the
+/// rendered items are left untouched (caller reserves them as blanks).
 pub fn draw_picker_list(
     buf: &mut Buffer,
     rows: &[Rect],

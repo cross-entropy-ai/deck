@@ -1,7 +1,6 @@
-//! SSH and remote-forward backend: the `ssh` client helpers ([`client`]),
-//! the port-forward command builders ([`port_forward`]), local listener
-//! enumeration for forward liveness ([`listeners`]), and the SSH-specific
-//! model types ([`model`]).
+//! SSH and remote-forward backend: `ssh` client helpers ([`client`]),
+//! port-forward command builders ([`port_forward`]), local listener
+//! enumeration ([`listeners`]), and SSH-specific model types ([`model`]).
 //!
 //! `client`'s public API is re-exported here so `crate::ssh::CONTROL_OPTS`,
 //! `crate::ssh::config_hosts`, etc. resolve directly off the module.

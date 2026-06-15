@@ -1,7 +1,6 @@
 //! Remote (ssh) backend for the session control plane.
 //!
-//! Drives a remote tmux server via `ssh <host> tmux ...` through
-//! `infra::tmux::remote`.
+//! Drives a remote tmux server via `infra::tmux::remote` (`ssh <host> tmux ...`).
 
 use crate::remote_tmux;
 
@@ -12,8 +11,7 @@ pub struct RemoteControl {
     /// ssh destination for this backend (config alias or hostname).
     pub host: String,
     /// This connection's client-tty marker id, used by `switch_to_session` to
-    /// target the right client. `0` = unknown / unwritten, which makes the
-    /// marker-gated switch a no-op.
+    /// target the right client. `0` = unknown, making the switch a no-op.
     pub marker_id: u64,
 }
 

@@ -1,8 +1,7 @@
 //! CLI parsing: an `argh` type tree lowered into [`ParsedCommand`]. The argh
 //! types stay private so the rest of deck never sees the parser's shape.
-//!
-//! The `///` lines on the argh structs are not decoration — argh requires
-//! them and renders them as `--help` text.
+//! The `///` lines on argh structs are required — argh renders them as
+//! `--help` text.
 
 use std::io::{self, Write};
 
@@ -26,9 +25,9 @@ pub(crate) enum ParsedCommand {
     RemoteAdd(String),
     RemoteList,
     RemoteRemove(String),
-    /// Hidden: re-exec entrypoint that performs an in-place self-upgrade
-    /// to the given version via the `self_update` crate. Spawned by the
-    /// running TUI inside the upgrade pane so its progress renders live.
+    /// Hidden re-exec entrypoint: in-place self-upgrade to the given version
+    /// via the `self_update` crate. Spawned by the running TUI inside the
+    /// upgrade pane so its progress renders live.
     UpgradeSelf(String),
 }
 

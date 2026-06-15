@@ -4,11 +4,9 @@
 //! shapes; both reduce to "the set of local ports in LISTEN state". The
 //! shelling-out + platform dispatch lives in `infra::ssh::listeners`.
 //!
-//! macOS used to parse `netstat -an`, but modern macOS (Darwin 27+) dropped
-//! the TCP/IPv4/IPv6 section from `netstat` output entirely — it now prints
-//! only Multipath and UNIX-domain sockets — so a netstat-based probe always
-//! came back empty and every `-L`/`-D` forward read as Down. `lsof` still
-//! enumerates TCP listeners reliably across macOS versions.
+//! We use `lsof` on macOS, not `netstat`: modern macOS (Darwin 27+) dropped
+//! the TCP/IPv4/IPv6 section from `netstat`, so a netstat probe always came
+//! back empty and every `-L`/`-D` forward read as Down.
 
 // parse_lsof/parse_ss are platform-split: local_listen_ports only calls
 // one of them per OS (cfg-gated), so the other is "unused" in a non-test
@@ -18,10 +16,9 @@
 use std::collections::HashSet;
 
 /// Parse macOS `lsof -nP -iTCP -sTCP:LISTEN` output into the set of local
-/// ports in LISTEN state. The `NAME` field holds `address:port` with a
-/// trailing `(LISTEN)` token, e.g. `*:54322 (LISTEN)`, `[::1]:54323 (LISTEN)`,
-/// `127.0.0.1:54324 (LISTEN)`. The port is the text after the address's final
-/// `:`, which also handles the bracketed IPv6 form.
+/// ports in LISTEN state. The `NAME` field holds `address:port` before a
+/// trailing `(LISTEN)` token (e.g. `*:54322 (LISTEN)`, `[::1]:54323 (LISTEN)`);
+/// the port is the text after the address's final `:`, handling bracketed IPv6.
 pub fn parse_lsof(output: &str) -> HashSet<u16> {
     let mut ports = HashSet::new();
     for line in output.lines() {
@@ -46,22 +43,10 @@ pub fn parse_lsof(output: &str) -> HashSet<u16> {
 }
 
 /// Parse Linux `ss -ltn` output into the set of local ports in LISTEN state.
-/// Handles both the classic format (state is the first column) and the modern
-/// iproute2 format (Ubuntu 22.04+, Debian 12+) where a `Netid` column is
-/// prepended. The local `Address:Port` is always three columns after `LISTEN`
-/// (State, Recv-Q, Send-Q, **Local Address:Port**).
-///
-/// Example classic format:
-/// ```text
-/// State   Recv-Q  Send-Q  Local Address:Port  Peer Address:Port
-/// LISTEN  0       128     0.0.0.0:8080        0.0.0.0:*
-/// ```
-///
-/// Example modern format:
-/// ```text
-/// Netid  State   Recv-Q  Send-Q  Local Address:Port  Peer Address:Port
-/// tcp    LISTEN  0       128     0.0.0.0:8080        0.0.0.0:*
-/// ```
+/// Handles the classic format (state in column 1) and modern iproute2
+/// (Ubuntu 22.04+, Debian 12+) which prepends a `Netid` column. The local
+/// `Address:Port` is always three columns after the `LISTEN` token either way
+/// (State, Recv-Q, Send-Q, Local Address:Port).
 pub fn parse_ss(output: &str) -> HashSet<u16> {
     let mut ports = HashSet::new();
     for line in output.lines() {

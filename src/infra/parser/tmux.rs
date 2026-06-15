@@ -1,10 +1,8 @@
 //! Pure parsers for tmux's tab-separated output.
 //!
-//! These are shared by `infra::tmux` (local) and `infra::remote_tmux`
-//! (SSH). The two callers differ in how they invoke tmux — timeouts,
-//! shell quoting for the format string, error semantics — but the
-//! bytes they receive back are the same shape, so the parsing lives
-//! here.
+//! Shared by `infra::tmux` (local) and `infra::remote_tmux` (SSH): the
+//! callers differ in how they invoke tmux (timeouts, shell quoting, error
+//! semantics) but the bytes they get back are the same shape.
 
 use std::collections::HashMap;
 
@@ -17,23 +15,20 @@ pub(crate) const DECK_ORDER_OPTION: &str = "@deck_order";
 
 /// The tmux `-t` target for a bare *session name*, forced to exact match
 /// with a leading `=`. Without it tmux resolves `-t name` by exact → prefix
-/// → fnmatch, so `kill-session -t work` can hit `workbench` when `work`
-/// doesn't exist, or pick the wrong one when a name is a prefix of another.
+/// → fnmatch, so `kill-session -t work` can hit `workbench` or pick a wrong
+/// prefix match.
 ///
-/// Shared by both backends so the `=` decision lives in one place (local
-/// passes the result straight to tmux; remote must additionally
-/// single-quote it — `shell_single_quote` — which also shields the leading
-/// `=` from zsh equals-expansion). Use ONLY for bare session names: pane
-/// ids (`%N`) are already exact, and `-s` (new-session) names are literals,
-/// not lookup targets — neither should be wrapped.
+/// Shared by both backends (local passes straight to tmux; remote must also
+/// `shell_single_quote` it, which shields the leading `=` from zsh
+/// equals-expansion). Use ONLY for bare session names: pane ids (`%N`) are
+/// already exact and `-s` names are literals, not lookup targets.
 pub(crate) fn exact_target(name: &str) -> String {
     format!("={name}")
 }
 
-/// `list-sessions -F` format. The `_SSH` variant wraps the same fields
-/// in bash/zsh ANSI-C `$'...'` quoting so the remote login shell treats
-/// `#` literally and turns `\t` into a tab; quoting is the only intended
-/// difference.
+/// `list-sessions -F` format. The `_SSH` variant wraps the same fields in
+/// bash/zsh ANSI-C `$'...'` quoting (so the remote shell treats `#` literally
+/// and turns `\t` into a tab); quoting is the only difference.
 pub(crate) const SESSION_LIST_FORMAT: &str = "#{session_name}\t#{session_path}\t#{@deck_order}";
 pub(crate) const SESSION_LIST_FORMAT_SSH: &str =
     "$'#{session_name}\\t#{session_path}\\t#{@deck_order}'";
@@ -43,11 +38,10 @@ pub(crate) const SESSION_LIST_FORMAT_SSH: &str =
 /// activity probe entirely, so there is no ssh-quoted variant.
 pub(crate) const WINDOW_ACTIVITY_FORMAT: &str = "#{session_name}\t#{window_activity}";
 
-/// Parse `tmux list-sessions` output. Both callers use the same three
-/// fields (`#{session_name}\t#{session_path}\t#{@deck_order}`); the trailing
-/// rank is empty when the `@deck_order` option is unset, so the order field
-/// parses to `None`. `window_activity` provides per-session activity
-/// timestamps; sessions absent from the map get `activity = 0`.
+/// Parse `tmux list-sessions` output (fields
+/// `#{session_name}\t#{session_path}\t#{@deck_order}`). The trailing rank is
+/// empty when `@deck_order` is unset, so order parses to `None`. Sessions
+/// absent from `window_activity` get `activity = 0`.
 pub(crate) fn parse_sessions(
     raw: &str,
     window_activity: &HashMap<String, u64>,
@@ -55,10 +49,9 @@ pub(crate) fn parse_sessions(
     raw.lines()
         .filter_map(|line| {
             let (name, after_name) = line.split_once('\t')?;
-            // `@deck_order` is the last field, a bare integer or empty.
-            // Split it off the tail so a dir that somehow contains a tab
-            // still parses. A line with no trailing tab at all yields no
-            // rank.
+            // `@deck_order` is the last field (bare integer or empty). Split
+            // off the tail so a dir containing a tab still parses; a line with
+            // no trailing tab yields no rank.
             let (dir, order) = match after_name.rsplit_once('\t') {
                 Some((dir, rank)) => (dir, rank.parse::<u32>().ok()),
                 None => (after_name, None),
@@ -75,9 +68,8 @@ pub(crate) fn parse_sessions(
 }
 
 /// Parse `tmux list-windows -a -F '#{session_name}\t#{window_activity}'`
-/// output, returning the max timestamp per session. Lines whose
-/// timestamp doesn't parse contribute a 0 (so a session with only
-/// malformed lines still appears, with activity 0).
+/// output into the max timestamp per session. Unparseable timestamps
+/// contribute 0 (a session with only malformed lines still appears, activity 0).
 pub(crate) fn parse_window_activity(raw: &str) -> HashMap<String, u64> {
     let mut map: HashMap<String, u64> = HashMap::new();
     for line in raw.lines() {

@@ -8,14 +8,10 @@ use ratatui_textarea::{CursorMove, TextArea};
 
 use crate::picker::FilterPicker;
 
-/// Split `input` into `(parent, leaf)` where `parent` is the directory
-/// portion (including any trailing `/`) and `leaf` is the segment
-/// being typed.
-///
-/// - `""` → `("", "")`
-/// - `"~/foo/"` → `("~/foo/", "")`
-/// - `"~/foo/ba"` → `("~/foo/", "ba")`
-/// - `"foo"` → `("", "foo")`
+/// Split `input` into `(parent, leaf)`: `parent` is the directory portion
+/// (with any trailing `/`), `leaf` the segment being typed. E.g. `""` →
+/// `("", "")`, `"~/foo/"` → `("~/foo/", "")`, `"~/foo/ba"` → `("~/foo/", "ba")`,
+/// `"foo"` → `("", "foo")`.
 pub fn split_input(input: &str) -> (&str, &str) {
     match input.rfind('/') {
         Some(idx) => (&input[..=idx], &input[idx + 1..]),
@@ -54,13 +50,10 @@ pub fn textarea_line<'a>(ta: &'a TextArea<'a>) -> &'a str {
     ta.lines().first().map(String::as_str).unwrap_or("")
 }
 
-/// Resolve a user-typed path to an absolute, normalized `PathBuf`.
-///
-/// - Leading `~` expands to `$HOME`. `~/foo` → `<home>/foo`. Bare `~`
-///   → `<home>`.
-/// - Bare relative paths (no leading `/` or `~`) resolve under
-///   `$HOME` for predictability.
-/// - `..` and redundant `/` are normalized via `Path::components`.
+/// Resolve a user-typed path to an absolute, normalized `PathBuf`. Leading
+/// `~` expands to `$HOME` (`~/foo` → `<home>/foo`, bare `~` → `<home>`); bare
+/// relative paths resolve under `$HOME`; `..` and redundant `/` are normalized
+/// via `Path::components`.
 pub fn expand_path(s: &str, home: &std::path::Path) -> PathBuf {
     let buf = if let Some(rest) = s.strip_prefix("~/") {
         home.join(rest)
@@ -84,13 +77,11 @@ pub fn expand_path(s: &str, home: &std::path::Path) -> PathBuf {
     normalized
 }
 
-/// The new-session overlay. This is a *two-field* picker — a session
-/// `name` field plus a dir-browse field — so it is not a plain
-/// filter-picker. The dir-browse half (the path input, directory listing,
-/// filtered/selected, and the overlay's single error slot) is delegated to
-/// the shared `FilterPicker`; the `name` field, focus switching,
-/// `~`/segment path editing, and `remote_host` stay bespoke here because
-/// they don't fit the generic shape.
+/// The new-session overlay: a *two-field* picker (session `name` plus a
+/// dir-browse field), so not a plain filter-picker. The dir-browse half
+/// (path input, listing, filtered/selected, error slot) is delegated to the
+/// shared `FilterPicker`; `name`, focus switching, `~`/segment path editing,
+/// and `remote_host` stay bespoke since they don't fit the generic shape.
 #[derive(Debug, Clone)]
 pub struct NewSessionState {
     /// Session name input field. Pre-filled with the next free
@@ -98,11 +89,10 @@ pub struct NewSessionState {
     pub name: TextArea<'static>,
     /// Which field has keyboard focus.
     pub focus: PickerFocus,
-    /// Path input + directory listing + filtered/selected + error. The
-    /// path input is `picker.input` (`~`/`..` preserved verbatim); the
-    /// directory children (written by dispatch after `read_dir`) are
-    /// `picker.items`. `picker.error` is the overlay's single error slot,
-    /// also set by name validation.
+    /// Path input + directory listing + filtered/selected + error.
+    /// `picker.input` is the path (`~`/`..` verbatim); `picker.items` the
+    /// directory children (written by dispatch after `read_dir`);
+    /// `picker.error` the single error slot, also set by name validation.
     pub picker: FilterPicker,
     /// `Some(host)` when the picker is creating a session on a remote
     /// host: directory entries come from `ssh <host> ls` and the session
@@ -132,10 +122,10 @@ impl NewSessionState {
         self.picker.input_str()
     }
 
-    /// Rebuild the directory listing's `filtered` from the path input's
-    /// leaf segment (case-insensitive prefix + dotfile rule) and clamp the
-    /// selection. Filters on the *leaf*, not the whole input, so the
-    /// predicate is wrapped for the shared `FilterPicker::refilter`.
+    /// Rebuild the listing's `filtered` from the path input's leaf segment
+    /// (case-insensitive prefix + dotfile rule) and clamp the selection.
+    /// Filters on the leaf, not the whole input, so the predicate is wrapped
+    /// for the shared `FilterPicker::refilter`.
     pub fn refilter(&mut self) {
         self.picker
             .refilter(|entries, input| filter_entries(entries, split_input(input).1));

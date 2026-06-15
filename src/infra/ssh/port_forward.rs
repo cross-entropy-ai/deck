@@ -1,10 +1,8 @@
-//! Pure builders for the ssh subcommands used to manage port forwards
-//! against a host's ControlMaster. No IO happens here; callers spawn
-//! the returned `Command`s on their own threads.
-//!
-//! All builders pass the same `-o ControlMaster=auto -o ControlPath=…
-//! -o ControlPersist=…` block so this worker and `app::ssh::remote_spawn`
-//! share the same master socket per host.
+//! Pure builders for the ssh subcommands that manage port forwards against a
+//! host's ControlMaster. No IO here; callers spawn the returned `Command`s on
+//! their own threads. All builders pass the same `ControlMaster`/`ControlPath`/
+//! `ControlPersist` block so this worker and `app::ssh::remote_spawn` share the
+//! same master socket per host.
 
 use std::process::Command;
 

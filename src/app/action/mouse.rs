@@ -5,17 +5,14 @@ use crate::state::{AppState, DividerButton, FocusTarget, HitKind, LayoutMode, Ma
 use super::{Action, MenuAction, PfAction, SettingsAction, SummaryAction};
 
 pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
-    // Single resolver for every rect-based button/region the sidebar
-    // publishes. The modal check below decides *whether* we consult it: the
-    // button rects (banner / tabs / summary / menu) and all session-row
-    // dispatch run only when no modal is up, so they can't be clicked
-    // through an overlay (the mouse half of bug #7).
+    // Single resolver for every rect-based button/region the sidebar publishes.
+    // Button rects and session-row dispatch run only when no modal is up, so
+    // they can't be clicked through an overlay (mouse half of bug #7).
     let hit = state.hit_regions.hit(mouse.column, mouse.row);
 
-    // One modal source of truth (`active_modal`), resolved before any
-    // button-rect or session-row hit test. Most overlays swallow all mouse;
-    // confirm-kill / summary-popup / context-menu keep their own click
-    // semantics.
+    // Resolve `active_modal` before any button-rect or session-row hit test.
+    // Most overlays swallow all mouse; confirm-kill / summary-popup /
+    // context-menu keep their own click semantics.
     if let Some(modal) = state.active_modal() {
         return modal_mouse_to_action(modal, mouse, state, hit);
     }
@@ -98,12 +95,10 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
                     return Action::None;
                 }
                 // Wheel over the Summary card scrolls its text (when it
-                // overflows), not the sidebar list. This tests the card
-                // rect *directly*, not via the priority resolver: the card
-                // spans the whole Agents-tab viewport, so the agent rows and
-                // dividers drawn over it outrank `HitKind::SummaryCard` in
-                // `hit()` (correct for clicks) — but the wheel must still
-                // scroll the summary when rolled anywhere over the card.
+                // overflows), not the sidebar list. Tests the card rect
+                // directly rather than via `hit()`, where overlaid agent
+                // rows/dividers would outrank it — the wheel must scroll the
+                // summary anywhere over the card.
                 if state.hit_regions.summary.max_scroll > 0
                     && state.summary_card_at(mouse.column, mouse.row)
                 {
@@ -125,11 +120,10 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         if state.main_view == MainView::Settings {
             return Action::Settings(SettingsAction::Close);
         }
-        // Check divider […] button hit regions before falling through to
-        // session-row dispatch so a click on the button isn't mistaken for
-        // a row selection. Agent rows (Agents tab) come next: a click
-        // switches to (and focuses) the pane. The resolver returns indices
-        // into the registry's vecs; read the matched hit straight out.
+        // Check divider […] button hit regions before session-row dispatch so
+        // a button click isn't mistaken for a row selection. Agent rows come
+        // next: a click switches to (and focuses) the pane. The resolver
+        // returns indices into the registry's vecs.
         match hit {
             Some(HitKind::Divider(i)) => {
                 let dh = &state.hit_regions.dividers[i];
@@ -245,10 +239,9 @@ fn modal_mouse_to_action(
 ) -> Action {
     match modal {
         Modal::ConfirmKill => {
-            // The kill prompt owns the sidebar: clicking a button
-            // confirms/cancels, every other click is inert — including the
-            // update banner — so nothing punches through a pending
-            // destructive confirmation.
+            // The kill prompt owns the sidebar: a button click confirms/cancels,
+            // every other click (including the update banner) is inert, so
+            // nothing punches through a pending destructive confirmation.
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
                 match hit {
                     Some(HitKind::KillYes) => return Action::ConfirmKill,

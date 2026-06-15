@@ -47,9 +47,9 @@ pub enum SessionOrigin<'a> {
 }
 
 /// The session-row abstraction the tabs-mode renderer consumes (the
-/// Expanded/Compact list builds its rows from `SessionEntry` directly in
-/// `model`). Tabs mode reads only origin/name/unreachable; the renderer
-/// must not branch on concrete types.
+/// Expanded/Compact list builds rows from `SessionEntry` directly in `model`).
+/// Tabs mode reads only origin/name/unreachable; the renderer must not branch
+/// on concrete types.
 pub trait SidebarSession {
     fn origin(&self) -> SessionOrigin<'_>;
     fn name(&self) -> &str;
@@ -105,11 +105,10 @@ pub struct NewSessionView<'a> {
     pub host: Option<&'a str>,
 }
 
-/// One settings row, already reduced to display strings by the render
-/// loop. The `app::settings::SETTING_ROWS` descriptor table is the source
-/// of label/value/help; the loop calls each row's closures against
-/// `&AppState` and hands the results here, keeping `draw_settings_page` a
-/// pure `ui` fn that never sees `AppState`.
+/// One settings row, reduced to display strings by the render loop. The
+/// `app::settings::SETTING_ROWS` table sources label/value/help; the loop runs
+/// each row's closures against `&AppState` and hands results here, keeping
+/// `draw_settings_page` a pure `ui` fn that never sees `AppState`.
 pub struct SettingRowView {
     pub label: &'static str,
     pub value: String,

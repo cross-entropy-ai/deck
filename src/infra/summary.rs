@@ -1,12 +1,11 @@
 //! Agents-tab "Summary" generation: capture each detected agent's pane
-//! buffer, stitch them into one XML-flavored prompt, and run the `claude`
-//! CLI headlessly (`claude -p`, prompt on stdin) to produce a plain-text
-//! summary.
+//! buffer, stitch them into one XML-flavored prompt, run `claude` headlessly
+//! (`claude -p`, prompt on stdin) for a plain-text summary.
 //!
-//! The prompt is a user-editable template (persisted to the config file,
-//! see `crate::config`); `{{SESSIONS}}` is where the per-pane `<session>`
-//! blocks are spliced in. Everything here runs off the UI thread, on the
-//! worker `App::start_summary_generation` spawns.
+//! The prompt is a user-editable template (persisted via `crate::config`)
+//! with `{{SESSIONS}}` where the per-pane `<session>` blocks splice in.
+//! Everything runs off the UI thread, on the worker
+//! `App::start_summary_generation` spawns.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -15,11 +14,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::worker::Cancel;
 
-/// Hard ceiling on a single `claude` summary run. A hung or wedged
-/// `claude` must not pin `SummaryState::Generating` forever: past this the
-/// child is killed and an error is surfaced so the card shows a failure and
-/// the Generate button re-enables. Generous because a multi-pane summary on
-/// a slow model legitimately takes a while.
+/// Hard ceiling on a single `claude` summary run, so a hung `claude` can't
+/// pin `SummaryState::Generating` forever: past this the child is killed and
+/// an error surfaced (card shows failure, Generate re-enables). Generous
+/// because a multi-pane summary on a slow model legitimately takes a while.
 pub const SUMMARY_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// How often the `claude` wait loop wakes to check the deadline and the
@@ -31,21 +29,20 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// alone rather than overwriting it with an `Error` card.
 pub const CANCELLED_MSG: &str = "summary cancelled";
 
-/// Bumped whenever `DEFAULT_SUMMARY_PROMPT` changes. On startup a config
-/// carrying an older version is refreshed to the new default (see
-/// `Config::load`), so template improvements ship to existing users — at
-/// the cost of resetting a hand-edited prompt when the default moves.
+/// Bumped whenever `DEFAULT_SUMMARY_PROMPT` changes. On startup a config with
+/// an older version is refreshed to the new default (see `Config::load`), so
+/// improvements reach existing users — at the cost of resetting a hand-edited
+/// prompt when the default moves.
 pub const DEFAULT_SUMMARY_PROMPT_VERSION: u32 = 3;
 
 /// Marker the template replaces with the rendered `<session>` blocks. A
 /// template missing it still works — the blocks are appended instead.
 pub const PROMPT_PLACEHOLDER: &str = "{{SESSIONS}}";
 
-/// Markers that mean a captured pane is showing deck's own UI (a nested
-/// deck) rather than an agent's work: the sidebar's Projects glyph and the
-/// footer's "[$ deck v…]" version label. The footer label is plain ASCII,
-/// so it survives `capture-pane` reliably even where the glyph doesn't.
-/// Such a pane is marked nested and omitted from the summary.
+/// Markers that a captured pane is showing deck's own UI (nested deck), not
+/// agent work: the sidebar's Projects glyph and the footer's "[$ deck v…]"
+/// label. The footer label is plain ASCII, so it survives `capture-pane` even
+/// where the glyph doesn't. Such a pane is marked nested and omitted.
 const DECK_UI_MARKERS: &[&str] = &["\u{e795}", "[$ deck v"];
 
 /// Whether a captured buffer is a nested deck UI (see `DECK_UI_MARKERS`).
@@ -140,10 +137,9 @@ pub fn language_label(lang: &str) -> &str {
     }
 }
 
-/// Capture every pane, build the prompt from `template`, and run `claude`
-/// with `model` (empty = the user's Claude Code default). `Err` carries a
-/// short, user-facing reason (no agents, claude missing, non-zero exit)
-/// for the card to display.
+/// Capture every pane, build the prompt from `template`, run `claude` with
+/// `model` (empty = user's Claude Code default). `Err` carries a short,
+/// user-facing reason (no agents, claude missing, non-zero exit) for the card.
 pub fn generate(
     panes: &[SummaryPane],
     template: &str,
@@ -207,11 +203,10 @@ pub fn generate(
     result
 }
 
-/// Directory holding one debug log per summary generation, when logging is
-/// enabled (see `write_log`). Under `~/.cache/deck/` — not `/tmp` — because
-/// these files embed each captured pane buffer (which can hold tokens or
-/// other on-screen secrets) and must not sit world-readable in a shared
-/// temp dir.
+/// Directory for per-generation debug logs, when logging is enabled (see
+/// `write_log`). Under `~/.cache/deck/`, not `/tmp`, because these files embed
+/// captured pane buffers (possibly tokens or on-screen secrets) and must not
+/// sit world-readable in a shared temp dir.
 pub fn log_dir() -> PathBuf {
     crate::config::home_dir()
         .join(".cache")
@@ -228,12 +223,12 @@ fn summary_logging_enabled() -> bool {
 /// Max debug logs to retain; older entries are pruned on each write.
 const MAX_SUMMARY_LOGS: usize = 20;
 
-/// Append a record of one generation: timestamp, deck version, model, the
-/// sessions captured, the full input prompt, and the response (or error).
+/// Append a record of one generation: timestamp, deck version, model,
+/// sessions captured, full input prompt, and response (or error).
 ///
-/// Logging is **opt-in** (`DECK_SUMMARY_LOG`) because the record embeds each
-/// captured pane buffer; when enabled, entries go under `~/.cache/deck/`
-/// owner-only and are capped. Best-effort — all IO failures are swallowed.
+/// Opt-in (`DECK_SUMMARY_LOG`) because the record embeds captured pane
+/// buffers; when enabled, entries go under `~/.cache/deck/` owner-only and are
+/// capped. Best-effort — all IO failures are swallowed.
 fn write_log(
     panes: &[SummaryPane],
     model: &str,
@@ -391,10 +386,9 @@ fn attr_escape(s: &str) -> String {
 /// the process may already have exited, in which case `kill` is a no-op
 /// error we ignore; `wait` then reaps whatever's left.
 fn kill_and_reap(child: &mut Child) {
-    // The child leads its own process group (set at spawn), so signal the
-    // whole group — this also kills any subprocesses it spawned (MCP
-    // servers, tools) rather than orphaning them to init. `killpg` may
-    // no-op if the group is already gone; the direct `kill` + `wait` then
+    // The child leads its own process group, so signal the whole group to
+    // also kill its subprocesses (MCP servers, tools) rather than orphaning
+    // them. `killpg` may no-op if the group is gone; the `kill` + `wait` then
     // reaps whatever's left.
     #[cfg(unix)]
     unsafe {
@@ -404,17 +398,14 @@ fn kill_and_reap(child: &mut Child) {
     let _ = child.wait();
 }
 
-/// Run `claude -p` with `prompt` on stdin and return its trimmed stdout.
-/// Headless print mode reads the prompt from stdin (it's "useful for
-/// pipes"); stdin avoids `ARG_MAX` limits a large multi-pane prompt could
-/// hit as an argv. `model` (e.g. "haiku") is passed via `--model`; empty
-/// falls back to the user's Claude Code default.
+/// Run `claude -p` with `prompt` on stdin, return trimmed stdout. Headless
+/// print mode reads the prompt from stdin, which also avoids `ARG_MAX` limits
+/// a large multi-pane prompt could hit as argv. `model` (e.g. "haiku") via
+/// `--model`; empty falls back to the user's Claude Code default.
 ///
 /// Bounded and cancellable: the child is polled against [`SUMMARY_TIMEOUT`]
-/// and the `cancel` flag, and **killed + reaped** on either — so a hung
-/// `claude` can't pin `Generating` forever and an Esc/cancel kills it
-/// promptly. Every error path (stdin write / EPIPE, spawn, timeout, cancel)
-/// also kills + reaps, so no child leaks as a zombie.
+/// and `cancel`, and killed + reaped on either. Every error path (stdin
+/// write/EPIPE, spawn, timeout, cancel) also kills + reaps, so no zombie leaks.
 pub fn run_claude(prompt: &str, model: &str, cancel: &Cancel) -> Result<String, String> {
     let mut cmd = Command::new("claude");
     cmd.arg("-p");
@@ -424,10 +415,9 @@ pub fn run_claude(prompt: &str, model: &str, cancel: &Cancel) -> Result<String, 
     run_command(cmd, prompt, cancel)
 }
 
-/// Drive an already-configured command to completion with `prompt` on
-/// stdin, bounded by [`SUMMARY_TIMEOUT`] and `cancel`. Split out of
-/// [`run_claude`] so the kill/cancel/timeout paths can be tested against a
-/// stub binary without invoking real `claude`.
+/// Drive an already-configured command to completion with `prompt` on stdin,
+/// bounded by [`SUMMARY_TIMEOUT`] and `cancel`. Split out of [`run_claude`] so
+/// the kill/cancel/timeout paths can be tested against a stub binary.
 fn run_command(mut cmd: Command, prompt: &str, cancel: &Cancel) -> Result<String, String> {
     // Run the child in its own process group so a timeout/cancel kill
     // reaches the subprocesses it spawns (e.g. MCP servers, tools) instead

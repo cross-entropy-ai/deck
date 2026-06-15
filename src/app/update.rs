@@ -8,12 +8,10 @@ use super::{App, UPDATE_CHECK_INTERVAL};
 
 impl App {
     pub(super) fn save_config(&mut self) {
-        // The single prefs→Config mapping site (`Prefs::to_config`), fed the
-        // App/runtime-level fields that live outside `Prefs`:
-        // - `raw_keybindings` (the serializable bindings live on `App`);
-        // - `config_remotes` — `forwards` (UI-managed) lives here. CLI-side
-        //   changes to remotes themselves still flow in via hot-reload;
-        // - `collapsed_sections` — runtime state, not a pref.
+        // The single prefs→Config mapping (`Prefs::to_config`), fed the
+        // runtime fields outside `Prefs`: `raw_keybindings` (lives on `App`);
+        // `config_remotes` (UI-managed `forwards` here; CLI changes flow in via
+        // hot-reload); `collapsed_sections` (runtime state, not a pref).
         self.state
             .prefs
             .to_config(
@@ -31,10 +29,10 @@ impl App {
                     .collect(),
             )
             .save();
-        // We just wrote the file; adopt its new mtime so the config watcher
-        // in `run` doesn't see our own save as an external edit and trigger a
-        // self-reload (which would kill plugin PTYs, close the exclude editor
-        // mid-edit, and flash the reload toast on every drag/toggle/save).
+        // Adopt the new mtime so the config watcher in `run` doesn't see our
+        // own save as an external edit and self-reload (which would kill plugin
+        // PTYs, close the exclude editor mid-edit, and flash the reload toast
+        // on every drag/toggle/save).
         self.config_mtime_seen = crate::config::config_mtime();
     }
 
@@ -51,20 +49,18 @@ impl App {
             }
             crate::update::UpdateCheckMode::Enabled => {
                 if self.update_checker.is_none() {
-                    // Spawn the worker (idle, parked on recv) so it's ready,
-                    // but DON'T request here. A fresh cache already back-dated
-                    // `last_update_request` to skip the network until the
-                    // cache ages out; the interval gate below decides when a
-                    // real check fires. Without this, every startup spawned
-                    // AND requested, hitting GitHub each launch and rendering
-                    // the cache dead. Spawning without requesting also avoids
-                    // arming the Drop-join stall (an in-flight request blocks
-                    // teardown until the HTTP returns).
+                    // Spawn the worker (idle, parked on recv) but DON'T request
+                    // here. A fresh cache back-dated `last_update_request` to
+                    // skip the network until the cache ages out; the interval
+                    // gate below decides when a real check fires. Requesting at
+                    // startup would hit GitHub each launch (cache dead) and arm
+                    // the Drop-join stall (an in-flight request blocks teardown
+                    // until the HTTP returns).
                     self.update_checker = Some(UpdateChecker::spawn());
                     // No prior timestamp means update-check was off at startup
-                    // and was just toggled on — check once now. The fresh-cache
-                    // path already set `last_update_request`, so this fires only
-                    // on a genuine enable.
+                    // and just toggled on — check once now. The fresh-cache
+                    // path already set `last_update_request`, so this fires
+                    // only on a genuine enable.
                     if self.last_update_request.is_none() {
                         self.request_update_check_now();
                     }
@@ -92,11 +88,11 @@ impl App {
                             || old_available != self.state.update_available;
                     }
                     UpdateResult::Err(msg) => {
-                        // Background check failed. An eprintln! here would be
-                        // invisible (and could corrupt the alt screen), so put
+                        // Background check failed. An eprintln! would be
+                        // invisible (and could corrupt the alt screen), so show
                         // it in the reload strip; it clears after the TTL. Set
-                        // the fields directly — `self.update_checker` is
-                        // borrowed here, so we can't call `show_warning`.
+                        // fields directly — `self.update_checker` is borrowed,
+                        // so `show_warning` isn't callable.
                         self.state.reload_status = Some(crate::state::ReloadStatus::Err(format!(
                             "update check failed: {msg}"
                         )));

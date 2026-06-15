@@ -1,14 +1,12 @@
-//! The settings page as a descriptor table — the single source of truth
-//! for what rows the page has, in what order, and what each one shows and
-//! does. Adding a setting means adding one [`SettingRow`]; the renderer
-//! (`app::render`) and the reducer (`app::action::reduce`) both iterate
-//! this slice, so a row's label, value, help, and adjust action can't
-//! drift apart.
+//! The settings page as a descriptor table — the single source of truth for
+//! what rows the page has, their order, and what each shows and does. Adding a
+//! setting means adding one [`SettingRow`]; the renderer (`app::render`) and
+//! reducer (`app::action::reduce`) both iterate this slice, so a row's label,
+//! value, help, and adjust action can't drift apart.
 //!
-//! This lives in the `app` layer, not `model`: each row's `adjust`
-//! produces an [`Action`], and `model` neither imports nor depends on
-//! `Action`. The value/help closures read `&AppState` so dynamic text
-//! (the frame-rate caveat, the update-check "last checked" line) stays
+//! Lives in `app`, not `model`: each row's `adjust` produces an [`Action`],
+//! which `model` doesn't depend on. The value/help closures read `&AppState`
+//! so dynamic text (frame-rate caveat, update-check "last checked" line) stays
 //! beside the value and action it describes.
 
 use crate::action::{Action, SettingsAction, SummaryAction};
@@ -18,9 +16,9 @@ use crate::theme::THEMES;
 use super::update::format_update_check_help;
 
 /// One row of the settings page. The closures borrow `&AppState` so the
-/// renderer can build the display strings each frame; `adjust` maps a
-/// direction (`+1` right / `-1` left) to the action that left/right (or
-/// Enter) fires on that row — toggles and openers ignore the direction.
+/// renderer builds display strings each frame; `adjust` maps a direction
+/// (`+1` right / `-1` left) to the action left/right (or Enter) fires on that
+/// row — toggles and openers ignore the direction.
 pub struct SettingRow {
     pub label: &'static str,
     pub value: fn(&AppState) -> String,

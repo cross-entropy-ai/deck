@@ -1,27 +1,20 @@
 //! Bounded-duration command execution.
 //!
-//! External tools (`tmux`, `git`, `ps`, ...) are normally fast, but a
-//! handful of failure modes — network filesystems, hung git hooks,
-//! frozen tmux servers — can stall a `Command::output()` call
-//! indefinitely. Since `infra::refresh` runs on a single worker thread,
-//! a single stuck spawn would freeze the entire status pipeline.
+//! External tools (`tmux`, `git`, `ps`, ...) are usually fast, but failure
+//! modes (network filesystems, hung git hooks, frozen tmux servers) can stall
+//! `Command::output()` forever. `infra::refresh` runs on a single worker
+//! thread, so one stuck spawn would freeze the whole status pipeline.
 //!
-//! `CommandRunner` is a thin abstraction: it runs one command,
-//! optionally waits up to a timeout, and returns a structured
-//! `CommandError` that distinguishes "couldn't spawn", "ran but failed"
-//! and "still running after the deadline". A real implementation
-//! (`RealRunner`) backs this with a worker thread that polls
-//! `Child::try_wait`; tests can swap in a `FakeRunner` to drive
-//! parsing/timeout branches deterministically.
+//! `CommandRunner` runs one command, optionally waits up to a timeout, and
+//! returns a `CommandError` distinguishing "couldn't spawn", "ran but failed",
+//! and "still running after the deadline". `RealRunner` backs it with
+//! `try_wait` polling; tests swap in a `FakeRunner` for deterministic
+//! parsing/timeout branches. The trait stays minimal — no streaming or
+//! environment-control APIs.
 //!
-//! The trait is intentionally minimal — just enough to remove the
-//! "infinite hang" risk and to make tmux/git parsing unit-testable.
-//! Higher-level streaming or environment-control APIs are out of scope.
-//!
-//! Behaviour note: on timeout, `RealRunner` kills the straggler's whole
-//! process group via `duct` so the OS reaps it (and any grandchildren a
-//! shell-wrapped command spawned). We don't try to recover its partial
-//! stdout — by the time we hit a timeout the data is suspect anyway.
+//! On timeout, `RealRunner` kills the straggler's whole process group via
+//! `duct` (so the OS reaps any grandchildren) and discards partial stdout,
+//! which is suspect by then.
 
 use std::io;
 use std::process::ExitStatus;

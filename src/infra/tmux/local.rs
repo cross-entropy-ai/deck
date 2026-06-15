@@ -6,10 +6,8 @@ use crate::infra::parser::tmux::{
     WINDOW_ACTIVITY_FORMAT,
 };
 
-/// How long any single tmux invocation may take before we give up and
-/// treat it as a failure. tmux is local IPC; healthy calls finish in a
-/// few milliseconds, so 1s is plenty of headroom while still rescuing
-/// us from a wedged server.
+/// Per-tmux-call timeout. tmux is local IPC and healthy calls finish in
+/// a few ms, so 1s rescues us from a wedged server with ample headroom.
 pub const TMUX_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Info about a tmux session.
@@ -19,17 +17,15 @@ pub struct SessionInfo {
     pub dir: String,
     /// Unix timestamp of last buffer activity in this session.
     pub activity: u64,
-    /// Deck's persisted display rank, read from the `@deck_order`
-    /// session option. `None` when the session was never reordered (the
-    /// option is unset, so the field comes back empty). Both local and
-    /// remote listings request the field.
+    /// Deck's persisted display rank from the `@deck_order` session
+    /// option. `None` when never reordered (option unset → empty field).
+    /// Both local and remote listings request it.
     pub order: Option<u32>,
 }
 
-/// Run a tmux command and return stdout, trimmed. `None` on any
-/// failure (spawn, non-zero exit, timeout). The error reason is
-/// dropped here; we only carry it through the typed paths used in
-/// tests today, leaving room to surface it in the UI later.
+/// Run a tmux command and return trimmed stdout. `None` on any failure
+/// (spawn, non-zero exit, timeout); the error reason is dropped here but
+/// carried through the typed paths, leaving room to surface it later.
 fn tmux(args: &[&str]) -> Option<String> {
     tmux_with(default_runner(), args).ok()
 }
@@ -46,12 +42,11 @@ pub fn list_sessions() -> Vec<SessionInfo> {
 }
 
 fn list_sessions_with(runner: &dyn CommandRunner) -> Vec<SessionInfo> {
-    // One tmux invocation for both the session list and the per-window
-    // activity (`;`-chained like `apply_theme`), instead of two spawns per
-    // refresh tick. A one-char prefix on each `-F` format tags which list
-    // every output line belongs to so the combined stdout demuxes cleanly.
-    // The trailing `#{@deck_order}` carries the persisted display rank
-    // (empty when unset) — see `persist_session_order`.
+    // One tmux invocation (`;`-chained like `apply_theme`) for both the
+    // session list and per-window activity, vs two spawns per tick. A
+    // one-char prefix on each `-F` format tags each output line so the
+    // combined stdout demuxes cleanly. Trailing `#{@deck_order}` carries
+    // the persisted rank (empty when unset) — see `persist_session_order`.
     let session_fmt = format!("S\t{SESSION_LIST_FORMAT}");
     let window_fmt = format!("W\t{WINDOW_ACTIVITY_FORMAT}");
     let Ok(raw) = tmux_with(
@@ -83,12 +78,10 @@ fn list_sessions_with(runner: &dyn CommandRunner) -> Vec<SessionInfo> {
     parse_sessions(&sessions_raw, &parse_window_activity(&windows_raw))
 }
 
-/// Persist the local session display order onto the tmux sessions
-/// themselves via the `@deck_order` user option (0-based rank). The
-/// option lives on the running tmux server, so the order survives a
-/// deck restart without touching the config file; it's read back by
-/// `list_sessions`. Best-effort — a failed write just means the order
-/// isn't remembered, degrading to tmux's default listing order.
+/// Persist session display order via the `@deck_order` user option
+/// (0-based rank). The option lives on the tmux server, so order survives
+/// a deck restart without the config file; read back by `list_sessions`.
+/// Best-effort: a failed write just falls back to tmux's default order.
 pub fn persist_session_order(order: &[String]) {
     persist_session_order_with(default_runner(), order)
 }
@@ -135,12 +128,10 @@ pub fn capture_pane(pane_id: &str) -> Option<String> {
     tmux(&["capture-pane", "-p", "-J", "-t", pane_id])
 }
 
-/// The tmux session deck itself is running inside, if any — resolved from
-/// `$TMUX_PANE` (the pane id tmux exports to the process it launched).
-/// `None` when deck isn't running under tmux. deck excludes this session
-/// from the sidebar and never attaches to it, so a deck launched inside
-/// tmux can't load the very session it lives in (infinite tmux→deck→tmux
-/// nesting).
+/// The tmux session deck is running inside, if any — resolved from
+/// `$TMUX_PANE` (the pane id tmux exports to its child). `None` when not
+/// under tmux. deck excludes this session from the sidebar and never
+/// attaches to it, avoiding infinite tmux→deck→tmux nesting.
 pub fn own_session() -> Option<String> {
     let pane = std::env::var("TMUX_PANE").ok()?;
     if pane.trim().is_empty() {
@@ -212,11 +203,10 @@ pub fn switch_client_for_tty(client_tty: &str, session: &str) {
     ]);
 }
 
-/// Outcome of an agent-pane focus (local or remote). `ExactPane` means the
-/// agent's window+pane were selected and our client switched to it (deck
-/// always grabs the exact pane, dragging any co-client along); `Failed`
-/// means the rule bailed or the transport errored, so the caller commits
-/// nothing.
+/// Outcome of an agent-pane focus (local or remote). `ExactPane`: the
+/// agent's window+pane were selected and our client switched to it
+/// (dragging any co-client along). `Failed`: the rule bailed or the
+/// transport errored, so the caller commits nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaneFocus {
     ExactPane,
@@ -291,13 +281,11 @@ pub fn pid_looks_like_deck(pid: u32) -> bool {
 
 fn pid_looks_like_deck_with(runner: &dyn CommandRunner, pid: u32) -> bool {
     let pid_str = pid.to_string();
-    // `comm=` is the executable image name (macOS: the exe path; Linux: the
-    // basename), NOT the full argv. We then compare the basename for
-    // *equality* against our own binary. A substring match on the `command=`
-    // argv would also fire on unrelated processes that merely mention
-    // "deck" (`vim deck.md`, a shell sitting in ~/deck) — and since the pid
-    // comes from a possibly-stale /tmp/deck.lock, a recycled pid could then
-    // be force-killed. Exact basename keeps us to our own kind.
+    // `comm=` is the executable image name (not full argv); we compare its
+    // basename for *equality* against our binary. A substring match on
+    // `command=` argv would also fire on processes merely mentioning "deck"
+    // (`vim deck.md`, a shell in ~/deck) — and since the pid comes from a
+    // possibly-stale /tmp/deck.lock, a recycled pid could be force-killed.
     let Ok(out) = runner.run("ps", &["-p", &pid_str, "-o", "comm="], TMUX_TIMEOUT) else {
         return false;
     };

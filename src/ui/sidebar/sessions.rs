@@ -19,14 +19,12 @@ use crate::state::{
 /// Braille spinner frames for the Summary card's "Generating…" state.
 pub(super) const SUMMARY_SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// Recolor the leading status glyph of an agent row as a traffic light:
-/// green = working, red = not working (idle), yellow = waiting for the user,
-/// gray = unknown. The glyph itself is chosen in `AppState::agent_item`; here
-/// we only override its color. `basic_style` builds a row's first line as
-/// `[marker, "<glyph> <location>"]`, so we split the title span and tint just
-/// the glyph, leaving the focus/bold styling and the location text intact.
-/// Placeholder rows ("no agents" / "detecting…") start with no known glyph and
-/// pass through unchanged.
+/// Recolor an agent row's leading status glyph as a traffic light: green =
+/// working, red = idle, yellow = waiting, gray = unknown. The glyph is chosen
+/// in `AppState::agent_item`; here we only override its color. `basic_style`
+/// builds the first line as `[marker, "<glyph> <location>"]`, so we split the
+/// title span and tint just the glyph, leaving focus/bold and location intact.
+/// Placeholder rows ("no agents" / "detecting…") have no glyph and pass through.
 fn recolor_agent_dot(
     mut text: Text<'static>,
     theme: &Theme,
@@ -138,10 +136,9 @@ pub(super) fn draw_sessions(
     let focused = props.focus_target.map(|f| f.0);
     let mut state = SectionedListState::new();
     state.set_focused(focused.unwrap_or(usize::MAX));
-    // Render with the crate's `basic_style`, then on the Agents tab recolor the
-    // leading status dot of each agent row by its `AgentStatus` (looked up via
-    // the row index — color is decoupled from the glyph shape, see
-    // `recolor_agent_dot`). Project rows fall straight through.
+    // Render with `basic_style`, then on the Agents tab recolor each agent
+    // row's status dot by its `AgentStatus` (looked up via row index; color is
+    // decoupled from glyph, see `recolor_agent_dot`). Project rows pass through.
     let theme = ctx.theme;
     let agents_tab = props.agents_tab;
     let agent_entries = props.agent_entries;
@@ -193,13 +190,12 @@ pub(super) fn draw_sessions(
     for v in layout.visible_items(scroll, area.height) {
         match v.row_idx {
             None => {
-                // A header: the bar (and its buttons) sits `item.lead` rows
-                // below the block top — the lead rows are inert section-spacing
-                // margin that both the renderer and `header_at_y` skip. Resolve
-                // the bar's viewport row first, then hit-test/place rects there;
-                // using `v.viewport_y` directly would land on the margin row, so
-                // a remote divider (which carries a 1-row top margin) would never
-                // register and its button clicks would fall through to collapse.
+                // A header: the bar (and buttons) sits `item.lead` rows below
+                // the block top; the lead rows are inert section-spacing margin
+                // that the renderer and `header_at_y` skip. Resolve the bar's
+                // viewport row first, then place rects there — `v.viewport_y`
+                // would land on the margin row, so a remote divider (1-row top
+                // margin) would never register and its clicks fall through.
                 let Some(bar_y) = v.viewport_y_for_item_line(v.item.lead) else {
                     continue;
                 };
@@ -228,9 +224,9 @@ pub(super) fn draw_sessions(
             }
             Some(i) => {
                 // Only real agents get a click hit. A placeholder row has no
-                // pane, so it publishes nothing — a click on it falls through
-                // to the row-focus path, moving the cursor without switching
-                // (the same guarded no-op a `NoSessions` row gets on Projects).
+                // pane and publishes nothing — a click falls through to the
+                // row-focus path, moving the cursor without switching (the same
+                // guarded no-op a `NoSessions` row gets on Projects).
                 if props.agents_tab {
                     if let Some((entry, agent)) = props
                         .agent_entries
@@ -259,10 +255,9 @@ pub(super) fn draw_sessions(
     (dividers, agents)
 }
 
-/// Right-aligned `[icon]` button cell ranges within a header `width` cells
-/// wide, in button order, with a 1-cell gap between them. Mirrors the
-/// crate's private `header_button_ranges` so deck's click rects line up
-/// exactly with where the `basic` preset paints the buttons.
+/// Right-aligned `[icon]` button cell ranges within a `width`-wide header, in
+/// button order with a 1-cell gap. Mirrors the crate's private
+/// `header_button_ranges` so click rects line up with the `basic` preset.
 fn header_button_ranges(width: u16, buttons: &[String]) -> Vec<Range<u16>> {
     if buttons.is_empty() {
         return Vec::new();
@@ -385,10 +380,9 @@ pub(super) fn draw_summary_card(
                     .add_modifier(Modifier::BOLD),
             ));
         }
-        // Derive each button's column from the running offset (matches the
-        // drawn spans `left + filler + [age] + Generate + [popup]`), and
-        // clamp to the card width so a narrow card never reports a rect past
-        // its right edge.
+        // Derive each button's column from the running offset (matching the
+        // drawn spans `left + filler + [age] + Generate + [popup]`), clamped to
+        // card width so a narrow card never reports a rect past its right edge.
         let age_run = if show_age { age.width() + 1 } else { 0 };
         let gen_x = (left_w + filler + age_run) as u16;
         let popup_x = gen_x + gen_w as u16;
@@ -474,10 +468,9 @@ mod tests {
     use crate::agent::AgentStatus;
     use ratatui::text::Line;
 
-    /// The fg color the leading dot ends up with, or `None` if left uncolored.
-    /// Input mirrors `basic_style`'s shape: span[0] is the focus marker,
-    /// span[1] starts with the dot glyph. The glyph is `●` for every case to
-    /// prove color follows the *status*, not the glyph shape.
+    /// The fg color the leading dot ends up with, or `None` if uncolored. Input
+    /// mirrors `basic_style`'s shape: span[0] marker, span[1] starts with the
+    /// glyph. The glyph is `●` everywhere to prove color follows status.
     fn dot_color(status: AgentStatus) -> Option<Color> {
         let theme = &crate::theme::THEMES[0];
         let input = Text::from(Line::from(vec![Span::raw(""), Span::raw("● sess:1.0")]));
