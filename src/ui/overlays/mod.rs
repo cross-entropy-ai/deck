@@ -49,10 +49,6 @@ pub(super) fn draw_help(
         key_span("1-9".to_string()),
         desc_span("quick jump"),
     ]));
-    lines.push(Line::from(vec![
-        key_span("Mouse".to_string()),
-        desc_span("click All / Idle / Working tabs"),
-    ]));
 
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(

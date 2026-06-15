@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use crate::infra::command::{default_runner, CommandRunner};
 use crate::infra::parser::tmux::exact_target;
-use crate::remote_tmux::{client_marker_token, run_ssh, shell_single_quote};
+use crate::remote_tmux::{run_ssh, shell_single_quote};
 use crate::tmux::PaneFocus;
 
 /// Echoed once the rule selected the window/pane and switched our client.
@@ -77,10 +77,7 @@ pub(crate) fn run_focus_with(
                 .map(|o| o.stdout_trimmed())
         }
         FocusTransport::Remote { host, marker_id } => {
-            let set_c = format!(
-                "C=$(cat {} 2>/dev/null)",
-                client_marker_token(host, *marker_id)
-            );
+            let set_c = crate::remote_tmux::read_client_tty(host, *marker_id);
             let cmd = focus_command(&set_c, session, pane_id);
             run_ssh(runner, host, &[cmd.as_str()])
         }
@@ -113,10 +110,7 @@ pub(crate) fn active_pane_with(
                 .map(|o| o.stdout_trimmed())
         }
         FocusTransport::Remote { host, marker_id } => {
-            let set_c = format!(
-                "C=$(cat {} 2>/dev/null)",
-                client_marker_token(host, *marker_id)
-            );
+            let set_c = crate::remote_tmux::read_client_tty(host, *marker_id);
             run_ssh(runner, host, &[active_pane_command(&set_c).as_str()])
         }
     };

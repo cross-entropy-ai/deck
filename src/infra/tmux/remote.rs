@@ -266,7 +266,7 @@ fn shell_quote_remote_path(path: &str) -> String {
 /// untargeted op that could move another client. Writing `-c "$C"` as two
 /// shell words avoids the zsh `${C:+…}` word-splitting trap; the guarding
 /// `[ -n "$C" ]` is portable.
-fn read_client_tty(host: &str, marker_id: u64) -> String {
+pub(crate) fn read_client_tty(host: &str, marker_id: u64) -> String {
     format!(
         "C=$(cat {marker} 2>/dev/null)",
         marker = client_marker_token(host, marker_id),
