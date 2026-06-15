@@ -157,9 +157,7 @@ pub(crate) fn capture_panes(host: &str, pane_ids: &[String]) -> HashMap<String, 
     capture_panes_with(default_runner(), host, pane_ids)
 }
 
-/// Capture several remote panes in a SINGLE ssh hop, returning `pane_id ->
-/// buffer`. Classifies remote agents' status without one hop per pane;
-/// pane ids are deck-known `%N` handles. Empty map on failure / no panes.
+/// Worker for [`capture_panes`]; pane ids are deck-known `%N` handles.
 fn capture_panes_with(
     runner: &dyn CommandRunner,
     host: &str,

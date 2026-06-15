@@ -108,9 +108,8 @@ fn marker_ready_applies_when_generation_and_marker_match() {
 
 #[test]
 fn marker_ready_dropped_when_marker_id_is_not_the_live_one() {
-    // Same generation, but the live connection's marker advanced (a respawn
-    // within… well, a respawn bumps generation, but defensively the marker
-    // id guard still rejects a confirmation for a marker that isn't current).
+    // Same generation, but the live connection's marker advanced: the marker
+    // id guard defensively rejects a confirmation for a marker that isn't current.
     let mut conns = HashMap::new();
     conns.insert("h".to_string(), conn(RemoteConnStatus::Connected, 9, false));
     let mut generations = HashMap::new();

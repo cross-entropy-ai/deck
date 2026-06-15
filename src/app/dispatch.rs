@@ -381,9 +381,6 @@ impl App {
         }
     }
 
-    /// Switch to and focus the pane a clicked agent runs in. Local: re-point
-    /// the client and select the exact window/pane. Remote: switch to that
-    /// host's session (pane focus on remote is a follow-up).
     /// Kick the Agents-tab summary generation: flip to the animated
     /// `Generating` state and spawn a worker that captures each detected agent's
     /// pane buffer, builds the prompt from the template, and runs `claude -p`.

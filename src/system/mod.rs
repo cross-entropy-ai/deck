@@ -41,19 +41,15 @@ use crate::tmux::SessionInfo;
 
 /// A mounted backend supplying sessions to the shell. Every method is keyed by
 /// [`LaneId`], which already carries the owning system's id — so a system only
-/// ever sees lanes it produced in [`sections`](System::sections).
+/// ever sees lanes it produced in [`section_for`](System::section_for).
 pub trait System: Send + Sync {
     /// Stable id for this system (e.g. `"tmux"`). Must match the `system`
     /// half of every [`LaneId`] this system hands out.
     fn id(&self) -> &str;
 
-    /// The lanes this system currently exposes, in display order. Each becomes
-    /// one sidebar section (divider header + its rows). The shell concatenates
-    /// the sections of all registered systems.
-    /// The [`SectionDef`] for a single lane: the divider's title, accent,
-    /// buttons, and badge. The shell enumerates the lanes to lay out from its
-    /// session list (so every session row keeps a section) and calls this to
-    /// style each one.
+    /// The [`SectionDef`] for a single lane: the divider's title and buttons.
+    /// The shell enumerates the lanes to lay out from its session list (so
+    /// every session row keeps a section) and calls this to style each one.
     fn section_for(&self, lane: &LaneId, ctx: &SectionCtx) -> SectionDef;
 
     /// Snapshot one lane's sessions + detected agents. Run off the UI thread by
@@ -79,7 +75,7 @@ pub trait System: Send + Sync {
     fn on_button(&self, lane: &LaneId, command: &str, x: u16, y: u16) -> Vec<Effect>;
 }
 
-/// Read-only state a [`System`] consults to build its [`sections`](System::sections).
+/// Read-only state a [`System`] consults to build its [`section_for`](System::section_for).
 /// (tmux derives lanes — and each `⇄N` forward count — from `remotes`.)
 pub struct SectionCtx<'a> {
     pub remotes: &'a [RemoteConfig],

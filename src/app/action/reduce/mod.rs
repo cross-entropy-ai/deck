@@ -275,7 +275,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state
                 .entries
                 .retain(|e| e.host.as_deref() != Some(host.as_str()));
-            // Clamp the Projects cursor against the Projects row space.
             state.clamp_projects_focus();
             state.clamp_agent_focus();
             fx.save_config();

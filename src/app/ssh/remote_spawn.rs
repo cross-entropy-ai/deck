@@ -170,8 +170,7 @@ fn spawn_one(host: String, generation: u64, tx: Sender<RemoteSpawnEvent>, size: 
             // some other attached client. The `rm` first clears any marker
             // from a prior connection so stale ttys don't linger. `tty`'s
             // output goes to the file, so nothing dirties the terminal before
-            // tmux paints. Best-effort; readiness is confirmed out of band
-            // below.
+            // tmux paints. Best-effort; readiness confirmed out of band below.
             let marker_id = next_marker_id();
             let remote_cmd = format!(
                 "mkdir -p {dir} 2>/dev/null ; rm -f {glob} 2>/dev/null ; tty > {marker} 2>/dev/null ; {path} tmux attach",

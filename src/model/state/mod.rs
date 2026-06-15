@@ -278,7 +278,6 @@ pub struct FocusTarget(pub usize);
 /// paths outside settings touch them (refresh loop, banner, hit-testing).
 #[derive(Debug, Default)]
 pub struct SettingsState {
-    /// Selected row in the settings page.
     pub selected: usize,
 
     /// Theme picker overlay (open inside the settings page).
@@ -310,10 +309,7 @@ pub struct Prefs {
     /// Use the terminal's default (transparent) background instead of the
     /// theme's solid background color.
     pub transparent_bg: bool,
-    /// Active sidebar tab. `Projects` lists tmux sessions; `Agents` lists
-    /// detected agents as the primary list. Persisted to config. Agent
-    /// detection in the refresh worker runs only while this is `Agents`
-    /// (see `agents_tab_active`).
+    /// Active sidebar tab; see [`SidebarTab`]. Persisted to config.
     pub sidebar_tab: SidebarTab,
     pub sidebar_width: u16,
     pub sidebar_height: u16,

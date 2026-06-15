@@ -43,8 +43,7 @@ impl App {
             }
         }
         // `entries` + `agents` are settled: rebuild the stored Agents-tab list
-        // from them (model A — stored, like `entries`), then re-anchor the
-        // cursor against the freshly built list.
+        // (model A — stored, like `entries`), then re-anchor the cursor.
         self.state.rebuild_agent_entries();
         self.state.reanchor_agent_focus(agent_key);
     }
@@ -151,8 +150,7 @@ impl App {
 
         // Apply this round's agent detection: store probed hosts, drop stale
         // agents on covered-but-failed hosts, prune to configured. (Logic lives
-        // on AppState for testability.) Stored entry list + cursor are
-        // re-anchored by the caller (`apply_update`) once both are settled.
+        // on AppState for testability.)
         self.state.apply_remote_agents(covered_hosts, agents);
     }
 

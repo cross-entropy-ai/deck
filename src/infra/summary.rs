@@ -45,7 +45,6 @@ pub const PROMPT_PLACEHOLDER: &str = "{{SESSIONS}}";
 /// where the glyph doesn't. Such a pane is marked nested and omitted.
 const DECK_UI_MARKERS: &[&str] = &["\u{e795}", "[$ deck v"];
 
-/// Whether a captured buffer is a nested deck UI (see `DECK_UI_MARKERS`).
 fn is_nested_deck(buffer: &str) -> bool {
     DECK_UI_MARKERS.iter().any(|m| buffer.contains(m))
 }
@@ -357,10 +356,8 @@ fn attr_escape(s: &str) -> String {
 /// the process may already have exited, in which case `kill` is a no-op
 /// error we ignore; `wait` then reaps whatever's left.
 fn kill_and_reap(child: &mut Child) {
-    // The child leads its own process group, so signal the whole group to
-    // also kill its subprocesses (MCP servers, tools) rather than orphaning
-    // them. `killpg` may no-op if the group is gone; the `kill` + `wait` then
-    // reaps whatever's left.
+    // Child leads its own process group; signal the whole group to also kill
+    // its subprocesses (MCP servers, tools) rather than orphaning them.
     #[cfg(unix)]
     unsafe {
         libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
@@ -390,9 +387,8 @@ pub fn run_claude(prompt: &str, model: &str, cancel: &Cancel) -> Result<String, 
 /// bounded by [`SUMMARY_TIMEOUT`] and `cancel`. Split out of [`run_claude`] so
 /// the kill/cancel/timeout paths can be tested against a stub binary.
 fn run_command(mut cmd: Command, prompt: &str, cancel: &Cancel) -> Result<String, String> {
-    // Run the child in its own process group so a timeout/cancel kill
-    // reaches the subprocesses it spawns (e.g. MCP servers, tools) instead
-    // of orphaning them — `kill_and_reap` signals the whole group.
+    // Own process group so a timeout/cancel kill reaches the subprocesses it
+    // spawns (MCP servers, tools); `kill_and_reap` signals the whole group.
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -423,8 +419,8 @@ fn run_command(mut cmd: Command, prompt: &str, cancel: &Cancel) -> Result<String
         }
     }
 
-    // Poll for completion against the deadline and the cancel flag rather
-    // than blocking forever in `wait_with_output`.
+    // Poll against the deadline and cancel flag rather than blocking forever
+    // in `wait_with_output`.
     let deadline = Instant::now() + SUMMARY_TIMEOUT;
     loop {
         match child.try_wait() {

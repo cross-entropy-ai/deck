@@ -398,7 +398,6 @@ impl HitRegions {
     /// Resolve a click at `(col, row)` to the region it lands on. Match
     /// order encodes priority: kill buttons, banner, tabs, summary buttons,
     /// then menu, then dividers (on group header rows), then agent rows.
-    /// Uses `Rect::contains` throughout.
     pub fn hit(&self, col: u16, row: u16) -> Option<HitKind> {
         let pos = Position::new(col, row);
         if let Some(kill) = self.kill {

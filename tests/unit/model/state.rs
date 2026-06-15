@@ -227,7 +227,7 @@ fn agents_layout_groups_agents_under_host_dividers() {
     let built = state.agents_layout();
     // Two focusable agent rows (local agent, then h1's), in agent_entries order.
     assert_eq!(built.layout.row_count(), 2);
-    // Focusable count on the Agents tab is the agent count, not sessions.
+    // Focusable count on the Agents tab is the agent count, not session count.
     assert_eq!(state.focusable_count(), 2);
 }
 

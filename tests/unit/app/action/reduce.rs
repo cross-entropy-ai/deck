@@ -763,7 +763,6 @@ fn rename_input_key_appends_char() {
 #[test]
 fn rename_confirm_produces_side_effect() {
     let mut state = make_test_state(1);
-    // Build a RenameState with original "old" but current input "new-name".
     let rs = RenameState::new("old".to_string(), "new-name".to_string(), None);
     assert_eq!(rs.original_name, "old");
     state.overlay.renaming = Some(rs);
@@ -857,7 +856,7 @@ fn new_session_next_clamped_to_filtered_len() {
     let mut state = picker_state_with("~/", vec!["a".into(), "b".into()]);
     apply_action(&mut state, Action::NewSession(NewSessionAction::Next));
     apply_action(&mut state, Action::NewSession(NewSessionAction::Next));
-    apply_action(&mut state, Action::NewSession(NewSessionAction::Next)); // tries to overrun
+    apply_action(&mut state, Action::NewSession(NewSessionAction::Next));
     let ns = state.overlay.new_session.as_ref().unwrap();
     assert_eq!(ns.picker.selected, 1);
 }
@@ -975,7 +974,7 @@ fn pf_add_open_creates_default_form() {
 #[test]
 fn pf_task_result_persists_forward_when_overlay_closed() {
     let mut state = make_test_state(0);
-    // Seed a host in config_remotes (no overlay open)
+    // No overlay open: the result must still persist to config_remotes.
     state.config_remotes = vec![crate::config::RemoteConfig {
         host: "h1".into(),
         forwards: vec![],

@@ -213,8 +213,7 @@ impl Config {
                 Ok(c) => c,
                 Err(_) => return Config::default(),
             };
-            // Migrate keybindings (command renames, legacy key syntax,
-            // unknown sweep) and seed/refresh the summary prompt, then
+            // Migrate keybindings and seed/refresh the summary prompt, then
             // rewrite once so the file self-heals.
             let mut changed = migrate_keybindings(&mut config.keybindings);
             changed |= config.migrate_summary_prompt();

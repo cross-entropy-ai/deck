@@ -106,8 +106,8 @@ impl AppState {
             // buttons, badge.
             let def = crate::system::for_lane(lane_id).section_for(lane_id, &ctx);
             if opts.show_headers {
-                // ponytail: section dividers stay muted on purpose — least
-                // distraction, no per-host tint.
+                // Section dividers stay muted on purpose — least distraction,
+                // no per-host tint.
                 let color = theme.muted;
                 let mut header = BasicItem::new(def.title.clone())
                     .separator("─")
@@ -336,10 +336,8 @@ impl AppState {
     /// `agent_entries` element so focus/scroll/hit-test stay in sync.
     pub fn agents_layout(&self) -> BuiltLayout {
         // Sections fold independently of Projects via `collapsed_agent_sections`.
-        // Remote sections take a 1-row top margin. The Summary card is a separate
-        // widget pinned above, so the list is pure `BasicItem`. Body mirrors
-        // `sidebar_layout`: filter the stored list by host, build each entry into
-        // a `BasicItem` via the `agent_item` twin of `session_item`.
+        // The Summary card is a separate widget pinned above, so the list is
+        // pure `BasicItem`.
         self.build_sections(
             SectionLayoutOpts {
                 show_headers: true,

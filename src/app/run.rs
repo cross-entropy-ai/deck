@@ -528,14 +528,12 @@ mod tests {
     fn ticker_due_advances_only_when_elapsed() {
         let mut t = Ticker::new(Duration::from_millis(100));
         let start = t.last;
-        // Not yet due.
         assert!(!t.due(start + Duration::from_millis(50)));
         assert_eq!(t.last, start);
         // Due once interval elapsed; last advances to the queried instant.
         let now = start + Duration::from_millis(150);
         assert!(t.due(now));
         assert_eq!(t.last, now);
-        // Immediately after firing, not due again.
         assert!(!t.due(now + Duration::from_millis(50)));
     }
 

@@ -47,7 +47,6 @@ pub(super) struct TerminalPane {
 }
 
 impl TerminalPane {
-    /// Wrap a freshly spawned PTY with a vt100 parser sized to match.
     pub(super) fn new(pty: Pty, rows: u16, cols: u16) -> Self {
         Self {
             pty,

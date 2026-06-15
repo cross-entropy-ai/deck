@@ -147,8 +147,8 @@ pub(super) fn draw_sessions(
     .highlight_style(Style::default().bg(ctx.theme.surface));
     frame.render_stateful_widget(widget, area, &mut state);
 
-    // Recompute the scroll the widget used (same formula) and walk the
-    // visible items to publish click targets.
+    // Recompute the scroll the widget used (same formula) to walk visible
+    // items and publish click targets.
     let scroll = layout.scroll_offset(focused, area.height);
     let mut dividers = Vec::new();
     let mut agents = Vec::new();
