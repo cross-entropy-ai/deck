@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::PluginConfig;
 use crate::geometry::{context_menu_rect, host_accent, shorten_dir, tab_col_ranges, tab_label};
-use crate::host_key::{HostKey, HostQuery};
+use crate::lane::LaneId;
+use crate::system::tmux::lane;
 use crate::keybindings::Keybindings;
 use crate::update::{UpdateCheckMode, UpdateStatus};
 
@@ -528,7 +529,7 @@ pub struct AppState {
     /// Layout/render look a section up by key, never branching on local vs
     /// remote. Each value lists located agents (count + session/window/pane).
     /// See `crate::agent`.
-    pub agents: HashMap<HostKey, Vec<crate::agent::DetectedAgent>>,
+    pub agents: HashMap<LaneId, Vec<crate::agent::DetectedAgent>>,
 
     /// The flattened Agents-tab list, twin of `entries` — stored, not derived
     /// per frame. Built from `agents` + host order (`rebuild_agent_entries`)
@@ -538,16 +539,16 @@ pub struct AppState {
     pub agent_entries: Vec<AgentEntry>,
 
     /// Sidebar groups the user has collapsed (Expanded view only).
-    /// `HostKey::local()` = `@local`, `HostKey::remote(host)` = a `@host` group.
+    /// `lane(None)` = `@local`, `lane(Some(host))` = a `@host` group.
     /// A collapsed group renders as just its divider (rows hidden by the layout).
     /// Persisted to config (`collapsed_sections`), restored at startup.
-    pub collapsed_sections: HashSet<HostKey>,
+    pub collapsed_sections: HashSet<LaneId>,
 
     /// Agents-tab twin of `collapsed_sections`, keyed the same way. Separate so
     /// a host collapsed on Projects doesn't hide its agent rows (and vice versa)
     /// — the two tabs fold independently. Persisted to config
     /// (`collapsed_agent_sections`), restored at startup.
-    pub collapsed_agent_sections: HashSet<HostKey>,
+    pub collapsed_agent_sections: HashSet<LaneId>,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -968,7 +969,7 @@ impl AppState {
     /// this without caring whether the section is local or remote.
     pub fn section_agents(&self, host: Option<&str>) -> Option<&[crate::agent::DetectedAgent]> {
         self.agents
-            .get(HostQuery::from_host(host))
+            .get(lane(host).as_str())
             .map(Vec::as_slice)
     }
 
@@ -985,19 +986,21 @@ impl AppState {
     ) {
         for host in covered_hosts {
             if !fresh.contains_key(&host) {
-                self.agents.remove(HostQuery::from_host(Some(&host)));
+                self.agents.remove(lane(Some(&host)).as_str());
             }
         }
         for (host, list) in fresh {
-            self.agents.insert(HostKey::remote(&host), list);
+            self.agents.insert(lane(Some(&host)), list);
         }
         let configured: std::collections::HashSet<&str> = self
             .config_remotes
             .iter()
             .map(|r| r.host.as_str())
             .collect();
-        self.agents
-            .retain(|k, _| k.host().is_none_or(|h| configured.contains(h)));
+        self.agents.retain(|k, _| {
+            let l = k.lane();
+            l == "local" || configured.contains(l)
+        });
     }
 
     /// The active theme, resolved from the saved index. Layout builders bake
@@ -1112,7 +1115,7 @@ impl AppState {
     fn build_sections(
         &self,
         opts: SectionLayoutOpts,
-        collapsed: &HashSet<HostKey>,
+        collapsed: &HashSet<LaneId>,
         mut push_rows: impl FnMut(&mut SidebarLayout, &mut Vec<SectionMeta>, Option<&str>),
     ) -> BuiltLayout {
         let mut layout = SidebarLayout::new();
@@ -1122,17 +1125,17 @@ impl AppState {
         // Each divider header's (section_idx, key) in push order, so collapse
         // flags can be flipped after the list is built; section_idx counts
         // pushed headers, matching the crate's section numbering (`sections`).
-        let mut group_headers: Vec<(usize, HostKey)> = Vec::new();
+        let mut group_headers: Vec<(usize, LaneId)> = Vec::new();
 
         // Push one section's divider header + `SectionMeta`. `first` (the local
         // section) stays flush at the top; later remote sections take a 1-row
         // top margin when `opts.remote_header_margin` is set.
         let push_divider = |layout: &mut SidebarLayout,
                                 sections: &mut Vec<SectionMeta>,
-                                group_headers: &mut Vec<(usize, HostKey)>,
+                                group_headers: &mut Vec<(usize, LaneId)>,
                                 header: BasicItem,
                                 meta: SectionMeta,
-                                key: HostKey,
+                                key: LaneId,
                                 first: bool| {
             if !opts.show_headers {
                 return;
@@ -1157,7 +1160,7 @@ impl AppState {
                 divider: true,
                 forward_badge: None,
             },
-            HostKey::local(),
+            lane(None),
             true,
         );
         push_rows(&mut layout, &mut sections, None);
@@ -1184,7 +1187,7 @@ impl AppState {
                     divider: true,
                     forward_badge: badge,
                 },
-                HostKey::remote(&host),
+                lane(Some(&host)),
                 false,
             );
             push_rows(&mut layout, &mut sections, Some(&host));
@@ -1513,13 +1516,13 @@ impl AppState {
         if self.agents_tab_active() {
             return self.agent_entries.get(idx).is_some_and(|e| {
                 self.collapsed_agent_sections
-                    .contains(HostQuery::from_host(e.host.as_deref()))
+                    .contains(lane(e.host.as_deref()).as_str())
             });
         }
         idx < self.focusable_count()
-            && self.collapsed_sections.contains(HostQuery::from_host(
-                self.section_key_of_focus(idx).as_deref(),
-            ))
+            && self
+                .collapsed_sections
+                .contains(lane(self.section_key_of_focus(idx).as_deref()).as_str())
     }
 
     /// Decode the active tab's cursor into a focus target. Returns `None`
@@ -1556,7 +1559,7 @@ impl AppState {
     /// aren't probed yet, so a probe racing ahead of detection can't blank a
     /// valid highlight (absence = "not known", not "no agent here").
     pub fn steer_marker_to_pane(&mut self, host: Option<&str>, pane_id: &str) {
-        let target = match self.agents.get(HostQuery::from_host(host)) {
+        let target = match self.agents.get(lane(host).as_str()) {
             None => return,
             Some(list) => list
                 .iter()

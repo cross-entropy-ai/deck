@@ -20,12 +20,12 @@ impl App {
                 self.state
                     .collapsed_sections
                     .iter()
-                    .map(|k| k.host().map(str::to_string))
+                    .map(|k| crate::system::tmux::TmuxSystem::host_of(k).map(str::to_string))
                     .collect(),
                 self.state
                     .collapsed_agent_sections
                     .iter()
-                    .map(|k| k.host().map(str::to_string))
+                    .map(|k| crate::system::tmux::TmuxSystem::host_of(k).map(str::to_string))
                     .collect(),
             )
             .save();

@@ -425,13 +425,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // ignore it), so no view-mode gate is needed. Collapsing the
             // focused row's group doesn't move focus: the highlight is just
             // hidden until expand, and `j`/`k` step out to a visible row.
-            let host_key = crate::host_key::HostKey::from(key);
+            let lane_key = crate::system::tmux::lane(key.as_deref());
             if state.agents_tab_active() {
-                if !state.collapsed_agent_sections.remove(&host_key) {
-                    state.collapsed_agent_sections.insert(host_key);
+                if !state.collapsed_agent_sections.remove(&lane_key) {
+                    state.collapsed_agent_sections.insert(lane_key);
                 }
-            } else if !state.collapsed_sections.remove(&host_key) {
-                state.collapsed_sections.insert(host_key);
+            } else if !state.collapsed_sections.remove(&lane_key) {
+                state.collapsed_sections.insert(lane_key);
             }
             fx.save_config();
         }

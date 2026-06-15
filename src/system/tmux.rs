@@ -47,11 +47,21 @@ impl TmuxSystem {
 
     /// `None` for the local lane, `Some(host)` for a remote one — the
     /// `Option<&str>` host shape the rest of tmux's plumbing still speaks.
-    fn host_of(lane: &LaneId) -> Option<&str> {
+    pub fn host_of(lane: &LaneId) -> Option<&str> {
         match lane.lane() {
             LOCAL => None,
             host => Some(host),
         }
+    }
+}
+
+/// The canonical tmux lane for an `Option<&str>` host (`None` = local). The
+/// bridge used while the shell's DTOs still carry `Option<String>` hosts:
+/// per-lane stores key on the [`LaneId`] this produces.
+pub fn lane(host: Option<&str>) -> LaneId {
+    match host {
+        None => TmuxSystem::local_lane(),
+        Some(h) => TmuxSystem::host_lane(h),
     }
 }
 

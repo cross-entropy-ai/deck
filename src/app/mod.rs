@@ -190,12 +190,12 @@ impl App {
         state.collapsed_sections = cfg
             .collapsed_sections
             .iter()
-            .map(|h| crate::host_key::HostKey::from(h.clone()))
+            .map(|h| crate::system::tmux::lane(h.as_deref()))
             .collect();
         state.collapsed_agent_sections = cfg
             .collapsed_agent_sections
             .iter()
-            .map(|h| crate::host_key::HostKey::from(h.clone()))
+            .map(|h| crate::system::tmux::lane(h.as_deref()))
             .collect();
 
         // The TUI owns the alternate screen, so a startup eprintln! would be

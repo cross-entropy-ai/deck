@@ -17,7 +17,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use super::SessionControl;
-use crate::host_key::{HostKey, HostQuery};
+use crate::lane::LaneId;
+use crate::system::tmux::lane;
 
 /// What to run on a worker. Built on the UI thread; the backend that runs
 /// it is captured separately at submit time.
@@ -63,7 +64,7 @@ struct Job {
 /// the UI thread drains. Workers are spawned lazily on first use for a key
 /// and live until the executor is dropped (their `recv` then ends).
 pub struct SessionExecutor {
-    senders: HashMap<HostKey, Sender<Job>>,
+    senders: HashMap<LaneId, Sender<Job>>,
     outcome_tx: Sender<SessionOutcome>,
     outcome_rx: Receiver<SessionOutcome>,
 }
@@ -90,8 +91,8 @@ impl SessionExecutor {
         // Cache the sender only after the thread starts, so a failed spawn
         // can't park a dead sender that swallows later ops (the op is dropped;
         // next refresh reconciles). Common path (worker exists) looks up via
-        // borrowed `HostQuery` to avoid allocating; first-use builds a `HostKey`.
-        let tx = match self.senders.get(HostQuery::from_host(host.as_deref())) {
+        // borrowed `&str` key to avoid allocating; first-use builds a `LaneId`.
+        let tx = match self.senders.get(lane(host.as_deref()).as_str()) {
             Some(tx) => tx,
             None => {
                 let outcome_tx = self.outcome_tx.clone();
@@ -108,7 +109,7 @@ impl SessionExecutor {
                     return;
                 }
                 self.senders
-                    .entry(HostKey::from_host(host.as_deref()))
+                    .entry(lane(host.as_deref()))
                     .or_insert(tx)
             }
         };
@@ -119,7 +120,7 @@ impl SessionExecutor {
     /// `recv` loop and lets the parked thread exit. Called on host-offboard so
     /// it doesn't leak a parked worker; a later op re-spawns a fresh one.
     pub fn remove(&mut self, key: &Option<String>) {
-        self.senders.remove(HostQuery::from_host(key.as_deref()));
+        self.senders.remove(lane(key.as_deref()).as_str());
     }
 
     /// Non-blocking drain of one completed outcome, if any.
@@ -225,7 +226,7 @@ mod tests {
         );
         assert!(
             exec.senders
-                .contains_key(HostQuery::from_host(host.as_deref())),
+                .contains_key(lane(host.as_deref()).as_str()),
             "submit should cache the host's FIFO sender"
         );
 
@@ -234,7 +235,7 @@ mod tests {
         assert!(
             !exec
                 .senders
-                .contains_key(HostQuery::from_host(host.as_deref())),
+                .contains_key(lane(host.as_deref()).as_str()),
             "remove should prune the offboarded host's sender"
         );
 
@@ -248,7 +249,7 @@ mod tests {
         );
         exec.remove(&host);
         assert!(
-            exec.senders.contains_key(HostQuery::from_host(None)),
+            exec.senders.contains_key(lane(None).as_str()),
             "removing one host must not disturb another lane"
         );
     }

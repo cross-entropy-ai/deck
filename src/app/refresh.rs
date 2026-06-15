@@ -198,7 +198,7 @@ impl App {
         // once both entries and agents are settled.
         self.state
             .agents
-            .insert(crate::host_key::HostKey::local(), agents);
+            .insert(crate::system::tmux::lane(None), agents);
 
         // On first load, restore the manual order from each session's
         // `@deck_order` rank (written by ReorderSession): ranked sessions

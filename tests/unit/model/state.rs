@@ -74,11 +74,11 @@ fn agent_entries_ordered_local_then_hosts() {
     set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
     state.agents.insert(
-        crate::host_key::HostKey::local(),
+        crate::system::tmux::lane(None),
         vec![detected("local", "%1")],
     );
     state.agents.insert(
-        crate::host_key::HostKey::remote("h1"),
+        crate::system::tmux::lane(Some("h1")),
         vec![detected("h1s", "%2")],
     );
     state.rebuild_agent_entries();
@@ -98,7 +98,7 @@ fn agent_cursor_tracks_its_agent_when_the_list_changes() {
     let mut state = make_state(LayoutMode::Horizontal, false, 100, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
     state.agents.insert(
-        crate::host_key::HostKey::local(),
+        crate::system::tmux::lane(None),
         vec![
             detected("a", "%1"),
             detected("b", "%2"),
@@ -111,7 +111,7 @@ fn agent_cursor_tracks_its_agent_when_the_list_changes() {
     // Refresh drops "a"; "b" shifts from index 1 to 0.
     let key = state.focused_agent_key();
     state.agents.insert(
-        crate::host_key::HostKey::local(),
+        crate::system::tmux::lane(None),
         vec![detected("b", "%2"), detected("c", "%3")],
     );
     state.rebuild_agent_entries();
@@ -126,7 +126,7 @@ fn agent_cursor_clamps_when_focused_agent_disappears() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
     state.agents.insert(
-        crate::host_key::HostKey::local(),
+        crate::system::tmux::lane(None),
         vec![
             detected("a", "%1"),
             detected("b", "%2"),
@@ -140,7 +140,7 @@ fn agent_cursor_clamps_when_focused_agent_disappears() {
     // "c" is gone; only "a" remains.
     state
         .agents
-        .insert(crate::host_key::HostKey::local(), vec![detected("a", "%1")]);
+        .insert(crate::system::tmux::lane(None), vec![detected("a", "%1")]);
     state.rebuild_agent_entries();
     state.reanchor_agent_focus(key);
 
@@ -155,7 +155,7 @@ fn steer_marker_follows_the_active_pane() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
     state.agents.insert(
-        crate::host_key::HostKey::local(),
+        crate::system::tmux::lane(None),
         vec![detected("a", "%1"), detected("b", "%2")],
     );
     state.rebuild_agent_entries();
@@ -209,11 +209,11 @@ fn agents_layout_groups_agents_under_host_dividers() {
     set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
     state.agents.insert(
-        crate::host_key::HostKey::local(),
+        crate::system::tmux::lane(None),
         vec![detected("local", "%1")],
     );
     state.agents.insert(
-        crate::host_key::HostKey::remote("h1"),
+        crate::system::tmux::lane(Some("h1")),
         vec![detected("h1s", "%2")],
     );
     state.rebuild_agent_entries();
@@ -232,11 +232,11 @@ fn agents_sections_fold_via_their_own_collapse_set() {
     set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
     state.agents.insert(
-        crate::host_key::HostKey::local(),
+        crate::system::tmux::lane(None),
         vec![detected("local", "%1")],
     );
     state.agents.insert(
-        crate::host_key::HostKey::remote("h1"),
+        crate::system::tmux::lane(Some("h1")),
         vec![detected("h1s", "%2")],
     );
     state.rebuild_agent_entries();
@@ -250,7 +250,7 @@ fn agents_sections_fold_via_their_own_collapse_set() {
     // Projects folds independently.
     state
         .collapsed_agent_sections
-        .insert(crate::host_key::HostKey::local());
+        .insert(crate::system::tmux::lane(None));
     assert!(state.is_focus_collapsed(0), "local agent row now hidden");
     assert!(!state.is_focus_collapsed(1), "h1 agent row still visible");
     assert!(
@@ -324,7 +324,7 @@ fn agents_layout_shows_placeholder_for_empty_section() {
     // cursor can land on it; activating it is a guarded no-op.
     state
         .agents
-        .insert(crate::host_key::HostKey::local(), vec![]);
+        .insert(crate::system::tmux::lane(None), vec![]);
     state.rebuild_agent_entries();
     let built = state.agents_layout();
     assert!(
@@ -373,15 +373,15 @@ fn apply_remote_agents_drops_stale_on_failed_probe() {
     ];
     // Prior round: local + both hosts had detected agents.
     state.agents.insert(
-        crate::host_key::HostKey::local(),
+        crate::system::tmux::lane(None),
         vec![detected("local", "%1")],
     );
     state.agents.insert(
-        crate::host_key::HostKey::remote("h1"),
+        crate::system::tmux::lane(Some("h1")),
         vec![detected("h1old", "%10")],
     );
     state.agents.insert(
-        crate::host_key::HostKey::remote("h2"),
+        crate::system::tmux::lane(Some("h2")),
         vec![detected("h2old", "%20")],
     );
 
@@ -394,19 +394,19 @@ fn apply_remote_agents_drops_stale_on_failed_probe() {
 
     // h1 updated, h2 (failed probe) cleared, local untouched.
     assert_eq!(
-        state.agents[crate::host_key::HostQuery::from_host(Some("h1"))][0].pane_id,
+        state.agents[crate::system::tmux::lane(Some("h1")).as_str()][0].pane_id,
         "%11"
     );
     assert!(
         !state
             .agents
-            .contains_key(crate::host_key::HostQuery::from_host(Some("h2"))),
+            .contains_key(crate::system::tmux::lane(Some("h2")).as_str()),
         "stale agents on a failed-probe host must be dropped"
     );
     assert!(
         state
             .agents
-            .contains_key(crate::host_key::HostQuery::from_host(None)),
+            .contains_key(crate::system::tmux::lane(None).as_str()),
         "local entry untouched"
     );
 }
@@ -416,13 +416,13 @@ fn apply_remote_agents_prunes_unconfigured_hosts() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     // No remotes configured; a leftover host entry should be pruned.
     state.agents.insert(
-        crate::host_key::HostKey::remote("ghost"),
+        crate::system::tmux::lane(Some("ghost")),
         vec![detected("s", "%1")],
     );
     state.apply_remote_agents(Default::default(), Default::default());
     assert!(!state
         .agents
-        .contains_key(crate::host_key::HostQuery::from_host(Some("ghost"))));
+        .contains_key(crate::system::tmux::lane(Some("ghost")).as_str()));
 }
 
 #[test]
@@ -887,7 +887,7 @@ fn collapsed_local_group_hides_rows() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state
         .collapsed_sections
-        .insert(crate::host_key::HostKey::local());
+        .insert(crate::system::tmux::lane(None));
     let built = state.sidebar_layout(ViewMode::Expanded);
 
     assert!(built.layout.is_collapsible());
@@ -904,7 +904,7 @@ fn focus_skips_collapsed_remote_group() {
     state.clamp_projects_focus();
     state
         .collapsed_sections
-        .insert(crate::host_key::HostKey::local());
+        .insert(crate::system::tmux::lane(None));
 
     // Local rows are hidden, the remote row is not.
     assert!(state.is_focus_collapsed(0));

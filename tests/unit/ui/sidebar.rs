@@ -178,10 +178,10 @@ fn agents_tab_publishes_clickable_agent_entries() {
     state.clamp_projects_focus();
     state
         .agents
-        .insert(crate::host_key::HostKey::local(), vec![mk("%7"), mk("%8")]);
+        .insert(crate::system::tmux::lane(None), vec![mk("%7"), mk("%8")]);
     state
         .agents
-        .insert(crate::host_key::HostKey::remote("h1"), vec![mk("%9")]);
+        .insert(crate::system::tmux::lane(Some("h1")), vec![mk("%9")]);
     state.rebuild_agent_entries();
     let built = state.agents_layout();
     let agent_entries = state.agent_entries.clone();

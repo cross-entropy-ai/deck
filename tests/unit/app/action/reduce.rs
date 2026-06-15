@@ -1285,7 +1285,7 @@ fn focus_next_skips_collapsed_remote_group() {
     );
     state
         .collapsed_sections
-        .insert(crate::host_key::HostKey::remote("h"));
+        .insert(crate::system::tmux::lane(Some("h")));
     state.focused = 1;
     apply_action(&mut state, Action::FocusNext);
     assert_eq!(state.focused, 4, "focus skips the collapsed h group");
@@ -1311,7 +1311,7 @@ fn toggle_section_collapse_leaves_focus_put() {
     let fx = apply_action(&mut state, Action::ToggleSection(Some("h".to_string())));
     assert!(state
         .collapsed_sections
-        .contains(crate::host_key::HostQuery::from_host(Some("h"))));
+        .contains(crate::system::tmux::lane(Some("h")).as_str()));
     assert_eq!(state.focused, 2, "collapse leaves the selection put");
     assert!(fx.has_save_config(), "collapse persists to config");
 }
@@ -1321,11 +1321,11 @@ fn toggle_section_expands_back() {
     let mut state = make_test_state(2);
     state
         .collapsed_sections
-        .insert(crate::host_key::HostKey::local());
+        .insert(crate::system::tmux::lane(None));
     let fx = apply_action(&mut state, Action::ToggleSection(None));
     assert!(!state
         .collapsed_sections
-        .contains(crate::host_key::HostQuery::from_host(None)));
+        .contains(crate::system::tmux::lane(None).as_str()));
     assert!(fx.has_save_config());
 }
 
@@ -1363,7 +1363,7 @@ mod agents_tab {
     fn entering_agents_syncs_right_pane_to_focused_agent() {
         let mut state = make_test_state(3);
         state.agents.insert(
-            crate::host_key::HostKey::local(),
+            crate::system::tmux::lane(None),
             vec![agent("a", "%1"), agent("b", "%2")],
         );
         state.rebuild_agent_entries();
@@ -1381,7 +1381,7 @@ mod agents_tab {
     fn entering_agents_restores_cursor_onto_active_agent() {
         let mut state = make_test_state(3);
         state.agents.insert(
-            crate::host_key::HostKey::local(),
+            crate::system::tmux::lane(None),
             vec![agent("a", "%1"), agent("b", "%2")],
         );
         state.rebuild_agent_entries();
@@ -1469,7 +1469,7 @@ mod agents_tab {
     fn cursor_is_per_tab() {
         let mut state = make_test_state(3);
         state.agents.insert(
-            crate::host_key::HostKey::local(),
+            crate::system::tmux::lane(None),
             vec![agent("a", "%1"), agent("b", "%2")],
         );
         state.rebuild_agent_entries();
@@ -1487,7 +1487,7 @@ mod agents_tab {
     fn navigate_on_agents_follows_cursor() {
         let mut state = make_test_state(3);
         state.agents.insert(
-            crate::host_key::HostKey::local(),
+            crate::system::tmux::lane(None),
             vec![agent("a", "%1"), agent("b", "%2")],
         );
         state.rebuild_agent_entries();
@@ -1506,7 +1506,7 @@ mod agents_tab {
     fn enter_on_agents_switches_to_pane() {
         let mut state = make_test_state(3);
         state.agents.insert(
-            crate::host_key::HostKey::local(),
+            crate::system::tmux::lane(None),
             vec![agent("a", "%1"), agent("b", "%2")],
         );
         state.rebuild_agent_entries();
@@ -1524,7 +1524,7 @@ mod agents_tab {
         let mut state = make_test_state(3);
         state
             .agents
-            .insert(crate::host_key::HostKey::local(), vec![agent("a", "%1")]);
+            .insert(crate::system::tmux::lane(None), vec![agent("a", "%1")]);
         apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
         apply_action(&mut state, Action::KillSession);
         assert!(

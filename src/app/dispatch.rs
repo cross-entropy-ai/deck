@@ -618,9 +618,7 @@ impl App {
         }
         self.state
             .agents
-            .get(crate::host_key::HostQuery::from_host(
-                target.host.as_deref(),
-            ))
+            .get(crate::system::tmux::lane(target.host.as_deref()).as_str())
             .is_some_and(|list| list.iter().any(|a| a.pane_id == target.pane_id))
     }
 
