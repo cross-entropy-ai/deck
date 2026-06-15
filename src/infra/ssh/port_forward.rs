@@ -67,5 +67,5 @@ pub fn build_exit_cmd(host: &str) -> Command {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/infra/port_forward.rs"]
+#[path = "../../../tests/unit/infra/port_forward.rs"]
 mod tests;

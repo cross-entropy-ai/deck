@@ -4,7 +4,7 @@
 //! returns `OpResult` per executed step.
 //!
 //! The I/O-bearing logic (process tracking, threading) is kept here,
-//! separate from `infra::port_forward`, so it's testable via the `Runner`
+//! separate from `infra::ssh::port_forward`, so it's testable via the `Runner`
 //! trait without shelling out to real `ssh`.
 
 use std::collections::HashSet;
@@ -81,28 +81,28 @@ pub trait Runner: Send + 'static {
     fn listening_ports(&self) -> Option<std::collections::HashSet<u16>>;
 }
 
-/// The default Runner — actually shells out via `infra::port_forward`.
+/// The default Runner — actually shells out via `infra::ssh::port_forward`.
 pub struct SshRunner;
 
 impl Runner for SshRunner {
     fn run_master(&self, host: &str) -> Result<(), String> {
-        let mut cmd = crate::infra::port_forward::build_master_cmd(host);
+        let mut cmd = crate::infra::ssh::port_forward::build_master_cmd(host);
         run_blocking(&mut cmd)
     }
     fn run_forward(&self, host: &str, spec: &ForwardSpec) -> Result<(), String> {
-        let mut cmd = crate::infra::port_forward::build_forward_cmd(host, spec);
+        let mut cmd = crate::infra::ssh::port_forward::build_forward_cmd(host, spec);
         run_blocking(&mut cmd)
     }
     fn run_cancel(&self, host: &str, spec: &ForwardSpec) -> Result<(), String> {
-        let mut cmd = crate::infra::port_forward::build_cancel_cmd(host, spec);
+        let mut cmd = crate::infra::ssh::port_forward::build_cancel_cmd(host, spec);
         run_blocking(&mut cmd)
     }
     fn run_exit(&self, host: &str) -> Result<(), String> {
-        let mut cmd = crate::infra::port_forward::build_exit_cmd(host);
+        let mut cmd = crate::infra::ssh::port_forward::build_exit_cmd(host);
         run_blocking(&mut cmd)
     }
     fn listening_ports(&self) -> Option<std::collections::HashSet<u16>> {
-        crate::infra::listeners::local_listen_ports()
+        crate::infra::ssh::listeners::local_listen_ports()
     }
 }
 

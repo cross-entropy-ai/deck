@@ -61,5 +61,5 @@ pub fn filter_hosts(hosts: &[String], needle: &str) -> Vec<usize> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/model/add_remote.rs"]
+#[path = "../../../../tests/unit/model/add_remote.rs"]
 mod tests;

@@ -2,7 +2,7 @@
 //!
 //! `lsof` (macOS) and `ss` (Linux) print listening sockets in different
 //! shapes; both reduce to "the set of local ports in LISTEN state". The
-//! shelling-out + platform dispatch lives in `infra::listeners`.
+//! shelling-out + platform dispatch lives in `infra::ssh::listeners`.
 //!
 //! macOS used to parse `netstat -an`, but modern macOS (Darwin 27+) dropped
 //! the TCP/IPv4/IPv6 section from `netstat` output entirely — it now prints

@@ -36,7 +36,9 @@ Source is split into five top-level modules under `src/` (plus `main.rs`).
 - **`model/`**: `model/state.rs` (`AppState`, enums, constants),
   `model/config.rs` (YAML persistence), `model/keybindings.rs`.
 - **`infra/`**: stateless backends and CLI wrappers — `infra/tmux/`
-  (`local.rs` + `remote.rs`), `infra/ssh.rs`, `infra/pty.rs`,
+  (`local.rs` + `remote.rs`), `infra/ssh/` (the ssh client, port-forward
+  command builders, listener enumeration, and ssh-specific model types
+  under `infra/ssh/model/`), `infra/pty.rs`,
   `infra/agent.rs`, etc. At the crate root these are aliased as
   `crate::tmux` (local) and `crate::remote_tmux` (remote).
 - **`session/`**: the `SessionControl` backend trait abstracting local vs
