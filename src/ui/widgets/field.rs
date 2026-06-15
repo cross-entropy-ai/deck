@@ -56,11 +56,6 @@ pub fn labeled_field(
         label_style,
         textarea,
         focused,
-        TextAreaColors {
-            fg: theme.text,
-            bg: theme.bg,
-            cursor_fg: theme.bg,
-            cursor_bg: theme.accent,
-        },
+        TextAreaColors::field(theme, theme.text, theme.bg),
     );
 }

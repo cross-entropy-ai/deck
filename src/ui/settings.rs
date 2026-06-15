@@ -334,12 +334,7 @@ fn draw_summary_language_editor(
         Style::default().bg(theme.bg),
         input,
         true,
-        TextAreaColors {
-            fg: theme.accent,
-            bg: theme.bg,
-            cursor_fg: theme.bg,
-            cursor_bg: theme.accent,
-        },
+        TextAreaColors::field(theme, theme.accent, theme.bg),
     );
 
     Paragraph::new(Line::from(Span::styled(
@@ -436,12 +431,7 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
         style_textarea(
             &mut ta,
             true,
-            TextAreaColors {
-                fg: theme.text,
-                bg: theme.surface,
-                cursor_fg: theme.bg,
-                cursor_bg: theme.accent,
-            },
+            TextAreaColors::field(theme, theme.text, theme.surface),
         );
         ta.render(cols[1], frame.buffer_mut());
         row_idx += 1;

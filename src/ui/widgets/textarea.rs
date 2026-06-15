@@ -3,6 +3,8 @@
 use ratatui::style::{Color, Style};
 use ratatui_textarea::TextArea;
 
+use crate::theme::Theme;
+
 /// Colors for a single-line `TextArea` field.
 pub struct TextAreaColors {
     /// Text foreground and field background. The background is also
@@ -13,6 +15,19 @@ pub struct TextAreaColors {
     /// Cursor block colors when the field is focused.
     pub cursor_fg: Color,
     pub cursor_bg: Color,
+}
+
+impl TextAreaColors {
+    /// Field colors with the standard focused-cursor block (theme `bg` on
+    /// `accent`), which every field shares; only `fg`/`bg` vary per site.
+    pub fn field(theme: &Theme, fg: Color, bg: Color) -> Self {
+        Self {
+            fg,
+            bg,
+            cursor_fg: theme.bg,
+            cursor_bg: theme.accent,
+        }
+    }
 }
 
 /// Apply the standard single-line TextArea styling: base text style, the

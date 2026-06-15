@@ -226,12 +226,7 @@ pub(super) fn draw_rename_input(
         Style::default().bg(theme.bg),
         textarea,
         true,
-        TextAreaColors {
-            fg: theme.accent,
-            bg: theme.bg,
-            cursor_fg: theme.bg,
-            cursor_bg: theme.accent,
-        },
+        TextAreaColors::field(theme, theme.accent, theme.bg),
     );
 
     Paragraph::new(Line::from(Span::styled(

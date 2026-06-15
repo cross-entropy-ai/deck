@@ -277,12 +277,7 @@ fn render_field_row(
         label_style,
         row.textarea,
         focused,
-        TextAreaColors {
-            fg,
-            bg: theme.surface,
-            cursor_fg: theme.bg,
-            cursor_bg: theme.accent,
-        },
+        TextAreaColors::field(theme, fg, theme.surface),
     );
 }
 
