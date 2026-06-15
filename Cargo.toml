@@ -3,7 +3,11 @@ name = "deck"
 version = "0.10.1"
 edition = "2021"
 
+[workspace]
+members = ["crates/agent-detect"]
+
 [dependencies]
+agent-detect = { path = "crates/agent-detect" }
 argh = "0.1.19"
 ratatui = "0.30"
 crossterm = "0.29"

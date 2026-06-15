@@ -33,7 +33,6 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
                 area,
                 SidebarProps {
                     sessions: &sessions,
-                    local_count: 0,
                     built: &built,
                     focus_target: None,
                     sidebar_active: true,
@@ -122,7 +121,6 @@ fn render_hits(
                 area,
                 SidebarProps {
                     sessions: &sessions,
-                    local_count: 0,
                     built: &built,
                     focus_target: None,
                     sidebar_active: true,
@@ -197,7 +195,6 @@ fn agents_tab_publishes_clickable_agent_entries() {
                 frame.area(),
                 SidebarProps {
                     sessions: &sessions,
-                    local_count: 0,
                     built: &built,
                     focus_target: state.focus_target(),
                     sidebar_active: true,
@@ -291,7 +288,6 @@ fn remote_divider_buttons_register_below_their_top_margin() {
                 frame.area(),
                 SidebarProps {
                     sessions: &sessions,
-                    local_count: state.local_count(),
                     built: &built,
                     focus_target: state.focus_target(),
                     sidebar_active: true,
@@ -359,7 +355,7 @@ fn remote_divider_shows_colored_forward_badge() {
     // its divider: N counts the forwards, the color is the health rollup, and
     // a click opens that host's port-forward overlay (not a collapse).
     use crate::config::RemoteConfig;
-use crate::forwards::{ForwardMode, ForwardSpec};
+    use crate::forwards::{ForwardMode, ForwardSpec};
     use crate::state::{AppState, ForwardHealth, ForwardKey, SidebarTab, ViewMode};
     use crate::system::tmux::TmuxSystem;
 
@@ -414,7 +410,6 @@ use crate::forwards::{ForwardMode, ForwardSpec};
                 frame.area(),
                 SidebarProps {
                     sessions: &sessions,
-                    local_count: state.local_count(),
                     built: &built,
                     focus_target: state.focus_target(),
                     sidebar_active: true,
