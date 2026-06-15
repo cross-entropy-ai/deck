@@ -8,7 +8,6 @@ mod settings;
 mod sidebar;
 mod summary_popup;
 mod text;
-pub mod theme;
 pub mod widgets;
 
 use crate::keybindings::Keybindings;
