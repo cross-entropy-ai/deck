@@ -165,7 +165,7 @@ fn agents_tab_publishes_clickable_agent_entries() {
         status: crate::agent::AgentStatus::Idle,
     };
 
-    let mut state = AppState::new(80, 24);
+    let mut state = AppState::new(100, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
     // Two local agents and one remote, so the click→pane mapping has to
     // survive dividers/margins between sections (the "specific pane" path).
@@ -372,7 +372,7 @@ fn remote_divider_shows_colored_forward_badge() {
     };
     let (f1, f2) = (spec(8001), spec(8002));
 
-    let mut state = AppState::new(80, 24);
+    let mut state = AppState::new(100, 24);
     state.prefs.sidebar_tab = SidebarTab::Projects;
     state.prefs.sidebar_width = 40;
     state.config_remotes = vec![RemoteConfig {

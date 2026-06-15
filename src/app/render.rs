@@ -56,7 +56,7 @@ impl App {
         let port_forward_overlay = s.overlay.port_forward.as_ref();
         let show_borders = s.prefs.show_borders;
         let sidebar_tab = s.prefs.sidebar_tab;
-        let layout_mode = s.prefs.layout_mode;
+        let layout_mode = s.effective_layout_mode();
         let view_mode = s.prefs.view_mode;
         let sidebar_width = s.prefs.sidebar_width;
         let sidebar_height = s.effective_sidebar_height();

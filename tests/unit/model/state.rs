@@ -95,7 +95,7 @@ fn agent_cursor_tracks_its_agent_when_the_list_changes() {
     // drops the agent *above* the cursor must keep the cursor on the SAME
     // agent, or the left highlight slides onto a different agent than the
     // pane shown on the right (active_agent).
-    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    let mut state = make_state(LayoutMode::Horizontal, false, 100, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
     state.agents.insert(
         crate::host_key::HostKey::local(),
@@ -204,7 +204,7 @@ fn steer_marker_leaves_marker_when_host_unprobed() {
 
 #[test]
 fn agents_layout_groups_agents_under_host_dividers() {
-    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    let mut state = make_state(LayoutMode::Horizontal, false, 100, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
     set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
@@ -227,7 +227,7 @@ fn agents_layout_groups_agents_under_host_dividers() {
 
 #[test]
 fn agents_sections_fold_via_their_own_collapse_set() {
-    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    let mut state = make_state(LayoutMode::Horizontal, false, 100, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
     set_remote(&mut state, vec![remote_row("h1", false, false)]);
     state.clamp_projects_focus();
@@ -317,7 +317,7 @@ fn scroll_summary_clamps_to_max() {
 
 #[test]
 fn agents_layout_shows_placeholder_for_empty_section() {
-    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    let mut state = make_state(LayoutMode::Horizontal, false, 100, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
     // Local probed but empty -> a "no agents" placeholder. Like a Projects
     // `NoSessions` row it's a focusable row (synthetic `AgentEntry`), so the
@@ -485,7 +485,7 @@ fn sidebar_layout_keeps_local_divider_when_empty() {
 
 #[test]
 fn is_divider_at_row_detects_header_not_session() {
-    let state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    let state = make_state(LayoutMode::Horizontal, false, 100, 24);
     // Header banner is 2 rows (no border); the Summary card strip is pinned
     // to the bottom on both tabs, so the list begins right after the header.
     // The @local divider is the first list item (1 row tall); the first
@@ -631,6 +631,23 @@ fn forward_badge_rolls_up_per_host_health() {
     // Nothing confirmed either way yet → neutral "probing".
     set(&mut state, ForwardHealth::Probing, ForwardHealth::Probing);
     assert_eq!(state.forward_badge("h1").unwrap().status, ForwardBadgeStatus::Probing);
+}
+
+#[test]
+fn narrow_terminal_forces_vertical_layout() {
+    // At or below NARROW_LAYOUT_MAX_WIDTH the Horizontal pref is overridden
+    // to Vertical for rendering/sizing, but the stored pref is preserved.
+    let narrow = make_state(LayoutMode::Horizontal, false, NARROW_LAYOUT_MAX_WIDTH, 24);
+    assert_eq!(narrow.effective_layout_mode(), LayoutMode::Vertical);
+    assert_eq!(narrow.prefs.layout_mode, LayoutMode::Horizontal);
+
+    // One column wider, the Horizontal pref takes effect again.
+    let wide = make_state(LayoutMode::Horizontal, false, NARROW_LAYOUT_MAX_WIDTH + 1, 24);
+    assert_eq!(wide.effective_layout_mode(), LayoutMode::Horizontal);
+
+    // A Vertical pref is honored at any width.
+    let wide_vertical = make_state(LayoutMode::Vertical, false, 120, 24);
+    assert_eq!(wide_vertical.effective_layout_mode(), LayoutMode::Vertical);
 }
 
 #[test]

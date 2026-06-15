@@ -50,9 +50,10 @@ pub struct DetectedAgent {
 
 /// Traffic-light health shown as a colored dot before each agent row:
 /// green = actively working, red = not working (idle), yellow = waiting for
-/// user input, gray = unknown (not captured, or an agent kind whose classifier
-/// isn't implemented yet). Color mapping lives in the renderer
-/// (`ui::sidebar::sessions::recolor_agent_dot`); these stay semantic.
+/// user input, default/uncolored = unknown (not captured, or an agent kind
+/// whose classifier isn't implemented yet). Color mapping lives in the
+/// renderer (`ui::sidebar::sessions::recolor_agent_dot`), keyed off this
+/// status (not the glyph); these stay semantic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AgentStatus {
     Working,

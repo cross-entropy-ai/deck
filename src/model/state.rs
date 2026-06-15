@@ -48,6 +48,12 @@ const SIDEBAR_HEIGHT_MAX_BORDERED: u16 = 6;
 const MIN_MAIN_WIDTH: u16 = 10;
 const MIN_MAIN_HEIGHT: u16 = 1;
 
+/// At or below this terminal width a side-by-side (Horizontal) split leaves
+/// the main pane too cramped, so the layout is forced to the stacked
+/// (Vertical) tab-bar regardless of the stored preference. See
+/// [`AppState::effective_layout_mode`].
+pub const NARROW_LAYOUT_MAX_WIDTH: u16 = 80;
+
 // --- Enums ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -704,7 +710,7 @@ impl AppState {
     /// refresh worker and selects the agents layout / focus space.
     pub fn agents_tab_active(&self) -> bool {
         self.prefs.sidebar_tab == SidebarTab::Agents
-            && self.prefs.layout_mode == LayoutMode::Horizontal
+            && self.effective_layout_mode() == LayoutMode::Horizontal
     }
 
     /// The active view's cursor: `focused` on Projects, `agent_focused`
@@ -727,12 +733,27 @@ impl AppState {
         }
     }
 
+    /// The layout actually used for rendering, sizing, and hit-testing — as
+    /// opposed to `prefs.layout_mode`, the user's stored choice. On a narrow
+    /// terminal ([`NARROW_LAYOUT_MAX_WIDTH`] columns or fewer) it's forced to
+    /// [`LayoutMode::Vertical`]; the preference is left untouched and applies
+    /// again once the terminal is wide enough. Every layout-dependent branch
+    /// (the renderer, `pty_size`, the mouse hit-testers) must read this, not
+    /// the raw pref, or the rendered split and the click geometry will drift.
+    pub fn effective_layout_mode(&self) -> LayoutMode {
+        if self.term_width <= NARROW_LAYOUT_MAX_WIDTH {
+            LayoutMode::Vertical
+        } else {
+            self.prefs.layout_mode
+        }
+    }
+
     pub fn effective_sidebar_height(&self) -> u16 {
         // Vertical layout is a single tab-switching row — there is no
         // second detail row to resize into, so the sidebar is pinned to
         // exactly the tab bar (plus top/bottom border when shown) and
         // the stored `sidebar_height` is ignored.
-        if self.prefs.layout_mode == LayoutMode::Vertical {
+        if self.effective_layout_mode() == LayoutMode::Vertical {
             return if self.prefs.show_borders { 3 } else { 1 };
         }
         let (min_height, max_height) = self.sidebar_height_bounds();
@@ -774,7 +795,7 @@ impl AppState {
 
     pub fn pty_size(&self) -> (u16, u16) {
         let bo = if self.prefs.show_borders { 2u16 } else { 0 };
-        match self.prefs.layout_mode {
+        match self.effective_layout_mode() {
             LayoutMode::Horizontal => {
                 let cols = self
                     .term_width
@@ -801,7 +822,7 @@ impl AppState {
     /// click-dead.
     pub fn sidebar_footer_height(&self) -> u16 {
         let b = if self.prefs.show_borders { 2u16 } else { 0 };
-        let content_width = match self.prefs.layout_mode {
+        let content_width = match self.effective_layout_mode() {
             LayoutMode::Horizontal => self.prefs.sidebar_width.saturating_sub(b),
             LayoutMode::Vertical => self.term_width.saturating_sub(b),
         };
@@ -818,7 +839,7 @@ impl AppState {
     /// on geometry and the scroll offset the renderer applied.
     fn session_row_hit(&self, row: u16) -> Option<(BuiltLayout, u16, u16, u16)> {
         let b = if self.prefs.show_borders { 1u16 } else { 0 };
-        let sidebar_h = match self.prefs.layout_mode {
+        let sidebar_h = match self.effective_layout_mode() {
             LayoutMode::Horizontal => self.term_height,
             LayoutMode::Vertical => self.effective_sidebar_height(),
         };
@@ -1055,9 +1076,10 @@ impl AppState {
     }
 
     /// `BasicItem` for one Agents-tab row, the twin of `session_item`. A real
-    /// agent shows a status glyph (`●` working / `○` idle / `◐` waiting / `·`
-    /// unknown) before its location; the renderer tints that glyph as a traffic
-    /// light (`recolor_agent_dot`), so the glyph shape and its color agree.
+    /// agent shows a status glyph (`●` working / `○` idle / `◐` waiting / `●`
+    /// unknown) before its location; the renderer tints that glyph by the
+    /// agent's `AgentStatus` (`recolor_agent_dot`) — color is keyed off the
+    /// status, not the glyph, so two statuses may reuse a glyph.
     /// The pane deck currently shows isn't marked here: the row highlight
     /// (the cursor follows the active pane, see `steer_marker_to_pane`)
     /// already carries "you are here". An empty section's placeholder shows
@@ -1069,7 +1091,7 @@ impl AppState {
                     crate::agent::AgentStatus::Working => "●",
                     crate::agent::AgentStatus::Idle => "○",
                     crate::agent::AgentStatus::Waiting => "◐",
-                    crate::agent::AgentStatus::Unknown => "·",
+                    crate::agent::AgentStatus::Unknown => "○",
                 };
                 BasicItem::new(format!("{dot} {}", agent.location()))
             }

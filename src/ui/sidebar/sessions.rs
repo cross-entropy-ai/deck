@@ -27,7 +27,21 @@ pub(super) const SUMMARY_SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼
 /// the glyph, leaving the focus/bold styling and the location text intact.
 /// Placeholder rows ("no agents" / "detecting…") start with no known glyph and
 /// pass through unchanged.
-fn recolor_agent_dot(mut text: Text<'static>, theme: &Theme) -> Text<'static> {
+fn recolor_agent_dot(
+    mut text: Text<'static>,
+    theme: &Theme,
+    status: crate::agent::AgentStatus,
+) -> Text<'static> {
+    use crate::agent::AgentStatus;
+    // Color is keyed off the *status*, not the glyph shape — two statuses may
+    // share a glyph (e.g. Working and Unknown can both be `●`). `Unknown` is
+    // left at the default text color (no tint).
+    let color = match status {
+        AgentStatus::Working => theme.success, // green
+        AgentStatus::Idle => theme.error,      // red (not working)
+        AgentStatus::Waiting => theme.warning, // yellow (needs the user)
+        AgentStatus::Unknown => return text,   // default (uncolored)
+    };
     let Some(line) = text.lines.first_mut() else {
         return text;
     };
@@ -37,13 +51,6 @@ fn recolor_agent_dot(mut text: Text<'static>, theme: &Theme) -> Text<'static> {
     let mut chars = line.spans[1].content.chars();
     let Some(glyph) = chars.next() else {
         return text;
-    };
-    let color = match glyph {
-        '●' => theme.success, // working
-        '○' => theme.error,   // not working (idle)
-        '◐' => theme.warning, // waiting for the user
-        '·' => theme.dim,     // unknown
-        _ => return text,
     };
     let style = line.spans[1].style;
     let marker = line.spans[0].clone();
@@ -132,10 +139,12 @@ pub(super) fn draw_sessions(
     let mut state = SectionedListState::new();
     state.set_focused(focused.unwrap_or(usize::MAX));
     // Render with the crate's `basic_style`, then on the Agents tab recolor the
-    // leading status dot of each agent row (the glyph already encodes status;
-    // see `AppState::agent_item`). Project rows fall straight through.
+    // leading status dot of each agent row by its `AgentStatus` (looked up via
+    // the row index — color is decoupled from the glyph shape, see
+    // `recolor_agent_dot`). Project rows fall straight through.
     let theme = ctx.theme;
     let agents_tab = props.agents_tab;
+    let agent_entries = props.agent_entries;
     // Per-host badge color, keyed by the divider's `@host` (sans `@`) so the
     // closure can recolor the `[⇄N]` span without re-deriving forward health.
     let badge_colors: std::collections::HashMap<&str, Color> = props
@@ -151,7 +160,15 @@ pub(super) fn draw_sessions(
     let widget = SectionedListWidget::new(layout, move |item, item_ctx| {
         let text = basic_style(item, item_ctx);
         if agents_tab && matches!(item.kind, ItemKind::Row) {
-            return recolor_agent_dot(text, theme);
+            if let Some(status) = item_ctx
+                .row_idx
+                .and_then(|i| agent_entries.get(i))
+                .and_then(|e| e.agent())
+                .map(|a| a.status)
+            {
+                return recolor_agent_dot(text, theme, status);
+            }
+            return text;
         }
         if matches!(item.kind, ItemKind::Header) {
             if let Some(color) = item
@@ -449,4 +466,37 @@ pub(super) fn draw_summary_card(
         rect,
     );
     summary
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::AgentStatus;
+    use ratatui::text::Line;
+
+    /// The fg color the leading dot ends up with, or `None` if left uncolored.
+    /// Input mirrors `basic_style`'s shape: span[0] is the focus marker,
+    /// span[1] starts with the dot glyph. The glyph is `●` for every case to
+    /// prove color follows the *status*, not the glyph shape.
+    fn dot_color(status: AgentStatus) -> Option<Color> {
+        let theme = &crate::theme::THEMES[0];
+        let input = Text::from(Line::from(vec![Span::raw(""), Span::raw("● sess:1.0")]));
+        let out = recolor_agent_dot(input, theme, status);
+        out.lines[0]
+            .spans
+            .iter()
+            .find(|s| s.content == "●")
+            .and_then(|s| s.style.fg)
+    }
+
+    #[test]
+    fn agent_dot_colored_by_status_not_glyph() {
+        let theme = &crate::theme::THEMES[0];
+        assert_eq!(dot_color(AgentStatus::Working), Some(theme.success));
+        assert_eq!(dot_color(AgentStatus::Idle), Some(theme.error));
+        assert_eq!(dot_color(AgentStatus::Waiting), Some(theme.warning));
+        // Unknown reuses the `●` glyph but is left at the default text color:
+        // the glyph is never split into its own colored span.
+        assert_eq!(dot_color(AgentStatus::Unknown), None);
+    }
 }

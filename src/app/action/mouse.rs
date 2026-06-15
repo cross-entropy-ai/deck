@@ -40,7 +40,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         }
     }
 
-    let (on_separator, in_sidebar) = match state.prefs.layout_mode {
+    let (on_separator, in_sidebar) = match state.effective_layout_mode() {
         LayoutMode::Horizontal => {
             let gap_col = state.prefs.sidebar_width;
             let on_sep = mouse.column >= gap_col && mouse.column <= gap_col + 1;
@@ -80,7 +80,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             return Action::StartDrag;
         }
         MouseEventKind::Drag(MouseButton::Left) if state.dragging_separator => {
-            return match state.prefs.layout_mode {
+            return match state.effective_layout_mode() {
                 LayoutMode::Horizontal => Action::ResizeSidebar(mouse.column + 1),
                 LayoutMode::Vertical => Action::ResizeSidebarHeight(mouse.row + 1),
             };
@@ -160,13 +160,13 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         // A click on a group divider that wasn't on one of its buttons
         // (handled above) collapses/expands that group. Dividers exist
         // only in the Horizontal (Expanded) layout.
-        if state.prefs.layout_mode == LayoutMode::Horizontal {
+        if state.effective_layout_mode() == LayoutMode::Horizontal {
             if let Some(key) = state.divider_section_key_at(mouse.row) {
                 return Action::ToggleSection(key);
             }
         }
 
-        let flat = match state.prefs.layout_mode {
+        let flat = match state.effective_layout_mode() {
             LayoutMode::Horizontal => state.focus_at_row(mouse.row).map(|t| t.0),
             // Both return a unified flat index (local rows then
             // remotes); the tab hit-tester resolves remote tabs too.
@@ -185,10 +185,10 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     if mouse.kind == MouseEventKind::Down(MouseButton::Right) && in_sidebar {
         // Right-clicking a group divider does nothing — its actions live
         // on the divider's own `[…]` button, not a context menu.
-        if state.prefs.layout_mode == LayoutMode::Horizontal && state.is_divider_at_row(mouse.row) {
+        if state.effective_layout_mode() == LayoutMode::Horizontal && state.is_divider_at_row(mouse.row) {
             return Action::None;
         }
-        let target = match state.prefs.layout_mode {
+        let target = match state.effective_layout_mode() {
             LayoutMode::Horizontal => state.focus_at_row(mouse.row),
             LayoutMode::Vertical => state
                 .session_at_col(mouse.column, mouse.row)
@@ -216,7 +216,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             return Action::None;
         }
         let b = if state.prefs.show_borders { 1u16 } else { 0 };
-        let (col_off, row_off) = match state.prefs.layout_mode {
+        let (col_off, row_off) = match state.effective_layout_mode() {
             LayoutMode::Horizontal => (state.prefs.sidebar_width + 1 + b, b),
             LayoutMode::Vertical => (b, state.effective_sidebar_height() + b),
         };
