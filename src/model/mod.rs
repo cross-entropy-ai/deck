@@ -2,6 +2,7 @@ pub mod config;
 pub mod effects;
 pub mod geometry;
 pub mod keybindings;
+pub mod lane;
 pub mod menu;
 pub mod new_session;
 pub mod overlay;
