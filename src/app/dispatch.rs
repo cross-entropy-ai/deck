@@ -473,6 +473,33 @@ impl App {
         self.state.cancel_summary();
     }
 
+    /// Resolve the focus transport for `host` (`None` = local) and the
+    /// `marker_id` that tags the resulting outcome. `marker_id` lets a
+    /// reconnect (which mints a new id) reject a completion from the old
+    /// connection; local has no generation, so 0 is a harmless placeholder.
+    /// Returns `None` when a remote host has no live marker yet — the caller
+    /// bails, since the remote focus script would just abort server-side.
+    fn focus_transport(&self, host: Option<&str>) -> Option<(crate::focus::FocusTransport, u64)> {
+        match host {
+            None => Some((
+                crate::focus::FocusTransport::Local {
+                    client_tty: self.local_terminal.pty.slave_tty.clone(),
+                },
+                0,
+            )),
+            Some(host) => {
+                let marker_id = self.remote.live_marker_id(host)?;
+                Some((
+                    crate::focus::FocusTransport::Remote {
+                        host: host.to_string(),
+                        marker_id,
+                    },
+                    marker_id,
+                ))
+            }
+        }
+    }
+
     fn switch_to_agent_pane(&mut self, target: crate::state::AgentTarget) {
         // Stamp this click as the newest focus intent; any in-flight focus
         // from a prior click is now stale and won't commit.
@@ -482,28 +509,8 @@ impl App {
         // and how we learn Deck's own client tty. Resolve that here, then run
         // the *same* focus rule off-thread (local routes through the worker too
         // to keep one code path; remote ssh can stall so it must be off-thread).
-        // For remote we still gate on the marker being ready, else the script
-        // just bails server-side.
-        let transport = match &target.host {
-            None => crate::focus::FocusTransport::Local {
-                client_tty: self.local_terminal.pty.slave_tty.clone(),
-            },
-            Some(host) => {
-                let Some(marker_id) = self.remote.live_marker_id(host) else {
-                    return;
-                };
-                crate::focus::FocusTransport::Remote {
-                    host: host.clone(),
-                    marker_id,
-                }
-            }
-        };
-        // `marker_id` tags the outcome so a reconnect (which mints a new id)
-        // can reject a completion from the old connection; local has no
-        // generation, so 0 is a harmless placeholder.
-        let marker_id = match &transport {
-            crate::focus::FocusTransport::Remote { marker_id, .. } => *marker_id,
-            crate::focus::FocusTransport::Local { .. } => 0,
+        let Some((transport, marker_id)) = self.focus_transport(target.host.as_deref()) else {
+            return;
         };
         let tx = self.focus_tx.clone();
         let seq = self.focus_seq;
@@ -532,23 +539,8 @@ impl App {
             return;
         }
         let host = self.remote.active().cloned();
-        let transport = match &host {
-            None => crate::focus::FocusTransport::Local {
-                client_tty: self.local_terminal.pty.slave_tty.clone(),
-            },
-            Some(h) => {
-                let Some(marker_id) = self.remote.live_marker_id(h) else {
-                    return;
-                };
-                crate::focus::FocusTransport::Remote {
-                    host: h.clone(),
-                    marker_id,
-                }
-            }
-        };
-        let marker_id = match &transport {
-            crate::focus::FocusTransport::Remote { marker_id, .. } => *marker_id,
-            crate::focus::FocusTransport::Local { .. } => 0,
+        let Some((transport, marker_id)) = self.focus_transport(host.as_deref()) else {
+            return;
         };
         let tx = self.active_pane_tx.clone();
         let seq = self.focus_seq;
@@ -805,9 +797,9 @@ impl App {
                 Effect::RemoveRemoteHost(host) => {
                     // Tear down the ControlMaster (and any forwards riding on
                     // it) so the host stops occupying SSH state once detached.
-                    let _ = self
-                        .port_forward_tx
-                        .send(crate::app::ssh::port_forward_task::Op::StopHost { host: host.clone() });
+                    let _ = self.port_forward_tx.send(
+                        crate::app::ssh::port_forward_task::Op::StopHost { host: host.clone() },
+                    );
                     // Drop the per-host runtime state (PTY, conn status, active
                     // pointer) so a later re-add of the same host gets a fresh
                     // connection instead of inheriting stale `Failed` status.
@@ -817,9 +809,7 @@ impl App {
                 // reuses the existing action path, so behavior can't drift from
                 // the keyboard/menu routes to the same destinations.
                 Effect::ReconnectHost(host) => {
-                    self.dispatch(Action::ReconnectHost {
-                        host: host.clone(),
-                    });
+                    self.dispatch(Action::ReconnectHost { host: host.clone() });
                 }
                 Effect::OpenForwardOverlay(host) => {
                     self.dispatch(Action::Pf(PfAction::Open(host.clone())));
