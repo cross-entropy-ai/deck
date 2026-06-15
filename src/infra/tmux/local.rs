@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use crate::infra::command::{default_runner, CommandError, CommandRunner};
 use crate::infra::parser::tmux::{
-    exact_target, parse_sessions, parse_window_activity, DECK_ORDER_OPTION, SESSION_LIST_FORMAT,
-    WINDOW_ACTIVITY_FORMAT,
+    exact_target, order_set_option_args, parse_sessions, parse_window_activity,
+    SESSION_LIST_FORMAT, WINDOW_ACTIVITY_FORMAT,
 };
 
 /// Per-tmux-call timeout. tmux is local IPC and healthy calls finish in
@@ -92,17 +92,7 @@ fn persist_session_order_with(runner: &dyn CommandRunner, order: &[String]) {
     }
     // Batch into a single tmux invocation: `set-option -t a @deck_order 0 ;
     // set-option -t b @deck_order 1 ; ...` (same `;`-chaining as apply_theme).
-    let mut args: Vec<String> = Vec::with_capacity(order.len() * 6);
-    for (rank, name) in order.iter().enumerate() {
-        if rank > 0 {
-            args.push(";".to_string());
-        }
-        args.push("set-option".to_string());
-        args.push("-t".to_string());
-        args.push(exact_target(name));
-        args.push(DECK_ORDER_OPTION.to_string());
-        args.push(rank.to_string());
-    }
+    let args = order_set_option_args(order, ";", exact_target);
     let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
     let _ = runner.run("tmux", &args_ref, TMUX_TIMEOUT);
 }

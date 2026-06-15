@@ -26,6 +26,31 @@ pub(crate) fn exact_target(name: &str) -> String {
     format!("={name}")
 }
 
+/// Build the `set-option -t <target> @deck_order <rank>` arg chain that
+/// persists display order, `separator`-joined into one tmux invocation.
+/// Both backends share the loop; only the separator and target quoting
+/// differ — local passes a bare `;` and unquoted targets, remote passes a
+/// single-quoted `';'` and `shell_single_quote`s each target so the remote
+/// shell forwards both to tmux intact. Empty `order` yields no args.
+pub(crate) fn order_set_option_args(
+    order: &[String],
+    separator: &str,
+    target: impl Fn(&str) -> String,
+) -> Vec<String> {
+    let mut args = Vec::with_capacity(order.len() * 6);
+    for (rank, name) in order.iter().enumerate() {
+        if rank > 0 {
+            args.push(separator.to_string());
+        }
+        args.push("set-option".to_string());
+        args.push("-t".to_string());
+        args.push(target(name));
+        args.push(DECK_ORDER_OPTION.to_string());
+        args.push(rank.to_string());
+    }
+    args
+}
+
 /// `list-sessions -F` format. The `_SSH` variant wraps the same fields in
 /// bash/zsh ANSI-C `$'...'` quoting (so the remote shell treats `#` literally
 /// and turns `\t` into a tab); quoting is the only difference.

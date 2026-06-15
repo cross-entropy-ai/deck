@@ -11,7 +11,7 @@ use std::time::Duration;
 use crate::agent::DetectedAgent;
 use crate::infra::command::{default_runner, CommandError, CommandRunner};
 use crate::infra::parser::tmux::{
-    exact_target, parse_sessions, DECK_ORDER_OPTION, SESSION_LIST_FORMAT_SSH,
+    exact_target, order_set_option_args, parse_sessions, SESSION_LIST_FORMAT_SSH,
 };
 use crate::tmux::SessionInfo;
 
@@ -474,16 +474,9 @@ fn persist_session_order_with(runner: &dyn CommandRunner, host: &str, order: &[S
     // separator is single-quoted (`';'`) to reach tmux as its command
     // separator, not split the shell command; names are quoted likewise.
     let mut argv: Vec<String> = vec!["tmux".to_string()];
-    for (rank, name) in order.iter().enumerate() {
-        if rank > 0 {
-            argv.push("';'".to_string());
-        }
-        argv.push("set-option".to_string());
-        argv.push("-t".to_string());
-        argv.push(shell_single_quote(&exact_target(name)));
-        argv.push(DECK_ORDER_OPTION.to_string());
-        argv.push(rank.to_string());
-    }
+    argv.extend(order_set_option_args(order, "';'", |name| {
+        shell_single_quote(&exact_target(name))
+    }));
     let argv_ref: Vec<&str> = argv.iter().map(String::as_str).collect();
     let _ = run_ssh(runner, host, &argv_ref);
 }
