@@ -17,7 +17,7 @@ Browse and switch agent sessions easily.
 
 <br>
 
-[Install](#install) · [Usage](#usage) · [Customize](#customize) · [Plugins](#plugins) · [Develop](#develop)
+[Install](#install) · [Usage](#usage) · [Customize](#customize) · [Develop](#develop)
 
 <br>
 
@@ -66,21 +66,6 @@ Configuration lives in `~/.config/deck/config.json`.
 
 > [!TIP]
 > Click a session to switch, right-click for a context menu (rename, kill, new session), or drag the edge between panes to resize.
-
-#### Plugins
-
-Bind a key to any command and run it inside its own deck pane. Add entries to your config:
-
-```json
-{
-  "plugins": [
-    { "name": "GPU", "command": "nvtop", "key": "g" },
-    { "name": "Top", "command": "btop",    "key": "m" }
-  ]
-}
-```
-
-Each plugin shows up in the sidebar; press its key while the sidebar is focused to launch it in the main pane. `Esc` returns to the terminal session.
 
 ## Develop
 

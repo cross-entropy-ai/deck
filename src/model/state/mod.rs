@@ -6,7 +6,6 @@ use ratatui_sectioned_list::widget::BasicItem;
 use ratatui_sectioned_list::ItemKind;
 use serde::{Deserialize, Serialize};
 
-use crate::config::PluginConfig;
 use crate::geometry::{context_menu_rect, host_accent, shorten_dir, tab_col_ranges, tab_label};
 use crate::keybindings::Keybindings;
 use crate::lane::LaneId;
@@ -75,7 +74,6 @@ pub enum FocusMode {
 pub enum MainView {
     Terminal,
     Settings,
-    Plugin(usize),
     Upgrade,
 }
 
@@ -344,7 +342,6 @@ pub struct Prefs {
     pub view_mode: ViewMode,
     pub frame_rate_limit: u16,
     pub exclude_patterns: Vec<String>,
-    pub plugins: Vec<PluginConfig>,
     pub update_check_mode: UpdateCheckMode,
     /// The summary prompt template (from config), `{{SESSIONS}}` filled
     /// with the agent panes at generation time. Seeded in `App::new` and
@@ -387,7 +384,6 @@ impl Prefs {
             view_mode: cfg.view_mode,
             frame_rate_limit: normalize_frame_rate_limit(cfg.frame_rate_limit),
             exclude_patterns: cfg.exclude_patterns.clone(),
-            plugins: cfg.plugins.clone(),
             update_check_mode: cfg.update_check,
             summary_prompt: cfg.summary_prompt.clone(),
             summary_prompt_projects: cfg.summary_prompt_projects.clone(),
@@ -422,7 +418,6 @@ impl Prefs {
             view_mode: self.view_mode,
             frame_rate_limit: self.frame_rate_limit,
             exclude_patterns: self.exclude_patterns.clone(),
-            plugins: self.plugins.clone(),
             keybindings,
             update_check: self.update_check_mode,
             remotes,
@@ -596,7 +591,6 @@ impl AppState {
                 view_mode: ViewMode::default(),
                 frame_rate_limit: 5,
                 exclude_patterns: Vec::new(),
-                plugins: Vec::new(),
                 update_check_mode: UpdateCheckMode::default(),
                 summary_prompt: String::new(),
                 summary_prompt_projects: String::new(),
@@ -803,10 +797,10 @@ impl AppState {
             LayoutMode::Horizontal => self.prefs.sidebar_width.saturating_sub(b),
             LayoutMode::Vertical => self.term_width.saturating_sub(b),
         };
-        crate::geometry::sidebar_footer_height(
-            crate::geometry::banner_visible(self.update_available.is_some(), content_width),
-            self.prefs.plugins.len(),
-        )
+        crate::geometry::sidebar_footer_height(crate::geometry::banner_visible(
+            self.update_available.is_some(),
+            content_width,
+        ))
     }
 
     /// Resolve a screen row in the scrollable session area into

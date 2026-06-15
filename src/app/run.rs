@@ -1,10 +1,10 @@
 //! The event-loop run pumps and timers.
 //!
-//! `App::run` drains ~nine async sources (local PTY, remote-spawn events,
-//! remote PTYs, plugin PTYs, upgrade PTY, refresh worker, session executor,
+//! `App::run` drains ~eight async sources (local PTY, remote-spawn events,
+//! remote PTYs, upgrade PTY, refresh worker, session executor,
 //! port-forward worker, remote-focus completions, summary worker) and ticks
-//! ~six periodic timers (render gate, refresh, config watcher, marker-retry,
-//! blink, summary spinner). Each drain is a `pump_*` method returning a
+//! ~five periodic timers (render gate, refresh, config watcher, marker-retry,
+//! summary spinner). Each drain is a `pump_*` method returning a
 //! [`Redraw`] so `needs_render`/`force_render` bookkeeping lives in one place;
 //! timers use a tiny [`Ticker`].
 //!
@@ -187,27 +187,6 @@ impl App {
         redraw
     }
 
-    /// Drain plugin PTYs (background panes too, so their pipes can't fill).
-    fn pump_plugins(&mut self) -> Redraw {
-        let mut redraw = Redraw::No;
-        for (idx, inst) in self.plugin_instances.iter_mut().enumerate() {
-            let Some(inst) = inst.as_mut() else {
-                continue;
-            };
-            let view_active = self.state.main_view == MainView::Plugin(idx);
-            if Self::drain_pane(
-                &mut inst.pty,
-                &mut inst.parser,
-                &mut inst.alive,
-                false,
-                view_active,
-            ) {
-                redraw = redraw.merge(Redraw::Soft);
-            }
-        }
-        redraw
-    }
-
     /// Drain the upgrade PTY, if one is running.
     fn pump_upgrade_pty(&mut self) -> Redraw {
         let upgrade_view_active = self.state.main_view == MainView::Upgrade;
@@ -225,24 +204,10 @@ impl App {
         Redraw::No
     }
 
-    /// Reap a foreground plugin or upgrade pane that exited: drop the dead
-    /// instance and snap the main view back to the terminal.
+    /// Reap a foreground upgrade pane that exited: drop the dead instance and
+    /// snap the main view back to the terminal.
     fn pump_foreground_exits(&mut self) -> Redraw {
         let mut redraw = Redraw::No;
-        if let MainView::Plugin(idx) = self.state.main_view {
-            if self
-                .plugin_instances
-                .get(idx)
-                .and_then(|o| o.as_ref())
-                .is_some_and(|inst| !inst.alive)
-            {
-                self.plugin_instances[idx] = None;
-                self.state.main_view = MainView::Terminal;
-                self.state.focus_mode = FocusMode::Main;
-                redraw = Redraw::Force;
-            }
-        }
-
         if self.state.main_view == MainView::Upgrade
             && self
                 .upgrade_instance
@@ -350,7 +315,6 @@ impl App {
         // so the first frame paints immediately.
         let mut render_gate =
             Ticker::new_due(render_min_interval(self.state.prefs.frame_rate_limit));
-        let mut blink = Ticker::new(Duration::from_millis(500));
         let mut spinner = Ticker::new(Duration::from_millis(80));
         // Periodic session/pf refresh. The interval is recomputed each tick
         // (the Agents tab uses a slower probe cadence), so the Ticker's own
@@ -368,7 +332,6 @@ impl App {
             redraw = redraw.merge(self.pump_local_pty());
             redraw = redraw.merge(self.pump_remote_events());
             redraw = redraw.merge(self.pump_remote_ptys());
-            redraw = redraw.merge(self.pump_plugins());
             redraw = redraw.merge(self.pump_upgrade_pty());
             redraw = redraw.merge(self.pump_foreground_exits());
 
@@ -390,16 +353,6 @@ impl App {
             // right-click menu uses so teardown is identical.
             if crate::shutdown::shutdown_requested() && self.dispatch(Action::Quit) {
                 break;
-            }
-
-            let background_plugin_alive =
-                self.plugin_instances.iter().enumerate().any(|(i, inst)| {
-                    inst.as_ref().is_some_and(|inst| {
-                        inst.alive && self.state.main_view != MainView::Plugin(i)
-                    })
-                });
-            if background_plugin_alive && blink.due(Instant::now()) {
-                redraw = redraw.merge(Redraw::Soft);
             }
 
             // Animate the Agents-tab Summary spinner while generating, even

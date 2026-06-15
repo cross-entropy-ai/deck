@@ -13,7 +13,7 @@ use crate::update::UpdateStatus;
 use ratatui_textarea::TextArea;
 
 use super::overlays::{draw_confirm_kill, draw_help, draw_rename_input};
-use super::{PluginView, SidebarSession};
+use super::SidebarSession;
 
 mod container;
 mod footer;
@@ -56,8 +56,6 @@ pub struct SidebarProps<'a> {
     /// Height of the Summary card strip pinned above the Agents-tab list.
     pub summary_card_height: u16,
     pub tabs_mode: bool,
-    pub plugins: &'a [PluginView<'a>],
-    pub blink_on: bool,
     pub keybindings: &'a Keybindings,
     pub update_available: Option<&'a UpdateStatus>,
 }
@@ -65,7 +63,6 @@ pub struct SidebarProps<'a> {
 #[derive(Clone, Copy)]
 struct SidebarRenderCtx<'a> {
     theme: &'a Theme,
-    blink_on: bool,
 }
 
 /// The footer/tabs "≡ menu" button label and its accent-bold span. Shared
@@ -138,10 +135,7 @@ fn clamp_hits(hits: &mut HitRegions, area: Rect) {
 /// Draw the sidebar and return the frame's clickable regions for mouse
 /// dispatch.
 pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> HitRegions {
-    let ctx = SidebarRenderCtx {
-        theme: props.theme,
-        blink_on: props.blink_on,
-    };
+    let ctx = SidebarRenderCtx { theme: props.theme };
 
     if props.tabs_mode {
         // Tabs mode shows the unified session list (local rows first,
@@ -194,7 +188,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
     // Footer geometry shared with `AppState::sidebar_footer_height` so
     // mouse hit-testing can't drift from what is drawn.
     let banner_visible = banner_visible(props.update_available.is_some(), content.width);
-    let footer_height = sidebar_footer_height(banner_visible, props.plugins.len());
+    let footer_height = sidebar_footer_height(banner_visible);
 
     let [header_area, sessions_area, footer_area] = Layout::vertical([
         Constraint::Length(SIDEBAR_HEADER_HEIGHT),
@@ -270,7 +264,6 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
         footer_area,
         &ctx,
         FooterProps {
-            plugins: props.plugins,
             update_available: if banner_visible {
                 props.update_available
             } else {

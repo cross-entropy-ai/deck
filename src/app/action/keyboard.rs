@@ -27,9 +27,6 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 
     match state.focus_mode {
         FocusMode::Main => {
-            if matches!(state.main_view, MainView::Plugin(_)) && key.code == KeyCode::Esc {
-                return Action::DeactivatePlugin;
-            }
             if state.main_view == MainView::Upgrade && key.code == KeyCode::Esc {
                 return Action::AbortUpgrade;
             }
@@ -150,12 +147,6 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 
     if let Some(cmd) = state.keybindings.lookup(key) {
         return command_to_action(cmd, state);
-    }
-
-    if let KeyCode::Char(ch) = key.code {
-        if let Some(idx) = state.prefs.plugins.iter().position(|p| p.key == ch) {
-            return Action::ActivatePlugin(idx);
-        }
     }
 
     if key.code == KeyCode::Char('f') {

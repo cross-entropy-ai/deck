@@ -30,9 +30,9 @@ impl App {
             )
             .save();
         // Adopt the new mtime so the config watcher in `run` doesn't see our
-        // own save as an external edit and self-reload (which would kill plugin
-        // PTYs, close the exclude editor mid-edit, and flash the reload toast
-        // on every drag/toggle/save).
+        // own save as an external edit and self-reload (which would close the
+        // exclude editor mid-edit and flash the reload toast on every
+        // drag/toggle/save).
         self.config_mtime_seen = crate::config::config_mtime();
     }
 

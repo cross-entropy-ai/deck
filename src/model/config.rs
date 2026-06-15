@@ -10,14 +10,6 @@ use crate::keybindings::migrate_keybindings;
 use crate::state::{LayoutMode, SidebarTab, ViewMode, SIDEBAR_HEIGHT};
 use crate::update::UpdateCheckMode;
 
-/// A command-based plugin that runs in its own PTY.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PluginConfig {
-    pub name: String,
-    pub command: String,
-    pub key: char,
-}
-
 /// A remote host whose tmux sessions deck surfaces alongside local ones.
 /// `host` must resolve via `~/.ssh/config` or as a hostname; deck shells
 /// out to `ssh <host> ...`.
@@ -84,7 +76,6 @@ pub struct Config {
     pub view_mode: ViewMode,
     pub frame_rate_limit: u16,
     pub exclude_patterns: Vec<String>,
-    pub plugins: Vec<PluginConfig>,
     pub keybindings: BTreeMap<String, KeyBindingValue>,
     pub update_check: UpdateCheckMode,
     pub remotes: Vec<RemoteConfig>,
@@ -145,7 +136,6 @@ impl Default for Config {
             view_mode: ViewMode::Expanded,
             frame_rate_limit: 5,
             exclude_patterns: vec!["_*".to_string()],
-            plugins: Vec::new(),
             keybindings: BTreeMap::new(),
             update_check: UpdateCheckMode::Enabled,
             remotes: Vec::new(),
@@ -218,7 +208,7 @@ impl Config {
 
     /// Load the config at `path`, self-healing migrations back to disk when
     /// the file parses (or is absent). A present-but-UNPARSEABLE file is
-    /// **never** overwritten (one typo would wipe remotes/keybindings/plugins
+    /// **never** overwritten (one typo would wipe remotes/keybindings
     /// to defaults): keep defaults in memory only, leave the file untouched.
     /// `try_load` surfaces the parse error to the user separately.
     fn load_from(path: &std::path::Path) -> Self {

@@ -514,14 +514,14 @@ fn is_divider_at_row_detects_header_not_session() {
 #[test]
 fn sidebar_footer_height_matches_renderer() {
     // The renderer (ui::sidebar::draw_sidebar) lays the footer out as
-    // `2 + banner + plugins`; the hit-tester must agree or the bottom
-    // visible session row goes click-dead. This locks the two fixed rows
-    // (the separator + the menu/version line).
+    // `2 + banner`; the hit-tester must agree or the bottom visible session
+    // row goes click-dead. This locks the two fixed rows (the separator +
+    // the menu/version line).
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     assert_eq!(
         state.sidebar_footer_height(),
         2,
-        "no plugins, no banner: just the separator + menu rows"
+        "no banner: just the separator + menu rows"
     );
     // The update banner adds exactly one row, matching the renderer.
     state.update_available = Some(UpdateStatus {
@@ -1008,11 +1008,6 @@ fn prefs_config_round_trip_is_identity() {
         view_mode: ViewMode::Compact,
         frame_rate_limit: 30,
         exclude_patterns: vec!["foo*".to_string(), "/bar/".to_string()],
-        plugins: vec![crate::config::PluginConfig {
-            name: "p".to_string(),
-            command: "cmd".to_string(),
-            key: 'p',
-        }],
         keybindings: std::collections::BTreeMap::new(),
         update_check: crate::update::UpdateCheckMode::Disabled,
         remotes: Vec::new(),

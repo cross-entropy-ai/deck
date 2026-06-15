@@ -25,8 +25,8 @@ impl TerminalPane {
 }
 
 /// Spawn `program` in a PTY sized to the main pane, with COLUMNS/LINES
-/// exported for programs that read them instead of the tty. Shared by the
-/// plugin and upgrade panes.
+/// exported for programs that read them instead of the tty. Used by the
+/// upgrade pane.
 fn spawn_sized_pane(
     program: &str,
     args: &[&str],
@@ -66,9 +66,6 @@ impl App {
             if let Some(pane) = conn.pane.as_mut() {
                 pane.resize(pty_rows, pty_cols);
             }
-        }
-        for inst in self.plugin_instances.iter_mut().flatten() {
-            inst.resize(pty_rows, pty_cols);
         }
         // The upgrade pane runs in the foreground during a self-update; keep
         // it reflowing on resize too, or it stays at its spawn size until the
@@ -153,16 +150,4 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn spawn_plugin_pty(&mut self, idx: usize) -> io::Result<()> {
-        let plugin = &self.state.prefs.plugins[idx];
-        let (rows, cols) = self.state.pty_size();
-
-        let parts: Vec<&str> = plugin.command.split_whitespace().collect();
-        let (program, args) = parts
-            .split_first()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty plugin command"))?;
-
-        self.plugin_instances[idx] = Some(spawn_sized_pane(program, args, rows, cols)?);
-        Ok(())
-    }
 }

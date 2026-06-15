@@ -491,17 +491,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.resize_pty(true);
         }
 
-        Action::ActivatePlugin(idx) => {
-            if idx < state.prefs.plugins.len() {
-                state.main_view = MainView::Plugin(idx);
-                state.focus_mode = FocusMode::Main;
-            }
-        }
-        Action::DeactivatePlugin => {
-            state.main_view = MainView::Terminal;
-            state.focus_mode = FocusMode::Main;
-        }
-
         Action::ForwardKey(_) | Action::ForwardMouse(_) => {}
         Action::SidebarClickSession(_)
         | Action::NumberKeyJump(_)
@@ -512,7 +501,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
 
         // Handled entirely in dispatch (needs App-level access to raw
-        // keybindings, plugin instances, PTY, etc.).
+        // keybindings, PTY, etc.).
         Action::ReloadConfig => {}
 
         // Handled in dispatch (marks the host reconnecting + kicks a

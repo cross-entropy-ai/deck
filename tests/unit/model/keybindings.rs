@@ -126,7 +126,7 @@ fn cfg(entries: &[(&str, KeyBindingValue)]) -> BTreeMap<String, KeyBindingValue>
 
 #[test]
 fn from_empty_config_equals_defaults() {
-    let (kb, warnings) = Keybindings::from_config(&BTreeMap::new(), &[]);
+    let (kb, warnings) = Keybindings::from_config(&BTreeMap::new());
     assert!(warnings.is_empty());
     assert_eq!(
         kb.lookup(&ev(KeyCode::Char('j'), KeyModifiers::NONE)),
@@ -137,7 +137,7 @@ fn from_empty_config_equals_defaults() {
 #[test]
 fn single_rebind_replaces_default() {
     let map = cfg(&[("kill_session", KeyBindingValue::Single("shift-x".into()))]);
-    let (kb, warnings) = Keybindings::from_config(&map, &[]);
+    let (kb, warnings) = Keybindings::from_config(&map);
     assert!(warnings.is_empty());
     assert_eq!(kb.lookup(&ev(KeyCode::Char('x'), KeyModifiers::NONE)), None);
     assert_eq!(
@@ -152,7 +152,7 @@ fn multi_rebind() {
         "toggle_help",
         KeyBindingValue::Multi(vec!["h".into(), "?".into(), "f1".into()]),
     )]);
-    let (kb, warnings) = Keybindings::from_config(&map, &[]);
+    let (kb, warnings) = Keybindings::from_config(&map);
     assert!(warnings.is_empty());
     assert_eq!(
         kb.lookup(&ev(KeyCode::Char('h'), KeyModifiers::NONE)),
@@ -167,7 +167,7 @@ fn multi_rebind() {
 #[test]
 fn null_unbinds() {
     let map = cfg(&[("toggle_borders", KeyBindingValue::Unbind)]);
-    let (kb, warnings) = Keybindings::from_config(&map, &[]);
+    let (kb, warnings) = Keybindings::from_config(&map);
     assert!(warnings.is_empty());
     assert_eq!(kb.lookup(&ev(KeyCode::Char('b'), KeyModifiers::NONE)), None);
     assert!(kb.keys_for(Command::ToggleBorders).is_empty());
@@ -176,7 +176,7 @@ fn null_unbinds() {
 #[test]
 fn unknown_command_silently_ignored_keeps_defaults() {
     let map = cfg(&[("made_up_cmd", KeyBindingValue::Single("z".into()))]);
-    let (kb, warnings) = Keybindings::from_config(&map, &[]);
+    let (kb, warnings) = Keybindings::from_config(&map);
     assert!(warnings.is_empty());
     assert_eq!(
         kb.lookup(&ev(KeyCode::Char('j'), KeyModifiers::NONE)),
@@ -282,7 +282,7 @@ fn legacy_config_resolves_after_full_migration() {
     // run through the full migration that `Config::load` applies.
     let mut map = cfg(&[("toggle_focus", KeyBindingValue::Single("C-s".into()))]);
     migrate_keybindings(&mut map);
-    let (kb, warnings) = Keybindings::from_config(&map, &[]);
+    let (kb, warnings) = Keybindings::from_config(&map);
     assert!(warnings.is_empty(), "warnings: {warnings:?}");
     assert_eq!(
         kb.lookup(&ev(KeyCode::Char('s'), KeyModifiers::CONTROL)),
@@ -296,7 +296,7 @@ fn bad_key_string_warns() {
         "toggle_help",
         KeyBindingValue::Multi(vec!["h".into(), "nope".into()]),
     )]);
-    let (kb, warnings) = Keybindings::from_config(&map, &[]);
+    let (kb, warnings) = Keybindings::from_config(&map);
     assert_eq!(warnings.len(), 1);
     assert!(warnings[0].contains("nope"));
     assert_eq!(
@@ -311,7 +311,7 @@ fn same_key_two_commands_first_wins() {
         ("kill_session", KeyBindingValue::Single("shift-x".into())),
         ("quit", KeyBindingValue::Single("shift-x".into())),
     ]);
-    let (kb, warnings) = Keybindings::from_config(&map, &[]);
+    let (kb, warnings) = Keybindings::from_config(&map);
     assert_eq!(warnings.len(), 1);
     assert_eq!(
         kb.lookup(&ev(KeyCode::Char('X'), KeyModifiers::SHIFT)),
@@ -320,23 +320,9 @@ fn same_key_two_commands_first_wins() {
 }
 
 #[test]
-fn plugin_key_wins_over_binding() {
-    let plugins = vec![PluginConfig {
-        name: "GPU".into(),
-        command: "findgpu".into(),
-        key: 'l',
-    }];
-    let (kb, warnings) = Keybindings::from_config(&BTreeMap::new(), &plugins);
-    assert_eq!(warnings.len(), 1);
-    assert!(warnings[0].contains("plugin"));
-    assert_eq!(kb.lookup(&ev(KeyCode::Char('l'), KeyModifiers::NONE)), None);
-    assert!(kb.keys_for(Command::ToggleLayout).is_empty());
-}
-
-#[test]
 fn runtime_uppercase_event_matches_bound_uppercase() {
     let map = cfg(&[("kill_session", KeyBindingValue::Single("shift-x".into()))]);
-    let (kb, _) = Keybindings::from_config(&map, &[]);
+    let (kb, _) = Keybindings::from_config(&map);
     assert_eq!(
         kb.lookup(&ev(KeyCode::Char('X'), KeyModifiers::NONE)),
         Some(Command::KillSession)

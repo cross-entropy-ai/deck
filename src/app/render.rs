@@ -10,7 +10,7 @@ use ratatui::{DefaultTerminal, Frame};
 use crate::bridge;
 use crate::state::{FocusMode, LayoutMode, MainView};
 use crate::theme::THEMES;
-use crate::ui::{self, PluginStatus, PluginView, SettingRowView, SettingsView};
+use crate::ui::{self, SettingRowView, SettingsView};
 
 use super::settings::SETTING_ROWS;
 use super::App;
@@ -140,38 +140,6 @@ impl App {
                 }
             };
 
-            let plugin_views: Vec<PluginView> = self
-                .state
-                .prefs
-                .plugins
-                .iter()
-                .enumerate()
-                .map(|(i, p)| {
-                    let alive = self
-                        .plugin_instances
-                        .get(i)
-                        .and_then(|slot| slot.as_ref())
-                        .map(|inst| inst.alive)
-                        .unwrap_or(false);
-                    let status = match (alive, main_view == MainView::Plugin(i)) {
-                        (true, true) => PluginStatus::Foreground,
-                        (true, false) => PluginStatus::Background,
-                        (false, _) => PluginStatus::Inactive,
-                    };
-                    PluginView {
-                        key: p.key,
-                        name: p.name.as_str(),
-                        status,
-                    }
-                })
-                .collect();
-
-            // 1 Hz pulse for plugins running in the background — the main
-            // loop already redraws every ~16 ms so we don't need a tick.
-            let blink_on = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| (d.as_millis() / 500) % 2 == 0)
-                .unwrap_or(true);
             // ~12.5 fps braille spinner for the Summary card; sessions.rs
             // takes this mod the frame count.
             let spinner_idx = SystemTime::now()
@@ -215,8 +183,6 @@ impl App {
                     summary_scroll: self.state.summary.scroll,
                     summary_card_height,
                     tabs_mode: layout_mode == LayoutMode::Vertical,
-                    plugins: &plugin_views,
-                    blink_on,
                     keybindings: &self.state.keybindings,
                     update_available,
                 },
@@ -241,14 +207,6 @@ impl App {
             // render an empty-state placeholder instead of a stale screen.
             let local_active_dead = self.remote.active().is_none() && !self.local_terminal.alive;
             let screen = self.active_terminal().parser.screen();
-            let plugin_screen = match main_view {
-                MainView::Plugin(idx) => self
-                    .plugin_instances
-                    .get(idx)
-                    .and_then(|o| o.as_ref())
-                    .map(|inst| inst.parser.screen()),
-                _ => None,
-            };
             let upgrade_screen = match main_view {
                 MainView::Upgrade => self
                     .upgrade_instance
@@ -263,7 +221,6 @@ impl App {
                 // empty-state placeholder below instead of a stale screen.
                 (None, MainView::Terminal) if local_active_dead => None,
                 (None, MainView::Terminal) => Some(screen),
-                (None, MainView::Plugin(_)) => plugin_screen,
                 (None, MainView::Upgrade) => upgrade_screen,
                 (None, MainView::Settings) => None,
             };

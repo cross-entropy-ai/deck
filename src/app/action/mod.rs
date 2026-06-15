@@ -71,9 +71,6 @@ pub enum Action {
     ForwardKey(Vec<u8>),
     ForwardMouse(Vec<u8>),
 
-    ActivatePlugin(usize),
-    DeactivatePlugin,
-
     ReconnectHost {
         host: String,
     },

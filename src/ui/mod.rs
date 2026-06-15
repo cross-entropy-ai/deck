@@ -21,21 +21,6 @@ pub use settings::{draw_settings_page, draw_theme_picker};
 pub use sidebar::{draw_sidebar, SidebarProps};
 pub use summary_popup::draw_summary_popup;
 
-/// Runtime state of a configured plugin, used by the sidebar footer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PluginStatus {
-    Inactive,
-    Background,
-    Foreground,
-}
-
-/// Minimal data needed to render one plugin row in the sidebar footer.
-pub struct PluginView<'a> {
-    pub key: char,
-    pub name: &'a str,
-    pub status: PluginStatus,
-}
-
 /// The session-row abstraction the tabs-mode renderer consumes (the
 /// Expanded/Compact list builds rows from `SessionEntry` directly in `model`).
 /// Tabs mode reads only host/name/unreachable; the renderer must not branch

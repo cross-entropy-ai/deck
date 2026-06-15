@@ -5,15 +5,12 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
-use crate::geometry::plugin_block_rows;
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
 
-use super::super::{PluginStatus, PluginView};
 use super::{menu_span, SidebarRenderCtx, MENU_LABEL};
 
 pub(super) struct FooterProps<'a> {
-    pub plugins: &'a [PluginView<'a>],
     pub update_available: Option<&'a UpdateStatus>,
 }
 
@@ -25,91 +22,12 @@ pub(super) struct FooterHits {
     pub menu: Option<Rect>,
 }
 
-struct PluginRowsProps<'a> {
-    plugins: &'a [PluginView<'a>],
-    width: usize,
-}
-
 /// A full-width horizontal rule in the footer's dim color.
 fn divider_line(width: usize, theme: &Theme) -> Line<'static> {
     Line::from(Span::styled(
         "─".repeat(width),
         Style::default().fg(theme.dim),
     ))
-}
-
-fn plugin_dot_style(status: PluginStatus, blink_on: bool, theme: &Theme) -> Style {
-    match status {
-        PluginStatus::Foreground => Style::default().fg(theme.green),
-        PluginStatus::Background => {
-            if blink_on {
-                Style::default()
-                    .fg(theme.yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.dim)
-            }
-        }
-        PluginStatus::Inactive => Style::default().fg(theme.dim),
-    }
-}
-
-fn plugin_dot_glyph(status: PluginStatus) -> &'static str {
-    match status {
-        PluginStatus::Inactive => "○",
-        _ => "●",
-    }
-}
-
-fn append_plugin_rows(
-    rows: &mut Vec<Line<'static>>,
-    ctx: &SidebarRenderCtx<'_>,
-    props: PluginRowsProps<'_>,
-) {
-    let theme = ctx.theme;
-    let plugins = props.plugins;
-    let width = props.width;
-    if plugins.is_empty() {
-        return;
-    }
-
-    rows.push(Line::from(vec![
-        Span::raw(" "),
-        Span::styled("\u{eb5c}", Style::default().fg(theme.accent)),
-        Span::styled(
-            " Plugins",
-            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
-        ),
-    ]));
-
-    for p in plugins {
-        let dot_style = plugin_dot_style(p.status, ctx.blink_on, theme);
-        let key_color = match p.status {
-            PluginStatus::Inactive => theme.dim,
-            _ => theme.muted,
-        };
-        let name_color = match p.status {
-            PluginStatus::Foreground => theme.text,
-            PluginStatus::Background => theme.secondary,
-            PluginStatus::Inactive => theme.muted,
-        };
-        let name_style = match p.status {
-            PluginStatus::Foreground => {
-                Style::default().fg(name_color).add_modifier(Modifier::BOLD)
-            }
-            _ => Style::default().fg(name_color),
-        };
-        rows.push(Line::from(vec![
-            Span::raw(" "),
-            Span::styled(plugin_dot_glyph(p.status), dot_style),
-            Span::raw(" "),
-            Span::styled(p.key.to_string(), Style::default().fg(key_color)),
-            Span::raw("  "),
-            Span::styled(p.name.to_string(), name_style),
-        ]));
-    }
-
-    rows.push(divider_line(width, theme));
 }
 
 pub(super) fn draw_footer(
@@ -122,20 +40,9 @@ pub(super) fn draw_footer(
     let w = area.width as usize;
     let sep = divider_line(w, theme);
 
-    let rows_capacity = usize::from(
-        2 + plugin_block_rows(props.plugins.len()) + props.update_available.is_some() as u16,
-    );
+    let rows_capacity = usize::from(2 + props.update_available.is_some() as u16);
     let mut rows: Vec<Line> = Vec::with_capacity(rows_capacity);
     rows.push(sep);
-
-    append_plugin_rows(
-        &mut rows,
-        ctx,
-        PluginRowsProps {
-            plugins: props.plugins,
-            width: w,
-        },
-    );
 
     let mut upgrade_bounds: Option<Rect> = None;
     if let Some(status) = props.update_available {

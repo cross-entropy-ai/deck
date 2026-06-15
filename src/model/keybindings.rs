@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use crokey::{key, KeyCombination, KeyCombinationFormat};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::config::{KeyBindingValue, PluginConfig};
+use crate::config::KeyBindingValue;
 
 /// A single bound key chord, backed by crokey's `KeyCombination`. Its
 /// `normalized()` canonicalizes shift/case so `shift-j` and the runtime
@@ -197,10 +197,7 @@ fn parse_binding_list(name: &str, specs: &[String], warnings: &mut Vec<String>) 
 }
 
 impl Keybindings {
-    pub fn from_config(
-        raw: &BTreeMap<String, KeyBindingValue>,
-        plugins: &[PluginConfig],
-    ) -> (Self, Vec<String>) {
+    pub fn from_config(raw: &BTreeMap<String, KeyBindingValue>) -> (Self, Vec<String>) {
         let mut warnings = Vec::new();
         let mut reverse: HashMap<Command, Vec<KeyChord>> = HashMap::new();
 
@@ -265,26 +262,6 @@ impl Keybindings {
                 kept.push(kb);
             }
             reverse.insert(cmd, kept);
-        }
-
-        // 4. Plugin collision detection. Plugin keys win.
-        for plugin in plugins {
-            let kb = chord_from_event(&KeyEvent::new(
-                KeyCode::Char(plugin.key),
-                KeyModifiers::NONE,
-            ));
-            if let Some(&cmd) = map.get(&kb) {
-                map.remove(&kb);
-                if let Some(list) = reverse.get_mut(&cmd) {
-                    list.retain(|b| b != &kb);
-                }
-                warnings.push(format!(
-                    "plugin `{}` uses key `{}` which also bound `{}` — plugin wins",
-                    plugin.name,
-                    format_key(&kb),
-                    cmd.name()
-                ));
-            }
         }
 
         (Keybindings { map, reverse }, warnings)

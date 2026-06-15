@@ -1,15 +1,5 @@
 use super::*;
 
-use crate::geometry::plugin_block_rows;
-
-#[test]
-fn plugin_block_rows_counts_title_and_separator() {
-    // No plugins → no block; N plugins render as title + N rows + trailing
-    // separator = N + 2.
-    assert_eq!(plugin_block_rows(0), 0);
-    assert_eq!(plugin_block_rows(3), 5);
-}
-
 #[test]
 fn confirm_kill_renders_clickable_in_tabs_mode() {
     // In tabs mode the confirm-kill prompt must render and publish hit
@@ -49,8 +39,6 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
                     summary_scroll: 0,
                     summary_card_height: 0,
                     tabs_mode: true,
-                    plugins: &[],
-                    blink_on: false,
                     keybindings: &keybindings,
                     update_available: None,
                 },
@@ -91,14 +79,8 @@ use crate::state::{HitKind, HitRegions, SidebarTab, SummaryState};
 use crate::update::UpdateStatus;
 
 /// Render the sidebar at `width` x `height` on the Projects tab and return
-/// the captured hit registry. `has_update` toggles the footer banner;
-/// `plugins` adds plugin rows so the footer block varies.
-fn render_hits(
-    width: u16,
-    height: u16,
-    has_update: bool,
-    plugins: &[PluginView<'_>],
-) -> HitRegions {
+/// the captured hit registry. `has_update` toggles the footer banner.
+fn render_hits(width: u16, height: u16, has_update: bool) -> HitRegions {
     let theme = &crate::theme::THEMES[0];
     let built = BuiltLayout::default();
     let keybindings = Keybindings::default();
@@ -137,8 +119,6 @@ fn render_hits(
                     summary_scroll: 0,
                     summary_card_height: 0,
                     tabs_mode: false,
-                    plugins,
-                    blink_on: false,
                     keybindings: &keybindings,
                     update_available: has_update.then_some(&update),
                 },
@@ -211,8 +191,6 @@ fn agents_tab_publishes_clickable_agent_entries() {
                     summary_scroll: 0,
                     summary_card_height: state.summary_card_height(),
                     tabs_mode: false,
-                    plugins: &[],
-                    blink_on: false,
                     keybindings: &keybindings,
                     update_available: None,
                 },
@@ -304,8 +282,6 @@ fn remote_divider_buttons_register_below_their_top_margin() {
                     summary_scroll: 0,
                     summary_card_height: 0,
                     tabs_mode: false,
-                    plugins: &[],
-                    blink_on: false,
                     keybindings: &keybindings,
                     update_available: None,
                 },
@@ -426,8 +402,6 @@ fn remote_divider_shows_colored_forward_badge() {
                     summary_scroll: 0,
                     summary_card_height: 0,
                     tabs_mode: false,
-                    plugins: &[],
-                    blink_on: false,
                     keybindings: &keybindings,
                     update_available: None,
                 },
@@ -495,28 +469,17 @@ fn content_area(width: u16, height: u16) -> Rect {
 #[test]
 fn footer_allocation_matches_shared_formula() {
     // The renderer must split off exactly `sidebar_footer_height` rows for
-    // the footer, for every banner/plugin combination — the same formula
+    // the footer, with or without the update banner — the same formula
     // the mouse hit-tester uses (`AppState::sidebar_footer_height`), so a
     // click can't land a row off from what was drawn.
     let width = 30;
     let height = 24;
     let content = content_area(width, height);
 
-    let mk_plugin = || PluginView {
-        key: 'a',
-        name: "demo",
-        status: crate::ui::PluginStatus::Background,
-    };
-    let one = [mk_plugin()];
-    for (has_update, plugins) in [
-        (false, &[][..]),
-        (true, &[][..]),
-        (false, &one[..]),
-        (true, &one[..]),
-    ] {
-        let hits = render_hits(width, height, has_update, plugins);
+    for has_update in [false, true] {
+        let hits = render_hits(width, height, has_update);
         let banner_shown = banner_visible(has_update, content.width);
-        let footer_height = sidebar_footer_height(banner_shown, plugins.len());
+        let footer_height = sidebar_footer_height(banner_shown);
         // The footer occupies the bottom `footer_height` rows of the
         // content area; the tab labels sit on the header's first row.
         let tabs = hits.tabs.expect("Projects tab has a header");
@@ -533,8 +496,7 @@ fn footer_allocation_matches_shared_formula() {
             .saturating_sub(footer_height);
         assert!(
             sessions_h >= 1,
-            "sessions area underflowed (banner {banner_shown}, plugins {})",
-            plugins.len()
+            "sessions area underflowed (banner {banner_shown})"
         );
         // The banner hit, when shown, lands inside the footer band.
         if banner_shown {
@@ -560,7 +522,7 @@ fn captured_rects_stay_within_sidebar_area() {
         let content = content_area(width, height);
         let right = content.x + content.width;
         let bottom = content.y + content.height;
-        let hits = render_hits(width, height, true, &[]);
+        let hits = render_hits(width, height, true);
 
         let mut rects: Vec<Rect> = Vec::new();
         rects.extend(hits.banner);
@@ -606,7 +568,7 @@ fn narrow_agents_tab_does_not_leak_into_pty() {
     let width = 16;
     let height = 24;
     let content = content_area(width, height);
-    let hits = render_hits(width, height, false, &[]);
+    let hits = render_hits(width, height, false);
 
     // A column at/just past the sidebar's right edge is outside the area.
     let beyond = content.x + content.width;

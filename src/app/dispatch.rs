@@ -76,22 +76,6 @@ impl App {
                 }
                 fx.has_quit()
             }
-            Action::ActivatePlugin(idx) => {
-                if let Some(Some(ref inst)) = self.plugin_instances.get(idx) {
-                    if !inst.alive {
-                        self.plugin_instances[idx] = None;
-                    }
-                }
-                if idx < self.plugin_instances.len()
-                    && self.plugin_instances[idx].is_none()
-                    && self.spawn_plugin_pty(idx).is_err()
-                {
-                    return false;
-                }
-                let fx = action::apply_action(&mut self.state, action);
-                self.execute_side_effects(&fx);
-                fx.has_quit()
-            }
             Action::TriggerUpgrade => {
                 use crate::self_update::{
                     detect_install_method, manual_upgrade_hint, target_triple, InstallMethod,

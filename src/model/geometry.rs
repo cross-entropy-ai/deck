@@ -116,11 +116,11 @@ pub fn banner_visible(has_update: bool, content_width: u16) -> bool {
 }
 
 /// Sidebar footer height in rows: `2` fixed (top separator + menu/version
-/// line) plus the update banner (when shown) plus the plugin block. Shared
-/// by renderer and hit-testing so they can't drift (when they did, the
-/// bottom session row went click-dead).
-pub fn sidebar_footer_height(banner_visible: bool, plugin_count: usize) -> u16 {
-    2 + banner_visible as u16 + plugin_block_rows(plugin_count)
+/// line) plus the update banner (when shown). Shared by renderer and
+/// hit-testing so they can't drift (when they did, the bottom session row
+/// went click-dead).
+pub fn sidebar_footer_height(banner_visible: bool) -> u16 {
+    2 + banner_visible as u16
 }
 
 /// On-screen rect of the context menu anchored at `(menu_x, menu_y)`,
@@ -140,17 +140,6 @@ pub fn context_menu_rect(
     Rect::new(x, y, w, h)
 }
 
-/// Rows the plugin status block takes in the footer: title + one row per
-/// plugin + trailing separator. Zero with no plugins so the layout is
-/// unchanged for users without extensions. Shared so hit-testing in
-/// `AppState::focus_at_row` stays in sync with the renderer.
-pub const fn plugin_block_rows(count: usize) -> u16 {
-    if count == 0 {
-        0
-    } else {
-        count as u16 + 2
-    }
-}
 
 /// Accent color for a remote host's divider, cycled by the host's order
 /// among distinct remote hosts. Shared by the layout builder (which bakes it

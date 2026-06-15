@@ -4,7 +4,7 @@
 
 use crate::config::Config;
 use crate::keybindings::{self, Keybindings};
-use crate::state::{FocusMode, MainView, ReloadStatus};
+use crate::state::ReloadStatus;
 use crate::theme::THEMES;
 use crate::tmux;
 
@@ -52,8 +52,7 @@ impl App {
 
     /// Reload `~/.config/deck/config.yaml` and apply it in place. On failure
     /// in-memory state is left untouched and the error goes to
-    /// `state.reload_status` for the sidebar. On success, plugin instances are
-    /// killed (PTYs dropped) and must be re-launched by the user.
+    /// `state.reload_status` for the sidebar.
     pub(super) fn reload_config(&mut self) {
         let mut cfg = match Config::try_load() {
             Ok(c) => c,
@@ -67,16 +66,7 @@ impl App {
         // Mirror startup: backfill any keybindings the user hasn't set.
         keybindings::ensure_complete(&mut cfg.keybindings);
 
-        let (compiled, kb_warnings) = Keybindings::from_config(&cfg.keybindings, &cfg.plugins);
-
-        // Kill any running plugin PTYs. Dropping the PluginInstance drops
-        // its Pty, which lets portable-pty reap the child process.
-        self.plugin_instances.clear();
-        self.plugin_instances = (0..cfg.plugins.len()).map(|_| None).collect();
-        if matches!(self.state.main_view, MainView::Plugin(_)) {
-            self.state.main_view = MainView::Terminal;
-            self.state.focus_mode = FocusMode::Sidebar;
-        }
+        let (compiled, kb_warnings) = Keybindings::from_config(&cfg.keybindings);
 
         let new_theme_index = THEMES.iter().position(|t| t.name == cfg.theme).unwrap_or(0);
         let theme_changed = new_theme_index != self.state.prefs.theme_index;

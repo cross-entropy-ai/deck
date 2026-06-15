@@ -38,8 +38,8 @@ fn render_min_interval(frame_rate_limit: u16) -> Duration {
 }
 
 /// A PTY-backed terminal view in the main pane. The local `tmux attach`, each
-/// remote `ssh -t host tmux attach`, plugin commands, and the upgrade pane are
-/// all this struct — the render / input / resize code doesn't care which.
+/// remote `ssh -t host tmux attach`, and the upgrade pane are all this
+/// struct — the render / input / resize code doesn't care which.
 pub(super) struct TerminalPane {
     pub pty: Pty,
     pub parser: vt100::Parser,
@@ -69,7 +69,6 @@ pub struct App {
     /// spawn-generation counter. See `app/ssh/remote_conn.rs`.
     remote: RemoteConnManager,
     warning_state: Option<WarningState>,
-    plugin_instances: Vec<Option<TerminalPane>>,
     refresh_worker: RefreshWorker,
     /// Runs mutating control-plane ops (switch/rename/kill/new/order) and
     /// on-demand `list_dir` off the UI thread, one FIFO worker per backend.
@@ -178,8 +177,7 @@ impl App {
         }
 
         let theme_index = THEMES.iter().position(|t| t.name == cfg.theme).unwrap_or(0);
-        let plugin_count = cfg.plugins.len();
-        let (keybindings, kb_warnings) = Keybindings::from_config(&cfg.keybindings, &cfg.plugins);
+        let (keybindings, kb_warnings) = Keybindings::from_config(&cfg.keybindings);
 
         let mut state = AppState::new(term_width, term_height);
         // Same field list reload uses, so startup and hot-reload can't
@@ -249,7 +247,6 @@ impl App {
             local_terminal,
             remote,
             warning_state: None,
-            plugin_instances: (0..plugin_count).map(|_| None).collect(),
             refresh_worker: RefreshWorker::spawn(),
             session_exec: crate::session::executor::SessionExecutor::new(),
             raw_keybindings: cfg.keybindings.clone(),
@@ -328,16 +325,11 @@ impl App {
         }
     }
 
-    /// Write `bytes` to the PTY backing the active main view: foreground plugin,
-    /// upgrade pane, or attached terminal. `Settings` has no PTY, so it's a
-    /// no-op there. Shared by key forwarding, mouse forwarding, bracketed paste.
+    /// Write `bytes` to the PTY backing the active main view: upgrade pane or
+    /// attached terminal. `Settings` has no PTY, so it's a no-op there. Shared
+    /// by key forwarding, mouse forwarding, bracketed paste.
     pub(super) fn write_to_active_pty(&mut self, bytes: &[u8]) {
         match self.state.main_view {
-            MainView::Plugin(idx) => {
-                if let Some(inst) = self.plugin_instances.get_mut(idx).and_then(|o| o.as_mut()) {
-                    let _ = inst.pty.write(bytes);
-                }
-            }
             MainView::Upgrade => {
                 if let Some(ref mut inst) = self.upgrade_instance {
                     let _ = inst.pty.write(bytes);

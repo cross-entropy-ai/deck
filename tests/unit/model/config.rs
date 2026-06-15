@@ -53,23 +53,6 @@ fn config_roundtrip_preserves_view_mode() {
 }
 
 #[test]
-fn parse_json_with_plugins() {
-    let json = r#"{
-  "theme": "Catppuccin Mocha",
-  "plugins": [
-    { "name": "GPU Monitor", "command": "findgpu", "key": "g" },
-    { "name": "System", "command": "btop", "key": "m" }
-  ]
-}"#;
-    let config = parse(json);
-    assert_eq!(config.plugins.len(), 2);
-    assert_eq!(config.plugins[0].name, "GPU Monitor");
-    assert_eq!(config.plugins[0].command, "findgpu");
-    assert_eq!(config.plugins[0].key, 'g');
-    assert_eq!(config.plugins[1].key, 'm');
-}
-
-#[test]
 fn parse_json_with_keybindings_string() {
     let json = r#"{ "keybindings": { "kill_session": "X" } }"#;
     let config = parse(json);
