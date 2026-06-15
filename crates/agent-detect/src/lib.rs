@@ -27,8 +27,9 @@ pub enum AgentKind {
 }
 
 /// One tmux pane's identity, fed to `detect_agents`. `session`/`window`/
-/// `pane` are display fields; `pane_id` is the stable `%N` switch handle
-/// (indices renumber as panes/windows churn, so they can't be the target).
+/// `pane` are display fields (`window` is the window *name*); `pane_id` is
+/// the stable `%N` switch handle — names and indices both churn as
+/// panes/windows change, so only `pane_id` is a safe target.
 #[derive(Debug, Clone)]
 pub struct PaneInfo {
     pub pid: u32,
@@ -411,20 +412,20 @@ mod tests {
 600 500 vim
 700 1 /Users/me/.cursor/native-binary/claude --output-format stream-json";
         let panes = [
-            pane(100, "deck", "1", "0"),
-            pane(300, "work", "2", "1"),
-            pane(500, "work", "2", "2"),
+            pane(100, "deck", "main", "0"),
+            pane(300, "work", "agents", "1"),
+            pane(500, "work", "agents", "2"),
         ];
         let agents = detect_agents(&panes, ps);
         assert_eq!(agents.len(), 2);
-        // pane 100 -> claude, located at its session/window/pane, with the
+        // pane 100 -> claude, located at its session/window-name/pane, with the
         // stable pane id carried for switching.
         assert_eq!(agents[0].kind, AgentKind::Claude);
-        assert_eq!(agents[0].location(), "deck:1.0");
+        assert_eq!(agents[0].location(), "deck:main.0");
         assert_eq!(agents[0].pane_id, "%100");
         // pane 300 -> codex (matched two levels down the wrapper).
         assert_eq!(agents[1].kind, AgentKind::Codex);
-        assert_eq!(agents[1].location(), "work:2.1");
+        assert_eq!(agents[1].location(), "work:agents.1");
         assert_eq!(agents[1].pane_id, "%300");
         // pane 500 -> no agent (not in the list).
     }
