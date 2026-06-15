@@ -9,9 +9,9 @@
 //! back empty and every `-L`/`-D` forward read as Down.
 
 // parse_lsof/parse_ss are platform-split: local_listen_ports only calls
-// one of them per OS (cfg-gated), so the other is "unused" in a non-test
-// build on that platform. The module-level allow covers that.
-#![allow(dead_code)]
+// one of them per OS, so each parser is cfg-gated to the platform that uses
+// it (plus `test`, where both are exercised) — otherwise the other reads as
+// dead code in a non-test build on that platform.
 
 use std::collections::HashSet;
 
@@ -19,6 +19,7 @@ use std::collections::HashSet;
 /// ports in LISTEN state. The `NAME` field holds `address:port` before a
 /// trailing `(LISTEN)` token (e.g. `*:54322 (LISTEN)`, `[::1]:54323 (LISTEN)`);
 /// the port is the text after the address's final `:`, handling bracketed IPv6.
+#[cfg(any(target_os = "macos", test))]
 pub fn parse_lsof(output: &str) -> HashSet<u16> {
     let mut ports = HashSet::new();
     for line in output.lines() {
@@ -47,6 +48,7 @@ pub fn parse_lsof(output: &str) -> HashSet<u16> {
 /// (Ubuntu 22.04+, Debian 12+) which prepends a `Netid` column. The local
 /// `Address:Port` is always three columns after the `LISTEN` token either way
 /// (State, Recv-Q, Send-Q, Local Address:Port).
+#[cfg(any(target_os = "linux", test))]
 pub fn parse_ss(output: &str) -> HashSet<u16> {
     let mut ports = HashSet::new();
     for line in output.lines() {
