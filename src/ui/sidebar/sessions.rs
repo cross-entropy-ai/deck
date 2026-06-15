@@ -62,11 +62,21 @@ fn recolor_agent_dot(
 }
 
 /// Drop the `BOLD` the library preset bakes into header bars — dividers stay
-/// muted and quiet, no bold weight on the title/chevron.
+/// muted and quiet, no bold weight on the title/chevron — and trim the double
+/// space the preset leaves between the chevron (`"▾ "`) and the label
+/// (`" title "`): chevron span[0] ends in a space, label span[1] starts with
+/// one, so strip the label's leading space to collapse `▾  title` → `▾ title`.
 fn unbold(mut text: Text<'static>) -> Text<'static> {
     for line in &mut text.lines {
         for span in &mut line.spans {
             span.style = span.style.remove_modifier(Modifier::BOLD);
+        }
+        // ponytail: assumes left-aligned headers (lpad=0, so span[1] is the
+        // label). Revisit if a divider ever uses center/right alignment.
+        if let Some(label) = line.spans.get_mut(1) {
+            if let Some(rest) = label.content.strip_prefix(' ') {
+                label.content = rest.to_string().into();
+            }
         }
     }
     text
