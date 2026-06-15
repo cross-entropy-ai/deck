@@ -182,5 +182,4 @@ mod tests {
         assert!(s.contains("Host myhost"));
         assert!(s.contains("ControlMaster auto"));
     }
-
 }

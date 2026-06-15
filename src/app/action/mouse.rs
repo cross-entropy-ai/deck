@@ -171,7 +171,9 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     if mouse.kind == MouseEventKind::Down(MouseButton::Right) && in_sidebar {
         // Right-clicking a group divider does nothing — its actions live
         // on the divider's own `[…]` button, not a context menu.
-        if state.effective_layout_mode() == LayoutMode::Horizontal && state.is_divider_at_row(mouse.row) {
+        if state.effective_layout_mode() == LayoutMode::Horizontal
+            && state.is_divider_at_row(mouse.row)
+        {
             return Action::None;
         }
         let target = match state.effective_layout_mode() {

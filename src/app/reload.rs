@@ -108,11 +108,11 @@ impl App {
         // Hosts only in old → stop master + offboard runtime state.
         for old in &old_remotes {
             if !new_remotes.iter().any(|n| n.host == old.host) {
-                let _ = self
-                    .port_forward_tx
-                    .send(crate::app::ssh::port_forward_task::Op::StopHost {
-                        host: old.host.clone(),
-                    });
+                let _ =
+                    self.port_forward_tx
+                        .send(crate::app::ssh::port_forward_task::Op::StopHost {
+                            host: old.host.clone(),
+                        });
                 self.offboard_remote_host(&old.host);
             }
         }

@@ -108,9 +108,7 @@ impl SessionExecutor {
                 {
                     return;
                 }
-                self.senders
-                    .entry(lane(host.as_deref()))
-                    .or_insert(tx)
+                self.senders.entry(lane(host.as_deref())).or_insert(tx)
             }
         };
         let _ = tx.send(Job { backend, op, host });
@@ -225,17 +223,14 @@ mod tests {
             },
         );
         assert!(
-            exec.senders
-                .contains_key(lane(host.as_deref()).as_str()),
+            exec.senders.contains_key(lane(host.as_deref()).as_str()),
             "submit should cache the host's FIFO sender"
         );
 
         // Offboard reaps the lane.
         exec.remove(&host);
         assert!(
-            !exec
-                .senders
-                .contains_key(lane(host.as_deref()).as_str()),
+            !exec.senders.contains_key(lane(host.as_deref()).as_str()),
             "remove should prune the offboarded host's sender"
         );
 

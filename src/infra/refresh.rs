@@ -194,7 +194,8 @@ fn collect_local(
 
     // Gather the local lane's sessions + agents through the tmux System.
     let snap = TmuxSystem.snapshot(&TmuxSystem::local_lane(), req.show_agents);
-    let (sessions, raw_agents) = snap.map_or_else(|| (Vec::new(), None), |s| (s.sessions, s.agents));
+    let (sessions, raw_agents) =
+        snap.map_or_else(|| (Vec::new(), None), |s| (s.sessions, s.agents));
 
     let rows = sessions
         .into_iter()

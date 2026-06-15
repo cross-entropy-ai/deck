@@ -38,8 +38,15 @@ pub fn draw_summary_popup(
 
     let rows = inner.height as usize;
     let content_w = (inner.width as usize).saturating_sub(1).max(1); // 1 col bar
-    let (row_spans, max_scroll) =
-        markdown_window(text, rows, scroll, content_w, theme, theme.text, theme.surface);
+    let (row_spans, max_scroll) = markdown_window(
+        text,
+        rows,
+        scroll,
+        content_w,
+        theme,
+        theme.text,
+        theme.surface,
+    );
     let lines: Vec<Line> = row_spans.into_iter().map(Line::from).collect();
 
     frame.render_widget(Paragraph::new(lines), inner);

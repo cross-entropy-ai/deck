@@ -93,7 +93,8 @@ mod tests {
         let text = "aaaa bbbb cccc dddd eeee";
         let content_w = 5;
         let rows = 3;
-        let (out, max_scroll) = markdown_window(text, rows, 0, content_w, theme, theme.text, theme.bg);
+        let (out, max_scroll) =
+            markdown_window(text, rows, 0, content_w, theme, theme.text, theme.bg);
 
         assert_eq!(out.len(), rows, "one span list per row");
         // 5 wrapped lines, 3-row window -> 2 lines of slack.

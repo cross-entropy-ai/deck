@@ -72,7 +72,12 @@ pub fn draw_picker_list(
         let display = start + pos;
         let sel = display == selected;
         let marker = if sel { "\u{25b8}" } else { " " };
-        Paragraph::new(list_item_line(theme, sel, format!("  {marker} "), content(idx)))
-            .render(rows[pos], buf);
+        Paragraph::new(list_item_line(
+            theme,
+            sel,
+            format!("  {marker} "),
+            content(idx),
+        ))
+        .render(rows[pos], buf);
     }
 }

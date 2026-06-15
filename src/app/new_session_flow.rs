@@ -155,7 +155,10 @@ impl App {
         }
     }
 
-    fn set_new_session_error(&mut self, err: impl Into<String>) -> Option<crate::state::CreateSessionRequest> {
+    fn set_new_session_error(
+        &mut self,
+        err: impl Into<String>,
+    ) -> Option<crate::state::CreateSessionRequest> {
         if let Some(ns) = self.state.overlay.new_session.as_mut() {
             ns.picker.error = Some(err.into());
         }

@@ -475,13 +475,17 @@ impl App {
         SettingsView {
             selected: s.settings.selected,
             rows,
-            exclude_editor: s.overlay.exclude_editor.as_ref().map(|e| ui::ExcludeEditorView {
-                patterns: &s.prefs.exclude_patterns,
-                selected: e.selected,
-                adding: e.adding,
-                input: &e.input,
-                error: e.error.as_deref(),
-            }),
+            exclude_editor: s
+                .overlay
+                .exclude_editor
+                .as_ref()
+                .map(|e| ui::ExcludeEditorView {
+                    patterns: &s.prefs.exclude_patterns,
+                    selected: e.selected,
+                    adding: e.adding,
+                    input: &e.input,
+                    error: e.error.as_deref(),
+                }),
             keybindings: &s.keybindings,
             keybindings_view_open: s.settings.keybindings_view_open,
             keybindings_view_scroll: s.settings.keybindings_view_scroll,
@@ -490,7 +494,13 @@ impl App {
     }
 }
 
-fn draw_center_message(frame: &mut Frame, area: Rect, title: &str, detail: &str, theme: &crate::theme::Theme) {
+fn draw_center_message(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    detail: &str,
+    theme: &crate::theme::Theme,
+) {
     let lines = vec![
         Line::from(""),
         Line::from(Span::styled(title, Style::default().fg(theme.text))),

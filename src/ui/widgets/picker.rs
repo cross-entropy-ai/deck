@@ -51,8 +51,13 @@ pub fn draw_filter_picker(
     // Always reserve at least one list row (for the empty-state message).
     let list_rows = picker.filtered.len().min(picker.max_visible).max(1);
     // borders(2) + fields(N) + blank(1) + list + blank(1) + [error] + footer(1)
-    let content_height =
-        2 + picker.fields.len() as u16 + 1 + list_rows as u16 + 1 + picker.error.is_some() as u16 + 1;
+    let content_height = 2
+        + picker.fields.len() as u16
+        + 1
+        + list_rows as u16
+        + 1
+        + picker.error.is_some() as u16
+        + 1;
     let popup = popup_rect(area, picker.width, content_height, picker.min_height);
 
     let inner = popup_frame(
@@ -90,8 +95,11 @@ pub fn draw_filter_picker(
     idx += 1; // blank
 
     if picker.filtered.is_empty() {
-        Paragraph::new(Span::styled(picker.empty_msg, Style::default().fg(theme.dim)))
-            .render(rows[idx], frame.buffer_mut());
+        Paragraph::new(Span::styled(
+            picker.empty_msg,
+            Style::default().fg(theme.dim),
+        ))
+        .render(rows[idx], frame.buffer_mut());
     } else {
         draw_picker_list(
             frame.buffer_mut(),
