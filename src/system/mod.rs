@@ -34,8 +34,7 @@ pub fn for_lane(lane: &LaneId) -> &'static dyn System {
 use crate::agent::DetectedAgent;
 use crate::config::RemoteConfig;
 use crate::effects::Effect;
-use crate::forwards::{ForwardHealth, ForwardKey};
-use crate::geometry::{Badge, SectionButton};
+use crate::geometry::SectionButton;
 use crate::lane::LaneId;
 use crate::session::SessionControl;
 use crate::tmux::SessionInfo;
@@ -81,10 +80,9 @@ pub trait System: Send + Sync {
 }
 
 /// Read-only state a [`System`] consults to build its [`sections`](System::sections).
-/// (tmux derives lanes from `remotes` and each `⇄N` badge from `forward_health`.)
+/// (tmux derives lanes — and each `⇄N` forward count — from `remotes`.)
 pub struct SectionCtx<'a> {
     pub remotes: &'a [RemoteConfig],
-    pub forward_health: &'a HashMap<ForwardKey, ForwardHealth>,
 }
 
 /// Runtime state a [`System`] needs to build a [`control`](System::control)
@@ -106,13 +104,8 @@ pub struct SectionDef {
     pub lane: LaneId,
     /// Divider title (e.g. `"@local"`, `"@myhost"`). System-defined.
     pub title: String,
-    /// Theme accent slot index; the shell maps it to a color
-    /// (`geometry::host_accent`), keeping color knowledge in the theme.
-    pub accent: usize,
     /// Buttons on the divider, left→right.
     pub buttons: Vec<SectionButton>,
-    /// Optional status badge (e.g. the `⇄N` port-forward rollup).
-    pub badge: Option<Badge>,
     /// Give this section's header a 1-row top margin (vs. flush).
     pub top_margin: bool,
 }

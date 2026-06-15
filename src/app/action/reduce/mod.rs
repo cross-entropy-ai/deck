@@ -270,9 +270,8 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // the host from config_remotes (save_config persists it) and clear
             // its session rows so the sidebar updates before the next refresh.
             // The host's forward *rules* ride inside its `RemoteConfig`, so
-            // they're dropped here too; prune their now-orphaned liveness keys.
+            // they're dropped here too.
             state.config_remotes.retain(|r| r.host != host);
-            state.prune_forward_health();
             state
                 .entries
                 .retain(|e| e.host.as_deref() != Some(host.as_str()));

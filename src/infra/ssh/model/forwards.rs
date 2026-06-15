@@ -1,12 +1,10 @@
 //! Port-forward model: the persisted forward rule (`ForwardSpec` /
-//! `ForwardMode`) and its config-diff (`ForwardOp` / `diff_forwards`),
-//! per-forward liveness (`ForwardHealth` / `ForwardKey`), the divider badge
-//! rollup, and the add-forward overlay form state.
+//! `ForwardMode`), its config-diff (`ForwardOp` / `diff_forwards`), and the
+//! add-forward overlay form state.
 
 use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
-use crate::config::RemoteConfig;
 use crate::new_session::{make_textarea, textarea_line};
 
 // --- Persisted forward rule ---
@@ -67,6 +65,16 @@ impl ForwardSpec {
         let (flag, value) = self.ssh_flag_and_value();
         format!("{} {}", flag, value)
     }
+
+    /// Whether two forwards would claim the same local listener: same mode,
+    /// bind address, and listen port. The target endpoint is irrelevant — ssh
+    /// can't bind one port twice — so this is the identity used to reject a
+    /// duplicate before handing it to ssh.
+    pub fn same_listen_identity(&self, other: &ForwardSpec) -> bool {
+        self.mode == other.mode
+            && self.bind_addr == other.bind_addr
+            && self.listen_port == other.listen_port
+    }
 }
 
 /// Difference between two `Vec<ForwardSpec>` slices: which to add, which
@@ -91,112 +99,6 @@ pub fn diff_forwards(old: &[ForwardSpec], new: &[ForwardSpec]) -> Vec<ForwardOp>
         }
     }
     ops
-}
-
-// --- Port-forward liveness types ---
-
-/// Liveness of a single configured forward, refreshed each probe tick.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ForwardHealth {
-    /// Not yet probed this session, enumeration was unavailable, or the host
-    /// is still connecting.
-    Probing,
-    /// `-L`/`-D`: a local listener is present on the listen port. `-R`: the
-    /// host connection is up (the remote listener can't be confirmed locally,
-    /// so it simply tracks reachability).
-    Up,
-    /// `-L`/`-D`: no local listener. `-R`: the host is unreachable.
-    Down,
-}
-
-/// Stable identity of a configured forward, keying liveness across config
-/// reloads and reorders. `mode` and `bind_addr` are included alongside the
-/// listen port so an `-L` and `-R` sharing a port number don't collide.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ForwardKey {
-    pub host: String,
-    pub mode: ForwardMode,
-    pub bind_addr: Option<String>,
-    pub listen_port: u16,
-}
-
-impl ForwardKey {
-    pub fn from_spec(host: &str, spec: &ForwardSpec) -> Self {
-        Self {
-            host: host.to_string(),
-            mode: spec.mode,
-            bind_addr: spec.bind_addr.clone(),
-            listen_port: spec.listen_port,
-        }
-    }
-}
-
-// --- Divider badge rollup ---
-
-/// Aggregate liveness of a host's configured forwards, shown as a colored
-/// `[⇄N]` badge on the remote `@host` divider (left of `[⟳]`). `total` is the
-/// forward count; `status` is the rollup color the renderer paints.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ForwardBadge {
-    pub total: usize,
-    pub status: ForwardBadgeStatus,
-}
-
-/// Traffic-light state of a [`ForwardBadge`]: green = all up, red = all down,
-/// orange = mixed, "probing" (neutral) = none confirmed either way yet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ForwardBadgeStatus {
-    AllUp,
-    AllDown,
-    Mixed,
-    Probing,
-}
-
-impl ForwardBadge {
-    /// Roll a host's per-forward health up into a single badge. Returns `None`
-    /// when the host has no configured forwards (no badge is drawn).
-    pub fn rollup(healths: impl Iterator<Item = ForwardHealth>) -> Option<Self> {
-        let (mut up, mut down, mut total) = (0usize, 0usize, 0usize);
-        for h in healths {
-            total += 1;
-            match h {
-                ForwardHealth::Up => up += 1,
-                ForwardHealth::Down => down += 1,
-                ForwardHealth::Probing => {}
-            }
-        }
-        if total == 0 {
-            return None;
-        }
-        let status = if up == total {
-            ForwardBadgeStatus::AllUp
-        } else if down == total {
-            ForwardBadgeStatus::AllDown
-        } else if up == 0 && down == 0 {
-            ForwardBadgeStatus::Probing
-        } else {
-            ForwardBadgeStatus::Mixed
-        };
-        Some(Self { total, status })
-    }
-}
-
-/// Roll a host's configured forwards + live health into a badge — the per-host
-/// `⇄N` summary a remote divider renders. Owned here (the ssh side) rather than
-/// by the tmux system: the tmux divider only maps the returned [`ForwardBadge`]
-/// to its own badge type. `None` when the host has no forwards.
-pub fn host_badge(
-    remotes: &[RemoteConfig],
-    health: &std::collections::HashMap<ForwardKey, ForwardHealth>,
-    host: &str,
-) -> Option<ForwardBadge> {
-    let remote = remotes.iter().find(|r| r.host == host)?;
-    ForwardBadge::rollup(remote.forwards.iter().map(|f| {
-        health
-            .get(&ForwardKey::from_spec(host, f))
-            .copied()
-            .unwrap_or(ForwardHealth::Probing)
-    }))
 }
 
 // --- Port forward overlay ---

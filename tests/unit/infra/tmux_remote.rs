@@ -117,8 +117,7 @@ fn persist_session_order_chains_quoted_set_options_over_ssh() {
     // Names and the `;` separator are single-quoted so the remote shell
     // passes them literally to tmux (tmux interprets the `;`).
     assert!(
-        calls[0]
-            .contains("set-option -t '=a' @deck_order 0 ';' set-option -t '=b' @deck_order 1"),
+        calls[0].contains("set-option -t '=a' @deck_order 0 ';' set-option -t '=b' @deck_order 1"),
         "got: {}",
         calls[0]
     );

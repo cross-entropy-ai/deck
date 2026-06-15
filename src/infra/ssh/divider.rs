@@ -1,15 +1,12 @@
-//! SSH's contribution to a remote host's sidebar divider: the buttons and
-//! the `⇄N` forward badge it registers, plus their click handling. The tmux
-//! system asks for these when laying out a remote section — it never hardcodes
-//! which buttons a remote host has, because they're ssh features (port
-//! forwards, connection reconnect).
-
-use std::collections::HashMap;
+//! SSH's contribution to a remote host's sidebar divider: the buttons it
+//! registers (the `⇄N` forward count + reconnect) plus their click handling.
+//! The tmux system asks for these when laying out a remote section — it never
+//! hardcodes which buttons a remote host has, because they're ssh features
+//! (port forwards, connection reconnect).
 
 use crate::config::RemoteConfig;
 use crate::effects::Effect;
-use crate::forwards::{ForwardBadgeStatus, ForwardHealth, ForwardKey};
-use crate::geometry::{Badge, BadgeStatus, SectionButton};
+use crate::geometry::SectionButton;
 
 /// Button command ids ssh registers on a remote divider and handles in
 /// [`on_button`].
@@ -18,39 +15,22 @@ pub mod cmd {
     pub const FORWARDS: &str = "forwards";
 }
 
-/// The `⇄N` forward badge for a host, mapped from ssh's per-host rollup.
-/// `None` when the host has no configured forwards.
-pub fn badge(
-    remotes: &[RemoteConfig],
-    health: &HashMap<ForwardKey, ForwardHealth>,
-    host: &str,
-) -> Option<Badge> {
-    let rollup = crate::forwards::host_badge(remotes, health, host)?;
-    let status = match rollup.status {
-        ForwardBadgeStatus::AllUp => BadgeStatus::Ok,
-        ForwardBadgeStatus::AllDown => BadgeStatus::Err,
-        ForwardBadgeStatus::Mixed => BadgeStatus::Warn,
-        ForwardBadgeStatus::Probing => BadgeStatus::Idle,
-    };
-    Some(Badge {
-        label: format!("⇄{}", rollup.total),
-        status,
-    })
+/// Count of forwards configured for `host`, or `None` when it has none (no
+/// `⇄N` button is drawn then).
+fn forward_count(remotes: &[RemoteConfig], host: &str) -> Option<usize> {
+    let n = remotes.iter().find(|r| r.host == host)?.forwards.len();
+    (n > 0).then_some(n)
 }
 
-/// The buttons ssh puts on a remote host's divider, left→right: the forward
-/// badge button (only when the host has forwards) then reconnect. Returned
-/// alongside the badge so the caller doesn't recompute it.
-pub fn divider(
-    remotes: &[RemoteConfig],
-    health: &HashMap<ForwardKey, ForwardHealth>,
-    host: &str,
-) -> (Vec<SectionButton>, Option<Badge>) {
-    let badge = badge(remotes, health, host);
+/// The buttons ssh puts on a remote host's divider, left→right: the `⇄N`
+/// forward button (a count of configured forwards; only when the host has
+/// any), then reconnect. The count is the only forward feedback on the
+/// divider — deck doesn't probe per-forward liveness.
+pub fn divider(remotes: &[RemoteConfig], host: &str) -> Vec<SectionButton> {
     let mut buttons = Vec::with_capacity(2);
-    if let Some(b) = &badge {
+    if let Some(n) = forward_count(remotes, host) {
         buttons.push(SectionButton {
-            glyph: b.label.clone(),
+            glyph: format!("⇄{}", n),
             command: cmd::FORWARDS.to_string(),
         });
     }
@@ -58,7 +38,7 @@ pub fn divider(
         glyph: "⟳".to_string(),
         command: cmd::RECONNECT.to_string(),
     });
-    (buttons, badge)
+    buttons
 }
 
 /// Handle a click on an ssh-registered remote-divider button.
@@ -91,21 +71,21 @@ mod tests {
     }
 
     #[test]
-    fn forwards_present_yields_badge_button_then_reconnect() {
+    fn forwards_present_yields_count_button_then_reconnect() {
         let remotes = vec![remote("h", 2)];
-        let (buttons, badge) = divider(&remotes, &HashMap::new(), "h");
+        let buttons = divider(&remotes, "h");
         let cmds: Vec<&str> = buttons.iter().map(|b| b.command.as_str()).collect();
         assert_eq!(cmds, [cmd::FORWARDS, cmd::RECONNECT]);
-        assert_eq!(badge.unwrap().label, "⇄2");
+        // The forward button is the count of configured forwards.
+        assert_eq!(buttons[0].glyph, "⇄2");
     }
 
     #[test]
-    fn no_forwards_yields_only_reconnect_no_badge() {
+    fn no_forwards_yields_only_reconnect() {
         let remotes = vec![remote("h", 0)];
-        let (buttons, badge) = divider(&remotes, &HashMap::new(), "h");
+        let buttons = divider(&remotes, "h");
         let cmds: Vec<&str> = buttons.iter().map(|b| b.command.as_str()).collect();
         assert_eq!(cmds, [cmd::RECONNECT]);
-        assert!(badge.is_none());
     }
 
     #[test]

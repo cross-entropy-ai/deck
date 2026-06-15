@@ -381,7 +381,6 @@ impl App {
                     pf_area,
                     overlay,
                     &self.state.config_remotes,
-                    &self.state.forward_health,
                     theme,
                 );
             }

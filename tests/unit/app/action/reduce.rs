@@ -712,32 +712,26 @@ fn settings_provider_row_fires_its_effect() {
 }
 
 #[test]
-fn removing_a_remote_drops_its_forwards_and_prunes_health() {
+fn removing_a_remote_drops_its_forwards() {
     use crate::config::RemoteConfig;
-    use crate::forwards::{ForwardHealth, ForwardKey, ForwardMode, ForwardSpec};
+    use crate::forwards::{ForwardMode, ForwardSpec};
 
-    let spec = ForwardSpec {
-        mode: ForwardMode::Local,
-        bind_addr: None,
-        listen_port: 8080,
-        target_host: Some("localhost".into()),
-        target_port: Some(80),
-    };
     let mut state = make_test_state(1);
     state.config_remotes.push(RemoteConfig {
         host: "prod".into(),
-        forwards: vec![spec.clone()],
+        forwards: vec![ForwardSpec {
+            mode: ForwardMode::Local,
+            bind_addr: None,
+            listen_port: 8080,
+            target_host: Some("localhost".into()),
+            target_port: Some(80),
+        }],
     });
-    state
-        .forward_health
-        .insert(ForwardKey::from_spec("prod", &spec), ForwardHealth::Up);
 
     apply_action(&mut state, Action::RemoveRemoteFromList("prod".into()));
 
-    // The host is gone, so its nested forward rules go with it...
+    // The host is gone, so its nested forward rules go with it.
     assert!(state.config_remotes.iter().all(|r| r.host != "prod"));
-    // ...and the orphaned liveness key is pruned, not left to accrete.
-    assert!(state.forward_health.is_empty());
 }
 
 fn rename_state(initial: &str) -> RenameState {

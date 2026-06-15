@@ -241,10 +241,6 @@ pub enum PfAction {
         ok: bool,
         message: String,
     },
-    ProbeResult {
-        key: crate::state::ForwardKey,
-        health: crate::state::ForwardHealth,
-    },
 }
 
 #[derive(Debug)]

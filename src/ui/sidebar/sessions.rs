@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Span, Text};
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
@@ -11,7 +11,6 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
-use crate::geometry::BadgeStatus;
 use crate::state::{
     AgentEntry, AgentHit, AgentTarget, BuiltLayout, DividerHit, FocusTarget, SummaryHits,
     SummaryState,
@@ -62,29 +61,12 @@ fn recolor_agent_dot(
     text
 }
 
-/// Traffic-light color for a divider's status badge: green ok, red error,
-/// orange warn, muted while idle/probing. The shell owns the palette; the
-/// system only reports a coarse [`BadgeStatus`].
-fn badge_color(status: BadgeStatus, theme: &Theme) -> Color {
-    match status {
-        BadgeStatus::Ok => theme.success,
-        BadgeStatus::Err => theme.error,
-        BadgeStatus::Warn => theme.warning,
-        BadgeStatus::Idle => theme.muted,
-    }
-}
-
-/// Retint the `[⇄N]` badge span on a divider to its traffic-light `color`,
-/// leaving the rest of the bar in the host accent. `basic_style` paints each
-/// header button as its own span, so the badge — the leftmost button, prefixed
-/// `[⇄` — is a single span to recolor.
-fn recolor_forward_badge(mut text: Text<'static>, color: Color) -> Text<'static> {
+/// Drop the `BOLD` the library preset bakes into header bars — dividers stay
+/// muted and quiet, no bold weight on the title/chevron.
+fn unbold(mut text: Text<'static>) -> Text<'static> {
     for line in &mut text.lines {
         for span in &mut line.spans {
-            if span.content.starts_with("[⇄") {
-                span.style = span.style.fg(color);
-                return text;
-            }
+            span.style = span.style.remove_modifier(Modifier::BOLD);
         }
     }
     text
@@ -144,18 +126,6 @@ pub(super) fn draw_sessions(
     let theme = ctx.theme;
     let agents_tab = props.agents_tab;
     let agent_entries = props.agent_entries;
-    // Per-divider badge color, keyed by the divider title so the closure can
-    // recolor the `[⇄N]` span (matched against `item.data.title`) without
-    // re-deriving the system's state.
-    let badge_colors: std::collections::HashMap<&str, Color> = props
-        .built
-        .sections
-        .iter()
-        .filter_map(|m| {
-            let badge = m.badge.as_ref()?;
-            Some((m.title.as_str(), badge_color(badge.status, theme)))
-        })
-        .collect();
     let widget = SectionedListWidget::new(layout, move |item, item_ctx| {
         let text = basic_style(item, item_ctx);
         if agents_tab && matches!(item.kind, ItemKind::Row) {
@@ -170,9 +140,7 @@ pub(super) fn draw_sessions(
             return text;
         }
         if matches!(item.kind, ItemKind::Header) {
-            if let Some(color) = badge_colors.get(item.data.title.as_str()).copied() {
-                return recolor_forward_badge(text, color);
-            }
+            return unbold(text);
         }
         text
     })
@@ -463,6 +431,7 @@ pub(super) fn draw_summary_card(
 mod tests {
     use super::*;
     use crate::agent::AgentStatus;
+    use ratatui::style::Color;
     use ratatui::text::Line;
 
     /// The fg color the leading dot ends up with, or `None` if uncolored. Input

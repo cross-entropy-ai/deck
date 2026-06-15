@@ -99,7 +99,6 @@ impl AppState {
         let theme = self.active_theme();
         let ctx = crate::system::SectionCtx {
             remotes: &self.config_remotes,
-            forward_health: &self.forward_health,
         };
 
         for lane_id in &lanes {
@@ -107,11 +106,9 @@ impl AppState {
             // buttons, badge.
             let def = crate::system::for_lane(lane_id).section_for(lane_id, &ctx);
             if opts.show_headers {
-                let color = if def.accent == usize::MAX {
-                    theme.accent
-                } else {
-                    host_accent(theme, def.accent)
-                };
+                // ponytail: section dividers stay muted on purpose — least
+                // distraction, no per-host tint.
+                let color = theme.muted;
                 let mut header = BasicItem::new(def.title.clone())
                     .separator("─")
                     .color(color);
@@ -128,10 +125,8 @@ impl AppState {
                 }
                 sections.push(SectionMeta {
                     lane: def.lane.clone(),
-                    title: def.title,
                     buttons: def.buttons,
                     divider: true,
-                    badge: def.badge,
                 });
             }
             push_rows(&mut layout, &mut sections, lane_id);

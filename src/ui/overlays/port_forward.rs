@@ -8,10 +8,9 @@ use ratatui_textarea::TextArea;
 
 use crate::config::RemoteConfig;
 use crate::forwards::{ForwardMode, ForwardSpec};
-use crate::state::{ForwardHealth, ForwardKey, PfAddForm, PfField, PortForwardOverlay};
+use crate::state::{PfAddForm, PfField, PortForwardOverlay};
 use crate::theme::Theme;
 use crate::ui::widgets::{centered_rect, field_row, popup_frame, PopupStyle, TextAreaColors};
-use std::collections::HashMap;
 
 const OVERLAY_WIDTH: u16 = 64;
 
@@ -20,7 +19,6 @@ pub fn draw_port_forward(
     area: Rect,
     overlay: &PortForwardOverlay,
     remotes: &[RemoteConfig],
-    health: &HashMap<ForwardKey, ForwardHealth>,
     theme: &Theme,
 ) {
     let buf = frame.buffer_mut();
@@ -56,7 +54,7 @@ pub fn draw_port_forward(
     );
 
     match &overlay.add_form {
-        None => draw_list(buf, inner, forwards, overlay, health, theme),
+        None => draw_list(buf, inner, forwards, overlay, theme),
         Some(form) => draw_form(buf, inner, form, overlay.status.as_deref(), theme),
     }
 }
@@ -66,7 +64,6 @@ fn draw_list(
     area: Rect,
     forwards: &[ForwardSpec],
     overlay: &PortForwardOverlay,
-    health: &HashMap<ForwardKey, ForwardHealth>,
     theme: &Theme,
 ) {
     let mut lines: Vec<Line> = Vec::new();
@@ -86,19 +83,8 @@ fn draw_list(
             } else {
                 Style::default().fg(theme.text)
             };
-            let h = health
-                .get(&ForwardKey::from_spec(&overlay.host, f))
-                .copied()
-                .unwrap_or(ForwardHealth::Probing);
-            let (dot, dot_fg) = match h {
-                ForwardHealth::Up => ("\u{25cf}", theme.success), // ●
-                ForwardHealth::Down => ("\u{2715}", theme.error), // ✕
-                ForwardHealth::Probing => ("\u{00b7}", theme.muted), // ·
-            };
             lines.push(Line::from(vec![
                 Span::raw("  "),
-                Span::styled(dot, Style::default().fg(dot_fg)),
-                Span::raw(" "),
                 Span::styled(format!("{} {}", marker, format_forward(f)), style),
             ]));
         }

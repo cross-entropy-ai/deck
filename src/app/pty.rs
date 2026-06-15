@@ -149,5 +149,4 @@ impl App {
         self.upgrade_instance = Some(spawn_sized_pane(program, args, rows, cols)?);
         Ok(())
     }
-
 }

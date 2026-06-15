@@ -227,20 +227,13 @@ impl App {
     fn pump_port_forward(&mut self) -> Redraw {
         let mut redraw = Redraw::No;
         while let Ok(r) = self.port_forward_rx.try_recv() {
-            match r.kind {
-                crate::app::ssh::port_forward_task::OpKind::Probe(key, health) => {
-                    self.dispatch(Action::Pf(PfAction::ProbeResult { key, health }));
-                }
-                kind => {
-                    let host = kind.host().to_string();
-                    self.dispatch(Action::Pf(PfAction::TaskResult {
-                        host,
-                        op: kind,
-                        ok: r.ok,
-                        message: r.message,
-                    }));
-                }
-            }
+            let host = r.kind.host().to_string();
+            self.dispatch(Action::Pf(PfAction::TaskResult {
+                host,
+                op: r.kind,
+                ok: r.ok,
+                message: r.message,
+            }));
             redraw = Redraw::Force;
         }
         redraw
@@ -453,7 +446,6 @@ impl App {
                     self.suppress_next_periodic_refresh = false;
                 } else {
                     self.request_refresh();
-                    self.request_pf_probe();
                     self.probe_active_pane();
                 }
             }

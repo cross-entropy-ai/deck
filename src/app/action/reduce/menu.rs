@@ -2,9 +2,7 @@
 //! local-divider). Most confirmations delegate back to `apply_action` with a
 //! concrete `Action`; entry point is `reduce_menu`.
 
-use crate::state::{
-    session_menu_disabled, AppState, ContextMenu, MenuItem, MenuKind, SideEffect,
-};
+use crate::state::{session_menu_disabled, AppState, ContextMenu, MenuItem, MenuKind, SideEffect};
 
 use super::{apply_action, Action, MenuAction, PfAction, SettingsAction};
 

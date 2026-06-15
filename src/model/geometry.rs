@@ -6,7 +6,6 @@
 //! changing tab width keeps click-target math in sync.
 
 use ratatui::layout::{Position, Rect};
-use ratatui::style::Color;
 use unicode_width::UnicodeWidthStr;
 
 use crate::lane::LaneId;
@@ -15,7 +14,6 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::menu::MenuItem;
 use crate::state::SidebarTab;
-use crate::theme::Theme;
 
 /// One divider button. Open-ended: `glyph` is drawn, `command` is an id only
 /// the registering backend understands and the shell echoes back to its
@@ -24,23 +22,6 @@ use crate::theme::Theme;
 pub struct SectionButton {
     pub glyph: String,
     pub command: String,
-}
-
-/// A divider status badge — a label plus a status the shell maps to a theme
-/// color (e.g. the `⇄N` port-forward rollup).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Badge {
-    pub label: String,
-    pub status: BadgeStatus,
-}
-
-/// Coarse badge status; the shell picks the color.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BadgeStatus {
-    Ok,
-    Warn,
-    Err,
-    Idle,
 }
 
 /// Truncate `s` to at most `max_width` display columns, appending an
@@ -140,15 +121,6 @@ pub fn context_menu_rect(
     Rect::new(x, y, w, h)
 }
 
-
-/// Accent color for a remote host's divider, cycled by the host's order
-/// among distinct remote hosts. Shared by the layout builder (which bakes it
-/// into the `BasicItem` header) so dividers keep their per-host tint.
-pub fn host_accent(theme: &Theme, host_idx: usize) -> Color {
-    let tints = [theme.teal, theme.pink, theme.yellow, theme.accent];
-    tints[host_idx % tints.len()]
-}
-
 /// Collapse `$HOME` to `~` in a directory path. Pure; lives in the leaf
 /// geometry module so the sidebar layout builder (in `model`) can format
 /// session rows without reaching up into `ui`. `ui::text` re-exports it.
@@ -220,9 +192,6 @@ pub struct SectionMeta {
     /// it. For a non-divider placeholder header it's still set; read `divider`
     /// to tell them apart.
     pub lane: LaneId,
-    /// Divider title (e.g. `@local`, `@host`), the System-defined header text.
-    /// Lets the renderer key the badge recolor by title.
-    pub title: String,
     /// Buttons on this divider, left→right, matching the `BasicItem`
     /// `.button()` order. Empty for placeholder headers (empty-local /
     /// no-agents / detecting).
@@ -231,10 +200,6 @@ pub struct SectionMeta {
     /// carries buttons). `false` for placeholder rows that occupy a header
     /// slot but aren't interactive.
     pub divider: bool,
-    /// Status badge for this divider (e.g. the `⇄N` port-forward rollup).
-    /// Drives the badge color; `None` = no badge. Carried here so the renderer
-    /// colors it without re-deriving the system's state.
-    pub badge: Option<Badge>,
 }
 
 /// Switches distinguishing the two sidebar tabs built through the shared

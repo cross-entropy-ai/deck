@@ -854,17 +854,12 @@ impl App {
         // port) is already configured, before bothering ssh — else the user
         // sees a cryptic "bind: Address already in use", or a silent no-op when
         // ssh treats it as idempotent.
-        let key = crate::state::ForwardKey::from_spec(&host, &spec);
         let already_exists = self
             .state
             .config_remotes
             .iter()
             .find(|r| r.host == host)
-            .is_some_and(|r| {
-                r.forwards
-                    .iter()
-                    .any(|f| crate::state::ForwardKey::from_spec(&host, f) == key)
-            });
+            .is_some_and(|r| r.forwards.iter().any(|f| f.same_listen_identity(&spec)));
         if already_exists {
             overlay.status = Some(format!(
                 "Port {} is already being forwarded.",

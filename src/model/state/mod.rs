@@ -6,7 +6,7 @@ use ratatui_sectioned_list::widget::BasicItem;
 use ratatui_sectioned_list::ItemKind;
 use serde::{Deserialize, Serialize};
 
-use crate::geometry::{context_menu_rect, host_accent, shorten_dir, tab_col_ranges, tab_label};
+use crate::geometry::{context_menu_rect, shorten_dir, tab_col_ranges, tab_label};
 use crate::keybindings::Keybindings;
 use crate::lane::LaneId;
 use crate::system::tmux::lane;
@@ -18,7 +18,7 @@ use crate::update::{UpdateCheckMode, UpdateStatus};
 pub use crate::effects::{
     CreateSessionRequest, Effect, KillRequest, RemoteSwitchRequest, RenameRequest, SideEffect,
 };
-pub use crate::forwards::{ForwardHealth, ForwardKey, PfAddForm, PfField, PortForwardOverlay};
+pub use crate::forwards::{PfAddForm, PfField, PortForwardOverlay};
 pub use crate::geometry::{
     AgentEntry, AgentEntryKind, AgentHit, AgentTarget, BuiltLayout, DividerHit, HitKind,
     HitRegions, KillConfirmHits, SectionLayoutOpts, SectionMeta, SidebarLayout, SummaryHits,
@@ -271,27 +271,6 @@ pub fn attachable_on_host<'a>(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FocusTarget(pub usize);
 
-/// Connection state of a remote host, derived from its rows' reachability.
-/// Drives the color of the divider's reconnect button.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostStatus {
-    Connected,
-    Connecting,
-    Unreachable,
-}
-
-/// Connection status carried by a single remote row. All rows of a host
-/// share one status, so any row of the group represents it. Shared between
-/// the divider header and `-R` forward-health derivation so both read the
-/// host's state the same way.
-fn host_status_of(e: &SessionEntry) -> HostStatus {
-    match e.kind {
-        SessionEntryKind::Unreachable => HostStatus::Unreachable,
-        SessionEntryKind::Connecting => HostStatus::Connecting,
-        SessionEntryKind::Live { .. } | SessionEntryKind::NoSessions => HostStatus::Connected,
-    }
-}
-
 // --- Settings page state ---
 
 /// UI state for the settings page and its sub-popovers (theme picker,
@@ -508,10 +487,6 @@ pub struct AppState {
     /// and `reload_config`.
     pub config_remotes: Vec<crate::config::RemoteConfig>,
 
-    /// Per-forward liveness, refreshed each probe tick by the port-forward
-    /// worker. Keyed by `ForwardKey`. Missing key = `Probing` (not yet seen).
-    pub forward_health: HashMap<ForwardKey, ForwardHealth>,
-
     /// Interactive coding agents (Claude Code / Codex) detected per sidebar
     /// section, keyed by host (`None` = local, `Some(host)` = remote). An
     /// absent key hasn't been probed yet (rendered "claude …, codex …").
@@ -593,7 +568,6 @@ impl AppState {
             reload_status: None,
             reload_status_at: None,
             config_remotes: Vec::new(),
-            forward_health: HashMap::new(),
             agents: HashMap::new(),
             agent_entries: Vec::new(),
             active_agent: None,
@@ -981,55 +955,6 @@ impl AppState {
     /// sites build the same layout and don't carry a theme).
     pub fn active_theme(&self) -> &'static crate::theme::Theme {
         &crate::theme::THEMES[self.prefs.theme_index]
-    }
-
-    /// Drop health entries whose forward no longer exists in config (after a
-    /// reload that removed forwards), so the map doesn't accrete dead keys.
-    pub fn prune_forward_health(&mut self) {
-        let valid: std::collections::HashSet<ForwardKey> = self
-            .config_remotes
-            .iter()
-            .flat_map(|r| r.forwards.iter().map(|f| ForwardKey::from_spec(&r.host, f)))
-            .collect();
-        self.forward_health.retain(|k, _| valid.contains(k));
-    }
-
-    /// The connection status shown on a host's divider, derived from its
-    /// remote rows. `None` until the host has any row (pre-refresh).
-    pub fn host_conn_status(&self, host: &str) -> Option<HostStatus> {
-        self.entries
-            .iter()
-            .find(|e| e.host.as_deref() == Some(host))
-            .map(host_status_of)
-    }
-
-    /// Refresh `-R` forward health from each host's connection status. A
-    /// remote-forward listener lives on the far side, can't be probed locally,
-    /// so it mirrors reachability: connected → Up, unreachable → Down,
-    /// connecting → Probing. `-L`/`-D` are owned by the worker probe and left
-    /// untouched. Called on remote status change so `-R` and the divider agree.
-    pub fn sync_remote_forward_health(&mut self) {
-        let updates: Vec<(ForwardKey, ForwardHealth)> = self
-            .config_remotes
-            .iter()
-            .flat_map(|r| {
-                r.forwards
-                    .iter()
-                    .filter(|f| matches!(f.mode, crate::forwards::ForwardMode::Remote))
-                    .map(|f| {
-                        let health = match self.host_conn_status(&r.host) {
-                            Some(HostStatus::Connected) => ForwardHealth::Up,
-                            Some(HostStatus::Unreachable) => ForwardHealth::Down,
-                            Some(HostStatus::Connecting) | None => ForwardHealth::Probing,
-                        };
-                        (ForwardKey::from_spec(&r.host, f), health)
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        for (key, health) in updates {
-            self.forward_health.insert(key, health);
-        }
     }
 
     /// Clamp and set sidebar width. Returns true if it changed.

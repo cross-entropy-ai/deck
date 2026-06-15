@@ -71,33 +71,27 @@ fn menu_button() -> SectionButton {
 }
 
 /// Build one lane's [`SectionDef`]. The local lane is flush with just the menu
-/// button; a remote lane takes the host accent, the ssh-registered buttons +
-/// `⇄N` badge (from `crate::ssh::divider`), then the menu button. This fn
-/// doesn't know which remote buttons exist — ssh decides.
+/// button; a remote lane takes the ssh-registered buttons (the `⇄N` forward
+/// count + reconnect, from `crate::ssh::divider`), then the menu button. This
+/// fn doesn't know which remote buttons exist — ssh decides.
 fn section_def(ctx: &SectionCtx, lane: &LaneId) -> SectionDef {
     match TmuxSystem::host_of(lane) {
         None => SectionDef {
             lane: lane.clone(),
             title: "@local".to_string(),
-            accent: usize::MAX, // sentinel → base accent (see shell mapping)
             buttons: vec![menu_button()],
-            badge: None,
             top_margin: false,
         },
         Some(host) => {
-            let accent = ctx.remotes.iter().position(|r| r.host == host).unwrap_or(0);
-            // ssh registers the remote-only buttons (forwards, reconnect) and
-            // the badge; the menu button is appended last (rightmost), the
+            // ssh registers the remote-only buttons (the ⇄N forward count,
+            // reconnect); the menu button is appended last (rightmost), the
             // order the divider hit-tester zips against.
-            let (mut buttons, badge) =
-                crate::ssh::divider::divider(ctx.remotes, ctx.forward_health, host);
+            let mut buttons = crate::ssh::divider::divider(ctx.remotes, host);
             buttons.push(menu_button());
             SectionDef {
                 lane: lane.clone(),
                 title: format!("@{host}"),
-                accent,
                 buttons,
-                badge,
                 top_margin: true,
             }
         }

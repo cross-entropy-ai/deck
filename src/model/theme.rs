@@ -14,6 +14,9 @@ pub struct Theme {
     pub green: Color,
     pub teal: Color,
     pub yellow: Color,
+    // ponytail: palette slot, no current reader since dividers went muted.
+    // Kept so themes keep a full 12-slot palette; wire up if a widget needs it.
+    #[allow(dead_code)]
     pub pink: Color,
     /// Semantic slots, distinct from the decorative palette so a theme can tune
     /// "this is an error" without recoloring a pink host accent. Currently

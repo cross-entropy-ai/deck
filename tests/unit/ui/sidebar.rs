@@ -326,13 +326,14 @@ fn remote_divider_buttons_register_below_their_top_margin() {
 }
 
 #[test]
-fn remote_divider_shows_colored_forward_badge() {
-    // A remote host with configured forwards grows a leftmost `[⇄N]` badge on
-    // its divider: N counts the forwards, the color is the health rollup, and
-    // a click opens that host's port-forward overlay (not a collapse).
+fn remote_divider_shows_forward_count() {
+    // A remote host with configured forwards grows a leftmost `[⇄N]` button on
+    // its divider: N counts the forwards (deck no longer probes per-forward
+    // health), and a click opens that host's port-forward overlay (not a
+    // collapse).
     use crate::config::RemoteConfig;
     use crate::forwards::{ForwardMode, ForwardSpec};
-    use crate::state::{AppState, ForwardHealth, ForwardKey, SidebarTab, ViewMode};
+    use crate::state::{AppState, SidebarTab, ViewMode};
     use crate::system::tmux::TmuxSystem;
 
     let theme = &crate::theme::THEMES[0];
@@ -361,13 +362,6 @@ fn remote_divider_shows_colored_forward_badge() {
         kind: crate::state::SessionEntryKind::Live { is_current: false },
     });
     state.clamp_projects_focus();
-    // One forward up, one down → a "mixed" (warning-colored) rollup of 2.
-    state
-        .forward_health
-        .insert(ForwardKey::from_spec("h1", &f1), ForwardHealth::Up);
-    state
-        .forward_health
-        .insert(ForwardKey::from_spec("h1", &f2), ForwardHealth::Down);
 
     let built = state.sidebar_layout(ViewMode::Expanded);
     let sessions: Vec<&dyn SidebarSession> = state
@@ -427,16 +421,11 @@ fn remote_divider_shows_colored_forward_badge() {
         "badge sits to the left of the reconnect button"
     );
 
-    // The badge paints `[⇄2]` in the warning color (mixed health).
+    // The button renders `[⇄2]` — the count of configured forwards.
     let buf = terminal.backend().buffer();
     assert_eq!(buf[(badge.rect.x, badge.rect.y)].symbol(), "[");
     assert_eq!(buf[(badge.rect.x + 1, badge.rect.y)].symbol(), "⇄");
     assert_eq!(buf[(badge.rect.x + 2, badge.rect.y)].symbol(), "2");
-    assert_eq!(
-        buf[(badge.rect.x + 1, badge.rect.y)].fg,
-        theme.warning,
-        "mixed forward health colors the badge with the warning slot"
-    );
 
     // Clicking the badge opens the host's port-forward overlay.
     let badge_rect = badge.rect;

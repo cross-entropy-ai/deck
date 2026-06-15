@@ -90,10 +90,6 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
         } => {
             fx.merge(apply_pf_task_result(state, &host, &op, ok, &message));
         }
-
-        PfAction::ProbeResult { key, health } => {
-            state.forward_health.insert(key, health);
-        }
     }
     fx
 }
@@ -289,10 +285,6 @@ fn apply_pf_task_result(
                 overlay.status = Some(format!("exit: {}", message));
             }
         }
-        // Unreachable in practice: probe results are dispatched as
-        // PfAction::ProbeResult and never reach this function. Arm kept for
-        // match exhaustiveness over &OpKind.
-        OpKind::Probe(_, _) => {}
     }
     fx
 }

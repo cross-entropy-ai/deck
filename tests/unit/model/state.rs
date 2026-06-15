@@ -555,56 +555,26 @@ fn local_divider_menu_greys_remote_only_items() {
 }
 
 #[test]
-fn sync_remote_forward_health_mirrors_host_status() {
+fn remote_divider_shows_forward_count() {
     use crate::config::RemoteConfig;
     use crate::forwards::{ForwardMode, ForwardSpec};
-    use crate::state::{ForwardHealth, ForwardKey};
-
-    let r_spec = ForwardSpec {
-        mode: ForwardMode::Remote,
-        bind_addr: None,
-        listen_port: 9090,
-        target_host: Some("127.0.0.1".into()),
-        target_port: Some(9090),
-    };
-    let key = ForwardKey::from_spec("h1", &r_spec);
-
-    // connected → Up, unreachable → Down, connecting → Probing.
-    let cases = [
-        (remote_row("h1", false, false), ForwardHealth::Up),
-        (remote_row("h1", true, false), ForwardHealth::Down),
-        (remote_row("h1", false, true), ForwardHealth::Probing),
-    ];
-    for (row, expected) in cases {
-        let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-        state.config_remotes = vec![RemoteConfig {
-            host: "h1".into(),
-            forwards: vec![r_spec.clone()],
-        }];
-        set_remote(&mut state, vec![row]);
-        state.sync_remote_forward_health();
-        assert_eq!(state.forward_health.get(&key).copied(), Some(expected));
-    }
-}
-
-#[test]
-fn forward_badge_rolls_up_per_host_health() {
-    use crate::config::RemoteConfig;
-    use crate::forwards::{ForwardMode, ForwardSpec};
-    use crate::geometry::BadgeStatus;
-    use crate::state::{ForwardHealth, ForwardKey};
+    use crate::ssh::divider::cmd;
     use crate::system::tmux::TmuxSystem;
     use crate::system::System;
 
-    // The badge now comes from the tmux System, styled per lane.
-    let badge = |state: &AppState, host: &str| {
+    // The `⇄N` forward indicator is the leftmost divider button the tmux
+    // System supplies; N counts the host's configured forwards. deck no longer
+    // probes per-forward liveness, so the count is the only forward feedback.
+    let forward_glyph = |state: &AppState, host: &str| -> Option<String> {
         let ctx = crate::system::SectionCtx {
             remotes: &state.config_remotes,
-            forward_health: &state.forward_health,
         };
         TmuxSystem
             .section_for(&TmuxSystem::host_lane(host), &ctx)
-            .badge
+            .buttons
+            .into_iter()
+            .find(|b| b.command == cmd::FORWARDS)
+            .map(|b| b.glyph)
     };
 
     let spec = |port: u16| ForwardSpec {
@@ -614,52 +584,25 @@ fn forward_badge_rolls_up_per_host_health() {
         target_host: Some("127.0.0.1".into()),
         target_port: Some(port),
     };
-    let f1 = spec(8001);
-    let f2 = spec(8002);
 
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.config_remotes = vec![
         RemoteConfig {
             host: "h1".into(),
-            forwards: vec![f1.clone(), f2.clone()],
+            forwards: vec![spec(8001), spec(8002)],
         },
         RemoteConfig {
             host: "nofwd".into(),
             forwards: vec![],
         },
     ];
-    let set = |state: &mut AppState, a: ForwardHealth, b: ForwardHealth| {
-        state
-            .forward_health
-            .insert(ForwardKey::from_spec("h1", &f1), a);
-        state
-            .forward_health
-            .insert(ForwardKey::from_spec("h1", &f2), b);
-    };
 
-    // A host with no forwards never shows a badge.
-    assert_eq!(badge(&state, "nofwd"), None);
+    // The label counts every configured forward.
+    assert_eq!(forward_glyph(&state, "h1").as_deref(), Some("⇄2"));
+    // A host with no forwards has no forward button.
+    assert_eq!(forward_glyph(&state, "nofwd"), None);
     // An unknown host (not in config) likewise.
-    assert_eq!(badge(&state, "ghost"), None);
-
-    // The label counts every configured forward; status is the rollup.
-    set(&mut state, ForwardHealth::Up, ForwardHealth::Up);
-    let b = badge(&state, "h1").unwrap();
-    assert_eq!((b.label.as_str(), b.status), ("⇄2", BadgeStatus::Ok));
-
-    set(&mut state, ForwardHealth::Down, ForwardHealth::Down);
-    assert_eq!(badge(&state, "h1").unwrap().status, BadgeStatus::Err);
-
-    set(&mut state, ForwardHealth::Up, ForwardHealth::Down);
-    assert_eq!(badge(&state, "h1").unwrap().status, BadgeStatus::Warn);
-
-    // A probing forward alongside an up one is still "mixed", not all-up.
-    set(&mut state, ForwardHealth::Up, ForwardHealth::Probing);
-    assert_eq!(badge(&state, "h1").unwrap().status, BadgeStatus::Warn);
-
-    // Nothing confirmed either way yet → neutral "idle".
-    set(&mut state, ForwardHealth::Probing, ForwardHealth::Probing);
-    assert_eq!(badge(&state, "h1").unwrap().status, BadgeStatus::Idle);
+    assert_eq!(forward_glyph(&state, "ghost"), None);
 }
 
 #[test]
@@ -869,21 +812,38 @@ fn validate_bind_addr_passthrough() {
 }
 
 #[test]
-fn forward_key_from_spec_uses_mode_bind_and_listen() {
+fn same_listen_identity_keys_on_mode_bind_and_listen() {
     use crate::forwards::{ForwardMode, ForwardSpec};
-    use crate::state::ForwardKey;
-    let spec = ForwardSpec {
+    let base = ForwardSpec {
         mode: ForwardMode::Local,
         bind_addr: Some("127.0.0.1".into()),
         listen_port: 8080,
         target_host: Some("h".into()),
         target_port: Some(80),
     };
-    let key = ForwardKey::from_spec("server-1", &spec);
-    assert_eq!(key.host, "server-1");
-    assert_eq!(key.mode, ForwardMode::Local);
-    assert_eq!(key.bind_addr.as_deref(), Some("127.0.0.1"));
-    assert_eq!(key.listen_port, 8080);
+    // Same mode + bind + listen port collide even if the target differs — ssh
+    // can't bind the same listener twice.
+    let same_listener = ForwardSpec {
+        target_host: Some("other".into()),
+        target_port: Some(443),
+        ..base.clone()
+    };
+    assert!(base.same_listen_identity(&same_listener));
+    // A different listen port is a different listener.
+    assert!(!base.same_listen_identity(&ForwardSpec {
+        listen_port: 9090,
+        ..base.clone()
+    }));
+    // A different mode (an -R sharing the port number) doesn't collide.
+    assert!(!base.same_listen_identity(&ForwardSpec {
+        mode: ForwardMode::Remote,
+        ..base.clone()
+    }));
+    // A different bind address is a different listener.
+    assert!(!base.same_listen_identity(&ForwardSpec {
+        bind_addr: Some("0.0.0.0".into()),
+        ..base.clone()
+    }));
 }
 
 #[test]

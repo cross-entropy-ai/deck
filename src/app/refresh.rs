@@ -25,28 +25,6 @@ impl App {
         self.refresh_worker.request(self.build_refresh_request());
     }
 
-    /// Re-classify every `-L`/`-D` forward by enumerating local listeners.
-    /// `-R` forwards are skipped (health mirrors host reachability, set in
-    /// `apply_remote`). No-op (skips the `netstat`/`ss` spawn) when no local
-    /// forwards are configured.
-    pub(super) fn request_pf_probe(&self) {
-        let mut items = Vec::new();
-        for r in &self.state.config_remotes {
-            for f in &r.forwards {
-                if matches!(f.mode, crate::forwards::ForwardMode::Remote) {
-                    continue;
-                }
-                items.push(crate::state::ForwardKey::from_spec(&r.host, f));
-            }
-        }
-        if items.is_empty() {
-            return;
-        }
-        let _ = self
-            .port_forward_tx
-            .send(crate::app::ssh::port_forward_task::Op::Probe { items });
-    }
-
     pub(super) fn apply_update(&mut self, update: RefreshUpdate) {
         // Capture the focused agent's identity before this round rebuilds
         // `entries`/`agents`, so the cursor can re-anchor to the same pane
@@ -170,11 +148,6 @@ impl App {
         mark_connecting_rows(&mut self.state.entries, |host| {
             self.remote.is_connecting(host) || self.remote.is_marker_stuck(host)
         });
-
-        // -R forwards can't be probed locally; refresh their health from the
-        // host status we just settled so the badge/overlay agree with the
-        // divider (connected → green, unreachable → error).
-        self.state.sync_remote_forward_health();
 
         // Apply this round's agent detection: store probed hosts, drop stale
         // agents on covered-but-failed hosts, prune to configured. (Logic lives
