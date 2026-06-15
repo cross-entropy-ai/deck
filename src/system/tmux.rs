@@ -139,15 +139,6 @@ impl System for TmuxSystem {
         TMUX
     }
 
-    fn sections(&self, ctx: &SectionCtx) -> Vec<SectionDef> {
-        let mut out = Vec::with_capacity(ctx.remotes.len() + 1);
-        out.push(section_def(ctx, &TmuxSystem::local_lane()));
-        for remote in ctx.remotes {
-            out.push(section_def(ctx, &TmuxSystem::host_lane(&remote.host)));
-        }
-        out
-    }
-
     fn section_for(&self, lane: &LaneId, ctx: &SectionCtx) -> SectionDef {
         section_def(ctx, lane)
     }

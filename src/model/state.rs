@@ -1084,7 +1084,6 @@ impl AppState {
         mut push_rows: impl FnMut(&mut SidebarLayout, &mut Vec<SectionMeta>, &LaneId),
     ) -> BuiltLayout {
         use crate::system::tmux::TmuxSystem;
-        use crate::system::System;
 
         let mut layout = SidebarLayout::new();
         let mut sections: Vec<SectionMeta> = Vec::new();
@@ -1108,8 +1107,9 @@ impl AppState {
         };
 
         for lane_id in &lanes {
-            // The system styles the divider: title, accent, buttons, badge.
-            let def = TmuxSystem.section_for(lane_id, &ctx);
+            // The lane's owning system styles the divider: title, accent,
+            // buttons, badge.
+            let def = crate::system::for_lane(lane_id).section_for(lane_id, &ctx);
             if opts.show_headers {
                 let color = if def.accent == usize::MAX {
                     theme.accent

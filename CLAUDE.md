@@ -41,33 +41,46 @@ Source is split into five top-level modules under `src/` (plus `main.rs`).
   under `infra/ssh/model/`), `infra/pty.rs`,
   `infra/agent.rs`, etc. At the crate root these are aliased as
   `crate::tmux` (local) and `crate::remote_tmux` (remote).
-- **`session/`**: the `SessionControl` backend trait abstracting local vs
-  remote (`session/local.rs`, `session/remote.rs`, `session/executor.rs`).
+- **`session/`**: the `SessionControl` control-plane trait
+  (`session/local.rs`, `session/remote.rs`, `session/executor.rs`); a
+  `System` hands one out per lane via `control()`.
+- **`system/`**: the `System` extension point (`system/mod.rs`) — deck is a
+  shell that mounts `System`s; tmux (local + remote) is the one built-in
+  (`system/tmux.rs`). A `System` owns its lanes' sidebar structure
+  (`section_for`), discovery (`snapshot`), control plane (`control`), and
+  divider-button behavior (`on_button`). `crate::system::for_lane(&lane)`
+  resolves a lane's owning system; add a backend = `impl System` + register
+  it in the `SYSTEMS` slice.
 
 The rendering path: the `app` loop builds borrowed session slices ->
 `ui::draw_*()` pure functions -> `bridge::render_screen()` for the PTY pane.
 
 `vt100` is pinned to a long-lived `deck` branch on a fork (`Junyi-99/vt100-rust`) via `[patch.crates-io]` in `Cargo.toml`. See `docs/vt100-fork.md` for what's patched and how to add new fixes.
 
-### Local vs remote: one type, key by `Option<String>` host
+### Lanes and Systems: don't branch on local vs remote (or on which system)
 
-deck talks to a local tmux server and N remote ones, but the **high-level
-layers must not branch on local vs remote**. When adding any
-per-session/per-host feature:
+deck is a shell over one or more mounted `System`s; tmux exposes a *lane*
+per server (the local one + each remote host). The **high-level layers must
+not branch on local vs remote** — or, now, on which system owns a lane.
+When adding any per-session/per-lane feature:
 
 - **One data type for both.** Local and remote produce the *same* shape
-  (e.g. `SessionInfo`, `DetectedAgent`, `AgentTarget`). Never introduce a parallel
-  `foo` + `remote_foo` pair with different shapes (e.g. a scalar for
-  local and a map for remote) — that leaks the distinction upward.
-- **Key by host the way the rest of deck does:** `Option<String>`, where
-  `None` = local and `Some(host)` = a remote host (see `KillRequest`,
-  `RenameRequest`, `CreateSessionRequest`, `AppState.agents`). One
-  store (`HashMap<Option<String>, T>`); absence = "not known yet".
-- **Only the data-gathering branches.** `tmux/local.rs` (local) and
-  `tmux/remote.rs` (ssh) gather inputs differently, then feed the *same*
-  pure logic (`agent::detect_agents`, `tmux_parse::parse_sessions`). The
-  renderer consumes `&[&dyn SidebarSession]` and never asks "is this
-  remote?". Push the local/remote split as low as it goes.
+  (e.g. `SessionInfo`, `DetectedAgent`, `LaneSnapshot`). Never introduce a
+  parallel `foo` + `remote_foo` pair with different shapes — that leaks the
+  distinction upward.
+- **Key in-memory stores by `LaneId`** (`{system}\x1f{lane}`), not by host:
+  `AppState.agents`, `collapsed_sections`, the executor's FIFO lanes. Use
+  `crate::system::for_lane(&lane)` to reach the owning system; never match on
+  the system id or `lane.lane()` outside a `System` impl. (Some request DTOs —
+  `KillRequest`/`RenameRequest`/`CreateSessionRequest`, `SessionEntry.host`,
+  `AgentTarget` — still carry `Option<String>` host and are bridged via
+  `system::tmux::lane(host)`; migrating them to `LaneId` is pending.)
+- **The local/remote (and tmux-specific) split lives inside `TmuxSystem`.**
+  `tmux/local.rs` and `tmux/remote.rs` gather inputs differently, then feed
+  the *same* pure logic (`agent::detect_agents`, `tmux_parse::parse_sessions`),
+  surfaced through `System::snapshot`/`section_for`/`control`. The sidebar
+  renderer consumes the System's `SectionDef`/`SectionButton` and never asks
+  "is this remote?". Push the split as low as it goes.
 
 ### Remote ssh commands: mind the remote shell
 

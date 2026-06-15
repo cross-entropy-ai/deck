@@ -1,6 +1,4 @@
 use crate::action::{self, Action, MenuAction, NewSessionAction, PfAction, SummaryAction};
-use crate::session::local::LocalControl;
-use crate::session::remote::RemoteControl;
 use crate::session::SessionControl;
 use crate::state::{Effect, FocusMode, MainView, SideEffect};
 use crate::theme::THEMES;
@@ -182,9 +180,8 @@ impl App {
             } => {
                 // Decision A: the System owns what its divider buttons do. Ask
                 // it for the effects and run them through the normal pipeline.
-                use crate::system::System;
                 let mut fx = crate::state::SideEffect::default();
-                for e in crate::system::tmux::TmuxSystem.on_button(&lane, &command, x, y) {
+                for e in crate::system::for_lane(&lane).on_button(&lane, &command, x, y) {
                     fx.push(e);
                 }
                 self.execute_side_effects(&fx);
@@ -215,22 +212,27 @@ impl App {
         }
     }
 
-    /// Build the control-plane backend for a host: `None` -> local in-process
-    /// tmux backend (seeded with deck's own client tty), `Some(h)` -> remote ssh
-    /// backend for `h` (seeded with that connection's client-tty marker id, `0`
-    /// when unknown). Keyed by `Option<&str>` host like the rest of deck; only
-    /// the leaf tmux/ssh call runs here (off the UI thread via the executor),
-    /// while App-level orchestration (`active_remote`, pending-switch marker
-    /// dance, kill pre-switch, rename order-patch) stays in App. The backend is
-    /// `Send` and captures the current tty/marker at build time.
+    /// Build the control-plane backend for a host (`None` = local). Routes
+    /// through the lane's owning [`System`](crate::system::System), seeded with
+    /// the runtime state it needs: deck's own client tty and the host's
+    /// client-tty reconnect marker (`0` when unknown). Only the leaf tmux/ssh
+    /// call runs here (off the UI thread via the executor); App-level
+    /// orchestration (`active_remote`, pending-switch marker dance, kill
+    /// pre-switch, rename order-patch) stays in App. The backend is `Send` and
+    /// captures the tty/marker at build time.
     fn control(&self, host: Option<&str>) -> Box<dyn SessionControl + Send> {
-        match host {
-            None => Box::new(LocalControl::new(self.local_terminal.pty.slave_tty.clone())),
-            Some(h) => {
-                let marker_id = self.remote.marker_id(h);
-                Box::new(RemoteControl::new(h.to_string(), marker_id))
-            }
+        let lane = crate::system::tmux::lane(host);
+        // The System looks up the host's marker by name; pass just the one
+        // relevant entry (control is not a hot path).
+        let mut marker_ids = std::collections::HashMap::new();
+        if let Some(h) = host {
+            marker_ids.insert(h.to_string(), self.remote.marker_id(h));
         }
+        let ctx = crate::system::ControlCtx {
+            local_tty: &self.local_terminal.pty.slave_tty,
+            marker_ids: &marker_ids,
+        };
+        crate::system::for_lane(&lane).control(&lane, &ctx)
     }
 
     /// Build the backend for `host` and hand `op` to the executor's per-host

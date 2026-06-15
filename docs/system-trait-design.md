@@ -52,12 +52,17 @@ reducer stops growing per feature.
 
 ## Plan (each step compiles + tests)
 
-1. `LaneId` type (model/lane.rs), keep `HostKey` for now.
-2. `System` trait + types (src/system/), unwired.
-3. `TmuxSystem` wrapping today's local+remote.
-4. Re-key in-memory stores (agents, collapsed_sections, executor lanes) to `LaneId`; drop `HostKey`.
-5. Migrate `Option<String> host` DTOs to `LaneId`.
-6. `build_sections` walks `system.sections()`; drop `DividerButton`, `local_divider`/`remote_divider`.
-7. refresh → `snapshot(lane)`; merge `apply_local`/`apply_remote`.
-8. Wire decision A (mouse → `SystemButton`, reducer arm).
-9. Drop `SessionOrigin`; update CLAUDE.md + docs/session-abstraction.md.
+1. ✅ `LaneId` type (model/lane.rs).
+2. ✅ `System` trait + types (src/system/).
+3. ✅ `TmuxSystem` wrapping local+remote.
+4. ✅ Re-key in-memory stores (agents, collapsed_sections, executor lanes) to `LaneId`; `HostKey` deleted.
+5. ◑ Divider DTOs (`SectionMeta`/`DividerHit`) → `LaneId`. **Deferred:** routing DTOs (`Kill`/`Rename`/`Create`), `SessionEntry.host`, `AgentTarget` still carry `Option<String>` (bridged via `system::tmux::lane`).
+6. ✅ Sidebar built from `system.section_for(lane)`; `DividerButton`/`local_divider`/`remote_divider` removed; `ForwardBadge` → `system::Badge`.
+7. ✅ Refresh gathers per-lane via `System::snapshot` (orchestration — current_session, exclude, status, order, reachability — stays in the worker; `RefreshUpdate`/apply unchanged).
+8. ✅ Decision A: mouse → `Action::SystemButton` → `System::on_button` → effects.
+9. ◑ Control plane via `System::control`; `for_lane` registry (multi-system routing). **Deferred:** drop `SessionOrigin`; finish the routing/entry DTO migration.
+
+The `System` trait is fully wired (`section_for`, `snapshot`, `control`,
+`on_button`, resolved via `for_lane`). Mounting a second backend = `impl
+System` + add it to `SYSTEMS`; the remaining `Option<String>` DTOs would need
+finishing for a non-tmux backend to round-trip cleanly.

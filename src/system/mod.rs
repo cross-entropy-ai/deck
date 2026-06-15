@@ -14,6 +14,23 @@ pub mod tmux;
 
 use std::collections::HashMap;
 
+/// The mounted systems, in registration order. Adding a backend = implement
+/// [`System`], construct it here. (Today: just tmux.) Statics so any layer —
+/// the model's layout builder, the infra refresh worker, the app's dispatch —
+/// can resolve a lane's owner without threading a registry through them.
+static TMUX_SYSTEM: tmux::TmuxSystem = tmux::TmuxSystem;
+static SYSTEMS: &[&dyn System] = &[&TMUX_SYSTEM];
+
+/// The [`System`] that owns `lane`, resolved by its `system` id. Falls back to
+/// the first registered system for an unknown id (there is only one today).
+pub fn for_lane(lane: &LaneId) -> &'static dyn System {
+    SYSTEMS
+        .iter()
+        .copied()
+        .find(|s| s.id() == lane.system())
+        .unwrap_or(SYSTEMS[0])
+}
+
 use crate::agent::DetectedAgent;
 use crate::config::RemoteConfig;
 use crate::effects::Effect;
@@ -25,7 +42,7 @@ use crate::tmux::SessionInfo;
 /// A mounted backend supplying sessions to the shell. Every method is keyed by
 /// [`LaneId`], which already carries the owning system's id — so a system only
 /// ever sees lanes it produced in [`sections`](System::sections).
-pub trait System {
+pub trait System: Send + Sync {
     /// Stable id for this system (e.g. `"tmux"`). Must match the `system`
     /// half of every [`LaneId`] this system hands out.
     fn id(&self) -> &str;
@@ -33,12 +50,10 @@ pub trait System {
     /// The lanes this system currently exposes, in display order. Each becomes
     /// one sidebar section (divider header + its rows). The shell concatenates
     /// the sections of all registered systems.
-    fn sections(&self, ctx: &SectionCtx) -> Vec<SectionDef>;
-
-    /// The [`SectionDef`] for a single lane. Used while the shell still
-    /// enumerates the lanes to lay out from its own session list (so every
-    /// session row keeps a section); [`sections`](System::sections) is the
-    /// enumerate-from-system path the refresh worker will drive later.
+    /// The [`SectionDef`] for a single lane: the divider's title, accent,
+    /// buttons, and badge. The shell enumerates the lanes to lay out from its
+    /// session list (so every session row keeps a section) and calls this to
+    /// style each one.
     fn section_for(&self, lane: &LaneId, ctx: &SectionCtx) -> SectionDef;
 
     /// Snapshot one lane's sessions + detected agents. Run off the UI thread by
