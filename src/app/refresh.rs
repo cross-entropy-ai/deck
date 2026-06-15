@@ -33,7 +33,7 @@ impl App {
         let mut items = Vec::new();
         for r in &self.state.config_remotes {
             for f in &r.forwards {
-                if matches!(f.mode, crate::config::ForwardMode::Remote) {
+                if matches!(f.mode, crate::forwards::ForwardMode::Remote) {
                     continue;
                 }
                 items.push(crate::state::ForwardKey::from_spec(&r.host, f));

@@ -6,7 +6,7 @@
 
 use std::process::Command;
 
-use crate::config::ForwardSpec;
+use crate::forwards::ForwardSpec;
 
 /// The common ssh argument block: the shared [`crate::ssh::CONTROL_OPTS`]
 /// control options followed by `host`, so this worker and

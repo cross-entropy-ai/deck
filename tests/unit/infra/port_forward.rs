@@ -1,4 +1,4 @@
-use crate::config::{ForwardMode, ForwardSpec};
+use crate::forwards::{ForwardMode, ForwardSpec};
 use crate::infra::ssh::port_forward::{
     build_cancel_cmd, build_exit_cmd, build_forward_cmd, build_master_cmd, ssh_args_for_host,
 };

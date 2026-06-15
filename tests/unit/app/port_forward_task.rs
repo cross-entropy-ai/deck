@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use crate::app::ssh::port_forward_task::{Op, OpKind, Runner, Worker};
-use crate::config::{ForwardMode, ForwardSpec};
+use crate::forwards::{ForwardMode, ForwardSpec};
 use crate::state::{ForwardHealth, ForwardKey};
 
 #[derive(Default, Clone)]

@@ -13,8 +13,8 @@ pub(crate) use infra::{
     agent, focus, pty, refresh, self_update, shutdown, ssh, summary, update, worker,
 };
 pub(crate) use model::{
-    config, effects, geometry, keybindings, lane, menu, new_session, overlay, picker, state,
-    summary as summary_card,
+    config, effects, exclude, geometry, keybindings, lane, menu, new_session, overlay, picker,
+    state, summary as summary_card,
 };
 pub(crate) use ui::{bridge, theme};
 

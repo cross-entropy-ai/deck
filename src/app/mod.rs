@@ -276,7 +276,7 @@ impl App {
 
         // Send Bootstrap once so the worker establishes ControlMasters and
         // launches configured forwards eagerly at startup.
-        let hosts: Vec<(String, Vec<crate::config::ForwardSpec>)> = cfg
+        let hosts: Vec<(String, Vec<crate::forwards::ForwardSpec>)> = cfg
             .remotes
             .iter()
             .filter(|r| !r.forwards.is_empty())

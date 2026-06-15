@@ -1407,7 +1407,7 @@ impl AppState {
             .flat_map(|r| {
                 r.forwards
                     .iter()
-                    .filter(|f| matches!(f.mode, crate::config::ForwardMode::Remote))
+                    .filter(|f| matches!(f.mode, crate::forwards::ForwardMode::Remote))
                     .map(|f| {
                         let health = match self.host_conn_status(&r.host) {
                             Some(HostStatus::Connected) => ForwardHealth::Up,

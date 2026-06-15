@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::forwards::ForwardSpec;
 use crate::keybindings::migrate_keybindings;
 
 use crate::state::{LayoutMode, SidebarTab, ViewMode, SIDEBAR_HEIGHT};
@@ -28,63 +29,6 @@ pub struct RemoteConfig {
     /// against the host's ControlMaster.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub forwards: Vec<ForwardSpec>,
-}
-
-/// One SSH port-forward rule. Maps to a single `-L`, `-R`, or `-D` flag.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ForwardSpec {
-    pub mode: ForwardMode,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bind_addr: Option<String>,
-    pub listen_port: u16,
-    /// Local/Remote: required (target endpoint on the other side).
-    /// Dynamic: must be `None`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_host: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_port: Option<u16>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "lowercase")]
-pub enum ForwardMode {
-    Local,
-    Remote,
-    Dynamic,
-}
-
-impl ForwardSpec {
-    /// The pair `("-L" | "-R" | "-D", "<bind?>:listen:<target_host:target_port?>")`
-    /// suitable for `Command::arg(flag).arg(value)`. Use this when you need the
-    /// flag and value as separate arg slots (e.g., `ssh -O forward -L 8080:host:80`).
-    pub fn ssh_flag_and_value(&self) -> (&'static str, String) {
-        let flag = match self.mode {
-            ForwardMode::Local => "-L",
-            ForwardMode::Remote => "-R",
-            ForwardMode::Dynamic => "-D",
-        };
-        let bind_prefix = match &self.bind_addr {
-            Some(b) => format!("{}:", b),
-            None => String::new(),
-        };
-        let value = match self.mode {
-            ForwardMode::Dynamic => format!("{}{}", bind_prefix, self.listen_port),
-            ForwardMode::Local | ForwardMode::Remote => {
-                let th = self.target_host.as_deref().unwrap_or("");
-                let tp = self.target_port.unwrap_or(0);
-                format!("{}{}:{}:{}", bind_prefix, self.listen_port, th, tp)
-            }
-        };
-        (flag, value)
-    }
-
-    /// Render this rule as the corresponding `ssh -L/-R/-D` argument
-    /// string. Test-only helper over `ssh_flag_and_value`.
-    #[cfg(test)]
-    pub fn to_ssh_flag(&self) -> String {
-        let (flag, value) = self.ssh_flag_and_value();
-        format!("{} {}", flag, value)
-    }
 }
 
 /// User-configurable binding value for a single command.
@@ -376,84 +320,6 @@ impl Config {
         }
         confy::store_path(path, self).map_err(|e| e.to_string())
     }
-}
-
-/// Difference between two `Vec<ForwardSpec>` slices: which to add, which
-/// to cancel. Order-insensitive; equal specs (all fields) are the same.
-/// Used by UI edits (single ops) and hot-reload (bulk).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ForwardOp {
-    Add(ForwardSpec),
-    Cancel(ForwardSpec),
-}
-
-pub fn diff_forwards(old: &[ForwardSpec], new: &[ForwardSpec]) -> Vec<ForwardOp> {
-    let mut ops = Vec::new();
-    for o in old {
-        if !new.contains(o) {
-            ops.push(ForwardOp::Cancel(o.clone()));
-        }
-    }
-    for n in new {
-        if !old.contains(n) {
-            ops.push(ForwardOp::Add(n.clone()));
-        }
-    }
-    ops
-}
-
-/// A compiled exclude pattern — either a glob or a regex.
-pub enum ExcludePattern {
-    Glob(String),
-    Regex(regex::Regex),
-}
-
-/// Compile raw pattern strings into ExcludePattern values.
-/// Patterns wrapped in `/…/` are treated as regex; others as glob.
-/// Invalid regexes are silently skipped.
-pub fn compile_patterns(raw: &[String]) -> Vec<ExcludePattern> {
-    raw.iter()
-        .filter_map(|p| {
-            if let Some(inner) = p.strip_prefix('/').and_then(|s| s.strip_suffix('/')) {
-                regex::Regex::new(inner).ok().map(ExcludePattern::Regex)
-            } else {
-                Some(ExcludePattern::Glob(p.clone()))
-            }
-        })
-        .collect()
-}
-
-/// Returns true if the session name matches any exclude pattern.
-pub fn session_excluded(name: &str, patterns: &[ExcludePattern]) -> bool {
-    patterns.iter().any(|p| match p {
-        ExcludePattern::Glob(g) => glob_matches(g, name),
-        ExcludePattern::Regex(r) => r.is_match(name),
-    })
-}
-
-/// Minimal glob matcher supporting `*` (any sequence) and `?` (single char).
-fn glob_matches(pattern: &str, text: &str) -> bool {
-    let p: Vec<char> = pattern.chars().collect();
-    let t: Vec<char> = text.chars().collect();
-    let (plen, tlen) = (p.len(), t.len());
-    // dp[i][j] = pattern[..i] matches text[..j]
-    let mut dp = vec![vec![false; tlen + 1]; plen + 1];
-    dp[0][0] = true;
-    for i in 1..=plen {
-        if p[i - 1] == '*' {
-            dp[i][0] = dp[i - 1][0];
-        }
-    }
-    for i in 1..=plen {
-        for j in 1..=tlen {
-            match p[i - 1] {
-                '*' => dp[i][j] = dp[i - 1][j] || dp[i][j - 1],
-                '?' => dp[i][j] = dp[i - 1][j - 1],
-                c => dp[i][j] = c == t[j - 1] && dp[i - 1][j - 1],
-            }
-        }
-    }
-    dp[plen][tlen]
 }
 
 #[cfg(test)]

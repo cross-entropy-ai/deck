@@ -1,5 +1,6 @@
 pub mod config;
 pub mod effects;
+pub mod exclude;
 pub mod geometry;
 pub mod keybindings;
 pub mod lane;

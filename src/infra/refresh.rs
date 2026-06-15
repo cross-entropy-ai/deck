@@ -17,7 +17,7 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread;
 
-use crate::config::{self, ExcludePattern};
+use crate::exclude::{self, ExcludePattern};
 use crate::system::tmux::TmuxSystem;
 use crate::system::System;
 use crate::tmux;
@@ -144,7 +144,7 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
         }
 
         if req.exclude_patterns != cached_raw {
-            compiled = config::compile_patterns(&req.exclude_patterns);
+            compiled = exclude::compile_patterns(&req.exclude_patterns);
             cached_raw = req.exclude_patterns.clone();
         }
 
@@ -198,7 +198,7 @@ fn collect_local(
 
     let rows = sessions
         .into_iter()
-        .filter(|s| !config::session_excluded(&s.name, compiled))
+        .filter(|s| !exclude::session_excluded(&s.name, compiled))
         .map(|s| SnapshotRow {
             name: s.name,
             dir: s.dir,
@@ -212,7 +212,7 @@ fn collect_local(
     // pane buffer (local capture is cheap; remote agents stay `Unknown` until
     // their probe captures buffers too).
     let agents = if let Some(mut agents) = raw_agents {
-        agents.retain(|a| !config::session_excluded(&a.session, compiled));
+        agents.retain(|a| !exclude::session_excluded(&a.session, compiled));
         for a in &mut agents {
             if let Some(buf) = tmux::capture_pane(&a.pane_id) {
                 a.status = crate::agent::classify_status(a.kind, &buf);

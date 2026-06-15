@@ -1,5 +1,5 @@
 use crate::app::settings::SETTING_ROWS;
-use crate::config::ForwardMode;
+use crate::forwards::ForwardMode;
 use crate::new_session::textarea_line;
 use crate::state::{
     cycle_option, session_menu_disabled, step_clamped, AppState, ContextMenu, FocusMode,

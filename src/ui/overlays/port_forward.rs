@@ -6,7 +6,8 @@ use ratatui::widgets::{Paragraph, Widget, Wrap};
 use ratatui::Frame;
 use ratatui_textarea::TextArea;
 
-use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
+use crate::config::RemoteConfig;
+use crate::forwards::{ForwardMode, ForwardSpec};
 use crate::state::{ForwardHealth, ForwardKey, PfAddForm, PfField, PortForwardOverlay};
 use crate::theme::Theme;
 use crate::ui::widgets::{centered_rect, field_row, popup_frame, PopupStyle, TextAreaColors};

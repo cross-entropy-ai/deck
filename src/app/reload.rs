@@ -129,20 +129,20 @@ impl App {
         // Per-host diff for hosts present in either.
         for n in &new_remotes {
             let empty = Vec::new();
-            let old_fwds: &[crate::config::ForwardSpec] = old_remotes
+            let old_fwds: &[crate::forwards::ForwardSpec] = old_remotes
                 .iter()
                 .find(|o| o.host == n.host)
                 .map(|o| o.forwards.as_slice())
                 .unwrap_or(&empty);
-            for op in crate::config::diff_forwards(old_fwds, &n.forwards) {
+            for op in crate::forwards::diff_forwards(old_fwds, &n.forwards) {
                 let msg = match op {
-                    crate::config::ForwardOp::Add(spec) => {
+                    crate::forwards::ForwardOp::Add(spec) => {
                         crate::app::ssh::port_forward_task::Op::AddForward {
                             host: n.host.clone(),
                             spec,
                         }
                     }
-                    crate::config::ForwardOp::Cancel(spec) => {
+                    crate::forwards::ForwardOp::Cancel(spec) => {
                         crate::app::ssh::port_forward_task::Op::CancelForward {
                             host: n.host.clone(),
                             spec,

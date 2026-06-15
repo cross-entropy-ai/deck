@@ -546,7 +546,8 @@ fn local_divider_menu_greys_remote_only_items() {
 
 #[test]
 fn sync_remote_forward_health_mirrors_host_status() {
-    use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
+    use crate::config::RemoteConfig;
+use crate::forwards::{ForwardMode, ForwardSpec};
     use crate::state::{ForwardHealth, ForwardKey};
 
     let r_spec = ForwardSpec {
@@ -578,7 +579,8 @@ fn sync_remote_forward_health_mirrors_host_status() {
 
 #[test]
 fn forward_badge_rolls_up_per_host_health() {
-    use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
+    use crate::config::RemoteConfig;
+use crate::forwards::{ForwardMode, ForwardSpec};
     use crate::state::{ForwardHealth, ForwardKey};
     use crate::system::tmux::TmuxSystem;
     use crate::system::{BadgeStatus, System};
@@ -765,7 +767,7 @@ fn context_menu_navigation_skips_disabled_items() {
 
 // --- PfAddForm::validate() tests ---
 
-use crate::config::ForwardMode;
+use crate::forwards::ForwardMode;
 use crate::forwards::{PfAddForm, PfField, PfFormError};
 use ratatui_textarea::TextArea;
 
@@ -852,7 +854,7 @@ fn validate_bind_addr_passthrough() {
 
 #[test]
 fn forward_key_from_spec_uses_mode_bind_and_listen() {
-    use crate::config::{ForwardMode, ForwardSpec};
+    use crate::forwards::{ForwardMode, ForwardSpec};
     use crate::state::ForwardKey;
     let spec = ForwardSpec {
         mode: ForwardMode::Local,

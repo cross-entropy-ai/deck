@@ -931,7 +931,7 @@ fn pf_add_open_creates_default_form() {
     crate::action::apply_action(&mut state, Action::Pf(PfAction::AddOpen));
     let o = state.overlay.port_forward.as_ref().unwrap();
     let f = o.add_form.as_ref().unwrap();
-    assert_eq!(f.mode, crate::config::ForwardMode::Local);
+    assert_eq!(f.mode, crate::forwards::ForwardMode::Local);
     assert_eq!(f.focus, crate::state::PfField::ListenPort);
 }
 
@@ -944,8 +944,8 @@ fn pf_task_result_persists_forward_when_overlay_closed() {
         forwards: vec![],
     }];
 
-    let spec = crate::config::ForwardSpec {
-        mode: crate::config::ForwardMode::Local,
+    let spec = crate::forwards::ForwardSpec {
+        mode: crate::forwards::ForwardMode::Local,
         bind_addr: None,
         listen_port: 8080,
         target_host: Some("localhost".into()),
@@ -1014,7 +1014,7 @@ fn open_form_with_focus(
         host: "h".into(),
         selected: 0,
         add_form: Some(crate::state::PfAddForm {
-            mode: crate::config::ForwardMode::Local,
+            mode: crate::forwards::ForwardMode::Local,
             focus: field,
             bind_addr: if matches!(field, crate::state::PfField::BindAddr) {
                 ta(value)

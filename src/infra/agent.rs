@@ -74,17 +74,6 @@ pub fn classify_status(kind: AgentKind, buffer: &str) -> AgentStatus {
     }
 }
 
-/// Classify Claude Code's pane by scanning the capture's bottom slice
-/// bottom-up; the lowest status-bearing line wins (lines above are stale
-/// transcript). Per line:
-/// - in-flight turn → `Working`, via verb-independent tells that survive
-///   Claude's rotating spinner verbs ([`CLAUDE_INTERRUPT_HINT`],
-///   [`working_timer_tail`], [`working_spinner_glyph`],
-///   [`working_spinner_tail`], [`working_tool_tail`]);
-/// - permission/confirmation dialog ("Do you want to proceed?") → `Waiting`;
-/// - finished-turn summary "…ed for <number>…" ("Cogitated for 5s") → `Idle`;
-/// - nothing recognized → `Idle` at prompt; empty capture → `Unknown`.
-
 /// How many lines up from the bottom to consider at all — the capture is
 /// roughly one screen, but cap it so a busy transcript can't sway the verdict.
 const MAX_SCAN_LINES: usize = 40;
@@ -162,6 +151,16 @@ fn completed_line(lower: &str) -> bool {
     })
 }
 
+/// Classify Claude Code's pane by scanning the capture's bottom slice
+/// bottom-up; the lowest status-bearing line wins (lines above are stale
+/// transcript). Per line:
+/// - in-flight turn → `Working`, via verb-independent tells that survive
+///   Claude's rotating spinner verbs ([`CLAUDE_INTERRUPT_HINT`],
+///   [`working_timer_tail`], [`working_spinner_glyph`],
+///   [`working_spinner_tail`], [`working_tool_tail`]);
+/// - permission/confirmation dialog ("Do you want to proceed?") → `Waiting`;
+/// - finished-turn summary "…ed for <number>…" ("Cogitated for 5s") → `Idle`;
+/// - nothing recognized → `Idle` at prompt; empty capture → `Unknown`.
 fn claude_classify(buffer: &str) -> AgentStatus {
     if buffer.trim().is_empty() {
         return AgentStatus::Unknown;

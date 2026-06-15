@@ -1,9 +1,96 @@
-//! Port-forward model: per-forward liveness (`ForwardHealth` / `ForwardKey`),
-//! the divider badge rollup, and the add-forward overlay form state.
+//! Port-forward model: the persisted forward rule (`ForwardSpec` /
+//! `ForwardMode`) and its config-diff (`ForwardOp` / `diff_forwards`),
+//! per-forward liveness (`ForwardHealth` / `ForwardKey`), the divider badge
+//! rollup, and the add-forward overlay form state.
 
 use ratatui_textarea::TextArea;
+use serde::{Deserialize, Serialize};
 
 use crate::new_session::{make_textarea, textarea_line};
+
+// --- Persisted forward rule ---
+
+/// One SSH port-forward rule. Maps to a single `-L`, `-R`, or `-D` flag.
+/// Persisted as part of `RemoteConfig` in the YAML config.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForwardSpec {
+    pub mode: ForwardMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind_addr: Option<String>,
+    pub listen_port: u16,
+    /// Local/Remote: required (target endpoint on the other side).
+    /// Dynamic: must be `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum ForwardMode {
+    Local,
+    Remote,
+    Dynamic,
+}
+
+impl ForwardSpec {
+    /// The pair `("-L" | "-R" | "-D", "<bind?>:listen:<target_host:target_port?>")`
+    /// suitable for `Command::arg(flag).arg(value)`. Use this when you need the
+    /// flag and value as separate arg slots (e.g., `ssh -O forward -L 8080:host:80`).
+    pub fn ssh_flag_and_value(&self) -> (&'static str, String) {
+        let flag = match self.mode {
+            ForwardMode::Local => "-L",
+            ForwardMode::Remote => "-R",
+            ForwardMode::Dynamic => "-D",
+        };
+        let bind_prefix = match &self.bind_addr {
+            Some(b) => format!("{}:", b),
+            None => String::new(),
+        };
+        let value = match self.mode {
+            ForwardMode::Dynamic => format!("{}{}", bind_prefix, self.listen_port),
+            ForwardMode::Local | ForwardMode::Remote => {
+                let th = self.target_host.as_deref().unwrap_or("");
+                let tp = self.target_port.unwrap_or(0);
+                format!("{}{}:{}:{}", bind_prefix, self.listen_port, th, tp)
+            }
+        };
+        (flag, value)
+    }
+
+    /// Render this rule as the corresponding `ssh -L/-R/-D` argument
+    /// string. Test-only helper over `ssh_flag_and_value`.
+    #[cfg(test)]
+    pub fn to_ssh_flag(&self) -> String {
+        let (flag, value) = self.ssh_flag_and_value();
+        format!("{} {}", flag, value)
+    }
+}
+
+/// Difference between two `Vec<ForwardSpec>` slices: which to add, which
+/// to cancel. Order-insensitive; equal specs (all fields) are the same.
+/// Used by UI edits (single ops) and hot-reload (bulk).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForwardOp {
+    Add(ForwardSpec),
+    Cancel(ForwardSpec),
+}
+
+pub fn diff_forwards(old: &[ForwardSpec], new: &[ForwardSpec]) -> Vec<ForwardOp> {
+    let mut ops = Vec::new();
+    for o in old {
+        if !new.contains(o) {
+            ops.push(ForwardOp::Cancel(o.clone()));
+        }
+    }
+    for n in new {
+        if !old.contains(n) {
+            ops.push(ForwardOp::Add(n.clone()));
+        }
+    }
+    ops
+}
 
 // --- Port-forward liveness types ---
 
@@ -27,13 +114,13 @@ pub enum ForwardHealth {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ForwardKey {
     pub host: String,
-    pub mode: crate::config::ForwardMode,
+    pub mode: ForwardMode,
     pub bind_addr: Option<String>,
     pub listen_port: u16,
 }
 
 impl ForwardKey {
-    pub fn from_spec(host: &str, spec: &crate::config::ForwardSpec) -> Self {
+    pub fn from_spec(host: &str, spec: &ForwardSpec) -> Self {
         Self {
             host: host.to_string(),
             mode: spec.mode,
@@ -109,7 +196,7 @@ pub enum PfField {
 /// events to whichever one is focused.
 #[derive(Debug, Clone)]
 pub struct PfAddForm {
-    pub mode: crate::config::ForwardMode,
+    pub mode: ForwardMode,
     pub focus: PfField,
     pub bind_addr: TextArea<'static>,
     pub listen_port: TextArea<'static>,
@@ -139,7 +226,7 @@ impl PfFormError {
 }
 
 impl PfAddForm {
-    pub fn default_for(mode: crate::config::ForwardMode) -> Self {
+    pub fn default_for(mode: ForwardMode) -> Self {
         Self {
             mode,
             focus: PfField::ListenPort,
@@ -173,8 +260,7 @@ impl PfAddForm {
         }
     }
 
-    pub fn validate(&self) -> Result<crate::config::ForwardSpec, PfFormError> {
-        use crate::config::{ForwardMode, ForwardSpec};
+    pub fn validate(&self) -> Result<ForwardSpec, PfFormError> {
         // Trim defensively even though input filtering already blocks
         // whitespace, so any value is persisted clean. `u16::parse` enforces
         // the 0..=65535 range; port 0 ("let kernel pick") is accepted.
@@ -227,3 +313,7 @@ pub struct PortForwardOverlay {
     pub add_form: Option<PfAddForm>,
     pub status: Option<String>,
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/model/forwards.rs"]
+mod tests;

@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 
-use crate::config::ForwardSpec;
+use crate::forwards::ForwardSpec;
 
 /// Commands the UI sends to the worker.
 #[derive(Debug)]
@@ -173,7 +173,7 @@ impl<R: Runner> Worker<R> {
                 vec![result_from(OpKind::Exit(host), r)]
             }
             Op::Probe { items } => {
-                use crate::config::ForwardMode;
+                use crate::forwards::ForwardMode;
                 use crate::state::ForwardHealth;
                 // Only -L/-D reach the worker: their listener is local, so we
                 // confirm them via local LISTEN ports. -R listens on the far

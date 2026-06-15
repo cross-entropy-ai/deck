@@ -358,7 +358,8 @@ fn remote_divider_shows_colored_forward_badge() {
     // A remote host with configured forwards grows a leftmost `[⇄N]` badge on
     // its divider: N counts the forwards, the color is the health rollup, and
     // a click opens that host's port-forward overlay (not a collapse).
-    use crate::config::{ForwardMode, ForwardSpec, RemoteConfig};
+    use crate::config::RemoteConfig;
+use crate::forwards::{ForwardMode, ForwardSpec};
     use crate::state::{AppState, ForwardHealth, ForwardKey, SidebarTab, ViewMode};
     use crate::system::tmux::TmuxSystem;
 
