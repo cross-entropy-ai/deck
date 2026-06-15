@@ -36,7 +36,7 @@ pub struct DetectedAgent {
     pub pane: String,
     /// Stable `%N` pane id — the switch/focus target.
     pub pane_id: String,
-    /// Traffic-light health from the pane buffer (see [`StatusClassifier`]).
+    /// Traffic-light health from the pane buffer (see [`classify_status`]).
     /// `detect_agents` has no buffer, so it leaves this `Unknown` for the
     /// gathering layer to fill in.
     pub status: AgentStatus,
@@ -63,46 +63,14 @@ impl DetectedAgent {
     }
 }
 
-/// A snapshot of an agent's pane, fed to a [`StatusClassifier`]. A struct
-/// (not a bare `&str`) so future signals — idle time, exit code, scrollback
-/// — can be added without changing every classifier's signature.
-pub struct PaneSnapshot<'a> {
-    /// The visible pane buffer as plain text (`tmux capture-pane -p`).
-    pub buffer: &'a str,
-}
-
-/// Decides an agent's [`AgentStatus`] from its pane. One implementor per
-/// agent kind (only Claude Code today; others added as their TUIs are
-/// characterized). Pure (no IO) so it runs cheaply every refresh and is
-/// trivial to unit-test.
-pub trait StatusClassifier {
-    fn classify(&self, pane: &PaneSnapshot) -> AgentStatus;
-}
-
-/// The classifier for an agent kind. Kinds without a real classifier fall
-/// back to [`UnknownClassifier`] (gray) until one is written.
-pub fn classifier_for(kind: AgentKind) -> &'static dyn StatusClassifier {
-    static CLAUDE: ClaudeClassifier = ClaudeClassifier;
-    static UNKNOWN: UnknownClassifier = UnknownClassifier;
-    match kind {
-        AgentKind::Claude => &CLAUDE,
-        // TODO: a CodexClassifier once its TUI states are characterized.
-        AgentKind::Codex => &UNKNOWN,
-    }
-}
-
-/// Convenience: classify a `kind`'s status from a raw buffer string.
+/// Classify a `kind`'s status from its raw pane buffer. Pure (no IO) so it
+/// runs cheaply every refresh and is trivial to unit-test. Kinds without a
+/// real classifier stay `Unknown` (gray dot) until one is written.
 pub fn classify_status(kind: AgentKind, buffer: &str) -> AgentStatus {
-    classifier_for(kind).classify(&PaneSnapshot { buffer })
-}
-
-/// Fallback classifier for agent kinds not yet characterized: always
-/// `Unknown` (gray dot).
-pub struct UnknownClassifier;
-
-impl StatusClassifier for UnknownClassifier {
-    fn classify(&self, _pane: &PaneSnapshot) -> AgentStatus {
-        AgentStatus::Unknown
+    match kind {
+        AgentKind::Claude => claude_classify(buffer),
+        // TODO: characterize Codex's TUI states.
+        AgentKind::Codex => AgentStatus::Unknown,
     }
 }
 
@@ -116,7 +84,6 @@ impl StatusClassifier for UnknownClassifier {
 /// - permission/confirmation dialog ("Do you want to proceed?") → `Waiting`;
 /// - finished-turn summary "…ed for <number>…" ("Cogitated for 5s") → `Idle`;
 /// - nothing recognized → `Idle` at prompt; empty capture → `Unknown`.
-pub struct ClaudeClassifier;
 
 /// How many lines up from the bottom to consider at all — the capture is
 /// roughly one screen, but cap it so a busy transcript can't sway the verdict.
@@ -195,47 +162,45 @@ fn completed_line(lower: &str) -> bool {
     })
 }
 
-impl StatusClassifier for ClaudeClassifier {
-    fn classify(&self, pane: &PaneSnapshot) -> AgentStatus {
-        if pane.buffer.trim().is_empty() {
-            return AgentStatus::Unknown;
-        }
-        let lines: Vec<&str> = pane.buffer.lines().collect();
-        let scanned = &lines[lines.len().saturating_sub(MAX_SCAN_LINES)..];
-        // Count non-blank lines from the bottom so the blank rows around the
-        // input box don't shrink the live-tail window.
-        let mut content_seen = 0usize;
-        for line in scanned.iter().rev() {
-            let lower = line.to_ascii_lowercase();
-            // Strong, high-precision tells — matchable anywhere in the tail.
-            if lower.contains(CLAUDE_INTERRUPT_HINT) || working_timer_tail().is_match(line) {
-                return AgentStatus::Working;
-            }
-            if CLAUDE_WAITING_MARKERS.iter().any(|m| lower.contains(m)) {
-                return AgentStatus::Waiting;
-            }
-            // A finished-turn summary ("✶ Cogitated for 8s") reuses a spinner
-            // glyph, so rule it out before the bare-spinner tells below.
-            if completed_line(&lower) {
-                return AgentStatus::Idle;
-            }
-            if !line.trim().is_empty() {
-                content_seen += 1;
-            }
-            // Bare in-flight tells (no parenthetical), only within the bottom
-            // LIVE_TAIL_LINES non-blank lines where a live spinner / tool line
-            // sits.
-            if content_seen <= LIVE_TAIL_LINES
-                && (working_spinner_glyph().is_match(line)
-                    || working_spinner_tail().is_match(line)
-                    || working_tool_tail().is_match(line))
-            {
-                return AgentStatus::Working;
-            }
-        }
-        // No status line recognized → sitting at the prompt.
-        AgentStatus::Idle
+fn claude_classify(buffer: &str) -> AgentStatus {
+    if buffer.trim().is_empty() {
+        return AgentStatus::Unknown;
     }
+    let lines: Vec<&str> = buffer.lines().collect();
+    let scanned = &lines[lines.len().saturating_sub(MAX_SCAN_LINES)..];
+    // Count non-blank lines from the bottom so the blank rows around the
+    // input box don't shrink the live-tail window.
+    let mut content_seen = 0usize;
+    for line in scanned.iter().rev() {
+        let lower = line.to_ascii_lowercase();
+        // Strong, high-precision tells — matchable anywhere in the tail.
+        if lower.contains(CLAUDE_INTERRUPT_HINT) || working_timer_tail().is_match(line) {
+            return AgentStatus::Working;
+        }
+        if CLAUDE_WAITING_MARKERS.iter().any(|m| lower.contains(m)) {
+            return AgentStatus::Waiting;
+        }
+        // A finished-turn summary ("✶ Cogitated for 8s") reuses a spinner
+        // glyph, so rule it out before the bare-spinner tells below.
+        if completed_line(&lower) {
+            return AgentStatus::Idle;
+        }
+        if !line.trim().is_empty() {
+            content_seen += 1;
+        }
+        // Bare in-flight tells (no parenthetical), only within the bottom
+        // LIVE_TAIL_LINES non-blank lines where a live spinner / tool line
+        // sits.
+        if content_seen <= LIVE_TAIL_LINES
+            && (working_spinner_glyph().is_match(line)
+                || working_spinner_tail().is_match(line)
+                || working_tool_tail().is_match(line))
+        {
+            return AgentStatus::Working;
+        }
+    }
+    // No status line recognized → sitting at the prompt.
+    AgentStatus::Idle
 }
 
 /// Classify a process by its `argv` string, returning the agent kind only
