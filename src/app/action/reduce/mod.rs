@@ -184,36 +184,25 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if state.agents_tab_active() {
                 return fx;
             }
-            let Some(target) = state.focus_target() else {
-                return fx;
-            };
             // Same policy the context menu uses to grey "Kill": no killing a
             // placeholder row, a host's last live session, or the last local
-            // session. Compute the verdict, then drop the borrow before mutating.
-            let allowed = match state.entry_at(target) {
-                Some(entry) => state.can_kill(entry),
-                None => false,
-            };
-            if allowed {
+            // session. See `can_kill_focused`.
+            if state.can_kill_focused() {
                 state.overlay.confirm_kill = true;
             }
         }
         Action::ConfirmKill => {
+            // Always dismiss the overlay first, even when the kill is then
+            // blocked (defense in depth: a stale or forced confirm shouldn't
+            // fire on a placeholder, a host's last session, or the last local
+            // session — `can_kill_focused` gates that, same as KillSession).
             state.overlay.confirm_kill = false;
+            if !state.can_kill_focused() {
+                return fx;
+            }
             let Some(target) = state.focus_target() else {
                 return fx;
             };
-            // Defense in depth: the policy gating KillSession and the menu's
-            // greyed "Kill" also gates the actual kill, so a stale or forced
-            // confirm can't fire on a placeholder, a host's last session, or
-            // the last local session.
-            let allowed = match state.entry_at(target) {
-                Some(entry) => state.can_kill(entry),
-                None => false,
-            };
-            if !allowed {
-                return fx;
-            }
             let Some(entry) = state.entry_at(target) else {
                 return fx;
             };
@@ -520,7 +509,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
     fx
 }
 
-
 fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
     let mut fx = SideEffect::default();
     match action {
@@ -691,7 +679,6 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
     fx
 }
 
-
 fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffect {
     let mut fx = SideEffect::default();
     match action {
@@ -749,7 +736,6 @@ fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffec
     }
     fx
 }
-
 
 #[cfg(test)]
 #[path = "../../../../tests/unit/app/action/reduce.rs"]

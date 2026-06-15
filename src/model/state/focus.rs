@@ -213,6 +213,15 @@ impl AppState {
         self.kill_blocked_reason(entry).is_none()
     }
 
+    /// Whether the currently focused row may be killed: there is a valid focus
+    /// target, it resolves to an entry, and that entry passes [`can_kill`].
+    /// The verdict the `x`-key path (`KillSession`/`ConfirmKill`) gates on.
+    pub fn can_kill_focused(&self) -> bool {
+        self.focus_target()
+            .and_then(|t| self.entry_at(t))
+            .is_some_and(|e| self.can_kill(e))
+    }
+
     /// Map a screen position to a context menu item index.
     pub fn menu_item_at(&self, col: u16, row: u16) -> Option<usize> {
         let menu = self.overlay.context_menu.as_ref()?;
