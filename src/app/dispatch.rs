@@ -558,11 +558,10 @@ impl App {
         if self.remote.active().map(String::as_str) != outcome.host.as_deref() {
             return;
         }
-        let same_generation = match outcome.host.as_deref() {
-            None => true,
-            Some(h) => self.remote.marker_id(h) == outcome.marker_id,
-        };
-        if !same_generation {
+        if !self
+            .remote
+            .marker_matches(outcome.host.as_deref(), outcome.marker_id)
+        {
             return;
         }
         let Some(pane_id) = outcome.pane_id else {
@@ -583,13 +582,10 @@ impl App {
         if outcome.seq != self.focus_seq {
             return;
         }
-        // Local has no reconnect generation, so it's always current; remote
-        // must match the marker id it was spawned against.
-        let same_generation = match outcome.target.host.as_deref() {
-            None => true,
-            Some(h) => self.remote.marker_id(h) == outcome.marker_id,
-        };
-        if !same_generation {
+        if !self
+            .remote
+            .marker_matches(outcome.target.host.as_deref(), outcome.marker_id)
+        {
             return;
         }
         if !self.agent_focus_target_live(&outcome.target) {

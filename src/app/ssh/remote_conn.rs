@@ -343,6 +343,17 @@ impl RemoteConnManager {
             .unwrap_or(0)
     }
 
+    /// Whether an outcome stamped with `marker_id` still matches its host's
+    /// current connection generation. Local (`None`) has no reconnect
+    /// generation, so it's always current; a remote reconnect mints a new
+    /// marker id, rejecting outcomes from a dropped/older PTY.
+    pub(crate) fn marker_matches(&self, host: Option<&str>, marker_id: u64) -> bool {
+        match host {
+            None => true,
+            Some(h) => self.marker_id(h) == marker_id,
+        }
+    }
+
     pub(crate) fn is_live(&self, host: &str) -> bool {
         self.conns.get(host).is_some_and(RemoteConn::is_live)
     }
