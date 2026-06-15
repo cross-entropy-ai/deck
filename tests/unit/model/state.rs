@@ -84,8 +84,11 @@ fn agent_entries_ordered_local_then_hosts() {
     state.rebuild_agent_entries();
 
     // Agent rows appear in section order: local (`None`) then each host.
-    let hosts: Vec<Option<&str>> =
-        state.agent_entries.iter().map(|r| r.host.as_deref()).collect();
+    let hosts: Vec<Option<&str>> = state
+        .agent_entries
+        .iter()
+        .map(|r| r.host.as_deref())
+        .collect();
     assert_eq!(hosts, vec![None, Some("h1")]);
 }
 
@@ -177,7 +180,10 @@ fn steer_marker_follows_the_active_pane() {
     // Switch to a pane with no agent → marker clears, cursor stays put.
     state.steer_marker_to_pane(None, "%9");
     assert_eq!(state.active_agent, None);
-    assert_eq!(state.agent_focused, 1, "cursor stays when no agent is there");
+    assert_eq!(
+        state.agent_focused, 1,
+        "cursor stays when no agent is there"
+    );
 }
 
 #[test]
@@ -322,9 +328,7 @@ fn agents_layout_shows_placeholder_for_empty_section() {
     // Local probed but empty -> a "no agents" placeholder. Like a Projects
     // `NoSessions` row it's a focusable row (synthetic `AgentEntry`), so the
     // cursor can land on it; activating it is a guarded no-op.
-    state
-        .agents
-        .insert(crate::system::tmux::lane(None), vec![]);
+    state.agents.insert(crate::system::tmux::lane(None), vec![]);
     state.rebuild_agent_entries();
     let built = state.agents_layout();
     assert!(
@@ -494,8 +498,14 @@ fn is_divider_at_row_detects_header_not_session() {
     // The @local divider is the first list item (1 row tall); the first
     // session card sits just below it.
     let top = 2;
-    assert!(state.is_divider_at_row(top), "first list row is the @local divider");
-    assert!(!state.is_divider_at_row(top + 1), "next row is a session card");
+    assert!(
+        state.is_divider_at_row(top),
+        "first list row is the @local divider"
+    );
+    assert!(
+        !state.is_divider_at_row(top + 1),
+        "next row is a session card"
+    );
     assert_eq!(state.focus_at_row(top + 1), Some(FocusTarget(0)));
     // Rows in the header banner above the session area aren't dividers.
     assert!(!state.is_divider_at_row(0));
@@ -547,7 +557,7 @@ fn local_divider_menu_greys_remote_only_items() {
 #[test]
 fn sync_remote_forward_health_mirrors_host_status() {
     use crate::config::RemoteConfig;
-use crate::forwards::{ForwardMode, ForwardSpec};
+    use crate::forwards::{ForwardMode, ForwardSpec};
     use crate::state::{ForwardHealth, ForwardKey};
 
     let r_spec = ForwardSpec {
@@ -580,11 +590,11 @@ use crate::forwards::{ForwardMode, ForwardSpec};
 #[test]
 fn forward_badge_rolls_up_per_host_health() {
     use crate::config::RemoteConfig;
-use crate::forwards::{ForwardMode, ForwardSpec};
+    use crate::forwards::{ForwardMode, ForwardSpec};
     use crate::geometry::BadgeStatus;
     use crate::state::{ForwardHealth, ForwardKey};
-    use crate::system::System;
     use crate::system::tmux::TmuxSystem;
+    use crate::system::System;
 
     // The badge now comes from the tmux System, styled per lane.
     let badge = |state: &AppState, host: &str| {
@@ -661,7 +671,12 @@ fn narrow_terminal_forces_vertical_layout() {
     assert_eq!(narrow.prefs.layout_mode, LayoutMode::Horizontal);
 
     // One column wider, the Horizontal pref takes effect again.
-    let wide = make_state(LayoutMode::Horizontal, false, NARROW_LAYOUT_MAX_WIDTH + 1, 24);
+    let wide = make_state(
+        LayoutMode::Horizontal,
+        false,
+        NARROW_LAYOUT_MAX_WIDTH + 1,
+        24,
+    );
     assert_eq!(wide.effective_layout_mode(), LayoutMode::Horizontal);
 
     // A Vertical pref is honored at any width.
