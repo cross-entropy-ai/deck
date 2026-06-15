@@ -415,6 +415,13 @@ impl App {
         if self.state.summary.state == crate::state::SummaryState::Generating {
             return;
         }
+        // The run about to start covers the current agent statuses: reset the
+        // auto-refresh baseline to them (so it won't immediately re-fire for
+        // the state we're now summarizing) and stamp the throttle clock (so a
+        // manual Generate also debounces the next auto-run). See
+        // `maybe_auto_refresh_summary`.
+        self.prev_agent_status = Some(self.state.agent_status_signature());
+        self.last_auto_summary_at = Some(std::time::Instant::now());
         // Snapshot the panes to capture now, so the worker doesn't touch
         // shared state off-thread. The Agents tab summarizes each detected
         // agent's pane; the Projects tab summarizes each live session's active
@@ -464,6 +471,60 @@ impl App {
             "deck-summary",
             move |cancel| crate::summary::generate(&panes, &template, &model, &language, &cancel),
         ));
+    }
+
+    /// After a refresh settles, auto-regenerate the Agents-tab Summary when an
+    /// agent's traffic-light status changed since the last generation — the
+    /// moments a fresh summary is worth a `claude` call (an agent started,
+    /// finished, began waiting for input, or appeared/disappeared).
+    ///
+    /// Called from `apply_update`. Agent status is only probed on the Agents
+    /// tab, so off that tab we leave the baseline untouched (the empty agent
+    /// set the Projects tab produces would otherwise read as a spurious
+    /// change, and a tab switch back would falsely trigger). Gated on the user
+    /// opting in (`summary_auto_refresh`), the card being shown, no run already
+    /// in flight, and the throttle interval since the last generation.
+    ///
+    /// The baseline is only advanced when we actually start a run (here via
+    /// `start_summary_generation`, or when tracking-only below): if a change is
+    /// throttled or a run is in flight, the old baseline is kept so the pending
+    /// change is re-noticed on a later tick rather than silently dropped.
+    pub(super) fn maybe_auto_refresh_summary(&mut self) {
+        if !self.state.agents_tab_active() {
+            return;
+        }
+        let sig = self.state.agent_status_signature();
+        // First Agents-tab observation establishes the baseline without firing.
+        let Some(prev) = self.prev_agent_status.as_ref() else {
+            self.prev_agent_status = Some(sig);
+            return;
+        };
+        if *prev == sig {
+            return; // no traffic-light flipped
+        }
+        // A status flipped. If the user hasn't opted in (or the card is
+        // hidden), just track the new baseline and stop.
+        if !self.state.prefs.summary_auto_refresh || !self.state.prefs.summary_enabled {
+            self.prev_agent_status = Some(sig);
+            return;
+        }
+        // A run already in flight will reset the baseline when it lands; keep
+        // the old baseline so a change during the run is re-evaluated after.
+        if self.state.summary.state == crate::state::SummaryState::Generating {
+            return;
+        }
+        // Throttle: keep the old baseline so the pending change is retried once
+        // the window passes, rather than dropped.
+        let min_gap =
+            std::time::Duration::from_secs(self.state.prefs.summary_auto_refresh_secs.max(1));
+        if self
+            .last_auto_summary_at
+            .is_some_and(|t| t.elapsed() < min_gap)
+        {
+            return;
+        }
+        // start_summary_generation resets the baseline + throttle clock.
+        self.start_summary_generation();
     }
 
     /// Cancel an in-flight summary generation (Esc on the Agents tab, or a

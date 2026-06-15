@@ -115,6 +115,31 @@ pub fn agents_probe_interval_label(secs: u64) -> &'static str {
     }
 }
 
+/// Throttle floor (seconds) between *automatic* Summary regenerations on the
+/// Agents tab. Cycled in settings. Each auto-run spends a `claude` call, so a
+/// busy agent flipping status repeatedly must not trigger back-to-back runs;
+/// this is the minimum gap an auto-refresh waits after the last generation.
+pub const SUMMARY_AUTO_REFRESH_OPTIONS: [u64; 4] = [30, 60, 120, 300];
+pub const DEFAULT_SUMMARY_AUTO_REFRESH_SECS: u64 = 60;
+
+pub fn normalize_summary_auto_refresh_secs(secs: u64) -> u64 {
+    if SUMMARY_AUTO_REFRESH_OPTIONS.contains(&secs) {
+        secs
+    } else {
+        DEFAULT_SUMMARY_AUTO_REFRESH_SECS
+    }
+}
+
+pub fn summary_auto_refresh_label(secs: u64) -> &'static str {
+    match normalize_summary_auto_refresh_secs(secs) {
+        30 => "30s",
+        60 => "1m",
+        120 => "2m",
+        300 => "5m",
+        _ => "1m",
+    }
+}
+
 /// Step `delta` positions through `options` from `current`, wrapping at
 /// both ends. A `current` not in the slice steps from the first option.
 /// Shared by the settings cyclers and the port-forward form's field/mode
@@ -369,6 +394,14 @@ pub struct Prefs {
     /// Whether the inline Summary card is shown. Off collapses the card to
     /// zero height (`summary_card_height`) so the list reclaims the rows.
     pub summary_enabled: bool,
+    /// Whether the Agents-tab Summary auto-regenerates when an agent's
+    /// traffic-light status flips (see `App::maybe_auto_refresh_summary`).
+    /// Opt-in (default off): each auto-run spends a `claude` call.
+    pub summary_auto_refresh: bool,
+    /// Throttle floor (seconds) between automatic Summary regenerations.
+    /// Cycled in settings; normalized on load. Only meaningful while
+    /// `summary_auto_refresh` is on.
+    pub summary_auto_refresh_secs: u64,
 }
 
 impl Prefs {
@@ -402,6 +435,10 @@ impl Prefs {
             summary_language: cfg.summary_language.clone(),
             agents_probe_interval_secs: normalize_agents_probe_interval(cfg.agents_probe_interval),
             summary_enabled: cfg.summary_enabled,
+            summary_auto_refresh: cfg.summary_auto_refresh,
+            summary_auto_refresh_secs: normalize_summary_auto_refresh_secs(
+                cfg.summary_auto_refresh_secs,
+            ),
         }
     }
 
@@ -442,6 +479,8 @@ impl Prefs {
             summary_language: self.summary_language.clone(),
             agents_probe_interval: self.agents_probe_interval_secs,
             summary_enabled: self.summary_enabled,
+            summary_auto_refresh: self.summary_auto_refresh,
+            summary_auto_refresh_secs: self.summary_auto_refresh_secs,
             transparent_bg: self.transparent_bg,
         }
     }
@@ -616,6 +655,8 @@ impl AppState {
                 summary_language: String::new(),
                 agents_probe_interval_secs: DEFAULT_AGENTS_PROBE_INTERVAL,
                 summary_enabled: true,
+                summary_auto_refresh: false,
+                summary_auto_refresh_secs: DEFAULT_SUMMARY_AUTO_REFRESH_SECS,
             },
             settings: SettingsState::default(),
             agent_focused: 0,
@@ -691,6 +732,39 @@ impl AppState {
             normalize_agents_probe_interval(self.prefs.agents_probe_interval_secs),
             direction,
         );
+    }
+
+    pub fn cycle_summary_auto_refresh_interval(&mut self, direction: i32) {
+        self.prefs.summary_auto_refresh_secs = cycle_option(
+            &SUMMARY_AUTO_REFRESH_OPTIONS,
+            normalize_summary_auto_refresh_secs(self.prefs.summary_auto_refresh_secs),
+            direction,
+        );
+    }
+
+    /// A stable, comparable snapshot of every detected agent's traffic-light
+    /// status, keyed by host + pane id and sorted so the order is
+    /// deterministic across refreshes. The Agents-tab auto-refresh compares
+    /// consecutive snapshots: any difference means an agent started, finished,
+    /// began waiting for input, or appeared/disappeared — the moments a fresh
+    /// summary is worth a `claude` call. Cheap: one short pane-id clone plus a
+    /// `Copy` enum per agent.
+    pub fn agent_status_signature(&self) -> Vec<(Option<String>, String, crate::agent::AgentStatus)> {
+        let mut sig: Vec<(Option<String>, String, crate::agent::AgentStatus)> = self
+            .agents
+            .iter()
+            .flat_map(|(host, agents)| {
+                let host = host.host().map(str::to_string);
+                agents
+                    .iter()
+                    .map(move |a| (host.clone(), a.pane_id.clone(), a.status))
+            })
+            .collect();
+        // Sort by (host, pane id) — a unique key per agent — so the snapshot
+        // order is stable regardless of HashMap iteration order. The status
+        // isn't part of the sort key (it's the value we're watching change).
+        sig.sort_by(|a, b| (a.0.as_deref(), &a.1).cmp(&(b.0.as_deref(), &b.1)));
+        sig
     }
 
     /// Whether the Agents tab is the active sidebar view. The tab selector

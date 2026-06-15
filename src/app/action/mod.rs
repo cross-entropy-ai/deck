@@ -122,6 +122,10 @@ pub enum SettingsAction {
     CycleAgentsProbeInterval(i32),
     /// Toggle the inline Summary card on/off (settings, left/right/Enter).
     ToggleSummary,
+    /// Toggle Agents-tab Summary auto-refresh on/off (settings).
+    ToggleSummaryAutoRefresh,
+    /// Cycle the Summary auto-refresh throttle interval (settings, left/right).
+    CycleSummaryAutoRefreshInterval(i32),
 
     ExcludeOpen,
     ExcludeClose,

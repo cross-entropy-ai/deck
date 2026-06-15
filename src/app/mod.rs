@@ -131,6 +131,15 @@ pub struct App {
     /// immediately force a global session refresh; explicit refresh-causing
     /// actions still run, and the following periodic tick resumes normally.
     pub(super) suppress_next_periodic_refresh: bool,
+    /// Baseline for Agents-tab Summary auto-refresh: the agent traffic-light
+    /// signature (`AppState::agent_status_signature`) as of the last
+    /// generation. A refresh whose signature differs means a status flipped,
+    /// which triggers an auto-refresh (subject to the opt-in + throttle). See
+    /// `maybe_auto_refresh_summary`. `None` until the first Agents-tab refresh.
+    prev_agent_status: Option<Vec<(Option<String>, String, crate::agent::AgentStatus)>>,
+    /// When the last Summary generation (manual or auto) started, used as the
+    /// auto-refresh throttle clock. `None` until the first generation.
+    last_auto_summary_at: Option<Instant>,
 }
 
 /// Result of a remote agent-pane focus attempt, sent back from the
@@ -274,6 +283,8 @@ impl App {
             focus_seq: 0,
             own_session: tmux::own_session(),
             suppress_next_periodic_refresh: false,
+            prev_agent_status: None,
+            last_auto_summary_at: None,
         };
 
         tmux::apply_theme(&THEMES[theme_index]);

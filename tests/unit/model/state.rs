@@ -857,6 +857,79 @@ fn agents_probe_interval_cycles_and_labels() {
 }
 
 #[test]
+fn summary_auto_refresh_interval_cycles_and_labels() {
+    // An out-of-set value normalizes to the default.
+    assert_eq!(
+        normalize_summary_auto_refresh_secs(7),
+        DEFAULT_SUMMARY_AUTO_REFRESH_SECS
+    );
+    assert_eq!(summary_auto_refresh_label(30), "30s");
+    assert_eq!(summary_auto_refresh_label(300), "5m");
+
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.prefs.summary_auto_refresh_secs = 60;
+    state.cycle_summary_auto_refresh_interval(1);
+    assert_eq!(state.prefs.summary_auto_refresh_secs, 120);
+    state.cycle_summary_auto_refresh_interval(-1);
+    assert_eq!(state.prefs.summary_auto_refresh_secs, 60);
+    // Wraps at the ends.
+    state.prefs.summary_auto_refresh_secs = 30;
+    state.cycle_summary_auto_refresh_interval(-1);
+    assert_eq!(state.prefs.summary_auto_refresh_secs, 300);
+}
+
+#[test]
+fn agent_status_signature_is_sorted_and_tracks_flips() {
+    use crate::agent::AgentStatus;
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+
+    let mut working = detected("work", "%2");
+    working.status = AgentStatus::Working;
+    let mut idle = detected("idle", "%1");
+    idle.status = AgentStatus::Idle;
+    state
+        .agents
+        .insert(crate::host_key::HostKey::local(), vec![working, idle]);
+    let mut waiting = detected("rwork", "%1");
+    waiting.status = AgentStatus::Waiting;
+    state
+        .agents
+        .insert(crate::host_key::HostKey::remote("h1"), vec![waiting]);
+
+    // Sorted by (host, pane id): local (None) before the remote host, and
+    // within a host by pane id (%1 before %2). Order is stable regardless of
+    // HashMap iteration order.
+    let before = state.agent_status_signature();
+    assert_eq!(
+        before,
+        vec![
+            (None, "%1".to_string(), AgentStatus::Idle),
+            (None, "%2".to_string(), AgentStatus::Working),
+            (
+                Some("h1".to_string()),
+                "%1".to_string(),
+                AgentStatus::Waiting
+            ),
+        ]
+    );
+
+    // A traffic-light flip on one agent changes the signature — the signal the
+    // Agents-tab auto-refresh keys on. (Same agents, %2 now Idle.)
+    let mut flipped = detected("work", "%2");
+    flipped.status = AgentStatus::Idle;
+    let mut idle = detected("idle", "%1");
+    idle.status = AgentStatus::Idle;
+    state
+        .agents
+        .insert(crate::host_key::HostKey::local(), vec![flipped, idle]);
+    assert_ne!(
+        before,
+        state.agent_status_signature(),
+        "a traffic-light flip must change the signature"
+    );
+}
+
+#[test]
 fn step_clamped_forward_stops_at_last() {
     // Mid-range advances by one; at the last index it stays put.
     assert_eq!(step_clamped(0, 3, 1), 1);
@@ -916,6 +989,8 @@ fn prefs_config_round_trip_is_identity() {
         summary_language: "English".to_string(),
         agents_probe_interval: 5,
         summary_enabled: false,
+        summary_auto_refresh: true,
+        summary_auto_refresh_secs: 120,
         transparent_bg: false,
     };
 

@@ -186,6 +186,13 @@ pub struct Config {
     /// all. Off hides the card on both tabs and reclaims its rows for the
     /// session/agent list. Set from the settings page; defaults to on.
     pub summary_enabled: bool,
+    /// Whether the Agents-tab Summary auto-regenerates when an agent's
+    /// traffic-light status flips. Opt-in (defaults off): each auto-run spends
+    /// a `claude` call. Set from the settings page.
+    pub summary_auto_refresh: bool,
+    /// Throttle floor (seconds) between automatic Summary regenerations (one
+    /// of 30/60/120/300). Only meaningful while `summary_auto_refresh` is on.
+    pub summary_auto_refresh_secs: u64,
     /// Use the terminal's default (transparent) background instead of the
     /// theme's solid background color.
     pub transparent_bg: bool,
@@ -220,6 +227,8 @@ impl Default for Config {
             summary_language: String::new(),
             agents_probe_interval: crate::state::DEFAULT_AGENTS_PROBE_INTERVAL,
             summary_enabled: true,
+            summary_auto_refresh: false,
+            summary_auto_refresh_secs: crate::state::DEFAULT_SUMMARY_AUTO_REFRESH_SECS,
             transparent_bg: true,
         }
     }

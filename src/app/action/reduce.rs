@@ -590,6 +590,14 @@ fn reduce_settings(state: &mut AppState, action: SettingsAction) -> SideEffect {
             state.prefs.summary_enabled = !state.prefs.summary_enabled;
             fx.save_config();
         }
+        SettingsAction::ToggleSummaryAutoRefresh => {
+            state.prefs.summary_auto_refresh = !state.prefs.summary_auto_refresh;
+            fx.save_config();
+        }
+        SettingsAction::CycleSummaryAutoRefreshInterval(direction) => {
+            state.cycle_summary_auto_refresh_interval(direction);
+            fx.save_config();
+        }
         SettingsAction::OpenThemePicker => {
             // Opens as a standalone overlay over the current view — from
             // the sidebar (`t`) it does *not* enter the settings page,

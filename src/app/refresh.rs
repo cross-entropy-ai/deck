@@ -70,6 +70,9 @@ impl App {
         // re-anchor the cursor against the freshly built list.
         self.state.rebuild_agent_entries();
         self.state.reanchor_agent_focus(agent_key);
+        // Agent statuses are now settled for this round; auto-refresh the
+        // Summary if one flipped (opt-in + throttled — see the method).
+        self.maybe_auto_refresh_summary();
     }
 
     fn apply_remote(

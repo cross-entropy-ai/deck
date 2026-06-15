@@ -119,6 +119,30 @@ pub const SETTING_ROWS: &[SettingRow] = &[
         adjust: |_| Action::Summary(SummaryAction::OpenLanguageEditor),
     },
     SettingRow {
+        label: "Auto summary",
+        value: |s| {
+            if s.prefs.summary_auto_refresh {
+                "On"
+            } else {
+                "Off"
+            }
+            .to_string()
+        },
+        help: |_| {
+            "Regenerate the Agents summary when an agent's status changes (each run calls claude)"
+                .to_string()
+        },
+        adjust: |_| Action::Settings(SettingsAction::ToggleSummaryAutoRefresh),
+    },
+    SettingRow {
+        label: "Auto interval",
+        value: |s| {
+            crate::state::summary_auto_refresh_label(s.prefs.summary_auto_refresh_secs).to_string()
+        },
+        help: |_| "Left/right cycles the minimum gap between auto-refreshes".to_string(),
+        adjust: |dir| Action::Settings(SettingsAction::CycleSummaryAutoRefreshInterval(dir)),
+    },
+    SettingRow {
         label: "Agents probe",
         value: |s| {
             crate::state::agents_probe_interval_label(s.prefs.agents_probe_interval_secs)
