@@ -69,9 +69,10 @@ pub enum AgentStatus {
 }
 
 impl DetectedAgent {
-    /// Compact `session:window.pane` location for display.
+    /// Compact `session:window` location for display. The pane index is
+    /// omitted — it's noise in the sidebar; the real tmux target is `pane_id`.
     pub fn location(&self) -> String {
-        format!("{}:{}.{}", self.session, self.window, self.pane)
+        format!("{}:{}", self.session, self.window)
     }
 }
 
@@ -421,11 +422,11 @@ mod tests {
         // pane 100 -> claude, located at its session/window-name/pane, with the
         // stable pane id carried for switching.
         assert_eq!(agents[0].kind, AgentKind::Claude);
-        assert_eq!(agents[0].location(), "deck:main.0");
+        assert_eq!(agents[0].location(), "deck:main");
         assert_eq!(agents[0].pane_id, "%100");
         // pane 300 -> codex (matched two levels down the wrapper).
         assert_eq!(agents[1].kind, AgentKind::Codex);
-        assert_eq!(agents[1].location(), "work:agents.1");
+        assert_eq!(agents[1].location(), "work:agents");
         assert_eq!(agents[1].pane_id, "%300");
         // pane 500 -> no agent (not in the list).
     }
