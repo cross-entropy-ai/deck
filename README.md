@@ -40,13 +40,13 @@ Browse and switch agent sessions easily.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cross-entropy-ai/deck/main/install.sh | sh
+brew install cross-entropy-ai/tap/deck
 ```
 
-Or with Homebrew:
+Or with curl:
 
 ```bash
-brew install cross-entropy-ai/tap/deck
+curl -fsSL https://raw.githubusercontent.com/cross-entropy-ai/deck/main/install.sh | sh
 ```
 
 Or download a pre-built binary from [GitHub Releases](https://github.com/cross-entropy-ai/deck/releases).
