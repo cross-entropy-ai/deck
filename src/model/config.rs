@@ -74,6 +74,9 @@ pub struct Config {
     pub sidebar_width: u16,
     pub sidebar_height: u16,
     pub view_mode: ViewMode,
+    /// Render cap in FPS. Omitted from the file when it equals the default
+    /// (`DEFAULT_FRAME_RATE_LIMIT`); a missing key loads as that default.
+    #[serde(skip_serializing_if = "is_default_frame_rate")]
     pub frame_rate_limit: u16,
     pub exclude_patterns: Vec<String>,
     pub keybindings: BTreeMap<String, KeyBindingValue>,
@@ -129,7 +132,7 @@ impl Default for Config {
             sidebar_width: 28,
             sidebar_height: SIDEBAR_HEIGHT,
             view_mode: ViewMode::Expanded,
-            frame_rate_limit: 5,
+            frame_rate_limit: crate::state::DEFAULT_FRAME_RATE_LIMIT,
             exclude_patterns: vec!["_*".to_string()],
             keybindings: BTreeMap::new(),
             update_check: UpdateCheckMode::Enabled,
@@ -148,6 +151,10 @@ impl Default for Config {
             transparent_bg: true,
         }
     }
+}
+
+fn is_default_frame_rate(fps: &u16) -> bool {
+    *fps == crate::state::DEFAULT_FRAME_RATE_LIMIT
 }
 
 /// `$HOME`, falling back to `.` when unset — deck's one home-dir
@@ -217,6 +224,14 @@ impl Config {
             // rewrite once so the file self-heals.
             let mut changed = migrate_keybindings(&mut config.keybindings);
             changed |= config.migrate_summary_prompt();
+            // Drop a persisted frame_rate_limit that now equals the default.
+            // One-shot: once the key is gone the `contains` check is false, so
+            // we don't rewrite on every launch.
+            if is_default_frame_rate(&config.frame_rate_limit)
+                && fs::read_to_string(path).is_ok_and(|raw| raw.contains("frame_rate_limit"))
+            {
+                changed = true;
+            }
             if changed {
                 let _ = config.save_to(path);
             }

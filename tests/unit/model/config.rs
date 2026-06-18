@@ -29,14 +29,51 @@ fn parse_json_without_optional_fields_uses_defaults() {
 }"#;
     let config = parse(json);
     assert_eq!(config.view_mode, ViewMode::Expanded);
-    assert_eq!(config.frame_rate_limit, 5);
+    assert_eq!(
+        config.frame_rate_limit,
+        crate::state::DEFAULT_FRAME_RATE_LIMIT
+    );
     assert_eq!(config.exclude_patterns, vec!["_*"]);
 }
 
 #[test]
 fn unsupported_frame_rate_limit_normalizes_to_default() {
-    assert_eq!(crate::state::normalize_frame_rate_limit(15), 5);
-    assert_eq!(crate::state::frame_rate_limit_label(15), "Balanced 5 FPS");
+    assert_eq!(crate::state::normalize_frame_rate_limit(15), 30);
+    assert_eq!(crate::state::frame_rate_limit_label(15), "Smooth 30 FPS");
+}
+
+#[test]
+fn default_frame_rate_is_omitted_from_saved_file() {
+    let path = std::env::temp_dir().join("deck-frl-default.yaml");
+    Config::default().save_to(&path).unwrap();
+    let raw = fs::read_to_string(&path).unwrap();
+    assert!(!raw.contains("frame_rate_limit"), "default should not persist");
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn non_default_frame_rate_is_saved() {
+    let path = std::env::temp_dir().join("deck-frl-custom.yaml");
+    Config {
+        frame_rate_limit: 5,
+        ..Config::default()
+    }
+    .save_to(&path)
+    .unwrap();
+    let raw = fs::read_to_string(&path).unwrap();
+    assert!(raw.contains("frame_rate_limit"));
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn load_prunes_a_persisted_default_frame_rate() {
+    // A file that explicitly stored the (new) default gets it stripped on load.
+    let path = std::env::temp_dir().join("deck-frl-prune.yaml");
+    fs::write(&path, "frame_rate_limit: 30\nshow_borders: true\n").unwrap();
+    let _ = Config::load_from(&path);
+    let raw = fs::read_to_string(&path).unwrap();
+    assert!(!raw.contains("frame_rate_limit"), "stored default should be pruned");
+    let _ = fs::remove_file(&path);
 }
 
 #[test]

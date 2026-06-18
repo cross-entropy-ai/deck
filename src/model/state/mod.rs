@@ -97,6 +97,7 @@ pub enum SidebarTab {
 }
 
 pub const FRAME_RATE_LIMIT_OPTIONS: [u16; 4] = [2, 5, 10, 30];
+pub const DEFAULT_FRAME_RATE_LIMIT: u16 = 30;
 
 /// How often the Agents tab probes for agents + their status, in seconds.
 /// Cycled in settings; labelled fast / normal / slow / very slow.
@@ -170,7 +171,7 @@ pub fn normalize_frame_rate_limit(fps: u16) -> u16 {
     if FRAME_RATE_LIMIT_OPTIONS.contains(&fps) {
         fps
     } else {
-        5
+        DEFAULT_FRAME_RATE_LIMIT
     }
 }
 
