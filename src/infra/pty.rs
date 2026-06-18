@@ -145,6 +145,15 @@ pub fn encode_key(key: &KeyEvent) -> Vec<u8> {
         }
     }
 
+    // Super/Hyper/Meta + <char> = kitty CSI u, so the pane can detect the
+    // `cmd` group (e.g. Cmd+K). Ctrl/Alt chords are handled above; plain Shift
+    // is folded into the char by crossterm and must stay a bare keystroke.
+    if mods.intersects(KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META) {
+        if let KeyCode::Char(c) = key.code {
+            return format!("\x1b[{};{}u", c as u32, csi_modifier(mods)).into_bytes();
+        }
+    }
+
     // Modified special keys (Shift+Enter, Ctrl+Arrow, etc.)
     if mods != KeyModifiers::NONE {
         if let Some(bytes) = encode_modified_special(key.code, mods) {
@@ -209,7 +218,10 @@ pub fn encode_mouse(mouse: &MouseEvent, col_offset: u16, row_offset: u16) -> Vec
     format!("\x1b[<{};{};{}{}", button_code, x + 1, y + 1, suffix).into_bytes()
 }
 
-/// Compute the xterm/CSI u modifier parameter: 1 + bitmask(shift|alt|ctrl).
+/// Compute the kitty/CSI u modifier parameter: 1 + bitmask of held modifiers.
+/// Super/Hyper/Meta must be included or Cmd-chords (e.g. Cmd+Backspace =
+/// delete-to-line-start) reach the pane as their unmodified key — the app only
+/// detects the `cmd` group when the terminal reports the Super modifier.
 fn csi_modifier(mods: KeyModifiers) -> u8 {
     let mut m: u8 = 1;
     if mods.contains(KeyModifiers::SHIFT) {
@@ -220,6 +232,15 @@ fn csi_modifier(mods: KeyModifiers) -> u8 {
     }
     if mods.contains(KeyModifiers::CONTROL) {
         m += 4;
+    }
+    if mods.contains(KeyModifiers::SUPER) {
+        m += 8;
+    }
+    if mods.contains(KeyModifiers::HYPER) {
+        m += 16;
+    }
+    if mods.contains(KeyModifiers::META) {
+        m += 32;
     }
     m
 }
@@ -284,5 +305,33 @@ fn encode_f_key(n: u8) -> Vec<u8> {
         11 => b"\x1b[23~".to_vec(),
         12 => b"\x1b[24~".to_vec(),
         _ => vec![],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bs(mods: KeyModifiers) -> Vec<u8> {
+        encode_key(&KeyEvent::new(KeyCode::Backspace, mods))
+    }
+
+    #[test]
+    fn modified_backspace_carries_each_modifier() {
+        // Ctrl/Alt were already correct; Super (Cmd) used to degrade to ;1u
+        // (a plain Backspace), losing delete-to-line-start in the pane.
+        assert_eq!(bs(KeyModifiers::CONTROL), b"\x1b[127;5u");
+        assert_eq!(bs(KeyModifiers::ALT), b"\x1b[127;3u");
+        assert_eq!(bs(KeyModifiers::SUPER), b"\x1b[127;9u");
+    }
+
+    #[test]
+    fn cmd_letter_forwards_as_csi_u() {
+        // Cmd+K used to drop to a bare 'k'; now it carries the Super modifier
+        // ('k' = 107, Super => modifier 9). Plain/Shift letters stay bare.
+        let cmd_k = encode_key(&KeyEvent::new(KeyCode::Char('k'), KeyModifiers::SUPER));
+        assert_eq!(cmd_k, b"\x1b[107;9u");
+        let plain = encode_key(&KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT));
+        assert_eq!(plain, b"A");
     }
 }
