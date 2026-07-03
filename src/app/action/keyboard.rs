@@ -21,6 +21,19 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         }
     }
 
+    // cmd-1..cmd-9 switch to the Nth session from anywhere outside a modal,
+    // regardless of which half has focus. Needs a terminal that reports the
+    // Super modifier (kitty keyboard protocol).
+    if let KeyCode::Char(c @ '1'..='9') = key.code {
+        if key.modifiers.contains(KeyModifiers::SUPER) {
+            let idx = (c as usize) - ('1' as usize);
+            if idx < state.focusable_count() {
+                return Action::NumberKeyJump(idx);
+            }
+            return Action::None;
+        }
+    }
+
     if state.main_view == MainView::Settings && state.focus_mode == FocusMode::Main {
         return settings_key_to_action(key);
     }

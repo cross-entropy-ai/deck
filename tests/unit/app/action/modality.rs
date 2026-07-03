@@ -146,6 +146,7 @@ fn no_modal_leaks_a_forbidden_keyboard_action() {
     // to SwitchProject (default Enter). Each must be captured by the modal.
     let mut keys = vec![
         KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('1'), KeyModifiers::SUPER),
         KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
         KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
         KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
@@ -172,6 +173,23 @@ fn no_modal_leaks_a_forbidden_keyboard_action() {
                 "{modal:?}: key {key:?} leaked forbidden action {action:?}"
             );
         }
+    }
+}
+
+#[test]
+fn super_digit_jumps_to_session_from_either_focus() {
+    for mode in [FocusMode::Main, FocusMode::Sidebar] {
+        let mut state = make_state();
+        state.focus_mode = mode;
+        let key = KeyEvent::new(KeyCode::Char('2'), KeyModifiers::SUPER);
+        assert!(matches!(
+            key_to_action(&key, &state),
+            Action::NumberKeyJump(1)
+        ));
+
+        // Out of range (only 3 sessions): swallowed, not forwarded to the PTY.
+        let key = KeyEvent::new(KeyCode::Char('9'), KeyModifiers::SUPER);
+        assert!(matches!(key_to_action(&key, &state), Action::None));
     }
 }
 
