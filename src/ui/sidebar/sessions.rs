@@ -91,6 +91,39 @@ fn unbold(mut text: Text<'static>) -> Text<'static> {
     text
 }
 
+/// Paint a fixed-width marker into the preset's two-cell row gutter. The
+/// grabbed source stays marked with `↕`; once the pointer visits another row,
+/// that prospective drop target gets `▸` while the normal focus background
+/// continues to follow it.
+fn mark_project_drag(
+    mut text: Text<'static>,
+    row_idx: usize,
+    source: usize,
+    target: usize,
+    theme: &Theme,
+) -> Text<'static> {
+    let marker = if row_idx == source {
+        Some("↕ ")
+    } else if row_idx == target {
+        Some("▸ ")
+    } else {
+        None
+    };
+    let Some(marker) = marker else {
+        return text;
+    };
+    let Some(span) = text
+        .lines
+        .first_mut()
+        .and_then(|line| line.spans.first_mut())
+    else {
+        return text;
+    };
+    span.content = marker.into();
+    span.style = span.style.fg(theme.accent).add_modifier(Modifier::BOLD);
+    text
+}
+
 use super::super::text::pad_line;
 use super::super::widgets::markdown_window;
 use super::SidebarRenderCtx;
@@ -100,6 +133,7 @@ pub(super) struct SessionsProps<'a> {
     /// the hit-tester so clicks resolve to the same rows the widget drew.
     pub built: &'a BuiltLayout,
     pub focus_target: Option<FocusTarget>,
+    pub project_drag: Option<(usize, usize)>,
     /// Whether the Agents tab is active — agent rows publish a click target
     /// (switch-to-pane); session rows are focused via `focus_at_row`.
     pub agents_tab: bool,
@@ -145,8 +179,9 @@ pub(super) fn draw_sessions(
     let theme = ctx.theme;
     let agents_tab = props.agents_tab;
     let agent_entries = props.agent_entries;
+    let project_drag = props.project_drag;
     let widget = SectionedListWidget::new(layout, move |item, item_ctx| {
-        let text = basic_style(item, item_ctx);
+        let mut text = basic_style(item, item_ctx);
         if agents_tab && matches!(item.kind, ItemKind::Row) {
             if let Some(status) = item_ctx
                 .row_idx
@@ -157,6 +192,11 @@ pub(super) fn draw_sessions(
                 return recolor_agent_dot(text, theme, status);
             }
             return text;
+        }
+        if !agents_tab && matches!(item.kind, ItemKind::Row) {
+            if let (Some(row_idx), Some((source, target))) = (item_ctx.row_idx, project_drag) {
+                text = mark_project_drag(text, row_idx, source, target, theme);
+            }
         }
         if matches!(item.kind, ItemKind::Header) {
             return unbold(text);
@@ -464,8 +504,11 @@ pub(super) fn draw_summary_card(
 mod tests {
     use super::*;
     use crate::agent::AgentStatus;
+    use ratatui::backend::TestBackend;
     use ratatui::style::Color;
     use ratatui::text::Line;
+    use ratatui::Terminal;
+    use ratatui_sectioned_list::widget::BasicItem;
 
     /// The fg color the leading dot ends up with, or `None` if uncolored. Input
     /// mirrors `basic_style`'s shape: span[0] marker, span[1] starts with the
@@ -488,5 +531,47 @@ mod tests {
         assert_eq!(dot_color(AgentStatus::Idle), Some(theme.muted));
         assert_eq!(dot_color(AgentStatus::Waiting), Some(theme.warning));
         assert_eq!(dot_color(AgentStatus::Unknown), Some(theme.subtle));
+    }
+
+    #[test]
+    fn project_drag_renders_source_and_target_indicators() {
+        let theme = &crate::theme::THEMES[0];
+        let mut built = BuiltLayout::default();
+        built.layout.push_row_auto(BasicItem::new("alpha"));
+        built.layout.push_row_auto(BasicItem::new("beta"));
+        built.layout.push_row_auto(BasicItem::new("gamma"));
+
+        let backend = TestBackend::new(20, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                draw_sessions(
+                    frame,
+                    frame.area(),
+                    &SidebarRenderCtx { theme },
+                    SessionsProps {
+                        built: &built,
+                        focus_target: Some(FocusTarget(2)),
+                        project_drag: Some((0, 2)),
+                        agents_tab: false,
+                        agent_entries: &[],
+                    },
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let source = buffer
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "↕")
+            .expect("grabbed source marker must render");
+        let target = buffer
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "▸")
+            .expect("drop target marker must render");
+        assert_eq!(source.fg, theme.accent);
+        assert_eq!(target.fg, theme.accent);
     }
 }

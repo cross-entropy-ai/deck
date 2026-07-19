@@ -36,6 +36,8 @@ pub struct SidebarProps<'a> {
     pub sessions: &'a [&'a dyn SidebarSession],
     pub built: &'a BuiltLayout,
     pub focus_target: Option<FocusTarget>,
+    /// Active Projects drag as `(source row, current drop target)`.
+    pub project_drag: Option<(usize, usize)>,
     pub sidebar_active: bool,
     pub theme: &'a Theme,
     pub show_help: bool,
@@ -273,6 +275,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
             SessionsProps {
                 built: props.built,
                 focus_target: props.focus_target,
+                project_drag: props.project_drag,
                 agents_tab,
                 agent_entries: props.agent_entries,
             },
