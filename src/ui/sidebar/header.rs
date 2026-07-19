@@ -8,6 +8,9 @@ use unicode_width::UnicodeWidthStr;
 use crate::state::{SidebarTab, TabRects};
 use crate::theme::Theme;
 
+const PROJECTS_ICON: &str = "\u{e795}";
+const AGENTS_ICON: &str = "\u{f085}";
+
 /// Click regions published by the responsive sidebar Header.
 pub(super) struct HeaderHits {
     pub tabs: TabRects,
@@ -36,8 +39,8 @@ impl HeaderLayout {
 fn responsive_layout(width: u16, projects: usize, agents: usize) -> HeaderLayout {
     let candidates = [
         HeaderLayout {
-            projects: format!("\u{e795} Projects {projects}"),
-            agents: format!("\u{f085} Agents {agents}"),
+            projects: format!("{PROJECTS_ICON} Projects {projects}"),
+            agents: format!("{AGENTS_ICON} Agents {agents}"),
             gap: "   ",
             new_label: Some("+ New"),
         },
@@ -48,14 +51,14 @@ fn responsive_layout(width: u16, projects: usize, agents: usize) -> HeaderLayout
             new_label: Some("+"),
         },
         HeaderLayout {
-            projects: format!("Projects {projects}"),
-            agents: format!("Agents {agents}"),
-            gap: " ",
-            new_label: None,
+            projects: format!("{PROJECTS_ICON} {projects}"),
+            agents: format!("{AGENTS_ICON} {agents}"),
+            gap: "  ",
+            new_label: Some("+"),
         },
         HeaderLayout {
-            projects: "Projects".to_string(),
-            agents: "Agents".to_string(),
+            projects: PROJECTS_ICON.to_string(),
+            agents: AGENTS_ICON.to_string(),
             gap: " ",
             new_label: None,
         },
@@ -65,9 +68,9 @@ fn responsive_layout(width: u16, projects: usize, agents: usize) -> HeaderLayout
         .into_iter()
         .find(|layout| layout.width() <= width as usize)
         .unwrap_or(HeaderLayout {
-            projects: "Proj".to_string(),
-            agents: "Agents".to_string(),
-            gap: " ",
+            projects: PROJECTS_ICON.to_string(),
+            agents: String::new(),
+            gap: "",
             new_label: None,
         })
 }
@@ -177,5 +180,23 @@ mod tests {
         let layout = responsive_layout(48, 8, 3);
         assert!(layout.projects.contains("Projects 8"));
         assert_eq!(layout.new_label, Some("+ New"));
+    }
+
+    #[test]
+    fn narrow_width_uses_icons_counts_and_compact_new_action() {
+        let layout = responsive_layout(14, 8, 3);
+        assert_eq!(layout.projects, format!("{PROJECTS_ICON} 8"));
+        assert_eq!(layout.agents, format!("{AGENTS_ICON} 3"));
+        assert_eq!(layout.new_label, Some("+"));
+        assert!(!layout.projects.contains("Projects"));
+        assert!(!layout.agents.contains("Agents"));
+    }
+
+    #[test]
+    fn very_narrow_width_keeps_only_tab_icons() {
+        let layout = responsive_layout(6, 128, 64);
+        assert_eq!(layout.projects, PROJECTS_ICON);
+        assert_eq!(layout.agents, AGENTS_ICON);
+        assert_eq!(layout.new_label, None);
     }
 }
