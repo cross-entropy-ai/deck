@@ -101,6 +101,11 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                 }
                 MenuKind::Global => {
                     let inner = match selected_item {
+                        Some(MenuItem::NewLocalSession) => {
+                            let mut inner = SideEffect::default();
+                            inner.open_new_session_picker();
+                            inner
+                        }
                         Some(MenuItem::AddRemoteHost) => {
                             let mut inner = SideEffect::default();
                             inner.open_add_remote_picker();

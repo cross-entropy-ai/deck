@@ -6,7 +6,7 @@ use ratatui_sectioned_list::widget::BasicItem;
 use ratatui_sectioned_list::ItemKind;
 use serde::{Deserialize, Serialize};
 
-use crate::geometry::{context_menu_rect, shorten_dir, tab_col_ranges, tab_label};
+use crate::geometry::{context_menu_rect, shorten_dir, tab_bar_layout, tab_label};
 use crate::keybindings::Keybindings;
 use crate::lane::LaneId;
 use crate::system::tmux::lane;
@@ -844,11 +844,12 @@ impl AppState {
             .map(|e| tab_label(e.host.as_deref(), &e.name))
             .collect();
         let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-        let ranges = tab_col_ranges(&label_refs);
+        let content_width = self.term_width.saturating_sub(b.saturating_mul(2));
+        let layout = tab_bar_layout(&label_refs, self.focused, content_width);
         let local_col = col.saturating_sub(b);
-        for (i, &(start, end)) in ranges.iter().enumerate() {
-            if local_col >= start && local_col < end {
-                return Some(i);
+        for tab in layout.tabs {
+            if local_col >= tab.start && local_col < tab.end {
+                return Some(tab.index);
             }
         }
         None

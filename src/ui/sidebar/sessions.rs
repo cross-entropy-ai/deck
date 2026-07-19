@@ -272,6 +272,8 @@ pub(super) struct SummaryCardProps<'a> {
     pub spinner_idx: usize,
     /// Scroll offset (wrapped rows) into the Ready summary text.
     pub summary_scroll: usize,
+    /// Whether at least one real agent pane is available to capture.
+    pub can_generate: bool,
 }
 
 /// Draw the Agents-tab Summary card into its own rect, pinned above the
@@ -348,13 +350,15 @@ pub(super) fn draw_summary_card(
                 Style::default().fg(theme.muted).bg(theme.bg),
             ));
         }
-        title_spans.push(Span::styled(
-            gen_label,
+        let generate_style = if props.can_generate {
             Style::default()
                 .fg(theme.bg)
                 .bg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ));
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.muted).bg(theme.surface)
+        };
+        title_spans.push(Span::styled(gen_label, generate_style));
         if is_ready {
             title_spans.push(Span::styled(
                 popup_label,
@@ -371,12 +375,14 @@ pub(super) fn draw_summary_card(
         let gen_x = (left_w + filler + age_run) as u16;
         let popup_x = gen_x + gen_w as u16;
         let clamp_w = |x: u16, w: usize| (w as u16).min(rect.width.saturating_sub(x));
-        summary.button = Some(Rect {
-            x: rect.x + gen_x,
-            y: rect.y + 1,
-            width: clamp_w(gen_x, gen_w),
-            height: 1,
-        });
+        if props.can_generate {
+            summary.button = Some(Rect {
+                x: rect.x + gen_x,
+                y: rect.y + 1,
+                width: clamp_w(gen_x, gen_w),
+                height: 1,
+            });
+        }
         if is_ready {
             summary.popup = Some(Rect {
                 x: rect.x + popup_x,
@@ -387,16 +393,24 @@ pub(super) fn draw_summary_card(
         }
     }
     lines.push(pad_line(title_spans, theme.bg, width));
-    lines.push(pad_line(Vec::new(), theme.bg, width));
+    let compact_unavailable = !props.can_generate && matches!(props.summary, SummaryState::Idle);
+    if !compact_unavailable {
+        lines.push(pad_line(Vec::new(), theme.bg, width));
+    }
 
     // Body: a fixed-height window whose rows = card height minus the title,
     // blank, and drag-handle chrome.
-    let rows = (rect.height as usize).saturating_sub(3);
+    let chrome_rows = if compact_unavailable { 2 } else { 3 };
+    let rows = (rect.height as usize).saturating_sub(chrome_rows);
     match props.summary {
         SummaryState::Idle => {
             lines.push(pad_line(
                 vec![Span::styled(
-                    "  No summary generated yet",
+                    if compact_unavailable {
+                        "  No agents detected"
+                    } else {
+                        "  No summary generated yet"
+                    },
                     Style::default().fg(theme.muted).bg(theme.bg),
                 )],
                 theme.bg,

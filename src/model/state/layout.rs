@@ -254,6 +254,18 @@ impl AppState {
         if !self.prefs.summary_enabled || !self.agents_tab_active() {
             return 0;
         }
+        // The idle card has nothing actionable until at least one real agent
+        // exists. Keep just the grip, title/action row, and empty-state row so
+        // the agent list does not lose six body rows to an unavailable feature.
+        // Ready/Generating/Error keep the configured height: an existing result
+        // remains readable even if its source agent disappears after capture.
+        let has_agents = self
+            .agent_entries
+            .iter()
+            .any(|entry| entry.agent().is_some());
+        if !has_agents && matches!(self.summary.state, SummaryState::Idle) {
+            return 3;
+        }
         3 + self.prefs.summary_height
     }
 

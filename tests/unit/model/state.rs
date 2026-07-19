@@ -295,8 +295,14 @@ fn projects_cursor_reanchors_to_same_session_across_rebuild() {
 }
 
 #[test]
-fn summary_card_height_is_fixed_across_states() {
+fn summary_card_height_is_fixed_across_states_when_agents_exist() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.prefs.sidebar_tab = SidebarTab::Agents;
+    state.agents.insert(
+        crate::system::tmux::lane(None),
+        vec![detected("agent", "%1")],
+    );
+    state.rebuild_agent_entries();
     let idle = state.summary_card_height();
     state.summary.state = SummaryState::Generating;
     assert_eq!(state.summary_card_height(), idle);
@@ -309,6 +315,22 @@ fn summary_card_height_is_fixed_across_states() {
         idle,
         "the card is a fixed-size window; long text scrolls, not grows"
     );
+}
+
+#[test]
+fn idle_summary_card_collapses_until_an_agent_exists() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 100, 24);
+    state.prefs.sidebar_tab = SidebarTab::Agents;
+    state.rebuild_agent_entries();
+
+    assert_eq!(state.summary_card_height(), 3);
+
+    state.agents.insert(
+        crate::system::tmux::lane(None),
+        vec![detected("agent", "%1")],
+    );
+    state.rebuild_agent_entries();
+    assert_eq!(state.summary_card_height(), 3 + state.prefs.summary_height);
 }
 
 #[test]

@@ -68,6 +68,144 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
     );
 }
 
+#[test]
+fn idle_summary_without_agents_is_compact_and_disabled() {
+    use crate::state::{AppState, SidebarTab, SummaryState};
+    use ratatui::{backend::TestBackend, Terminal};
+
+    let theme = &crate::theme::THEMES[0];
+    let keybindings = Keybindings::default();
+    let mut state = AppState::new(100, 20);
+    state.prefs.show_borders = false;
+    state.prefs.sidebar_tab = SidebarTab::Agents;
+    state
+        .agents
+        .insert(crate::system::tmux::lane(None), Vec::new());
+    state.rebuild_agent_entries();
+    let built = state.agents_layout();
+    let sessions: Vec<&dyn SidebarSession> = Vec::new();
+
+    let backend = TestBackend::new(30, 20);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut captured = HitRegions::default();
+    terminal
+        .draw(|frame| {
+            captured = super::draw_sidebar(
+                frame,
+                frame.area(),
+                SidebarProps {
+                    sessions: &sessions,
+                    built: &built,
+                    focus_target: state.focus_target(),
+                    sidebar_active: true,
+                    theme,
+                    show_help: false,
+                    confirm_kill: None,
+                    rename_input: None,
+                    show_borders: false,
+                    sidebar_tab: SidebarTab::Agents,
+                    agent_entries: &state.agent_entries,
+                    summary: &SummaryState::Idle,
+                    summary_age: None,
+                    spinner_idx: 0,
+                    summary_scroll: 0,
+                    summary_card_height: state.summary_card_height(),
+                    tabs_mode: false,
+                    keybindings: &keybindings,
+                    update_available: None,
+                },
+            );
+        })
+        .unwrap();
+
+    assert_eq!(captured.summary.card.unwrap().height, 3);
+    assert!(captured.summary.button.is_none());
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(text.contains("No agents detected"));
+}
+
+#[test]
+fn overflowing_vertical_tabs_keep_focus_and_menu_visible() {
+    use crate::state::{AppState, SessionEntry, SessionEntryKind, SummaryState};
+    use ratatui::{backend::TestBackend, Terminal};
+
+    let theme = &crate::theme::THEMES[0];
+    let keybindings = Keybindings::default();
+    let mut state = AppState::new(40, 12);
+    state.prefs.show_borders = true;
+    state.entries = (0..10)
+        .map(|i| SessionEntry {
+            host: None,
+            name: format!("session-{i}"),
+            dir: String::new(),
+            kind: SessionEntryKind::Live { is_current: false },
+        })
+        .collect();
+    state.focused = 6;
+    let built = state.sidebar_layout(state.prefs.view_mode);
+    let sessions: Vec<&dyn SidebarSession> = state
+        .entries
+        .iter()
+        .map(|entry| entry as &dyn SidebarSession)
+        .collect();
+
+    let backend = TestBackend::new(40, 12);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut captured = HitRegions::default();
+    terminal
+        .draw(|frame| {
+            captured = super::draw_sidebar(
+                frame,
+                Rect::new(0, 0, 40, 3),
+                SidebarProps {
+                    sessions: &sessions,
+                    built: &built,
+                    focus_target: state.focus_target(),
+                    sidebar_active: true,
+                    theme,
+                    show_help: false,
+                    confirm_kill: None,
+                    rename_input: None,
+                    show_borders: true,
+                    sidebar_tab: SidebarTab::Projects,
+                    agent_entries: &[],
+                    summary: &SummaryState::Idle,
+                    summary_age: None,
+                    spinner_idx: 0,
+                    summary_scroll: 0,
+                    summary_card_height: 0,
+                    tabs_mode: true,
+                    keybindings: &keybindings,
+                    update_available: None,
+                },
+            );
+        })
+        .unwrap();
+
+    let menu = captured.menu.expect("menu remains pinned on overflow");
+    assert_eq!(
+        menu.x + menu.width + 1,
+        39,
+        "one trailing pad before border"
+    );
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(text.contains('…'));
+    assert!(text.contains("≡ menu"));
+    assert!(text.contains("7 session-6"));
+}
+
 // --- one geometry, one hit-test ---
 
 use ratatui::backend::TestBackend;

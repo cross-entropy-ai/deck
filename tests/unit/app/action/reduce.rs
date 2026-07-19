@@ -1217,11 +1217,23 @@ fn host_divider_menu_has_new_session_first_and_remove_last() {
 }
 
 #[test]
-fn global_menu_has_no_new_session() {
+fn global_menu_starts_with_new_local_session() {
     use crate::state::{MenuItem, MenuKind};
-    // Creating a local session lives on the `@local` divider, so the
-    // blank-area right-click menu does not offer it.
-    assert!(!MenuKind::Global.items().contains(&MenuItem::NewSession));
+    assert_eq!(
+        MenuKind::Global.items().first().copied(),
+        Some(MenuItem::NewLocalSession)
+    );
+}
+
+#[test]
+fn global_new_local_session_opens_local_picker() {
+    let mut state = make_test_state(1);
+    apply_action(
+        &mut state,
+        Action::Menu(MenuAction::OpenGlobal { x: 0, y: 0 }),
+    );
+    let fx = apply_action(&mut state, Action::Menu(MenuAction::Confirm));
+    assert!(fx.has_open_new_session_picker());
 }
 
 #[test]

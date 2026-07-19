@@ -32,10 +32,11 @@ const HOST_DIVIDER_MENU_ITEMS: &[MenuItem] = &[
 // but PortForward and RemoveFromList are remote-only: they're greyed out,
 // leaving just NewSession (creates a local session).
 const LOCAL_DIVIDER_DISABLED: &[MenuItem] = &[MenuItem::PortForward, MenuItem::RemoveFromList];
-// Right-click on blank sidebar space. NewSession is intentionally
-// absent — creating a local session lives on the `@local` divider's
-// `[…]` menu instead.
+// Right-click on blank sidebar space / the persistent footer button. Put the
+// primary creation action first; the explicit "local" label distinguishes it
+// from the per-host divider's NewSession action.
 const GLOBAL_MENU_ITEMS: &[MenuItem] = &[
+    MenuItem::NewLocalSession,
     MenuItem::AddRemoteHost,
     MenuItem::ToggleLayout,
     MenuItem::ToggleBorders,
@@ -58,6 +59,7 @@ pub enum MenuItem {
     ToggleBorders,
     Settings,
     Quit,
+    NewLocalSession,
     NewSession,
     PortForward,
     RemoveFromList,
@@ -76,6 +78,7 @@ impl MenuItem {
             MenuItem::ToggleBorders => "Toggle borders",
             MenuItem::Settings => "Settings",
             MenuItem::Quit => "Quit",
+            MenuItem::NewLocalSession => "New local session",
             MenuItem::NewSession => "New session",
             MenuItem::PortForward => "Port Forward",
             MenuItem::RemoveFromList => "Remove from list",

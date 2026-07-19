@@ -65,9 +65,9 @@ struct SidebarRenderCtx<'a> {
     theme: &'a Theme,
 }
 
-/// The footer/tabs "≡ menu" button label and its accent-bold span. Shared
-/// by `footer.rs` and `tabs.rs` so the two can't drift on glyph or style.
-pub(super) const MENU_LABEL: &str = "\u{2261} menu";
+/// Re-export the model-owned label so footer/tabs styling stays local while
+/// the vertical layout and hit-testing reserve the exact same display width.
+pub(super) use crate::geometry::MENU_LABEL;
 
 pub(super) fn menu_span(theme: &Theme) -> Span<'static> {
     Span::styled(
@@ -239,6 +239,10 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
                     summary_age: props.summary_age,
                     spinner_idx: props.spinner_idx,
                     summary_scroll: props.summary_scroll,
+                    can_generate: props
+                        .agent_entries
+                        .iter()
+                        .any(|entry| entry.agent().is_some()),
                 },
             )
         } else {
