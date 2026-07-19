@@ -29,6 +29,11 @@ pub use summary_popup::draw_summary_popup;
 pub trait SidebarSession {
     fn host(&self) -> Option<&str>;
     fn name(&self) -> &str;
+    /// Whether this row is a real session rather than a connection/status
+    /// placeholder. Used by the Header's Projects count.
+    fn is_attachable(&self) -> bool {
+        true
+    }
     /// Reaching this session's source failed (timeout, auth, ...).
     /// Tab label is still drawn, just greyed out.
     fn unreachable(&self) -> bool {
@@ -51,6 +56,9 @@ impl SidebarSession for SessionEntry {
             SessionEntryKind::NoSessions => crate::state::NO_SESSIONS_LABEL,
             SessionEntryKind::Live { .. } | SessionEntryKind::Connecting => &self.name,
         }
+    }
+    fn is_attachable(&self) -> bool {
+        SessionEntry::is_attachable(self)
     }
     fn unreachable(&self) -> bool {
         matches!(self.kind, SessionEntryKind::Unreachable)

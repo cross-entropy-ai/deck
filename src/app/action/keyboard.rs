@@ -68,6 +68,7 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
         Command::FocusNext => Action::FocusNext,
         Command::FocusPrev => Action::FocusPrev,
         Command::SwitchProject => Action::SwitchProject,
+        Command::NewLocalSession => Action::NewSession(NewSessionAction::OpenLocal),
         Command::KillSession => Action::KillSession,
         Command::ReorderUp => Action::ReorderSession(-1),
         Command::ReorderDown => Action::ReorderSession(1),

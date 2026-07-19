@@ -391,7 +391,7 @@ fn local_divider_new_session_opens_local_picker() {
         Action::Menu(MenuAction::OpenLocalDivider { x: 0, y: 0 }),
     );
     let fx = apply_action(&mut state, Action::Menu(MenuAction::Confirm));
-    // "New session" on @local routes to the local picker, not a remote one.
+    // "New session" on the local divider routes to the local picker.
     assert!(fx.has_open_new_session_picker());
     assert!(fx.first_open_remote_new_session_picker().is_none());
     // Confirming closes the menu.
@@ -1233,6 +1233,13 @@ fn global_new_local_session_opens_local_picker() {
         Action::Menu(MenuAction::OpenGlobal { x: 0, y: 0 }),
     );
     let fx = apply_action(&mut state, Action::Menu(MenuAction::Confirm));
+    assert!(fx.has_open_new_session_picker());
+}
+
+#[test]
+fn direct_new_local_session_action_opens_local_picker() {
+    let mut state = make_test_state(1);
+    let fx = apply_action(&mut state, Action::NewSession(NewSessionAction::OpenLocal));
     assert!(fx.has_open_new_session_picker());
 }
 

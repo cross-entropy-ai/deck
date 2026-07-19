@@ -5,6 +5,8 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
+use crate::keybindings::{format_key, Command, Keybindings};
+use crate::state::SidebarTab;
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
 
@@ -12,14 +14,23 @@ use super::{menu_span, SidebarRenderCtx, MENU_LABEL};
 
 pub(super) struct FooterProps<'a> {
     pub update_available: Option<&'a UpdateStatus>,
+    pub sidebar_active: bool,
+    pub show_borders: bool,
+    pub sidebar_tab: SidebarTab,
+    pub keybindings: &'a Keybindings,
 }
 
 /// Click regions the footer publishes each frame: the update banner's
-/// "upgrade" link and the "menu" button that opens the global context menu.
+/// "upgrade" link and the pinned menu button.
 #[derive(Default)]
 pub(super) struct FooterHits {
     pub upgrade: Option<Rect>,
     pub menu: Option<Rect>,
+}
+
+struct FooterAction {
+    key: String,
+    label: &'static str,
 }
 
 /// A full-width horizontal rule in the footer's dim color.
@@ -28,6 +39,61 @@ fn divider_line(width: usize, theme: &Theme) -> Line<'static> {
         "─".repeat(width),
         Style::default().fg(theme.dim),
     ))
+}
+
+fn first_key(keybindings: &Keybindings, command: Command) -> Option<String> {
+    keybindings.keys_for(command).first().map(format_key)
+}
+
+fn joined_nav_keys(keybindings: &Keybindings) -> Option<String> {
+    let next = first_key(keybindings, Command::FocusNext)?;
+    let prev = first_key(keybindings, Command::FocusPrev)?;
+    Some(format!("{next}/{prev}"))
+}
+
+fn actions(props: &FooterProps<'_>) -> Vec<FooterAction> {
+    if !props.sidebar_active {
+        return first_key(props.keybindings, Command::ToggleFocus)
+            .map(|key| {
+                vec![FooterAction {
+                    key,
+                    label: "sidebar",
+                }]
+            })
+            .unwrap_or_default();
+    }
+
+    let mut out = Vec::new();
+    if let Some(key) = first_key(props.keybindings, Command::NewLocalSession) {
+        out.push(FooterAction { key, label: "new" });
+    }
+    let help_keys = props
+        .keybindings
+        .keys_for(Command::ToggleHelp)
+        .iter()
+        .map(format_key)
+        .collect::<Vec<_>>()
+        .join("/");
+    if !help_keys.is_empty() {
+        out.push(FooterAction {
+            key: help_keys,
+            label: "help",
+        });
+    }
+    if let Some(key) = joined_nav_keys(props.keybindings) {
+        out.push(FooterAction { key, label: "move" });
+    }
+    if let Some(key) = first_key(props.keybindings, Command::SwitchProject) {
+        out.push(FooterAction {
+            key,
+            label: if props.sidebar_tab == SidebarTab::Agents {
+                "focus"
+            } else {
+                "open"
+            },
+        });
+    }
+    out
 }
 
 pub(super) fn draw_footer(
@@ -103,23 +169,80 @@ pub(super) fn draw_footer(
         }
     }
 
-    // The "menu" button opens the global context menu — the same one a
-    // right-click on empty space shows.
+    let menu_width = MENU_LABEL.width() as u16;
+    let menu_x = if area.width > menu_width {
+        area.width - menu_width - 1
+    } else {
+        area.width
+    };
+    let hints_limit = menu_x.saturating_sub(1); // quiet cell before menu
+    let mut hint_spans = vec![Span::styled(" ", Style::default().bg(theme.bg))];
+    let mut cursor = 1u16;
+
+    if !props.show_borders {
+        let focus = if props.sidebar_active {
+            "Sidebar"
+        } else {
+            "Terminal"
+        };
+        let width = focus.width() as u16;
+        if cursor + width <= hints_limit {
+            hint_spans.push(Span::styled(
+                focus,
+                Style::default()
+                    .fg(theme.accent)
+                    .bg(theme.bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            cursor += width;
+        }
+    }
+
+    for action in actions(&props) {
+        let separator = if cursor > 1 { "  " } else { "" };
+        let needed =
+            separator.width() as u16 + action.key.width() as u16 + 1 + action.label.width() as u16;
+        if cursor + needed > hints_limit {
+            continue;
+        }
+        if !separator.is_empty() {
+            hint_spans.push(Span::styled(
+                separator,
+                Style::default().fg(theme.dim).bg(theme.bg),
+            ));
+        }
+        hint_spans.push(Span::styled(
+            action.key,
+            Style::default()
+                .fg(theme.accent)
+                .bg(theme.bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        hint_spans.push(Span::styled(
+            format!(" {}", action.label),
+            Style::default().fg(theme.muted).bg(theme.bg),
+        ));
+        cursor += needed;
+    }
+
     let menu_y = area.y + rows.len() as u16;
-    let menu = Some(Rect {
-        x: area.x + 1,
+    let menu = (menu_x < area.width).then(|| Rect {
+        x: area.x + menu_x,
         y: menu_y,
-        width: MENU_LABEL.width() as u16,
+        width: menu_width,
         height: 1,
     });
-    rows.push(Line::from(vec![
-        Span::raw(" "),
-        menu_span(theme),
-        Span::styled(
-            format!("   [$ deck v{}]", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(theme.dim),
-        ),
-    ]));
+    if let Some(menu) = menu {
+        let relative_x = menu.x - area.x;
+        if relative_x > cursor {
+            hint_spans.push(Span::styled(
+                " ".repeat((relative_x - cursor) as usize),
+                Style::default().bg(theme.bg),
+            ));
+        }
+        hint_spans.push(menu_span(theme));
+    }
+    rows.push(Line::from(hint_spans));
 
     frame.render_widget(
         Paragraph::new(rows).style(Style::default().bg(theme.bg)),

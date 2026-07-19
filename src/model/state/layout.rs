@@ -20,7 +20,7 @@ impl AppState {
                 _ => e.name.clone(),
             }
         };
-        match view_mode {
+        let item = match view_mode {
             ViewMode::Compact => {
                 let prefix = e.host.as_deref().unwrap_or("local");
                 BasicItem::new(format!("{prefix}:{name}"))
@@ -35,11 +35,20 @@ impl AppState {
                 // is a uniform 2 rows tall.
                 BasicItem::new(name).line(dir)
             }
+        };
+        // Reserve red for an actual failure. Transitional/empty remote rows
+        // remain visible but quieter, so they don't compete with live sessions.
+        let theme = self.active_theme();
+        match e.kind {
+            SessionEntryKind::Unreachable => item.color(theme.error),
+            SessionEntryKind::Connecting => item.color(theme.warning),
+            SessionEntryKind::NoSessions => item.color(theme.muted),
+            SessionEntryKind::Live { .. } => item,
         }
     }
 
     /// `BasicItem` for one Agents-tab row, twin of `session_item`. A real agent
-    /// shows a status glyph (`●` working / `○` idle / `◐` waiting / `○` unknown)
+    /// shows a status glyph (`●` working / `○` idle / `◐` waiting / `?` unknown)
     /// before its location; the renderer tints the glyph by `AgentStatus`
     /// (`recolor_agent_dot`) — color keys off status, not glyph, so two statuses
     /// may reuse a glyph. The current pane isn't marked here: the row highlight
@@ -53,7 +62,7 @@ impl AppState {
                     crate::agent::AgentStatus::Working => "●",
                     crate::agent::AgentStatus::Idle => "○",
                     crate::agent::AgentStatus::Waiting => "◐",
-                    crate::agent::AgentStatus::Unknown => "○",
+                    crate::agent::AgentStatus::Unknown => "?",
                 };
                 BasicItem::new(format!("{dot} {}", agent.location()))
             }
@@ -64,7 +73,7 @@ impl AppState {
     }
 
     /// Shared skeleton behind both sidebar tabs: a local section then one per
-    /// remote host (in `remote_hosts_in_order`). Each gets its `@local`/`@host`
+    /// remote host (in `remote_hosts_in_order`). Each gets its local/host
     /// divider plus matching [`SectionMeta`] (when `opts.show_headers`), then
     /// `push_rows` fills the body (`host` `None` = local, `Some` = remote). The
     /// tabs are structurally identical, differing only in `opts` and the rows
@@ -146,11 +155,11 @@ impl AppState {
     }
 
     /// Build the unified Projects-tab layout: a flat `BasicItem` list of
-    /// `@local`/`@host` dividers (Expanded only) interleaved with session rows,
+    /// local/host dividers (Expanded only) interleaved with session rows,
     /// plus the per-divider [`SectionMeta`] the hit-tester resolves clicks
     /// against. Renderer and hit-tester share this so they can't disagree.
     pub fn sidebar_layout(&self, view_mode: ViewMode) -> BuiltLayout {
-        // Group dividers (`@local`, `@host`) are an Expanded-view adornment;
+        // Group dividers (`local`, host name) are an Expanded-view adornment;
         // Compact rows already carry an origin prefix. Collapse is likewise an
         // Expanded-only feature.
         let show_headers = matches!(view_mode, ViewMode::Expanded);
@@ -342,7 +351,7 @@ impl AppState {
         );
     }
 
-    /// Build the Agents-tab layout: an `@local`/`@host` divider per section with
+    /// Build the Agents-tab layout: a local/host divider per section with
     /// its rows beneath — a focusable row per detected agent, or one placeholder
     /// when empty (`detecting…` / `no agents`). Every row maps 1:1 to a stored
     /// `agent_entries` element so focus/scroll/hit-test stay in sync.

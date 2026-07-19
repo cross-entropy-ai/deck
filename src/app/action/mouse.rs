@@ -2,7 +2,7 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 use crate::state::{AppState, FocusTarget, HitKind, LayoutMode, MainView, Modal};
 
-use super::{Action, MenuAction, SettingsAction, SummaryAction};
+use super::{Action, MenuAction, NewSessionAction, SettingsAction, SummaryAction};
 
 pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     // Single resolver for every rect-based button/region the sidebar publishes.
@@ -26,6 +26,9 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         // modal up, so a modal hides them (bug #7).
         match hit {
             Some(HitKind::Tab(tab)) => return Action::SelectTab(tab),
+            Some(HitKind::NewLocalSession) => {
+                return Action::NewSession(NewSessionAction::OpenLocal)
+            }
             Some(HitKind::SummaryButton) => return Action::Summary(SummaryAction::Generate),
             Some(HitKind::SummaryPopup) => return Action::Summary(SummaryAction::OpenPopup),
             // The footer "menu" button opens the global context menu, anchored

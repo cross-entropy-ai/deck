@@ -267,6 +267,173 @@ fn render_hits(width: u16, height: u16, has_update: bool) -> HitRegions {
 }
 
 #[test]
+fn header_shows_live_counts_and_opens_new_local_session() {
+    use crate::state::{AppState, SessionEntry, SessionEntryKind};
+
+    let theme = &crate::theme::THEMES[0];
+    let keybindings = Keybindings::default();
+    let mut state = AppState::new(50, 20);
+    state.entries = vec![
+        SessionEntry {
+            host: None,
+            name: "work".to_string(),
+            dir: "/tmp/work".to_string(),
+            kind: SessionEntryKind::Live { is_current: true },
+        },
+        SessionEntry {
+            host: Some("offline".to_string()),
+            name: String::new(),
+            dir: String::new(),
+            kind: SessionEntryKind::Unreachable,
+        },
+    ];
+    state.agents.insert(
+        crate::system::tmux::lane(None),
+        vec![crate::agent::DetectedAgent {
+            kind: crate::agent::AgentKind::Claude,
+            session: "work".to_string(),
+            window: "1".to_string(),
+            pane: "0".to_string(),
+            pane_id: "%1".to_string(),
+            status: crate::agent::AgentStatus::Working,
+        }],
+    );
+    state.rebuild_agent_entries();
+    let built = state.sidebar_layout(state.prefs.view_mode);
+    let sessions: Vec<&dyn SidebarSession> = state
+        .entries
+        .iter()
+        .map(|entry| entry as &dyn SidebarSession)
+        .collect();
+
+    let backend = TestBackend::new(50, 20);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut captured = HitRegions::default();
+    terminal
+        .draw(|frame| {
+            captured = super::draw_sidebar(
+                frame,
+                frame.area(),
+                SidebarProps {
+                    sessions: &sessions,
+                    built: &built,
+                    focus_target: state.focus_target(),
+                    sidebar_active: true,
+                    theme,
+                    show_help: false,
+                    confirm_kill: None,
+                    rename_input: None,
+                    show_borders: false,
+                    sidebar_tab: SidebarTab::Projects,
+                    agent_entries: &state.agent_entries,
+                    summary: &SummaryState::Idle,
+                    summary_age: None,
+                    spinner_idx: 0,
+                    summary_scroll: 0,
+                    summary_card_height: 0,
+                    tabs_mode: false,
+                    keybindings: &keybindings,
+                    update_available: None,
+                },
+            );
+        })
+        .unwrap();
+
+    let first_row: String = (0..50)
+        .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+        .collect();
+    assert!(first_row.contains("Projects 1"));
+    assert!(first_row.contains("Agents 1"));
+    assert!(first_row.contains("+ New"));
+
+    let button = captured
+        .new_session
+        .expect("wide Header publishes its New button");
+    let button_cell = &terminal.backend().buffer()[(button.x, button.y)];
+    assert_eq!(
+        button_cell.bg, theme.bg,
+        "New stays a text action without a filled background"
+    );
+    assert_eq!(button_cell.fg, theme.accent);
+    assert_eq!(
+        captured.hit(button.x, button.y),
+        Some(HitKind::NewLocalSession)
+    );
+
+    state.hit_regions = captured;
+    let click = crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: button.x,
+        row: button.y,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    };
+    assert!(matches!(
+        crate::action::mouse_to_action(&click, &state),
+        crate::action::Action::NewSession(crate::action::NewSessionAction::OpenLocal)
+    ));
+}
+
+#[test]
+fn footer_is_contextual_and_drops_persistent_version_text() {
+    let render = |sidebar_active: bool| {
+        let theme = &crate::theme::THEMES[0];
+        let built = BuiltLayout::default();
+        let keybindings = Keybindings::default();
+        let sessions: Vec<&dyn SidebarSession> = Vec::new();
+        let backend = TestBackend::new(50, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                super::draw_sidebar(
+                    frame,
+                    frame.area(),
+                    SidebarProps {
+                        sessions: &sessions,
+                        built: &built,
+                        focus_target: None,
+                        sidebar_active,
+                        theme,
+                        show_help: false,
+                        confirm_kill: None,
+                        rename_input: None,
+                        show_borders: false,
+                        sidebar_tab: SidebarTab::Projects,
+                        agent_entries: &[],
+                        summary: &SummaryState::Idle,
+                        summary_age: None,
+                        spinner_idx: 0,
+                        summary_scroll: 0,
+                        summary_card_height: 0,
+                        tabs_mode: false,
+                        keybindings: &keybindings,
+                        update_available: None,
+                    },
+                );
+            })
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    };
+
+    let sidebar = render(true);
+    assert!(sidebar.contains("Sidebar"));
+    assert!(sidebar.contains("n new"));
+    assert!(sidebar.contains("h/? help"));
+    assert!(sidebar.contains("≡ menu"));
+    assert!(!sidebar.contains("deck v"));
+
+    let terminal = render(false);
+    assert!(terminal.contains("Terminal"));
+    assert!(terminal.contains("ctrl-s sidebar"));
+    assert!(!terminal.contains("n new"));
+}
+
+#[test]
 fn agents_tab_publishes_clickable_agent_entries() {
     use crate::state::{AppState, SidebarTab};
     let theme = &crate::theme::THEMES[0];
@@ -365,7 +532,7 @@ fn agents_tab_publishes_clickable_agent_entries() {
 
 #[test]
 fn remote_divider_buttons_register_below_their_top_margin() {
-    // A remote `@host` divider carries a 1-row top margin (section spacing),
+    // A remote host divider carries a 1-row top margin (section spacing),
     // so its bar — and its `[⟳]`/`[…]` buttons — paint one row *below* the
     // header block's top. The hit rects must follow the bar to that row;
     // earlier they were published at the block top (the inert margin row), so
@@ -654,6 +821,7 @@ fn captured_rects_stay_within_sidebar_area() {
         let mut rects: Vec<Rect> = Vec::new();
         rects.extend(hits.banner);
         rects.extend(hits.menu);
+        rects.extend(hits.new_session);
         rects.extend(hits.summary.button);
         rects.extend(hits.summary.popup);
         rects.extend(hits.summary.card);

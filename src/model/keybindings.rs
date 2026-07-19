@@ -60,6 +60,7 @@ commands! {
     FocusNext        => "focus_next",        "navigate",                [key!(j), key!(down)];
     FocusPrev        => "focus_prev",        "navigate",                [key!(k), key!(up)];
     SwitchProject    => "switch_project",    "switch session",          [key!(enter)];
+    NewLocalSession  => "new_local_session",  "new local session",       [key!(n)];
     KillSession      => "kill_session",      "kill session",            [key!(x)];
     ReorderUp        => "reorder_up",        "move session up",         [key!(alt - up)];
     ReorderDown      => "reorder_down",      "move session down",       [key!(alt - down)];

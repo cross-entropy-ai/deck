@@ -372,6 +372,24 @@ fn agents_layout_shows_placeholder_for_empty_section() {
     );
 }
 
+#[test]
+fn unknown_agent_uses_a_non_color_status_glyph() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 100, 24);
+    state.prefs.sidebar_tab = SidebarTab::Agents;
+    state.agents.insert(
+        crate::system::tmux::lane(None),
+        vec![detected("agent", "%1")],
+    );
+    state.rebuild_agent_entries();
+
+    let built = state.agents_layout();
+    assert!(built
+        .layout
+        .items()
+        .iter()
+        .any(|item| item.data.title.trim_start().starts_with("? ")));
+}
+
 fn detected(session: &str, pane_id: &str) -> crate::agent::DetectedAgent {
     crate::agent::DetectedAgent {
         kind: crate::agent::AgentKind::Claude,
@@ -460,20 +478,20 @@ fn sidebar_layout_adds_local_header_in_expanded() {
         .layout
         .items()
         .iter()
-        .filter(|i| i.data.title == "@local")
+        .filter(|i| i.data.title == "local")
         .count();
-    assert_eq!(local_headers, 1, "one @local divider above the local rows");
+    assert_eq!(local_headers, 1, "one local divider above the local rows");
 
     // The header is not a row, so the two local sessions are rows 0..2.
     assert_eq!(built.layout.row_count(), 2);
-    // The `@local` section carries the local-divider menu button.
+    // The local section carries the local-divider menu button.
     assert_eq!(
         built
             .sections
             .first()
             .map(|s| crate::system::tmux::TmuxSystem::host_of(&s.lane)),
         Some(None),
-        "first section is @local",
+        "first section is local",
     );
 }
 
@@ -502,12 +520,8 @@ fn sidebar_layout_keeps_local_divider_when_empty() {
     empty.clamp_projects_focus();
     let built = empty.sidebar_layout(ViewMode::Expanded);
     assert!(
-        built
-            .layout
-            .items()
-            .iter()
-            .any(|i| i.data.title == "@local"),
-        "@local divider remains when there are no local sessions",
+        built.layout.items().iter().any(|i| i.data.title == "local"),
+        "local divider remains when there are no local sessions",
     );
     assert_eq!(built.layout.row_count(), 0, "no local session rows");
 }
@@ -517,12 +531,12 @@ fn is_divider_at_row_detects_header_not_session() {
     let state = make_state(LayoutMode::Horizontal, false, 100, 24);
     // Header banner is 2 rows (no border); the Summary card strip is pinned
     // to the bottom on both tabs, so the list begins right after the header.
-    // The @local divider is the first list item (1 row tall); the first
+    // The local divider is the first list item (1 row tall); the first
     // session card sits just below it.
     let top = 2;
     assert!(
         state.is_divider_at_row(top),
-        "first list row is the @local divider"
+        "first list row is the local divider"
     );
     assert!(
         !state.is_divider_at_row(top + 1),

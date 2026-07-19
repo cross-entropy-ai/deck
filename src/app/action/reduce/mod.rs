@@ -568,6 +568,9 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
 fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEffect {
     let mut fx = SideEffect::default();
     match action {
+        NewSessionAction::OpenLocal => {
+            fx.open_new_session_picker();
+        }
         NewSessionAction::Close => {
             state.overlay.new_session = None;
         }

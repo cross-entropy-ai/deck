@@ -41,7 +41,7 @@ pub enum Action {
     ToggleSidebarTab,
     ToggleViewMode,
     /// Collapse/expand a sidebar group (Expanded view only). `None` is the
-    /// `@local` group; `Some(host)` is a remote `@host` group. Fired by a
+    /// local group; `Some(host)` is a remote host group. Fired by a
     /// divider click or the section-toggle keybinding.
     ToggleSection(Option<String>),
 
@@ -175,6 +175,8 @@ pub enum SummaryAction {
 
 #[derive(Debug)]
 pub enum NewSessionAction {
+    /// Open the local new-session picker (Header button / `n` shortcut).
+    OpenLocal,
     Close,
     InputKey(crossterm::event::KeyEvent),
     Confirm,
@@ -198,7 +200,7 @@ pub enum MenuAction {
         x: u16,
         y: u16,
     },
-    /// Open the `@local` divider's `[…]` menu (local "New session";
+    /// Open the local divider's `[…]` menu (local "New session";
     /// Port Forward / Remove from list greyed out).
     OpenLocalDivider {
         x: u16,

@@ -19,8 +19,9 @@ use crate::state::{
 /// Braille spinner frames for the Summary card's "Generating…" state.
 pub(super) const SUMMARY_SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// Recolor an agent row's leading status glyph as a traffic light: green =
-/// working, red = idle, yellow = waiting, gray = unknown. The glyph is chosen
+/// Recolor an agent row's leading status glyph semantically: green = working,
+/// yellow = waiting, gray = idle/unknown. Red is reserved for actual failures.
+/// The glyph is chosen
 /// in `AppState::agent_item`; here we only override its color. `basic_style`
 /// builds the first line as `[marker, "<glyph> <location>"]`, so we split the
 /// title span and tint just the glyph, leaving focus/bold and location intact.
@@ -31,14 +32,13 @@ fn recolor_agent_dot(
     status: crate::agent::AgentStatus,
 ) -> Text<'static> {
     use crate::agent::AgentStatus;
-    // Color is keyed off the *status*, not the glyph shape — two statuses may
-    // share a glyph (e.g. Working and Unknown can both be `●`). `Unknown` is
-    // left at the default text color (no tint).
+    // Color is keyed off the *status*, not the glyph shape. Shape still carries
+    // meaning independently, so the status remains readable without color.
     let color = match status {
         AgentStatus::Working => theme.success, // green
-        AgentStatus::Idle => theme.error,      // red (not working)
+        AgentStatus::Idle => theme.muted,      // neutral, not a failure
         AgentStatus::Waiting => theme.warning, // yellow (needs the user)
-        AgentStatus::Unknown => return text,   // default (uncolored)
+        AgentStatus::Unknown => theme.subtle,  // unknown, but still legible
     };
     let Some(line) = text.lines.first_mut() else {
         return text;
@@ -485,10 +485,8 @@ mod tests {
     fn agent_dot_colored_by_status_not_glyph() {
         let theme = &crate::theme::THEMES[0];
         assert_eq!(dot_color(AgentStatus::Working), Some(theme.success));
-        assert_eq!(dot_color(AgentStatus::Idle), Some(theme.error));
+        assert_eq!(dot_color(AgentStatus::Idle), Some(theme.muted));
         assert_eq!(dot_color(AgentStatus::Waiting), Some(theme.warning));
-        // Unknown reuses the `●` glyph but is left at the default text color:
-        // the glyph is never split into its own colored span.
-        assert_eq!(dot_color(AgentStatus::Unknown), None);
+        assert_eq!(dot_color(AgentStatus::Unknown), Some(theme.subtle));
     }
 }

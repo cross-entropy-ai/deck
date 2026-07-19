@@ -91,6 +91,7 @@ fn clamp_rect(rect: Rect, area: Rect) -> Option<Rect> {
 fn clamp_hits(hits: &mut HitRegions, area: Rect) {
     hits.banner = hits.banner.and_then(|r| clamp_rect(r, area));
     hits.menu = hits.menu.and_then(|r| clamp_rect(r, area));
+    hits.new_session = hits.new_session.and_then(|r| clamp_rect(r, area));
     if let Some(tabs) = hits.tabs.as_mut() {
         tabs.projects = clamp_rect(tabs.projects, area).unwrap_or(Rect {
             width: 0,
@@ -197,7 +198,24 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
     ])
     .areas(content);
 
-    let tab_rects = draw_header(frame, header_area, props.sidebar_tab, props.theme);
+    let project_count = props
+        .sessions
+        .iter()
+        .filter(|session| session.is_attachable())
+        .count();
+    let agent_count = props
+        .agent_entries
+        .iter()
+        .filter(|entry| entry.agent().is_some())
+        .count();
+    let header_hits = draw_header(
+        frame,
+        header_area,
+        props.sidebar_tab,
+        project_count,
+        agent_count,
+        props.theme,
+    );
     let agents_tab = matches!(props.sidebar_tab, SidebarTab::Agents);
     let mut kill_hits: Option<KillConfirmHits> = None;
     let (divider_hits, agent_hits, summary_hits) = if props.show_help {
@@ -274,6 +292,10 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
             } else {
                 None
             },
+            sidebar_active: props.sidebar_active,
+            show_borders: props.show_borders,
+            sidebar_tab: props.sidebar_tab,
+            keybindings: props.keybindings,
         },
     );
     let mut hits = HitRegions {
@@ -281,7 +303,8 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
         dividers: divider_hits,
         kill: kill_hits,
         agents: agent_hits,
-        tabs: Some(tab_rects),
+        tabs: Some(header_hits.tabs),
+        new_session: header_hits.new_session,
         summary: summary_hits,
         menu: menu_bounds,
     };

@@ -293,7 +293,7 @@ pub fn context_menu_width(items: &[MenuItem]) -> u16 {
 // --- Sidebar item / hit-region types ---
 
 /// Sidebar layout — a `SectionedList` of the crate's `BasicItem` preset.
-/// Headers carry an `@local` / `@host` divider (separator fill, accent
+/// Headers carry a local / host divider (separator fill, accent
 /// color, `[⟳]`/`[…]` buttons); rows carry a session/agent title plus dim
 /// secondary lines. Geometry, focus-driven scroll, and hit-testing are
 /// shared across renderer and action layer via this one type.
@@ -327,7 +327,7 @@ pub struct SectionMeta {
 /// remote host) is identical; only these toggles and per-row content differ.
 #[derive(Debug, Clone, Copy)]
 pub struct SectionLayoutOpts {
-    /// Push `@local` / `@host` divider headers. Projects omits them in Compact
+    /// Push local / host divider headers. Projects omits them in Compact
     /// view (rows carry an origin prefix instead); the Agents tab always shows
     /// them.
     pub show_headers: bool,
@@ -480,6 +480,8 @@ pub struct HitRegions {
     /// The `Projects` / `Agents` header tab labels (`None` in tabs mode,
     /// which has no header).
     pub tabs: Option<TabRects>,
+    /// The responsive Header `+ New` / `+` button.
+    pub new_session: Option<Rect>,
     /// The Summary card's buttons/card/scroll bound.
     pub summary: SummaryHits,
     /// The footer's "menu" button.
@@ -499,6 +501,8 @@ pub enum HitKind {
     Banner,
     /// A header tab label; carries which tab.
     Tab(SidebarTab),
+    /// The Header's local-session creation button.
+    NewLocalSession,
     /// The Summary card's "Generate" button.
     SummaryButton,
     /// The Summary card's "popup" (big view) button.
@@ -538,6 +542,9 @@ impl HitRegions {
             if tabs.agents.contains(pos) {
                 return Some(HitKind::Tab(SidebarTab::Agents));
             }
+        }
+        if self.new_session.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::NewLocalSession);
         }
         if self.summary.button.is_some_and(|r| r.contains(pos)) {
             return Some(HitKind::SummaryButton);
