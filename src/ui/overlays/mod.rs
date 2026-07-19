@@ -126,7 +126,7 @@ pub(super) fn draw_confirm_kill(
     let lines = vec![
         Line::raw(""),
         Line::from(vec![
-            Span::styled("  Kill ", Style::default().fg(theme.text)),
+            Span::styled("  Close ", Style::default().fg(theme.text)),
             Span::styled(
                 name,
                 Style::default()

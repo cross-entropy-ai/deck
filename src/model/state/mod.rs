@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use ratatui::layout::Position;
 use ratatui_sectioned_list::widget::BasicItem;
-use ratatui_sectioned_list::ItemKind;
+use ratatui_sectioned_list::{ItemKind, RowDragState};
 use serde::{Deserialize, Serialize};
 
 use crate::geometry::{context_menu_rect, shorten_dir, tab_bar_layout, tab_label};
@@ -442,6 +442,9 @@ pub struct AppState {
     /// summary settings (prompt/model/height/language) live in `prefs`.
     pub summary: SummaryCard,
     pub dragging_separator: bool,
+    /// Press/drag/release state for direct project-row reordering. Geometry
+    /// and hit-testing are owned by `ratatui-sectioned-list`.
+    pub project_drag: RowDragState,
 
     /// Transient sidebar overlays — help, kill-confirm, rename, context
     /// menu, exclude editor. See `OverlayState`.
@@ -554,6 +557,7 @@ impl AppState {
             agent_focused: 0,
             summary: SummaryCard::default(),
             dragging_separator: false,
+            project_drag: RowDragState::new(),
             overlay: OverlayState::default(),
             term_width,
             term_height,
@@ -792,6 +796,23 @@ impl AppState {
     pub fn focus_at_row(&self, row: u16) -> Option<FocusTarget> {
         let (built, viewport_y, scroll, _) = self.session_row_hit(row)?;
         built.layout.row_at_y(viewport_y, scroll).map(FocusTarget)
+    }
+
+    /// Start direct manipulation on the project row under `row`.
+    pub fn start_project_drag(&mut self, row: u16) -> Option<usize> {
+        let Some((built, viewport_y, scroll, _)) = self.session_row_hit(row) else {
+            self.project_drag.cancel();
+            return None;
+        };
+        self.project_drag.begin(&built.layout, viewport_y, scroll)
+    }
+
+    /// Track the last valid project row visited by an active drag.
+    pub fn update_project_drag(&mut self, row: u16) -> Option<usize> {
+        let Some((built, viewport_y, scroll, _)) = self.session_row_hit(row) else {
+            return self.project_drag.target();
+        };
+        self.project_drag.update(&built.layout, viewport_y, scroll)
     }
 
     /// Whether `row` falls on a group divider header (`@local` / `@host`).

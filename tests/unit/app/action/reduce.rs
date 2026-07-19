@@ -465,6 +465,23 @@ fn reorder_session_moves_up() {
 }
 
 #[test]
+fn drag_reorder_moves_directly_and_persists_once() {
+    let mut state = make_test_state(4);
+    state.focused = 0;
+    let fx = apply_action(&mut state, Action::ReorderSessionTo(3));
+    assert_eq!(
+        state
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["sess-1", "sess-2", "sess-3", "sess-0"]
+    );
+    assert_eq!(state.focused, 3);
+    assert!(fx.has_save_session_order());
+}
+
+#[test]
 fn reorder_local_session_leaves_remotes_pinned_after_in_order() {
     // A local reorder must not perturb the remote block, which stays after
     // all locals in its own order.
@@ -557,6 +574,35 @@ fn reorder_remote_session_stops_at_host_boundary() {
     assert_eq!(remote_entries(&state)[1].name, "b");
     assert_eq!(remote_entries(&state)[2].name, "c");
     assert!(fx.first_save_remote_session_order().is_none());
+}
+
+#[test]
+fn drag_reorder_remote_moves_directly_within_host_only() {
+    let mut state = make_test_state(1);
+    set_remote(
+        &mut state,
+        vec![
+            remote_row("h", "a"),
+            remote_row("h", "b"),
+            remote_row("h", "c"),
+            remote_row("h2", "d"),
+        ],
+    );
+    state.focused = 1;
+    let fx = apply_action(&mut state, Action::ReorderSessionTo(3));
+    assert_eq!(
+        remote_entries(&state)
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["b", "c", "a", "d"]
+    );
+    assert_eq!(fx.first_save_remote_session_order(), Some("h"));
+
+    state.focused = 3;
+    let fx = apply_action(&mut state, Action::ReorderSessionTo(4));
+    assert!(fx.first_save_remote_session_order().is_none());
+    assert_eq!(state.entries[3].name, "a");
 }
 
 #[test]
@@ -1244,7 +1290,7 @@ fn direct_new_local_session_action_opens_local_picker() {
 }
 
 #[test]
-fn placeholder_remote_menu_disables_rename_and_kill() {
+fn placeholder_remote_menu_disables_rename_and_close() {
     use crate::state::{session_menu_disabled, MenuItem, SessionEntryKind, UNREACHABLE_LABEL};
     let cases = [
         ("(no sessions)", SessionEntryKind::NoSessions),
@@ -1262,7 +1308,10 @@ fn placeholder_remote_menu_disables_rename_and_kill() {
             disabled.contains(&MenuItem::Rename),
             "{label}: Rename disabled"
         );
-        assert!(disabled.contains(&MenuItem::Kill), "{label}: Kill disabled");
+        assert!(
+            disabled.contains(&MenuItem::Close),
+            "{label}: Close disabled"
+        );
     }
 }
 
@@ -1292,15 +1341,15 @@ fn remote_session_with_siblings_disables_nothing() {
 }
 
 #[test]
-fn last_remote_session_disables_kill_only() {
+fn last_remote_session_disables_close_only() {
     use crate::state::{session_menu_disabled, MenuItem};
     // "solo" is the only session on its host; a session on a *different*
     // host doesn't count toward it.
     let sessions = vec![remote("h", "solo"), remote("other", "x")];
     let disabled = session_menu_disabled(&sessions[0], &sessions);
     assert!(
-        disabled.contains(&MenuItem::Kill),
-        "Kill disabled for last session"
+        disabled.contains(&MenuItem::Close),
+        "Close disabled for last session"
     );
     assert!(
         !disabled.contains(&MenuItem::Rename),

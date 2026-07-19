@@ -63,7 +63,7 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
         }
     }
     assert!(
-        text.contains("Kill victim"),
+        text.contains("Close victim"),
         "prompt text missing: {text:?}"
     );
 }

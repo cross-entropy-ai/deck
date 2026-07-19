@@ -186,7 +186,7 @@ impl AppState {
 
     /// Why the focused kill `target` can't be killed, or `None` if it can.
     /// Shared by the `x`-key path (`KillSession` / `ConfirmKill`) and the
-    /// context menu's "Kill" greying so they can't drift:
+    /// context menu's "Close" greying so they can't drift:
     ///  - a synthetic placeholder remote row (loading / unreachable /
     ///    "(no sessions)") has no real session — a kill would send
     ///    `ssh tmux kill-session` with a placeholder/empty name;

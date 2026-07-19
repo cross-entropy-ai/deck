@@ -576,7 +576,7 @@ fn local_divider_menu_greys_remote_only_items() {
         kind: MenuKind::LocalDivider,
         x: 0,
         y: 0,
-        selected: 0,
+        selected: 1,
     };
     // Same item list as a host divider...
     assert!(menu.items().contains(&MenuItem::NewSession));
@@ -721,12 +721,7 @@ fn context_menu_navigation_skips_disabled_items() {
     let all_disabled = ContextMenu {
         kind: MenuKind::Session {
             focus: FocusTarget(0),
-            disabled: &[
-                MenuItem::Rename,
-                MenuItem::Kill,
-                MenuItem::MoveUp,
-                MenuItem::MoveDown,
-            ],
+            disabled: &[MenuItem::Rename, MenuItem::Close],
         },
         x: 0,
         y: 0,
@@ -738,26 +733,24 @@ fn context_menu_navigation_skips_disabled_items() {
     assert_eq!(all_disabled.first_enabled(), 0);
     assert_eq!(all_disabled.next_enabled(), 0);
 
-    // One disabled item among enabled ones: navigation hops over it.
-    // Items are the fixed session list: Rename, Kill, Move up, Move down.
+    // One disabled item among enabled ones: navigation stays on Close.
+    // Items are the fixed session list: Rename, Close.
     let mixed = ContextMenu {
         kind: MenuKind::Session {
             focus: FocusTarget(0),
-            disabled: &[MenuItem::Kill],
+            disabled: &[MenuItem::Rename],
         },
         x: 0,
         y: 0,
-        selected: 0,
+        selected: 1,
     };
-    assert_eq!(mixed.first_enabled(), 0);
-    // From "Rename" (0), next skips disabled "Kill" (1) to "Move up" (2).
-    assert_eq!(mixed.next_enabled(), 2);
-    let from_last = ContextMenu {
-        selected: 2,
-        ..mixed.clone()
-    };
-    // From "Move up" (2), prev skips "Kill" (1) back to "Rename" (0).
-    assert_eq!(from_last.prev_enabled(), 0);
+    assert_eq!(mixed.first_enabled(), 1);
+    assert_eq!(mixed.next_enabled(), 1);
+    assert_eq!(mixed.prev_enabled(), 1);
+
+    assert_eq!(mixed.items().len(), 2);
+    assert_eq!(mixed.items()[0].label(), "Rename");
+    assert_eq!(mixed.items()[1].label(), "Close");
 }
 
 // --- PfAddForm::validate() tests ---

@@ -1817,8 +1817,7 @@ dependencies = [
 [[package]]
 name = "ratatui-sectioned-list"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75eb60a0f88bc19377876abc359e7564bbf8783b25d9d2bac03d3be848198d84"
+source = "git+https://github.com/deck-support/ratatui-sectioned-list?rev=952aaf95a19d5e501eb5194ffaafb73ee42ed6c9#952aaf95a19d5e501eb5194ffaafb73ee42ed6c9"
 dependencies = [
  "ratatui",
 ]

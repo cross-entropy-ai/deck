@@ -88,6 +88,12 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         MouseEventKind::Up(MouseButton::Left) if state.dragging_separator => {
             return Action::StopDrag;
         }
+        MouseEventKind::Drag(MouseButton::Left) if state.project_drag.is_active() => {
+            return Action::UpdateProjectDrag(mouse.row);
+        }
+        MouseEventKind::Up(MouseButton::Left) if state.project_drag.is_active() => {
+            return Action::FinishProjectDrag;
+        }
         _ => {}
     }
 
@@ -162,6 +168,13 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             LayoutMode::Vertical => state.session_at_col(mouse.column, mouse.row),
         };
         if let Some(idx) = flat {
+            if state.effective_layout_mode() == LayoutMode::Horizontal && !state.agents_tab_active()
+            {
+                // Defer ordinary click-switching until button-up: if the
+                // pointer visits another row first, the same gesture becomes
+                // a drag reorder instead.
+                return Action::StartProjectDrag(mouse.row);
+            }
             return Action::SidebarClickSession(idx);
         }
         // A click on empty sidebar space (below the last row) is inert: the

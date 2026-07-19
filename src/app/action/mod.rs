@@ -23,6 +23,7 @@ pub enum Action {
     ConfirmKill,
     CancelKill,
     ReorderSession(i32),
+    ReorderSessionTo(usize),
     /// Detach a remote host from deck's config — equivalent to
     /// `deck remote remove <host>`. Triggered from the remote-session
     /// right-click menu's "Remove from list".
@@ -65,6 +66,9 @@ pub enum Action {
     ResizeSidebarHeight(u16),
     StartDrag,
     StopDrag,
+    StartProjectDrag(u16),
+    UpdateProjectDrag(u16),
+    FinishProjectDrag,
 
     Resize(u16, u16),
 

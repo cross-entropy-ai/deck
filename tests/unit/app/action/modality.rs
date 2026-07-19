@@ -96,6 +96,9 @@ fn is_forbidden(a: &Action) -> bool {
     matches!(
         a,
         Action::SidebarClickSession(_)
+            | Action::StartProjectDrag(_)
+            | Action::UpdateProjectDrag(_)
+            | Action::FinishProjectDrag
             | Action::Menu(MenuAction::OpenSession { .. })
             | Action::Menu(MenuAction::OpenGlobal { .. })
             | Action::SwitchToAgentPane(_)
@@ -209,9 +212,12 @@ fn mouse_at(kind: MouseEventKind, col: u16, row: u16) -> MouseEvent {
 /// hard-coding.
 fn session_row_coord(state: &AppState) -> (u16, u16) {
     for row in 0..40u16 {
-        if let Action::SidebarClickSession(_) = mouse_to_action(
-            &mouse_at(MouseEventKind::Down(MouseButton::Left), 2, row),
-            state,
+        if matches!(
+            mouse_to_action(
+                &mouse_at(MouseEventKind::Down(MouseButton::Left), 2, row),
+                state,
+            ),
+            Action::SidebarClickSession(_) | Action::StartProjectDrag(_)
         ) {
             return (2, row);
         }
