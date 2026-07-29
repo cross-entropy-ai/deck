@@ -150,11 +150,7 @@ impl App {
             let layout = self.state.current_layout(view_mode);
             let agent_entries = self.state.agent_entries.as_slice();
             let focus_target = self.state.focus_target();
-            let project_drag = self
-                .state
-                .project_drag
-                .source()
-                .zip(self.state.project_drag.target());
+            let project_drag = self.state.project_drag_indicators();
             let summary_card_height = self.state.summary_card_height();
             captured_hits = ui::draw_sidebar(
                 frame,

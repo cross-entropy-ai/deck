@@ -341,6 +341,12 @@ impl App {
                 redraw = Redraw::Force;
             }
 
+            // A held press produces no further events, so the drag indicators
+            // need this tick to appear once their delay elapses.
+            if self.state.tick_project_drag(Instant::now()) {
+                redraw = Redraw::Force;
+            }
+
             // Another deck (typically `deck --force`) asked us to quit
             // via SIGTERM. Translate it into the same Action::Quit the
             // right-click menu uses so teardown is identical.

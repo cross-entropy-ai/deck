@@ -1163,3 +1163,42 @@ fn no_sessions_name_is_a_normal_live_session_now() {
     );
     assert!(state.focused_remote_placeholder().is_none() || state.focused != 2);
 }
+
+#[test]
+fn project_drag_indicators_wait_for_the_hold_delay() {
+    // Every press on a row starts a drag (release decides click vs reorder),
+    // so the `↕`/`▸` markers must not flash on an ordinary click-to-switch.
+    let mut state = make_state(LayoutMode::Horizontal, false, 100, 24);
+    let t0 = Instant::now();
+    assert_eq!(state.start_project_drag(3, t0), Some(0), "grabbed first card");
+    assert!(
+        state.project_drag_indicators().is_none(),
+        "no indicators on press"
+    );
+    assert!(!state.tick_project_drag(t0 + std::time::Duration::from_millis(499)));
+    assert!(
+        state.project_drag_indicators().is_none(),
+        "still hidden just under the delay"
+    );
+
+    // Held past the delay: the markers appear, and exactly one tick reports it
+    // (the caller redraws on that edge).
+    assert!(state.tick_project_drag(t0 + PROJECT_DRAG_INDICATOR_DELAY));
+    assert_eq!(state.project_drag_indicators(), Some((0, 0)));
+    assert!(
+        !state.tick_project_drag(t0 + std::time::Duration::from_secs(5)),
+        "edge fires once"
+    );
+}
+
+#[test]
+fn crossing_to_another_row_shows_drag_indicators_immediately() {
+    // The pointer leaving the pressed row proves this is a reorder, so the
+    // gesture gets its feedback without waiting out the delay.
+    let mut state = make_state(LayoutMode::Horizontal, false, 100, 24);
+    let t0 = Instant::now();
+    assert_eq!(state.start_project_drag(3, t0), Some(0));
+    assert!(state.project_drag_indicators().is_none());
+    assert_eq!(state.update_project_drag(5), Some(1), "second card");
+    assert_eq!(state.project_drag_indicators(), Some((0, 1)));
+}

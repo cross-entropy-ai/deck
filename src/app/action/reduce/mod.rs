@@ -494,7 +494,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::StartProjectDrag(row) => {
             if !state.agents_tab_active() {
-                if let Some(idx) = state.start_project_drag(row) {
+                if let Some(idx) = state.start_project_drag(row, std::time::Instant::now()) {
                     state.focused = idx;
                 }
             }

@@ -53,6 +53,15 @@ const MIN_MAIN_HEIGHT: u16 = 1;
 /// See [`AppState::effective_layout_mode`].
 pub const NARROW_LAYOUT_MAX_WIDTH: u16 = 80;
 
+/// How long a press must be held before the project-drag `↕`/`▸` markers
+/// appear. Every click on a row starts a drag (release decides whether the
+/// gesture was a click or a reorder), so showing them immediately flashed
+/// drag affordances at users who were only switching sessions. Crossing to
+/// another row still shows them at once — see
+/// [`AppState::update_project_drag`].
+pub const PROJECT_DRAG_INDICATOR_DELAY: std::time::Duration =
+    std::time::Duration::from_millis(500);
+
 // --- Enums ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -458,6 +467,10 @@ pub struct AppState {
     /// Press/drag/release state for direct project-row reordering. Geometry
     /// and hit-testing are owned by `ratatui-sectioned-list`.
     pub project_drag: RowDragState,
+    /// Grab time while the drag indicators are still *pending*, cleared once
+    /// they become visible. So `is_active() && this.is_none()` means "draw the
+    /// `↕`/`▸` markers" — see [`AppState::project_drag_indicators`].
+    project_drag_pending: Option<Instant>,
 
     /// Transient sidebar overlays — help, kill-confirm, rename, context
     /// menu, exclude editor. See `OverlayState`.
@@ -571,6 +584,7 @@ impl AppState {
             summary: SummaryCard::default(),
             dragging_separator: false,
             project_drag: RowDragState::new(),
+            project_drag_pending: None,
             overlay: OverlayState::default(),
             term_width,
             term_height,
@@ -808,21 +822,55 @@ impl AppState {
         built.layout.row_at_y(viewport_y, scroll).map(FocusTarget)
     }
 
-    /// Start direct manipulation on the project row under `row`.
-    pub fn start_project_drag(&mut self, row: u16) -> Option<usize> {
+    /// Start direct manipulation on the project row under `row`. The drag is
+    /// live immediately (so a fast drag still reorders); only its indicators
+    /// wait for `PROJECT_DRAG_INDICATOR_DELAY`.
+    pub fn start_project_drag(&mut self, row: u16, now: Instant) -> Option<usize> {
         let Some((built, viewport_y, scroll, _)) = self.session_row_hit(row) else {
             self.project_drag.cancel();
+            self.project_drag_pending = None;
             return None;
         };
-        self.project_drag.begin(&built.layout, viewport_y, scroll)
+        let hit = self.project_drag.begin(&built.layout, viewport_y, scroll);
+        self.project_drag_pending = hit.is_some().then_some(now);
+        hit
     }
 
-    /// Track the last valid project row visited by an active drag.
+    /// Track the last valid project row visited by an active drag. Reaching a
+    /// different row reveals the indicators right away: the pointer has left
+    /// the pressed row, so this is a reorder and not a click.
     pub fn update_project_drag(&mut self, row: u16) -> Option<usize> {
         let Some((built, viewport_y, scroll, _)) = self.session_row_hit(row) else {
             return self.project_drag.target();
         };
-        self.project_drag.update(&built.layout, viewport_y, scroll)
+        let target = self.project_drag.update(&built.layout, viewport_y, scroll);
+        if target != self.project_drag.source() {
+            self.project_drag_pending = None;
+        }
+        target
+    }
+
+    /// Source and target rows for the drag indicators, or `None` while no drag
+    /// is active or its reveal delay hasn't elapsed.
+    pub fn project_drag_indicators(&self) -> Option<(usize, usize)> {
+        if self.project_drag_pending.is_some() {
+            return None;
+        }
+        self.project_drag.source().zip(self.project_drag.target())
+    }
+
+    /// Reveal the drag indicators once the press has been held long enough.
+    /// Returns whether this tick made them appear, so the caller can redraw —
+    /// holding still produces no events of its own.
+    pub fn tick_project_drag(&mut self, now: Instant) -> bool {
+        let Some(pending) = self.project_drag_pending else {
+            return false;
+        };
+        if now.saturating_duration_since(pending) >= PROJECT_DRAG_INDICATOR_DELAY {
+            self.project_drag_pending = None;
+            return true;
+        }
+        false
     }
 
     /// Whether `row` falls on a group divider header (`@local` / `@host`).
