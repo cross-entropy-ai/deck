@@ -622,7 +622,8 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
         return fx;
     };
     match action {
-        NewSessionAction::OpenLocal | NewSessionAction::Close => unreachable!("handled above"),
+        // Handled above, before the overlay guard.
+        NewSessionAction::OpenLocal | NewSessionAction::Close => {}
         NewSessionAction::InputKey(key) => {
             use crate::new_session::PickerFocus;
             match ns.focus {
@@ -701,21 +702,19 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
 fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffect {
     let mut fx = SideEffect::default();
     match action {
-        AddRemoteAction::InputKey(key) => {
-            if let Some(ar) = state.overlay.add_remote.as_mut() {
-                ar.picker.input.input(key);
-                ar.refilter();
-                ar.picker.error = None;
-            }
-        }
-        AddRemoteAction::Prev => {
-            if let Some(ar) = state.overlay.add_remote.as_mut() {
-                ar.picker.step(-1);
-            }
-        }
-        AddRemoteAction::Next => {
-            if let Some(ar) = state.overlay.add_remote.as_mut() {
-                ar.picker.step(1);
+        // The input/navigation arms all edit the open picker; one guard for all.
+        AddRemoteAction::InputKey(_) | AddRemoteAction::Prev | AddRemoteAction::Next => {
+            let Some(ar) = state.overlay.add_remote.as_mut() else {
+                return fx;
+            };
+            match action {
+                AddRemoteAction::InputKey(key) => {
+                    ar.picker.input.input(key);
+                    ar.refilter();
+                    ar.picker.error = None;
+                }
+                AddRemoteAction::Prev => ar.picker.step(-1),
+                _ => ar.picker.step(1),
             }
         }
         AddRemoteAction::Close => {

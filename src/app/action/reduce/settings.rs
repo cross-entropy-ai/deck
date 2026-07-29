@@ -55,7 +55,7 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             fx.save_config();
         }
         SettingsAction::OpenAddRemotePicker => fx.push(Effect::OpenAddRemotePicker),
-        // ponytail: one aggregate row for every host — it opens the first host
+        // One aggregate row for every host — it opens the first host
         // that has forwards (else the first host); per-host editing stays on
         // each `@host` divider's `[⇄N]` badge button.
         SettingsAction::OpenPortForwards => {
@@ -134,52 +134,46 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         SettingsAction::ExcludeClose => {
             state.overlay.exclude_editor = None;
         }
-        SettingsAction::ExcludeNext => {
-            if let Some(ref mut editor) = state.overlay.exclude_editor {
-                if !editor.adding && !state.prefs.exclude_patterns.is_empty() {
-                    editor.selected =
-                        step_clamped(editor.selected, state.prefs.exclude_patterns.len(), 1);
-                }
-            }
-        }
-        SettingsAction::ExcludePrev => {
-            if let Some(ref mut editor) = state.overlay.exclude_editor {
-                if !editor.adding {
-                    editor.selected =
-                        step_clamped(editor.selected, state.prefs.exclude_patterns.len(), -1);
-                }
-            }
-        }
-        SettingsAction::ExcludeStartAdd | SettingsAction::ExcludeCancelAdd => {
-            if let Some(ref mut editor) = state.overlay.exclude_editor {
-                editor.adding = matches!(action, SettingsAction::ExcludeStartAdd);
-                editor.reset_input();
-                editor.error = None;
-            }
-        }
-        SettingsAction::ExcludeDelete => {
-            if let Some(ref mut editor) = state.overlay.exclude_editor {
-                if !editor.adding && !state.prefs.exclude_patterns.is_empty() {
-                    state.prefs.exclude_patterns.remove(editor.selected);
-                    if editor.selected >= state.prefs.exclude_patterns.len() {
-                        editor.selected = state.prefs.exclude_patterns.len().saturating_sub(1);
+        // Every remaining action edits the open exclude editor; one guard for all.
+        other => {
+            let Some(editor) = state.overlay.exclude_editor.as_mut() else {
+                return fx;
+            };
+            match other {
+                SettingsAction::ExcludeNext => {
+                    if !editor.adding && !state.prefs.exclude_patterns.is_empty() {
+                        editor.selected =
+                            step_clamped(editor.selected, state.prefs.exclude_patterns.len(), 1);
                     }
-                    fx.save_config();
-                    fx.refresh_sessions();
                 }
-            }
-        }
-        SettingsAction::ExcludeInputKey(key) => {
-            if let Some(ref mut editor) = state.overlay.exclude_editor {
-                if editor.adding {
-                    editor.input.input(key);
+                SettingsAction::ExcludePrev => {
+                    if !editor.adding {
+                        editor.selected =
+                            step_clamped(editor.selected, state.prefs.exclude_patterns.len(), -1);
+                    }
+                }
+                SettingsAction::ExcludeStartAdd | SettingsAction::ExcludeCancelAdd => {
+                    editor.adding = matches!(other, SettingsAction::ExcludeStartAdd);
+                    editor.reset_input();
                     editor.error = None;
                 }
-            }
-        }
-        SettingsAction::ExcludeConfirm => {
-            if let Some(ref mut editor) = state.overlay.exclude_editor {
-                if editor.adding {
+                SettingsAction::ExcludeDelete => {
+                    if !editor.adding && !state.prefs.exclude_patterns.is_empty() {
+                        state.prefs.exclude_patterns.remove(editor.selected);
+                        if editor.selected >= state.prefs.exclude_patterns.len() {
+                            editor.selected = state.prefs.exclude_patterns.len().saturating_sub(1);
+                        }
+                        fx.save_config();
+                        fx.refresh_sessions();
+                    }
+                }
+                SettingsAction::ExcludeInputKey(key) => {
+                    if editor.adding {
+                        editor.input.input(key);
+                        editor.error = None;
+                    }
+                }
+                SettingsAction::ExcludeConfirm if editor.adding => {
                     let pattern = editor.input_str().trim().to_string();
                     if pattern.is_empty() {
                         editor.adding = false;
@@ -201,6 +195,7 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
                         fx.refresh_sessions();
                     }
                 }
+                _ => {}
             }
         }
     }

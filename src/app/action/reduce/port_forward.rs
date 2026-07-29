@@ -25,11 +25,20 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
             state.overlay.port_forward = None;
         }
 
-        PfAction::FocusUp => {
-            // Back-step with no upper bound to consult; `saturating_sub` is the
-            // whole story, so this stays inline rather than faking a `len`.
-            if let Some(o) = state.overlay.port_forward.as_mut() {
-                o.selected = o.selected.saturating_sub(1);
+        // These three need the open overlay and nothing else; one guard for all.
+        PfAction::FocusUp | PfAction::AddOpen | PfAction::AddCancel => {
+            let Some(o) = state.overlay.port_forward.as_mut() else {
+                return fx;
+            };
+            match action {
+                // Back-step with no upper bound to consult; `saturating_sub` is
+                // the whole story, so this stays inline rather than faking a `len`.
+                PfAction::FocusUp => o.selected = o.selected.saturating_sub(1),
+                PfAction::AddOpen => {
+                    o.add_form = Some(PfAddForm::default_for(ForwardMode::Local));
+                    o.status = None;
+                }
+                _ => o.add_form = None,
             }
         }
         PfAction::FocusDown => {
@@ -39,35 +48,6 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
                 if let Some(o) = state.overlay.port_forward.as_mut() {
                     o.selected = step_clamped(o.selected, len, 1);
                 }
-            }
-        }
-
-        PfAction::AddOpen => {
-            if let Some(o) = state.overlay.port_forward.as_mut() {
-                o.add_form = Some(PfAddForm::default_for(ForwardMode::Local));
-                o.status = None;
-            }
-        }
-        PfAction::AddCancel => {
-            if let Some(o) = state.overlay.port_forward.as_mut() {
-                o.add_form = None;
-            }
-        }
-        PfAction::AddFieldNext | PfAction::AddFieldPrev => {
-            let delta = if matches!(action, PfAction::AddFieldPrev) {
-                -1
-            } else {
-                1
-            };
-            if let Some(f) = pf_add_form(state) {
-                f.focus = cycle_option(pf_field_order(f.mode), f.focus, delta);
-            }
-        }
-        PfAction::AddModeLeft => set_mode(state, -1),
-        PfAction::AddModeRight => set_mode(state, 1),
-        PfAction::AddInputKey(key) => {
-            if let Some(f) = pf_add_form(state) {
-                handle_pf_input(f, key);
             }
         }
 
@@ -82,6 +62,27 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
             message,
         } => {
             fx.merge(apply_pf_task_result(state, &host, &op, ok, &message));
+        }
+
+        // Every remaining action edits the open add form; one guard for all.
+        other => {
+            let Some(f) = pf_add_form(state) else {
+                return fx;
+            };
+            match other {
+                PfAction::AddFieldNext | PfAction::AddFieldPrev => {
+                    let delta = if matches!(other, PfAction::AddFieldPrev) {
+                        -1
+                    } else {
+                        1
+                    };
+                    f.focus = cycle_option(pf_field_order(f.mode), f.focus, delta);
+                }
+                PfAction::AddModeLeft => set_mode(f, -1),
+                PfAction::AddModeRight => set_mode(f, 1),
+                PfAction::AddInputKey(key) => handle_pf_input(f, key),
+                _ => {}
+            }
         }
     }
     fx
@@ -111,19 +112,17 @@ fn pf_add_form(state: &mut AppState) -> Option<&mut PfAddForm> {
     state.overlay.port_forward.as_mut()?.add_form.as_mut()
 }
 
-fn set_mode(state: &mut AppState, delta: i32) {
-    if let Some(f) = pf_add_form(state) {
-        let modes = [
-            ForwardMode::Local,
-            ForwardMode::Remote,
-            ForwardMode::Dynamic,
-        ];
-        f.mode = cycle_option(&modes, f.mode, delta);
-        if matches!(f.mode, ForwardMode::Dynamic)
-            && matches!(f.focus, PfField::TargetHost | PfField::TargetPort)
-        {
-            f.focus = PfField::ListenPort;
-        }
+fn set_mode(f: &mut PfAddForm, delta: i32) {
+    let modes = [
+        ForwardMode::Local,
+        ForwardMode::Remote,
+        ForwardMode::Dynamic,
+    ];
+    f.mode = cycle_option(&modes, f.mode, delta);
+    if matches!(f.mode, ForwardMode::Dynamic)
+        && matches!(f.focus, PfField::TargetHost | PfField::TargetPort)
+    {
+        f.focus = PfField::ListenPort;
     }
 }
 

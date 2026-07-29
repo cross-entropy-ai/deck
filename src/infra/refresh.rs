@@ -17,7 +17,7 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread;
 
-use crate::exclude::{self, ExcludePattern};
+use crate::exclude;
 use crate::system::tmux::TmuxSystem;
 use crate::tmux;
 
@@ -146,7 +146,7 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
     // would be churn. The empty initial cache is the compiled form of no
     // patterns.
     let mut cached_raw: Vec<String> = Vec::new();
-    let mut compiled: Vec<ExcludePattern> = Vec::new();
+    let mut compiled: Vec<regex::Regex> = Vec::new();
 
     while let Ok(mut req) = req_rx.recv() {
         // Coalesce: pick up the latest queued request before doing
@@ -195,7 +195,7 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
 
 fn collect_local(
     req: &RefreshRequest,
-    compiled: &[ExcludePattern],
+    compiled: &[regex::Regex],
 ) -> (String, Vec<SnapshotRow>, Vec<crate::agent::DetectedAgent>) {
     let current = if req.slave_tty.is_empty() {
         tmux::current_session()

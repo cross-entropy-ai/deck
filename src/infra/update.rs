@@ -107,6 +107,10 @@ fn parse_release_json(body: &str) -> Result<String, String> {
     #[derive(Deserialize)]
     struct Release {
         tag_name: String,
+        // Unused, but kept required: a body without it isn't a release payload,
+        // and dropping it would silently relax what counts as one.
+        #[allow(dead_code)]
+        html_url: String,
     }
     let r: Release = serde_json::from_str(body).map_err(|e| format!("parse: {}", e))?;
     Ok(r.tag_name.trim_start_matches('v').to_string())

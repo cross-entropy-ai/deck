@@ -91,8 +91,6 @@ pub enum SidebarTab {
 /// Frame-rate options as `(fps, settings label)`. Cycling order — the array is
 /// a cycle, so it's rotated to put the default first and `option_row` can fall
 /// back to row 0.
-// ponytail: cycling is the only consumer of the order, so rotating the array is
-// invisible; nothing renders these as a list.
 pub const FRAME_RATE_LIMIT_OPTIONS: [(u16, &str); 4] = [
     (30, "Smooth 30 FPS"),
     (2, "Power Saver 2 FPS"),
@@ -145,7 +143,13 @@ pub fn step_clamped(current: usize, len: usize, direction: i32) -> usize {
     let Some(last) = len.checked_sub(1) else {
         return 0;
     };
-    current.saturating_add_signed(direction as isize).min(last)
+    if direction >= 0 {
+        current.saturating_add(direction as usize).min(last)
+    } else {
+        // Backward steps don't clamp to `last`: an already out-of-range cursor
+        // walks back into range rather than jumping there.
+        current.saturating_sub(direction.unsigned_abs() as usize)
+    }
 }
 
 /// Apply a scroll `delta` to `current`, clamped to `0..=max`. Shared by the
@@ -918,6 +922,8 @@ impl AppState {
         let section_idx = built.layout.header_at_y(viewport_y, scroll)?;
         let meta = built.sections.get(section_idx)?;
         if meta.divider {
+            // Returns the `Option<String>` host the mouse layer's collapse keys
+            // still speak; becomes a plain `LaneId` once those move over.
             Some(crate::system::tmux::TmuxSystem::host_of(&meta.lane).map(str::to_string))
         } else {
             None

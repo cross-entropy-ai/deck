@@ -232,10 +232,14 @@ pub fn draw_theme_picker(
     selected_idx: usize,
     theme: &Theme,
 ) {
-    // ponytail: the 12-col floor now applies to any short list, not just an
-    // empty one — the only caller passes every theme name, whose widest is 24.
-    let width =
-        max_width(theme_names.iter().copied(), 12).min(area.width.saturating_sub(4) as usize) + 6;
+    // Not `max_width`: 12 is the empty-list default here, not a floor.
+    let width = theme_names
+        .iter()
+        .map(|name| UnicodeWidthStr::width(*name))
+        .max()
+        .unwrap_or(12)
+        .min(area.width.saturating_sub(4) as usize)
+        + 6;
     let popup_width = (width as u16).min(area.width.saturating_sub(2)).max(12);
     let popup_height = clamp_popup_height(area, theme_names.len() as u16 + 2, 3);
     let popup_area = centered_rect(area, popup_width, popup_height);

@@ -116,7 +116,9 @@ pub(super) fn wrap_markdown(text: &str, width: usize) -> Vec<Vec<MdRun>> {
                     line_w = 0;
                 }
                 if word_w > width {
-                    // A single word longer than the line: hard-split it.
+                    // A single word longer than the line: hard-split it. Not
+                    // `split_at_width` — that walks a `&str`; this carries a
+                    // per-char style alongside each char.
                     for (c, st) in word.drain(..) {
                         let w = cw(c);
                         if line_w > 0 && line_w + w > width {

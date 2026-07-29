@@ -25,16 +25,15 @@ pub enum AgentKind {
     Codex,
 }
 
-/// One tmux pane's identity, fed to `detect_agents`. `session`/`window`/
-/// `pane` are display fields (`window` is the window *name*); `pane_id` is
-/// the stable `%N` switch handle — names and indices both churn as
-/// panes/windows change, so only `pane_id` is a safe target.
+/// One tmux pane's identity, fed to `detect_agents`. `session`/`window` are
+/// display fields (`window` is the window *name*); `pane_id` is the stable
+/// `%N` switch handle — names and indices both churn as panes/windows change,
+/// so only `pane_id` is a safe target.
 #[derive(Debug, Clone)]
 pub struct PaneInfo {
     pub pid: u32,
     pub session: String,
     pub window: String,
-    pub pane: String,
     pub pane_id: String,
 }
 
@@ -104,10 +103,17 @@ const CLAUDE_INTERRUPT_HINT: &str = "esc to interrupt";
 /// The two spellings of the "still going" ellipsis Claude Code prints.
 const ELLIPSIS: [&str; 2] = ["\u{2026}", "..."];
 
-// ponytail: the four "working" tells below are plain `str` matching (ASCII
-// digits, ASCII case-folding, `char::is_alphanumeric` for "word") rather than a
-// regex engine — Claude Code's status lines are ASCII verbs plus a fixed glyph
-// set, so full Unicode digit/case classes buy nothing here.
+// The four "working" tells below are plain `str` matching rather than a regex
+// engine, which narrows three character classes. Claude Code's status lines are
+// ASCII verbs plus a fixed glyph set, so none of the narrowings are reachable
+// from what it prints — don't "restore" the Unicode classes thinking it's a bug:
+// - `\d` -> `is_ascii_digit`: "… (٥s" / "… (５m" no longer read as timer tails.
+// - `(?i)` -> `to_ascii_lowercase`: "ChecKing types…" (U+212A KELVIN SIGN,
+//   which case-folds to `k`) no longer reads as a tool line.
+// - `\w` -> `is_alphanumeric() || '_'`: those differ on `\p{No}`/`\p{Nl}`
+//   (alphanumeric, not `\w`) and `\p{M}`/`\p{Pc}`/Join_Control (`\w`, not
+//   alphanumeric), so "② Crunching…" and "Reading² files…" no longer read as
+//   working, while a leading ZWJ ("\u{200d}Crunching…") now does.
 
 /// Spinner progress tail with a live timer: "… (5m 21s", "… (30s)". Backup
 /// tell for spinner lines whose interrupt hint is truncated/wrapped off.
@@ -432,12 +438,11 @@ mod tests {
         assert_eq!(classify(""), None);
     }
 
-    fn pane(pid: u32, session: &str, window: &str, pane: &str) -> PaneInfo {
+    fn pane(pid: u32, session: &str, window: &str) -> PaneInfo {
         PaneInfo {
             pid,
             session: session.to_string(),
             window: window.to_string(),
-            pane: pane.to_string(),
             pane_id: format!("%{pid}"),
         }
     }
@@ -459,13 +464,13 @@ mod tests {
 600 500 vim
 700 1 /Users/me/.cursor/native-binary/claude --output-format stream-json";
         let panes = [
-            pane(100, "deck", "main", "0"),
-            pane(300, "work", "agents", "1"),
-            pane(500, "work", "agents", "2"),
+            pane(100, "deck", "main"),
+            pane(300, "work", "agents"),
+            pane(500, "work", "agents"),
         ];
         let agents = detect_agents(&panes, ps);
         assert_eq!(agents.len(), 2);
-        // pane 100 -> claude, located at its session/window-name/pane, with the
+        // pane 100 -> claude, located at its session/window-name, with the
         // stable pane id carried for switching.
         assert_eq!(agents[0].kind, AgentKind::Claude);
         assert_eq!(agents[0].location(), "deck:main");
@@ -482,7 +487,7 @@ mod tests {
         // Some setups exec the agent as the pane's command (pane_pid IS the
         // agent), with no intervening shell.
         let ps = "800 1 claude\n900 1 -zsh";
-        let agents = detect_agents(&[pane(800, "s", "0", "0"), pane(900, "s", "1", "0")], ps);
+        let agents = detect_agents(&[pane(800, "s", "0"), pane(900, "s", "1")], ps);
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].kind, AgentKind::Claude);
     }
@@ -490,7 +495,7 @@ mod tests {
     #[test]
     fn detect_agents_empty_inputs() {
         assert!(detect_agents(&[], "").is_empty());
-        assert!(detect_agents(&[pane(1, "s", "0", "0")], "").is_empty());
+        assert!(detect_agents(&[pane(1, "s", "0")], "").is_empty());
     }
 
     #[test]

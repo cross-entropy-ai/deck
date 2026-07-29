@@ -169,6 +169,9 @@ impl AppState {
             |layout, _sections, lane_id| {
                 // `entries` is grouped by host and contiguous, so filtering by
                 // the lane's host yields each section's rows in flat-index order.
+                // Rows still key on `Option<String>` host, so the lane is mapped
+                // back through tmux here; goes away when `SessionEntry.host`
+                // becomes a `LaneId` (see CLAUDE.md).
                 let host = crate::system::tmux::TmuxSystem::host_of(lane_id);
                 for e in self.entries.iter().filter(|e| e.host.as_deref() == host) {
                     layout.push_row_auto(self.session_item(e, view_mode));
@@ -363,6 +366,8 @@ impl AppState {
             },
             &self.collapsed_agent_sections,
             |layout, _sections, lane_id| {
+                // Same lane -> host mapping as `sidebar_layout`, for the same
+                // reason: `agent_entries` still key on `Option<String>` host.
                 let host = crate::system::tmux::TmuxSystem::host_of(lane_id);
                 for entry in self
                     .agent_entries

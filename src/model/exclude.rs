@@ -2,14 +2,11 @@
 //! test session names against them. Drives `exclude_patterns` from the
 //! config, but is pure filtering logic with no persistence concern.
 
-/// A compiled exclude pattern. Globs are translated to an equivalent anchored
-/// regex, so matching is one engine for both syntaxes.
-pub struct ExcludePattern(regex::Regex);
-
-/// Compile raw pattern strings into ExcludePattern values.
-/// Patterns wrapped in `/…/` are treated as regex; others as glob.
-/// Invalid regexes are silently skipped.
-pub fn compile_patterns(raw: &[String]) -> Vec<ExcludePattern> {
+/// Compile raw pattern strings into regexes. Patterns wrapped in `/…/` are
+/// treated as regex; others as glob, translated to an equivalent anchored
+/// regex so matching is one engine for both syntaxes. Invalid regexes are
+/// silently skipped.
+pub fn compile_patterns(raw: &[String]) -> Vec<regex::Regex> {
     raw.iter()
         .filter_map(
             |p| match p.strip_prefix('/').and_then(|s| s.strip_suffix('/')) {
@@ -17,13 +14,12 @@ pub fn compile_patterns(raw: &[String]) -> Vec<ExcludePattern> {
                 None => regex::Regex::new(&glob_to_regex(p)).ok(),
             },
         )
-        .map(ExcludePattern)
         .collect()
 }
 
 /// Returns true if the session name matches any exclude pattern.
-pub fn session_excluded(name: &str, patterns: &[ExcludePattern]) -> bool {
-    patterns.iter().any(|p| p.0.is_match(name))
+pub fn session_excluded(name: &str, patterns: &[regex::Regex]) -> bool {
+    patterns.iter().any(|p| p.is_match(name))
 }
 
 /// Translate a glob (`*` = any sequence, `?` = single char) into a whole-string

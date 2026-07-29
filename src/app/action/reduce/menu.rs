@@ -38,14 +38,17 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
             open(state, MenuKind::HostDivider { host }, x, y)
         }
         MenuAction::OpenLocalDivider { x, y } => open(state, MenuKind::LocalDivider, x, y),
-        MenuAction::Next => {
-            if let Some(ref mut menu) = state.overlay.context_menu {
-                menu.selected = menu.next_enabled();
-            }
-        }
-        MenuAction::Prev => {
-            if let Some(ref mut menu) = state.overlay.context_menu {
-                menu.selected = menu.prev_enabled();
+        // The highlight moves only while a menu is open; one guard for all three.
+        MenuAction::Next | MenuAction::Prev | MenuAction::Hover(_) => {
+            let Some(menu) = state.overlay.context_menu.as_mut() else {
+                return fx;
+            };
+            match action {
+                MenuAction::Next => menu.selected = menu.next_enabled(),
+                MenuAction::Prev => menu.selected = menu.prev_enabled(),
+                // Hovering a greyed item doesn't move the highlight onto it.
+                MenuAction::Hover(idx) if menu.is_enabled(idx) => menu.selected = idx,
+                _ => {}
             }
         }
         MenuAction::Confirm => {
@@ -106,14 +109,6 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
         }
         MenuAction::Dismiss => {
             state.overlay.context_menu = None;
-        }
-        MenuAction::Hover(idx) => {
-            if let Some(ref mut menu) = state.overlay.context_menu {
-                // Hovering a greyed item doesn't move the highlight onto it.
-                if menu.is_enabled(idx) {
-                    menu.selected = idx;
-                }
-            }
         }
         // Resolved in dispatch (Hover + Confirm); never reaches the reducer.
         MenuAction::ClickItem(_) => {}

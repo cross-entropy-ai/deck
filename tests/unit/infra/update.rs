@@ -51,13 +51,13 @@ fn parse_release_strips_v_prefix() {
 
 #[test]
 fn parse_release_without_v_prefix_ok() {
-    let body = r#"{"tag_name":"0.2.0"}"#;
+    let body = r#"{"tag_name":"0.2.0","html_url":"https://example.com/tag"}"#;
     assert_eq!(parse_release_json(body).unwrap(), "0.2.0");
 }
 
 #[test]
 fn parse_release_missing_field_errors() {
-    let body = r#"{"html_url":"https://example.com/tag"}"#;
+    let body = r#"{"tag_name":"v0.2.0"}"#;
     assert!(parse_release_json(body).is_err());
 }
 

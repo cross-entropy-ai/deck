@@ -7,10 +7,9 @@ use crate::infra::agent::PaneInfo;
 /// `window_name` (not `window_index`) is the *display* window field — the
 /// Agents tab shows the window's name; switching still targets the stable
 /// `pane_id`, so a name (possibly with spaces) here is cosmetic only.
-pub const PANE_FORMAT: &str =
-    "#{pane_pid}\t#{session_name}\t#{window_name}\t#{pane_index}\t#{pane_id}";
+pub const PANE_FORMAT: &str = "#{pane_pid}\t#{session_name}\t#{window_name}\t#{pane_id}";
 
-/// Parse `tmux list-panes -F '#{pane_pid}\t#{session_name}\t#{window_name}\t#{pane_index}'`
+/// Parse `tmux list-panes -F '#{pane_pid}\t#{session_name}\t#{window_name}\t#{pane_id}'`
 /// output into `PaneInfo`s. Shared by the local and ssh gathering paths.
 pub fn parse_panes(raw: &str) -> Vec<PaneInfo> {
     raw.lines()
@@ -21,7 +20,6 @@ pub fn parse_panes(raw: &str) -> Vec<PaneInfo> {
                 pid,
                 session: f.next()?.to_string(),
                 window: f.next()?.to_string(),
-                pane: f.next()?.to_string(),
                 pane_id: f.next()?.to_string(),
             })
         })
@@ -36,7 +34,7 @@ mod tests {
     fn parse_panes_reads_tab_fields() {
         // The window field now carries `#{window_name}`; names can contain
         // spaces and only `\t` separates fields, so a spaced name parses whole.
-        let raw = "56578\tdeck\tnvim\t0\t%240\n74037\ttpu-spot\tbuild server\t1\t%243\nbad_line";
+        let raw = "56578\tdeck\tnvim\t%240\n74037\ttpu-spot\tbuild server\t%243\nbad_line";
         let got = parse_panes(raw);
         assert_eq!(got.len(), 2);
         assert_eq!(got[0].pid, 56578);
@@ -45,7 +43,6 @@ mod tests {
         assert_eq!(got[0].pane_id, "%240");
         assert_eq!(got[1].pid, 74037);
         assert_eq!(got[1].window, "build server");
-        assert_eq!(got[1].pane, "1");
         assert_eq!(got[1].pane_id, "%243");
     }
 }

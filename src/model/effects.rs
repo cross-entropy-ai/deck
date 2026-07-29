@@ -70,8 +70,6 @@ impl SideEffect {
         self.effects.push(effect);
     }
 
-    // ponytail: only the high-traffic effects get a named pusher; everything
-    // else is pushed as `fx.push(Effect::X(..))` at its one or two call sites.
     pub fn save_config(&mut self) {
         self.push(Effect::SaveConfig);
     }

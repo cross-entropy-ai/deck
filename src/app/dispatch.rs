@@ -876,7 +876,7 @@ impl App {
         // port) is already configured, before bothering ssh — else the user
         // sees a cryptic "bind: Address already in use", or a silent no-op when
         // ssh treats it as idempotent.
-        // ponytail: not `state.remote_config()` — `overlay` holds a live &mut
+        // Not `state.remote_config()` — `overlay` holds a live &mut
         // into `self.state`, so only a disjoint field borrow compiles here.
         let already_exists = self
             .state
