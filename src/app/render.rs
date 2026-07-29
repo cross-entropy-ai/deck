@@ -238,13 +238,7 @@ impl App {
             };
 
             if let Some(screen) = background_screen {
-                bridge::render_screen(
-                    screen,
-                    main_inner,
-                    frame.buffer_mut(),
-                    theme.text,
-                    theme.bg,
-                );
+                bridge::render_screen(screen, main_inner, frame.buffer_mut(), theme.text, theme.bg);
                 if !sidebar_active && warning_state.is_none() {
                     bridge::set_cursor(frame, screen, main_inner);
                 }

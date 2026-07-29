@@ -263,7 +263,7 @@ fn encode_modified_special(code: KeyCode, mods: KeyModifiers) -> Option<Vec<u8>>
 
 /// F1-F4 are SS3 + letter (CSI `1;mod` + letter once modified); F5-F12 are
 /// CSI code + `~`, over a non-contiguous code table (no 16, no 22).
-const F1_4_LETTERS: [u8; 4] = [b'P', b'Q', b'R', b'S'];
+const F1_4_LETTERS: [u8; 4] = *b"PQRS";
 const F5_12_CODES: [u8; 8] = [15, 17, 18, 19, 20, 21, 23, 24];
 
 fn encode_modified_f_key(n: u8, m: u8) -> Vec<u8> {

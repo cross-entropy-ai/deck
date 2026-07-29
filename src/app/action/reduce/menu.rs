@@ -61,7 +61,9 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                 MenuKind::Session { focus, .. } => {
                     state.focused = focus.0;
                     match selected_item {
-                        Some(MenuItem::Rename) => fx.merge(apply_action(state, Action::StartRename)),
+                        Some(MenuItem::Rename) => {
+                            fx.merge(apply_action(state, Action::StartRename))
+                        }
                         Some(MenuItem::Close) => fx.merge(apply_action(state, Action::KillSession)),
                         _ => {}
                     }

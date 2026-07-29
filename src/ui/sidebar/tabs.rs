@@ -8,9 +8,9 @@ use unicode_width::UnicodeWidthStr;
 use crate::geometry::{tab_bar_layout, truncate, TAB_OVERFLOW_MARKER, TAB_SEPARATOR};
 
 use super::super::text::pad_line;
-use crate::state::{SessionEntry, SessionEntryKind};
 use super::container::draw_sidebar_container;
 use super::{menu_span, SidebarRenderCtx, MENU_LABEL};
+use crate::state::{SessionEntry, SessionEntryKind};
 
 pub(super) struct TabsProps<'a> {
     pub sessions: &'a [SessionEntry],

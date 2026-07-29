@@ -47,7 +47,10 @@ fn default_frame_rate_is_omitted_from_saved_file() {
     let path = std::env::temp_dir().join("deck-frl-default.yaml");
     Config::default().save_to(&path).unwrap();
     let raw = fs::read_to_string(&path).unwrap();
-    assert!(!raw.contains("frame_rate_limit"), "default should not persist");
+    assert!(
+        !raw.contains("frame_rate_limit"),
+        "default should not persist"
+    );
     let _ = fs::remove_file(&path);
 }
 
@@ -72,7 +75,10 @@ fn load_prunes_a_persisted_default_frame_rate() {
     fs::write(&path, "frame_rate_limit: 30\nshow_borders: true\n").unwrap();
     let _ = Config::load_from(&path);
     let raw = fs::read_to_string(&path).unwrap();
-    assert!(!raw.contains("frame_rate_limit"), "stored default should be pruned");
+    assert!(
+        !raw.contains("frame_rate_limit"),
+        "stored default should be pruned"
+    );
     let _ = fs::remove_file(&path);
 }
 

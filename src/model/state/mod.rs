@@ -59,8 +59,7 @@ pub const NARROW_LAYOUT_MAX_WIDTH: u16 = 80;
 /// drag affordances at users who were only switching sessions. Crossing to
 /// another row still shows them at once — see
 /// [`AppState::update_project_drag`].
-pub const PROJECT_DRAG_INDICATOR_DELAY: std::time::Duration =
-    std::time::Duration::from_millis(500);
+pub const PROJECT_DRAG_INDICATOR_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
 
 // --- Enums ---
 

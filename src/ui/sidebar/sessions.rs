@@ -36,9 +36,9 @@ fn recolor_agent_dot(
     // meaning independently, so the status remains readable without color.
     let color = match status {
         AgentStatus::Working => theme.green,
-        AgentStatus::Idle => theme.muted,     // neutral, not a failure
+        AgentStatus::Idle => theme.muted, // neutral, not a failure
         AgentStatus::Waiting => theme.yellow, // needs the user
-        AgentStatus::Unknown => theme.subtle,  // unknown, but still legible
+        AgentStatus::Unknown => theme.subtle, // unknown, but still legible
     };
     let Some(line) = text.lines.first_mut() else {
         return text;

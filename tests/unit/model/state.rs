@@ -1170,7 +1170,11 @@ fn project_drag_indicators_wait_for_the_hold_delay() {
     // so the `↕`/`▸` markers must not flash on an ordinary click-to-switch.
     let mut state = make_state(LayoutMode::Horizontal, false, 100, 24);
     let t0 = Instant::now();
-    assert_eq!(state.start_project_drag(3, t0), Some(0), "grabbed first card");
+    assert_eq!(
+        state.start_project_drag(3, t0),
+        Some(0),
+        "grabbed first card"
+    );
     assert!(
         state.project_drag_indicators().is_none(),
         "no indicators on press"
