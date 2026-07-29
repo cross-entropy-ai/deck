@@ -92,7 +92,8 @@ fn persist_session_order_with(runner: &dyn CommandRunner, order: &[String]) {
     }
     // Batch into a single tmux invocation: `set-option -t a @deck_order 0 ;
     // set-option -t b @deck_order 1 ; ...` (same `;`-chaining as apply_theme).
-    let args = order_set_option_args(order, ";", exact_target);
+    // Bare names, not `exact_target` — see `order_set_option_args`.
+    let args = order_set_option_args(order, ";", |name| name.to_string());
     let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
     let _ = runner.run("tmux", &args_ref, TMUX_TIMEOUT);
 }

@@ -32,6 +32,16 @@ pub(crate) fn exact_target(name: &str) -> String {
 /// differ — local passes a bare `;` and unquoted targets, remote passes a
 /// single-quoted `';'` and `shell_single_quote`s each target so the remote
 /// shell forwards both to tmux intact. Empty `order` yields no args.
+///
+/// Targets here are **bare names, not [`exact_target`]**: tmux's option
+/// commands resolve `-t` through a different path than `kill-session` /
+/// `rename-session`, and older servers reject the `=` prefix outright
+/// (tmux 3.4 answers `set-option -t '=work' …` with `no such session:
+/// =work`, while `has-session`/`rename-session -t '=work'` are fine). That
+/// silently dropped every rank on such a host, so a remote reorder never
+/// stuck. Dropping `=` is safe for this call: tmux tries exact match first
+/// and these names come from the live session list, so an existing name
+/// always wins over a prefix/fnmatch sibling.
 pub(crate) fn order_set_option_args(
     order: &[String],
     separator: &str,

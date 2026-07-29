@@ -462,9 +462,8 @@ fn persist_session_order_with(runner: &dyn CommandRunner, host: &str, order: &[S
     // separator is single-quoted (`';'`) to reach tmux as its command
     // separator, not split the shell command; names are quoted likewise.
     let mut argv: Vec<String> = vec!["tmux".to_string()];
-    argv.extend(order_set_option_args(order, "';'", |name| {
-        shell_single_quote(&exact_target(name))
-    }));
+    // Bare names, not `exact_target` — see `order_set_option_args`.
+    argv.extend(order_set_option_args(order, "';'", shell_single_quote));
     let argv_ref: Vec<&str> = argv.iter().map(String::as_str).collect();
     let _ = run_ssh(runner, host, &argv_ref);
 }

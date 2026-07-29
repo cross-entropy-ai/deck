@@ -115,9 +115,12 @@ fn persist_session_order_chains_quoted_set_options_over_ssh() {
     let calls = runner.calls();
     assert_eq!(calls.len(), 1, "one ssh hop");
     // Names and the `;` separator are single-quoted so the remote shell
-    // passes them literally to tmux (tmux interprets the `;`).
+    // passes them literally to tmux (tmux interprets the `;`). The names stay
+    // BARE inside those quotes — no `=` exact-match prefix, which tmux 3.4
+    // rejects for option commands (`no such session: =a`), silently dropping
+    // every rank so a remote reorder never stuck.
     assert!(
-        calls[0].contains("set-option -t '=a' @deck_order 0 ';' set-option -t '=b' @deck_order 1"),
+        calls[0].contains("set-option -t 'a' @deck_order 0 ';' set-option -t 'b' @deck_order 1"),
         "got: {}",
         calls[0]
     );

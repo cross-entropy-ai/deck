@@ -123,9 +123,12 @@ fn persist_session_order_batches_set_option_calls() {
     persist_session_order_with(&runner, &["alpha".to_string(), "beta".to_string()]);
     let calls = runner.calls();
     assert_eq!(calls.len(), 1, "one batched tmux invocation");
+    // Bare names, NOT `=alpha`: tmux's option commands reject the exact-match
+    // prefix on older servers (3.4 answers `no such session: =alpha`), which
+    // silently dropped every rank. See `order_set_option_args`.
     assert_eq!(
         calls[0],
-        "set-option -t =alpha @deck_order 0 ; set-option -t =beta @deck_order 1"
+        "set-option -t alpha @deck_order 0 ; set-option -t beta @deck_order 1"
     );
 }
 
