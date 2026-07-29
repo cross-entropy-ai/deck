@@ -65,7 +65,7 @@ deck runs two panes. The **sidebar** lists your tmux sessions. The **main pane**
 Configuration lives in `~/.config/deck/config.json`.
 
 > [!TIP]
-> Click a session to switch, right-click for a context menu (rename, kill, new session), or drag the edge between panes to resize.
+> Click a session to switch, drag a project to reorder it, right-click to rename or close it, or drag the edge between panes to resize.
 
 ## Develop
 

@@ -107,6 +107,10 @@ fn default_bindings_present() {
         Some(Command::KillSession)
     );
     assert_eq!(
+        kb.lookup(&ev(KeyCode::Char('n'), KeyModifiers::NONE)),
+        Some(Command::NewLocalSession)
+    );
+    assert_eq!(
         kb.lookup(&ev(KeyCode::Char('s'), KeyModifiers::CONTROL)),
         Some(Command::ToggleFocus)
     );

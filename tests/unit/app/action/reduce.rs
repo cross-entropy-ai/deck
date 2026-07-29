@@ -391,7 +391,7 @@ fn local_divider_new_session_opens_local_picker() {
         Action::Menu(MenuAction::OpenLocalDivider { x: 0, y: 0 }),
     );
     let fx = apply_action(&mut state, Action::Menu(MenuAction::Confirm));
-    // "New session" on @local routes to the local picker, not a remote one.
+    // "New session" on the local divider routes to the local picker.
     assert!(fx.has_open_new_session_picker());
     assert!(fx.first_open_remote_new_session_picker().is_none());
     // Confirming closes the menu.
@@ -461,6 +461,23 @@ fn reorder_session_moves_up() {
     assert_eq!(state.focused, 0);
     // The new arrangement is persisted to tmux (@deck_order) so it
     // survives a restart.
+    assert!(fx.has_save_session_order());
+}
+
+#[test]
+fn drag_reorder_moves_directly_and_persists_once() {
+    let mut state = make_test_state(4);
+    state.focused = 0;
+    let fx = apply_action(&mut state, Action::ReorderSessionTo(3));
+    assert_eq!(
+        state
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["sess-1", "sess-2", "sess-3", "sess-0"]
+    );
+    assert_eq!(state.focused, 3);
     assert!(fx.has_save_session_order());
 }
 
@@ -557,6 +574,35 @@ fn reorder_remote_session_stops_at_host_boundary() {
     assert_eq!(remote_entries(&state)[1].name, "b");
     assert_eq!(remote_entries(&state)[2].name, "c");
     assert!(fx.first_save_remote_session_order().is_none());
+}
+
+#[test]
+fn drag_reorder_remote_moves_directly_within_host_only() {
+    let mut state = make_test_state(1);
+    set_remote(
+        &mut state,
+        vec![
+            remote_row("h", "a"),
+            remote_row("h", "b"),
+            remote_row("h", "c"),
+            remote_row("h2", "d"),
+        ],
+    );
+    state.focused = 1;
+    let fx = apply_action(&mut state, Action::ReorderSessionTo(3));
+    assert_eq!(
+        remote_entries(&state)
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["b", "c", "a", "d"]
+    );
+    assert_eq!(fx.first_save_remote_session_order(), Some("h"));
+
+    state.focused = 3;
+    let fx = apply_action(&mut state, Action::ReorderSessionTo(4));
+    assert!(fx.first_save_remote_session_order().is_none());
+    assert_eq!(state.entries[3].name, "a");
 }
 
 #[test]
@@ -1217,15 +1263,34 @@ fn host_divider_menu_has_new_session_first_and_remove_last() {
 }
 
 #[test]
-fn global_menu_has_no_new_session() {
+fn global_menu_starts_with_new_local_session() {
     use crate::state::{MenuItem, MenuKind};
-    // Creating a local session lives on the `@local` divider, so the
-    // blank-area right-click menu does not offer it.
-    assert!(!MenuKind::Global.items().contains(&MenuItem::NewSession));
+    assert_eq!(
+        MenuKind::Global.items().first().copied(),
+        Some(MenuItem::NewLocalSession)
+    );
 }
 
 #[test]
-fn placeholder_remote_menu_disables_rename_and_kill() {
+fn global_new_local_session_opens_local_picker() {
+    let mut state = make_test_state(1);
+    apply_action(
+        &mut state,
+        Action::Menu(MenuAction::OpenGlobal { x: 0, y: 0 }),
+    );
+    let fx = apply_action(&mut state, Action::Menu(MenuAction::Confirm));
+    assert!(fx.has_open_new_session_picker());
+}
+
+#[test]
+fn direct_new_local_session_action_opens_local_picker() {
+    let mut state = make_test_state(1);
+    let fx = apply_action(&mut state, Action::NewSession(NewSessionAction::OpenLocal));
+    assert!(fx.has_open_new_session_picker());
+}
+
+#[test]
+fn placeholder_remote_menu_disables_rename_and_close() {
     use crate::state::{session_menu_disabled, MenuItem, SessionEntryKind, UNREACHABLE_LABEL};
     let cases = [
         ("(no sessions)", SessionEntryKind::NoSessions),
@@ -1243,7 +1308,10 @@ fn placeholder_remote_menu_disables_rename_and_kill() {
             disabled.contains(&MenuItem::Rename),
             "{label}: Rename disabled"
         );
-        assert!(disabled.contains(&MenuItem::Kill), "{label}: Kill disabled");
+        assert!(
+            disabled.contains(&MenuItem::Close),
+            "{label}: Close disabled"
+        );
     }
 }
 
@@ -1273,15 +1341,15 @@ fn remote_session_with_siblings_disables_nothing() {
 }
 
 #[test]
-fn last_remote_session_disables_kill_only() {
+fn last_remote_session_disables_close_only() {
     use crate::state::{session_menu_disabled, MenuItem};
     // "solo" is the only session on its host; a session on a *different*
     // host doesn't count toward it.
     let sessions = vec![remote("h", "solo"), remote("other", "x")];
     let disabled = session_menu_disabled(&sessions[0], &sessions);
     assert!(
-        disabled.contains(&MenuItem::Kill),
-        "Kill disabled for last session"
+        disabled.contains(&MenuItem::Close),
+        "Close disabled for last session"
     );
     assert!(
         !disabled.contains(&MenuItem::Rename),

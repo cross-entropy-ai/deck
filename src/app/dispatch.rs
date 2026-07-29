@@ -42,6 +42,31 @@ impl App {
                 self.settle_focus_after_switch();
                 false
             }
+            Action::FinishProjectDrag => {
+                let Some(movement) = self.state.project_drag.finish() else {
+                    return false;
+                };
+                if movement.from == movement.to {
+                    let mut fx = SideEffect::default();
+                    fx.merge(action::apply_action(
+                        &mut self.state,
+                        Action::FocusIndex(movement.from),
+                    ));
+                    fx.merge(action::apply_action(&mut self.state, Action::SwitchProject));
+                    self.execute_side_effects(&fx);
+                    self.settle_focus_after_switch();
+                } else {
+                    // The highlight follows the hovered target during the
+                    // gesture; restore the source before applying the move.
+                    self.state.focused = movement.from;
+                    let fx = action::apply_action(
+                        &mut self.state,
+                        Action::ReorderSessionTo(movement.to),
+                    );
+                    self.execute_side_effects(&fx);
+                }
+                false
+            }
             Action::SwitchToAgentPane(target) => {
                 self.switch_to_agent_pane(target);
                 false

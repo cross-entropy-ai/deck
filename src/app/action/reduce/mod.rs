@@ -148,6 +148,70 @@ fn switch_tab(state: &mut AppState, fx: &mut SideEffect, tab: SidebarTab) {
     fx.save_config();
 }
 
+/// Move the focused project directly to `target`, preserving lane boundaries
+/// and emitting one persistence effect for the completed gesture. Keyboard
+/// adjacent moves and mouse drag drops share this path.
+fn reorder_session_to(state: &mut AppState, target: usize, fx: &mut SideEffect) {
+    if state.agents_tab_active() {
+        return;
+    }
+    let source = state.focused;
+    if source == target || target >= state.entries.len() {
+        return;
+    }
+
+    let Some(entry) = state.entries.get(source) else {
+        return;
+    };
+    if let Some(host) = entry.host.clone() {
+        if !entry.is_attachable()
+            || !state.entries[target].is_attachable()
+            || state.entries[target].host.as_deref() != Some(host.as_str())
+        {
+            return;
+        }
+
+        let moved = state.entries.remove(source);
+        state.entries.insert(target, moved);
+        state.focused = target;
+        fx.save_remote_session_order(host);
+        return;
+    }
+
+    // Local rows remain ahead of every remote lane. Resolve both names through
+    // `session_order` so the persisted tmux ranks and visible entries move as
+    // one, even if a refresh previously changed their raw listing order.
+    let Some(target_entry) = state.entries.get(target) else {
+        return;
+    };
+    if !target_entry.is_local() {
+        return;
+    }
+    let name = entry.name.clone();
+    let target_name = target_entry.name.clone();
+    let Some(source_pos) = state.session_order.iter().position(|n| n == &name) else {
+        return;
+    };
+    let Some(target_pos) = state.session_order.iter().position(|n| n == &target_name) else {
+        return;
+    };
+
+    let moved = state.session_order.remove(source_pos);
+    state.session_order.insert(target_pos, moved);
+    state.apply_order();
+    state.clamp_projects_focus();
+    if let Some(new_focused) = state
+        .entries
+        .iter()
+        .position(|e| e.is_local() && e.name == name)
+    {
+        state.focused = new_focused;
+    }
+    // Persist once, on drop (or once per keyboard move), so a pointer crossing
+    // several rows never spams tmux or a remote SSH connection.
+    fx.save_session_order();
+}
+
 pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
     let mut fx = SideEffect::default();
 
@@ -184,7 +248,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if state.agents_tab_active() {
                 return fx;
             }
-            // Same policy the context menu uses to grey "Kill": no killing a
+            // Same policy the context menu uses to grey "Close": no closing a
             // placeholder row, a host's last live session, or the last local
             // session. See `can_kill_focused`.
             if state.can_kill_focused() {
@@ -285,56 +349,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if state.agents_tab_active() {
                 return fx;
             }
-            // Remote row: reorder only within the same host's contiguous block
-            // (hosts can't interleave). Swap with the adjacent row in
-            // `direction` if it's the same host and a real session, then persist
-            // that host's order over ssh. `focused` indexes `entries` directly.
             let idx = state.focused;
-            let len = state.entries.len();
-            let Some(entry) = state.entries.get(idx) else {
-                return fx;
-            };
-            if let Some(host) = entry.host.clone() {
-                if !entry.is_attachable() {
-                    return fx;
-                }
-                let neighbor = idx as i32 + direction;
-                if neighbor < 0 || neighbor as usize >= len {
-                    return fx;
-                }
-                let neighbor = neighbor as usize;
-                let n = &state.entries[neighbor];
-                if n.host.as_deref() != Some(host.as_str()) || !n.is_attachable() {
-                    return fx;
-                }
-                state.entries.swap(idx, neighbor);
-                state.focused = neighbor;
-                fx.save_remote_session_order(host);
-                return fx;
-            }
-
-            let name = entry.name.clone();
-            if let Some(pos) = state.session_order.iter().position(|n| n == &name) {
-                let new_pos = (pos as i32 + direction)
-                    .clamp(0, state.session_order.len() as i32 - 1)
-                    as usize;
-                if new_pos != pos {
-                    state.session_order.swap(pos, new_pos);
-                    state.apply_order();
-                    state.clamp_projects_focus();
-                    if let Some(new_focused) = state
-                        .entries
-                        .iter()
-                        .position(|e| e.is_local() && e.name == name)
-                    {
-                        state.focused = new_focused;
-                    }
-                    // Persist the new arrangement onto the tmux sessions so
-                    // it survives a deck restart (see `persist_session_order`).
-                    fx.save_session_order();
-                }
+            let target = idx as i32 + direction;
+            if target >= 0 {
+                reorder_session_to(state, target as usize, &mut fx);
             }
         }
+        Action::ReorderSessionTo(target) => reorder_session_to(state, target, &mut fx),
         Action::StartRename => {
             if state.agents_tab_active() {
                 return fx;
@@ -471,6 +492,21 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.dragging_separator = false;
             fx.save_config();
         }
+        Action::StartProjectDrag(row) => {
+            if !state.agents_tab_active() {
+                if let Some(idx) = state.start_project_drag(row) {
+                    state.focused = idx;
+                }
+            }
+        }
+        Action::UpdateProjectDrag(row) => {
+            if let Some(idx) = state.update_project_drag(row) {
+                state.focused = idx;
+            }
+        }
+        // App::dispatch consumes the library's RowMove so an unchanged drag
+        // can retain ordinary click-to-switch behavior.
+        Action::FinishProjectDrag => {}
 
         Action::Resize(w, h) => {
             state.term_width = w;
@@ -568,6 +604,9 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
 fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEffect {
     let mut fx = SideEffect::default();
     match action {
+        NewSessionAction::OpenLocal => {
+            fx.open_new_session_picker();
+        }
         NewSessionAction::Close => {
             state.overlay.new_session = None;
         }

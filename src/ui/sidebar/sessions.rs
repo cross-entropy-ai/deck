@@ -19,8 +19,9 @@ use crate::state::{
 /// Braille spinner frames for the Summary card's "Generating…" state.
 pub(super) const SUMMARY_SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// Recolor an agent row's leading status glyph as a traffic light: green =
-/// working, red = idle, yellow = waiting, gray = unknown. The glyph is chosen
+/// Recolor an agent row's leading status glyph semantically: green = working,
+/// yellow = waiting, gray = idle/unknown. Red is reserved for actual failures.
+/// The glyph is chosen
 /// in `AppState::agent_item`; here we only override its color. `basic_style`
 /// builds the first line as `[marker, "<glyph> <location>"]`, so we split the
 /// title span and tint just the glyph, leaving focus/bold and location intact.
@@ -31,14 +32,13 @@ fn recolor_agent_dot(
     status: crate::agent::AgentStatus,
 ) -> Text<'static> {
     use crate::agent::AgentStatus;
-    // Color is keyed off the *status*, not the glyph shape — two statuses may
-    // share a glyph (e.g. Working and Unknown can both be `●`). `Unknown` is
-    // left at the default text color (no tint).
+    // Color is keyed off the *status*, not the glyph shape. Shape still carries
+    // meaning independently, so the status remains readable without color.
     let color = match status {
         AgentStatus::Working => theme.success, // green
-        AgentStatus::Idle => theme.error,      // red (not working)
+        AgentStatus::Idle => theme.muted,      // neutral, not a failure
         AgentStatus::Waiting => theme.warning, // yellow (needs the user)
-        AgentStatus::Unknown => return text,   // default (uncolored)
+        AgentStatus::Unknown => theme.subtle,  // unknown, but still legible
     };
     let Some(line) = text.lines.first_mut() else {
         return text;
@@ -91,6 +91,39 @@ fn unbold(mut text: Text<'static>) -> Text<'static> {
     text
 }
 
+/// Paint a fixed-width marker into the preset's two-cell row gutter. The
+/// grabbed source stays marked with `↕`; once the pointer visits another row,
+/// that prospective drop target gets `▸` while the normal focus background
+/// continues to follow it.
+fn mark_project_drag(
+    mut text: Text<'static>,
+    row_idx: usize,
+    source: usize,
+    target: usize,
+    theme: &Theme,
+) -> Text<'static> {
+    let marker = if row_idx == source {
+        Some("↕ ")
+    } else if row_idx == target {
+        Some("▸ ")
+    } else {
+        None
+    };
+    let Some(marker) = marker else {
+        return text;
+    };
+    let Some(span) = text
+        .lines
+        .first_mut()
+        .and_then(|line| line.spans.first_mut())
+    else {
+        return text;
+    };
+    span.content = marker.into();
+    span.style = span.style.fg(theme.accent).add_modifier(Modifier::BOLD);
+    text
+}
+
 use super::super::text::pad_line;
 use super::super::widgets::markdown_window;
 use super::SidebarRenderCtx;
@@ -100,6 +133,7 @@ pub(super) struct SessionsProps<'a> {
     /// the hit-tester so clicks resolve to the same rows the widget drew.
     pub built: &'a BuiltLayout,
     pub focus_target: Option<FocusTarget>,
+    pub project_drag: Option<(usize, usize)>,
     /// Whether the Agents tab is active — agent rows publish a click target
     /// (switch-to-pane); session rows are focused via `focus_at_row`.
     pub agents_tab: bool,
@@ -145,8 +179,9 @@ pub(super) fn draw_sessions(
     let theme = ctx.theme;
     let agents_tab = props.agents_tab;
     let agent_entries = props.agent_entries;
+    let project_drag = props.project_drag;
     let widget = SectionedListWidget::new(layout, move |item, item_ctx| {
-        let text = basic_style(item, item_ctx);
+        let mut text = basic_style(item, item_ctx);
         if agents_tab && matches!(item.kind, ItemKind::Row) {
             if let Some(status) = item_ctx
                 .row_idx
@@ -157,6 +192,11 @@ pub(super) fn draw_sessions(
                 return recolor_agent_dot(text, theme, status);
             }
             return text;
+        }
+        if !agents_tab && matches!(item.kind, ItemKind::Row) {
+            if let (Some(row_idx), Some((source, target))) = (item_ctx.row_idx, project_drag) {
+                text = mark_project_drag(text, row_idx, source, target, theme);
+            }
         }
         if matches!(item.kind, ItemKind::Header) {
             return unbold(text);
@@ -272,6 +312,8 @@ pub(super) struct SummaryCardProps<'a> {
     pub spinner_idx: usize,
     /// Scroll offset (wrapped rows) into the Ready summary text.
     pub summary_scroll: usize,
+    /// Whether at least one real agent pane is available to capture.
+    pub can_generate: bool,
 }
 
 /// Draw the Agents-tab Summary card into its own rect, pinned above the
@@ -348,13 +390,15 @@ pub(super) fn draw_summary_card(
                 Style::default().fg(theme.muted).bg(theme.bg),
             ));
         }
-        title_spans.push(Span::styled(
-            gen_label,
+        let generate_style = if props.can_generate {
             Style::default()
                 .fg(theme.bg)
                 .bg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ));
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.muted).bg(theme.surface)
+        };
+        title_spans.push(Span::styled(gen_label, generate_style));
         if is_ready {
             title_spans.push(Span::styled(
                 popup_label,
@@ -371,12 +415,14 @@ pub(super) fn draw_summary_card(
         let gen_x = (left_w + filler + age_run) as u16;
         let popup_x = gen_x + gen_w as u16;
         let clamp_w = |x: u16, w: usize| (w as u16).min(rect.width.saturating_sub(x));
-        summary.button = Some(Rect {
-            x: rect.x + gen_x,
-            y: rect.y + 1,
-            width: clamp_w(gen_x, gen_w),
-            height: 1,
-        });
+        if props.can_generate {
+            summary.button = Some(Rect {
+                x: rect.x + gen_x,
+                y: rect.y + 1,
+                width: clamp_w(gen_x, gen_w),
+                height: 1,
+            });
+        }
         if is_ready {
             summary.popup = Some(Rect {
                 x: rect.x + popup_x,
@@ -387,16 +433,24 @@ pub(super) fn draw_summary_card(
         }
     }
     lines.push(pad_line(title_spans, theme.bg, width));
-    lines.push(pad_line(Vec::new(), theme.bg, width));
+    let compact_unavailable = !props.can_generate && matches!(props.summary, SummaryState::Idle);
+    if !compact_unavailable {
+        lines.push(pad_line(Vec::new(), theme.bg, width));
+    }
 
     // Body: a fixed-height window whose rows = card height minus the title,
     // blank, and drag-handle chrome.
-    let rows = (rect.height as usize).saturating_sub(3);
+    let chrome_rows = if compact_unavailable { 2 } else { 3 };
+    let rows = (rect.height as usize).saturating_sub(chrome_rows);
     match props.summary {
         SummaryState::Idle => {
             lines.push(pad_line(
                 vec![Span::styled(
-                    "  No summary generated yet",
+                    if compact_unavailable {
+                        "  No agents detected"
+                    } else {
+                        "  No summary generated yet"
+                    },
                     Style::default().fg(theme.muted).bg(theme.bg),
                 )],
                 theme.bg,
@@ -450,8 +504,11 @@ pub(super) fn draw_summary_card(
 mod tests {
     use super::*;
     use crate::agent::AgentStatus;
+    use ratatui::backend::TestBackend;
     use ratatui::style::Color;
     use ratatui::text::Line;
+    use ratatui::Terminal;
+    use ratatui_sectioned_list::widget::BasicItem;
 
     /// The fg color the leading dot ends up with, or `None` if uncolored. Input
     /// mirrors `basic_style`'s shape: span[0] marker, span[1] starts with the
@@ -471,10 +528,50 @@ mod tests {
     fn agent_dot_colored_by_status_not_glyph() {
         let theme = &crate::theme::THEMES[0];
         assert_eq!(dot_color(AgentStatus::Working), Some(theme.success));
-        assert_eq!(dot_color(AgentStatus::Idle), Some(theme.error));
+        assert_eq!(dot_color(AgentStatus::Idle), Some(theme.muted));
         assert_eq!(dot_color(AgentStatus::Waiting), Some(theme.warning));
-        // Unknown reuses the `●` glyph but is left at the default text color:
-        // the glyph is never split into its own colored span.
-        assert_eq!(dot_color(AgentStatus::Unknown), None);
+        assert_eq!(dot_color(AgentStatus::Unknown), Some(theme.subtle));
+    }
+
+    #[test]
+    fn project_drag_renders_source_and_target_indicators() {
+        let theme = &crate::theme::THEMES[0];
+        let mut built = BuiltLayout::default();
+        built.layout.push_row_auto(BasicItem::new("alpha"));
+        built.layout.push_row_auto(BasicItem::new("beta"));
+        built.layout.push_row_auto(BasicItem::new("gamma"));
+
+        let backend = TestBackend::new(20, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                draw_sessions(
+                    frame,
+                    frame.area(),
+                    &SidebarRenderCtx { theme },
+                    SessionsProps {
+                        built: &built,
+                        focus_target: Some(FocusTarget(2)),
+                        project_drag: Some((0, 2)),
+                        agents_tab: false,
+                        agent_entries: &[],
+                    },
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let source = buffer
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "↕")
+            .expect("grabbed source marker must render");
+        let target = buffer
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "▸")
+            .expect("drop target marker must render");
+        assert_eq!(source.fg, theme.accent);
+        assert_eq!(target.fg, theme.accent);
     }
 }

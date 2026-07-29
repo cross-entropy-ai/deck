@@ -93,12 +93,12 @@ pub struct ControlCtx<'a> {
 }
 
 /// What a [`System`] tells the shell to draw for one section. Replaces the old
-/// hardcoded `@local`/`@host` dividers and the closed `DividerButton` list.
+/// hardcoded local/host dividers and the closed `DividerButton` list.
 #[derive(Debug, Clone)]
 pub struct SectionDef {
     /// Identity of this section's lane.
     pub lane: LaneId,
-    /// Divider title (e.g. `"@local"`, `"@myhost"`). System-defined.
+    /// Divider title (e.g. `"local"`, `"myhost"`). System-defined.
     pub title: String,
     /// Buttons on the divider, left→right.
     pub buttons: Vec<SectionButton>,

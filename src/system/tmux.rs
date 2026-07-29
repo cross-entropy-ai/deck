@@ -1,6 +1,6 @@
 //! The built-in tmux [`System`]: local and remote tmux servers exposed as one
 //! mounted backend. Each configured remote host is a lane, plus the always-on
-//! local lane. It owns the `@local`/`@host` dividers and the local-vs-remote
+//! local lane. It owns the `local`/host dividers and the local-vs-remote
 //! control/snapshot split; the remote divider's ssh-specific buttons and
 //! `⇄N` badge are registered by `crate::ssh::divider`, not hardcoded here.
 
@@ -78,7 +78,7 @@ fn section_def(ctx: &SectionCtx, lane: &LaneId) -> SectionDef {
     match TmuxSystem::host_of(lane) {
         None => SectionDef {
             lane: lane.clone(),
-            title: "@local".to_string(),
+            title: "local".to_string(),
             buttons: vec![menu_button()],
             top_margin: false,
         },
@@ -90,7 +90,7 @@ fn section_def(ctx: &SectionCtx, lane: &LaneId) -> SectionDef {
             buttons.push(menu_button());
             SectionDef {
                 lane: lane.clone(),
-                title: format!("@{host}"),
+                title: host.to_string(),
                 buttons,
                 top_margin: true,
             }

@@ -83,6 +83,13 @@ pub const TAB_LEADING_PAD: u16 = 1;
 pub const TAB_INNER_PAD: u16 = 1;
 /// Separator glyph rendered between tabs (width 1).
 pub const TAB_SEPARATOR: &str = "│";
+/// Shared footer/tab-bar menu label. The vertical tab layout reserves its
+/// right edge before windowing sessions, so the menu never disappears merely
+/// because there are too many tabs.
+pub const MENU_LABEL: &str = "≡ menu";
+/// Overflow marker shown at either edge of a windowed vertical tab run.
+pub const TAB_OVERFLOW_MARKER: &str = "…";
+const TAB_OVERFLOW_RUN_WIDTH: u16 = 2; // marker + one separating space
 
 /// Minimum sidebar content width before the update banner renders at all.
 pub const BANNER_MIN_WIDTH: u16 = 8;
@@ -139,24 +146,137 @@ pub fn shorten_dir(dir: &str) -> String {
 fn tab_width(index: usize, name: &str) -> u16 {
     let idx_width = format!("{}", index + 1).len() as u16;
     let name_width = UnicodeWidthStr::width(name) as u16;
-    idx_width + TAB_INNER_PAD + name_width + TAB_INNER_PAD
+    idx_width
+        .saturating_add(TAB_INNER_PAD)
+        .saturating_add(name_width)
+        .saturating_add(TAB_INNER_PAD)
 }
 
-/// Column ranges (start, end) for each tab in the vertical/tabs layout,
-/// computed from session names alone. Used by the renderer to place
-/// tabs and by state to map a click column back to a tab index.
-pub fn tab_col_ranges(names: &[&str]) -> Vec<(u16, u16)> {
-    let mut ranges = Vec::with_capacity(names.len());
-    let mut x: u16 = TAB_LEADING_PAD;
-    for (i, name) in names.iter().enumerate() {
-        let width = tab_width(i, name);
-        ranges.push((x, x + width));
-        x += width;
-        if i + 1 < names.len() {
-            x += TAB_SEPARATOR.chars().count() as u16;
+/// One visible tab and its half-open content-column range. `index` is the
+/// original flat session index, not its position inside the visible window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VisibleTab {
+    pub index: usize,
+    pub start: u16,
+    pub end: u16,
+}
+
+/// Geometry for the single-row vertical tab bar. The renderer and click
+/// decoder both build this value, keeping overflow/windowing hit targets exact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabBarLayout {
+    pub tabs: Vec<VisibleTab>,
+    pub left_clipped: bool,
+    pub right_clipped: bool,
+    /// Content-relative column where the pinned menu label begins.
+    pub menu_x: Option<u16>,
+}
+
+fn tab_run_width(labels: &[&str], start: usize, end: usize) -> u32 {
+    let tabs = (start..end)
+        .map(|i| u32::from(tab_width(i, labels[i])))
+        .sum::<u32>();
+    let separators = end.saturating_sub(start + 1) as u32;
+    u32::from(TAB_LEADING_PAD)
+        + if start > 0 {
+            u32::from(TAB_OVERFLOW_RUN_WIDTH)
+        } else {
+            0
+        }
+        + tabs
+        + separators
+        + if end < labels.len() {
+            u32::from(TAB_OVERFLOW_RUN_WIDTH)
+        } else {
+            0
+        }
+}
+
+/// Window vertical session tabs around `focused`, reserving a pinned menu at
+/// the right. Whole neighboring tabs are added symmetrically while they fit;
+/// an unusually long focused label is truncated by the renderer to its range.
+pub fn tab_bar_layout(labels: &[&str], focused: usize, width: u16) -> TabBarLayout {
+    let menu_width = MENU_LABEL.width() as u16;
+    let menu_x =
+        (width >= menu_width.saturating_add(1)).then(|| width.saturating_sub(menu_width + 1));
+    // Keep one quiet cell between tabs/overflow and the pinned menu.
+    let tabs_limit = menu_x.map_or(width, |x| x.saturating_sub(1));
+
+    if labels.is_empty() || tabs_limit <= TAB_LEADING_PAD {
+        return TabBarLayout {
+            tabs: Vec::new(),
+            left_clipped: false,
+            right_clipped: false,
+            menu_x,
+        };
+    }
+
+    let focused = focused.min(labels.len() - 1);
+    let mut start = focused;
+    let mut end = focused + 1;
+    loop {
+        let left_width = (start > 0).then(|| tab_run_width(labels, start - 1, end));
+        let right_width = (end < labels.len()).then(|| tab_run_width(labels, start, end + 1));
+        let left_fits = left_width.is_some_and(|w| w <= u32::from(tabs_limit));
+        let right_fits = right_width.is_some_and(|w| w <= u32::from(tabs_limit));
+
+        match (left_fits, right_fits) {
+            (false, false) => break,
+            (true, false) => start -= 1,
+            (false, true) => end += 1,
+            (true, true) => {
+                let left_count = focused - start;
+                let right_count = end - focused - 1;
+                if left_count < right_count
+                    || (left_count == right_count && left_width <= right_width)
+                {
+                    start -= 1;
+                } else {
+                    end += 1;
+                }
+            }
         }
     }
-    ranges
+
+    let left_clipped = start > 0;
+    let right_clipped = end < labels.len();
+    let mut cursor = TAB_LEADING_PAD
+        + if left_clipped {
+            TAB_OVERFLOW_RUN_WIDTH
+        } else {
+            0
+        };
+    let right_reserve = if right_clipped {
+        TAB_OVERFLOW_RUN_WIDTH
+    } else {
+        0
+    };
+    let mut tabs = Vec::with_capacity(end - start);
+    for (i, label) in labels.iter().enumerate().take(end).skip(start) {
+        let room = tabs_limit
+            .saturating_sub(cursor)
+            .saturating_sub(right_reserve);
+        if room == 0 {
+            break;
+        }
+        let width = tab_width(i, label).min(room);
+        tabs.push(VisibleTab {
+            index: i,
+            start: cursor,
+            end: cursor + width,
+        });
+        cursor += width;
+        if i + 1 < end {
+            cursor = cursor.saturating_add(TAB_SEPARATOR.width() as u16);
+        }
+    }
+
+    TabBarLayout {
+        tabs,
+        left_clipped,
+        right_clipped,
+        menu_x,
+    }
 }
 
 pub fn context_menu_width(items: &[MenuItem]) -> u16 {
@@ -173,7 +293,7 @@ pub fn context_menu_width(items: &[MenuItem]) -> u16 {
 // --- Sidebar item / hit-region types ---
 
 /// Sidebar layout — a `SectionedList` of the crate's `BasicItem` preset.
-/// Headers carry an `@local` / `@host` divider (separator fill, accent
+/// Headers carry a local / host divider (separator fill, accent
 /// color, `[⟳]`/`[…]` buttons); rows carry a session/agent title plus dim
 /// secondary lines. Geometry, focus-driven scroll, and hit-testing are
 /// shared across renderer and action layer via this one type.
@@ -207,7 +327,7 @@ pub struct SectionMeta {
 /// remote host) is identical; only these toggles and per-row content differ.
 #[derive(Debug, Clone, Copy)]
 pub struct SectionLayoutOpts {
-    /// Push `@local` / `@host` divider headers. Projects omits them in Compact
+    /// Push local / host divider headers. Projects omits them in Compact
     /// view (rows carry an origin prefix instead); the Agents tab always shows
     /// them.
     pub show_headers: bool,
@@ -360,6 +480,8 @@ pub struct HitRegions {
     /// The `Projects` / `Agents` header tab labels (`None` in tabs mode,
     /// which has no header).
     pub tabs: Option<TabRects>,
+    /// The responsive Header `+ New` / `+` button.
+    pub new_session: Option<Rect>,
     /// The Summary card's buttons/card/scroll bound.
     pub summary: SummaryHits,
     /// The footer's "menu" button.
@@ -379,6 +501,8 @@ pub enum HitKind {
     Banner,
     /// A header tab label; carries which tab.
     Tab(SidebarTab),
+    /// The Header's local-session creation button.
+    NewLocalSession,
     /// The Summary card's "Generate" button.
     SummaryButton,
     /// The Summary card's "popup" (big view) button.
@@ -418,6 +542,9 @@ impl HitRegions {
             if tabs.agents.contains(pos) {
                 return Some(HitKind::Tab(SidebarTab::Agents));
             }
+        }
+        if self.new_session.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::NewLocalSession);
         }
         if self.summary.button.is_some_and(|r| r.contains(pos)) {
             return Some(HitKind::SummaryButton);

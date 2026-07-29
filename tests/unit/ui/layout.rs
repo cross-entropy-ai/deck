@@ -1,5 +1,6 @@
-use super::{context_menu_width, tab_col_ranges, tab_label};
+use super::{context_menu_width, tab_bar_layout, tab_label, MENU_LABEL};
 use crate::menu::MenuItem;
+use unicode_width::UnicodeWidthStr;
 
 #[test]
 fn remote_tab_label_truncates_each_side_to_six() {
@@ -28,10 +29,50 @@ fn tab_ranges_size_cjk_by_display_width_not_bytes() {
     // reserve 4 columns for the name (not 6), so a byte-length sizing
     // would over-reserve and shift every following tab's click target.
     // Layout: leading pad(1) + idx "1"(1) + inner pad(1) + name + inner pad(1).
-    let ranges = tab_col_ranges(&["你好"]);
-    let (start, end) = ranges[0];
+    let layout = tab_bar_layout(&["你好"], 0, 40);
+    let tab = layout.tabs[0];
+    let (start, end) = (tab.start, tab.end);
     assert_eq!(start, 1); // TAB_LEADING_PAD
     assert_eq!(end - start, 1 + 1 + 4 + 1); // idx + pad + name(4 cols) + pad
+}
+
+#[test]
+fn tab_bar_windows_around_focus_and_pins_menu() {
+    let labels = [
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+    ];
+    let width = 32;
+    let layout = tab_bar_layout(&labels, 4, width);
+
+    assert!(layout.tabs.iter().any(|tab| tab.index == 4));
+    assert!(
+        layout.left_clipped,
+        "earlier tabs should collapse behind an ellipsis"
+    );
+    assert!(
+        layout.right_clipped,
+        "the final tab should remain behind an ellipsis"
+    );
+    assert_eq!(
+        layout.menu_x,
+        Some(width - MENU_LABEL.width() as u16 - 1),
+        "menu stays pinned even when the tab run overflows"
+    );
+    assert!(
+        layout
+            .tabs
+            .iter()
+            .all(|tab| tab.end < layout.menu_x.unwrap()),
+        "tab hit ranges must stop before the menu"
+    );
+}
+
+#[test]
+fn long_focused_tab_is_clamped_before_pinned_menu() {
+    let layout = tab_bar_layout(&["a-session-name-that-is-far-too-long"], 0, 20);
+    let tab = layout.tabs[0];
+    assert_eq!(tab.index, 0);
+    assert!(tab.end < layout.menu_x.unwrap());
 }
 
 #[test]

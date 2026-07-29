@@ -4,23 +4,17 @@
 use crate::state::{attachable_on_host, FocusTarget, SessionEntry};
 
 // One list for local and remote rows. No "Switch" item — focus already
-// switches. On a remote row Rename/Kill map to `ssh <host> tmux <cmd>` and
-// MoveUp/MoveDown reorder within the host group (hosts can't interleave),
-// persisted to that server's `@deck_order`.
-const SESSION_MENU_ITEMS: &[MenuItem] = &[
-    MenuItem::Rename,
-    MenuItem::Kill,
-    MenuItem::MoveUp,
-    MenuItem::MoveDown,
-];
+// switches. On a remote row Rename/Close map to `ssh <host> tmux <cmd>`.
+// Reordering is direct manipulation (left-button drag), not a menu command.
+const SESSION_MENU_ITEMS: &[MenuItem] = &[MenuItem::Rename, MenuItem::Close];
 // Greyed-out when the right-clicked row is a synthetic placeholder (remote
 // host with no sessions, or unreachable): no real session to
-// Rename/Kill/reorder, i.e. every session item.
+// Rename/Close, i.e. every session item.
 const PLACEHOLDER_DISABLED_ITEMS: &[MenuItem] = SESSION_MENU_ITEMS;
-// Only Kill is greyed when the row is the last live session on a remote
+// Only Close is greyed when the row is the last live session on a remote
 // host: killing it would tear down that host's tmux server. Rename is
 // still fine.
-const LAST_REMOTE_SESSION_DISABLED: &[MenuItem] = &[MenuItem::Kill];
+const LAST_REMOTE_SESSION_DISABLED: &[MenuItem] = &[MenuItem::Close];
 // Host divider [...] menu acts on the whole remote *group*. RemoveFromList
 // is equivalent to `deck remote remove <host>`.
 const HOST_DIVIDER_MENU_ITEMS: &[MenuItem] = &[
@@ -32,10 +26,11 @@ const HOST_DIVIDER_MENU_ITEMS: &[MenuItem] = &[
 // but PortForward and RemoveFromList are remote-only: they're greyed out,
 // leaving just NewSession (creates a local session).
 const LOCAL_DIVIDER_DISABLED: &[MenuItem] = &[MenuItem::PortForward, MenuItem::RemoveFromList];
-// Right-click on blank sidebar space. NewSession is intentionally
-// absent — creating a local session lives on the `@local` divider's
-// `[…]` menu instead.
+// Right-click on blank sidebar space / the persistent footer button. Put the
+// primary creation action first; the explicit "local" label distinguishes it
+// from the per-host divider's NewSession action.
 const GLOBAL_MENU_ITEMS: &[MenuItem] = &[
+    MenuItem::NewLocalSession,
     MenuItem::AddRemoteHost,
     MenuItem::ToggleLayout,
     MenuItem::ToggleBorders,
@@ -50,14 +45,13 @@ const GLOBAL_MENU_ITEMS: &[MenuItem] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuItem {
     Rename,
-    Kill,
-    MoveUp,
-    MoveDown,
+    Close,
     AddRemoteHost,
     ToggleLayout,
     ToggleBorders,
     Settings,
     Quit,
+    NewLocalSession,
     NewSession,
     PortForward,
     RemoveFromList,
@@ -68,14 +62,13 @@ impl MenuItem {
     pub fn label(&self) -> &'static str {
         match self {
             MenuItem::Rename => "Rename",
-            MenuItem::Kill => "Kill",
-            MenuItem::MoveUp => "Move up",
-            MenuItem::MoveDown => "Move down",
+            MenuItem::Close => "Close",
             MenuItem::AddRemoteHost => "Add Remote Host",
             MenuItem::ToggleLayout => "Toggle layout",
             MenuItem::ToggleBorders => "Toggle borders",
             MenuItem::Settings => "Settings",
             MenuItem::Quit => "Quit",
+            MenuItem::NewLocalSession => "New local session",
             MenuItem::NewSession => "New session",
             MenuItem::PortForward => "Port Forward",
             MenuItem::RemoveFromList => "Remove from list",
@@ -89,7 +82,7 @@ pub enum MenuKind {
     /// list (`SESSION_MENU_ITEMS`); only the greyed subset is per-row.
     Session {
         focus: FocusTarget,
-        /// Items shown greyed-out and unselectable (e.g. Rename/Kill on a
+        /// Items shown greyed-out and unselectable (e.g. Rename/Close on a
         /// placeholder row). Empty for a real session.
         disabled: &'static [MenuItem],
     },
@@ -127,8 +120,8 @@ impl MenuKind {
 }
 
 /// Menu items to grey out for a right-clicked row: a placeholder (no
-/// sessions / unreachable) disables Rename and Kill; the last live session
-/// on a remote host disables Kill (killing it tears down the host's tmux
+/// sessions / unreachable) disables Rename and Close; the last live session
+/// on a remote host disables Close (closing it tears down the host's tmux
 /// server), Rename stays; everything else has every item enabled.
 pub fn session_menu_disabled(
     entry: &SessionEntry,

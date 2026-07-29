@@ -295,8 +295,14 @@ fn projects_cursor_reanchors_to_same_session_across_rebuild() {
 }
 
 #[test]
-fn summary_card_height_is_fixed_across_states() {
+fn summary_card_height_is_fixed_across_states_when_agents_exist() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    state.prefs.sidebar_tab = SidebarTab::Agents;
+    state.agents.insert(
+        crate::system::tmux::lane(None),
+        vec![detected("agent", "%1")],
+    );
+    state.rebuild_agent_entries();
     let idle = state.summary_card_height();
     state.summary.state = SummaryState::Generating;
     assert_eq!(state.summary_card_height(), idle);
@@ -309,6 +315,22 @@ fn summary_card_height_is_fixed_across_states() {
         idle,
         "the card is a fixed-size window; long text scrolls, not grows"
     );
+}
+
+#[test]
+fn idle_summary_card_collapses_until_an_agent_exists() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 100, 24);
+    state.prefs.sidebar_tab = SidebarTab::Agents;
+    state.rebuild_agent_entries();
+
+    assert_eq!(state.summary_card_height(), 3);
+
+    state.agents.insert(
+        crate::system::tmux::lane(None),
+        vec![detected("agent", "%1")],
+    );
+    state.rebuild_agent_entries();
+    assert_eq!(state.summary_card_height(), 3 + state.prefs.summary_height);
 }
 
 #[test]
@@ -348,6 +370,24 @@ fn agents_layout_shows_placeholder_for_empty_section() {
         state.focused_agent().is_none(),
         "cursor can sit on the placeholder, but it isn't switchable",
     );
+}
+
+#[test]
+fn unknown_agent_uses_a_non_color_status_glyph() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 100, 24);
+    state.prefs.sidebar_tab = SidebarTab::Agents;
+    state.agents.insert(
+        crate::system::tmux::lane(None),
+        vec![detected("agent", "%1")],
+    );
+    state.rebuild_agent_entries();
+
+    let built = state.agents_layout();
+    assert!(built
+        .layout
+        .items()
+        .iter()
+        .any(|item| item.data.title.trim_start().starts_with("? ")));
 }
 
 fn detected(session: &str, pane_id: &str) -> crate::agent::DetectedAgent {
@@ -438,20 +478,20 @@ fn sidebar_layout_adds_local_header_in_expanded() {
         .layout
         .items()
         .iter()
-        .filter(|i| i.data.title == "@local")
+        .filter(|i| i.data.title == "local")
         .count();
-    assert_eq!(local_headers, 1, "one @local divider above the local rows");
+    assert_eq!(local_headers, 1, "one local divider above the local rows");
 
     // The header is not a row, so the two local sessions are rows 0..2.
     assert_eq!(built.layout.row_count(), 2);
-    // The `@local` section carries the local-divider menu button.
+    // The local section carries the local-divider menu button.
     assert_eq!(
         built
             .sections
             .first()
             .map(|s| crate::system::tmux::TmuxSystem::host_of(&s.lane)),
         Some(None),
-        "first section is @local",
+        "first section is local",
     );
 }
 
@@ -480,12 +520,8 @@ fn sidebar_layout_keeps_local_divider_when_empty() {
     empty.clamp_projects_focus();
     let built = empty.sidebar_layout(ViewMode::Expanded);
     assert!(
-        built
-            .layout
-            .items()
-            .iter()
-            .any(|i| i.data.title == "@local"),
-        "@local divider remains when there are no local sessions",
+        built.layout.items().iter().any(|i| i.data.title == "local"),
+        "local divider remains when there are no local sessions",
     );
     assert_eq!(built.layout.row_count(), 0, "no local session rows");
 }
@@ -495,12 +531,12 @@ fn is_divider_at_row_detects_header_not_session() {
     let state = make_state(LayoutMode::Horizontal, false, 100, 24);
     // Header banner is 2 rows (no border); the Summary card strip is pinned
     // to the bottom on both tabs, so the list begins right after the header.
-    // The @local divider is the first list item (1 row tall); the first
+    // The local divider is the first list item (1 row tall); the first
     // session card sits just below it.
     let top = 2;
     assert!(
         state.is_divider_at_row(top),
-        "first list row is the @local divider"
+        "first list row is the local divider"
     );
     assert!(
         !state.is_divider_at_row(top + 1),
@@ -540,7 +576,7 @@ fn local_divider_menu_greys_remote_only_items() {
         kind: MenuKind::LocalDivider,
         x: 0,
         y: 0,
-        selected: 0,
+        selected: 1,
     };
     // Same item list as a host divider...
     assert!(menu.items().contains(&MenuItem::NewSession));
@@ -685,12 +721,7 @@ fn context_menu_navigation_skips_disabled_items() {
     let all_disabled = ContextMenu {
         kind: MenuKind::Session {
             focus: FocusTarget(0),
-            disabled: &[
-                MenuItem::Rename,
-                MenuItem::Kill,
-                MenuItem::MoveUp,
-                MenuItem::MoveDown,
-            ],
+            disabled: &[MenuItem::Rename, MenuItem::Close],
         },
         x: 0,
         y: 0,
@@ -702,26 +733,24 @@ fn context_menu_navigation_skips_disabled_items() {
     assert_eq!(all_disabled.first_enabled(), 0);
     assert_eq!(all_disabled.next_enabled(), 0);
 
-    // One disabled item among enabled ones: navigation hops over it.
-    // Items are the fixed session list: Rename, Kill, Move up, Move down.
+    // One disabled item among enabled ones: navigation stays on Close.
+    // Items are the fixed session list: Rename, Close.
     let mixed = ContextMenu {
         kind: MenuKind::Session {
             focus: FocusTarget(0),
-            disabled: &[MenuItem::Kill],
+            disabled: &[MenuItem::Rename],
         },
         x: 0,
         y: 0,
-        selected: 0,
+        selected: 1,
     };
-    assert_eq!(mixed.first_enabled(), 0);
-    // From "Rename" (0), next skips disabled "Kill" (1) to "Move up" (2).
-    assert_eq!(mixed.next_enabled(), 2);
-    let from_last = ContextMenu {
-        selected: 2,
-        ..mixed.clone()
-    };
-    // From "Move up" (2), prev skips "Kill" (1) back to "Rename" (0).
-    assert_eq!(from_last.prev_enabled(), 0);
+    assert_eq!(mixed.first_enabled(), 1);
+    assert_eq!(mixed.next_enabled(), 1);
+    assert_eq!(mixed.prev_enabled(), 1);
+
+    assert_eq!(mixed.items().len(), 2);
+    assert_eq!(mixed.items()[0].label(), "Rename");
+    assert_eq!(mixed.items()[1].label(), "Close");
 }
 
 // --- PfAddForm::validate() tests ---

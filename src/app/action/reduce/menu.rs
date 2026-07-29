@@ -10,7 +10,7 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
     let mut fx = SideEffect::default();
     match action {
         MenuAction::OpenSession { target, x, y } => {
-            // The session context menu (rename/kill/reorder) is Projects-
+            // The session context menu (rename/close) is Projects-
             // only; the Agents tab has no per-row menu.
             if state.agents_tab_active() {
                 return fx;
@@ -92,15 +92,18 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                     state.focused = focus.0;
                     let inner = match selected_item {
                         Some(MenuItem::Rename) => apply_action(state, Action::StartRename),
-                        Some(MenuItem::Kill) => apply_action(state, Action::KillSession),
-                        Some(MenuItem::MoveUp) => apply_action(state, Action::ReorderSession(-1)),
-                        Some(MenuItem::MoveDown) => apply_action(state, Action::ReorderSession(1)),
+                        Some(MenuItem::Close) => apply_action(state, Action::KillSession),
                         _ => SideEffect::default(),
                     };
                     fx.merge(inner);
                 }
                 MenuKind::Global => {
                     let inner = match selected_item {
+                        Some(MenuItem::NewLocalSession) => {
+                            let mut inner = SideEffect::default();
+                            inner.open_new_session_picker();
+                            inner
+                        }
                         Some(MenuItem::AddRemoteHost) => {
                             let mut inner = SideEffect::default();
                             inner.open_add_remote_picker();

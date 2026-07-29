@@ -2,7 +2,7 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 use crate::state::{AppState, FocusTarget, HitKind, LayoutMode, MainView, Modal};
 
-use super::{Action, MenuAction, SettingsAction, SummaryAction};
+use super::{Action, MenuAction, NewSessionAction, SettingsAction, SummaryAction};
 
 pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     // Single resolver for every rect-based button/region the sidebar publishes.
@@ -26,6 +26,9 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         // modal up, so a modal hides them (bug #7).
         match hit {
             Some(HitKind::Tab(tab)) => return Action::SelectTab(tab),
+            Some(HitKind::NewLocalSession) => {
+                return Action::NewSession(NewSessionAction::OpenLocal)
+            }
             Some(HitKind::SummaryButton) => return Action::Summary(SummaryAction::Generate),
             Some(HitKind::SummaryPopup) => return Action::Summary(SummaryAction::OpenPopup),
             // The footer "menu" button opens the global context menu, anchored
@@ -84,6 +87,12 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         }
         MouseEventKind::Up(MouseButton::Left) if state.dragging_separator => {
             return Action::StopDrag;
+        }
+        MouseEventKind::Drag(MouseButton::Left) if state.project_drag.is_active() => {
+            return Action::UpdateProjectDrag(mouse.row);
+        }
+        MouseEventKind::Up(MouseButton::Left) if state.project_drag.is_active() => {
+            return Action::FinishProjectDrag;
         }
         _ => {}
     }
@@ -159,6 +168,13 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             LayoutMode::Vertical => state.session_at_col(mouse.column, mouse.row),
         };
         if let Some(idx) = flat {
+            if state.effective_layout_mode() == LayoutMode::Horizontal && !state.agents_tab_active()
+            {
+                // Defer ordinary click-switching until button-up: if the
+                // pointer visits another row first, the same gesture becomes
+                // a drag reorder instead.
+                return Action::StartProjectDrag(mouse.row);
+            }
             return Action::SidebarClickSession(idx);
         }
         // A click on empty sidebar space (below the last row) is inert: the
