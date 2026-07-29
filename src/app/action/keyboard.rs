@@ -26,13 +26,9 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     // cmd-1..cmd-9 switch to the Nth session from anywhere outside a modal,
     // regardless of which half has focus. Needs a terminal that reports the
     // Super modifier (kitty keyboard protocol).
-    if let KeyCode::Char(c @ '1'..='9') = key.code {
-        if key.modifiers.contains(KeyModifiers::SUPER) {
-            let idx = (c as usize) - ('1' as usize);
-            if idx < state.focusable_count() {
-                return Action::NumberKeyJump(idx);
-            }
-            return Action::None;
+    if key.modifiers.contains(KeyModifiers::SUPER) {
+        if let Some(action) = digit_jump(key, state) {
+            return action;
         }
     }
 
@@ -54,6 +50,46 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         }
         FocusMode::Sidebar => sidebar_key_to_action(key, state),
     }
+}
+
+/// `1`-`9` jump to the Nth row of the unified flat list (local rows then
+/// remotes), matching the numbered tabs in the vertical layout so `3` reaches a
+/// remote `host:session` tab. An out-of-range digit is swallowed, not passed on.
+/// `None` means the key isn't a digit.
+fn digit_jump(key: &KeyEvent, state: &AppState) -> Option<Action> {
+    let KeyCode::Char(c @ '1'..='9') = key.code else {
+        return None;
+    };
+    let idx = (c as usize) - ('1' as usize);
+    Some(if idx < state.focusable_count() {
+        Action::NumberKeyJump(idx)
+    } else {
+        Action::None
+    })
+}
+
+/// The navigation keys the list-like overlays share, so their spellings live in
+/// one place. Handler-specific keys stay in the handler; a handler that doesn't
+/// want one of these must leave that variant unmatched.
+enum Nav {
+    Up,
+    Down,
+    Left,
+    Right,
+    Close,
+    Confirm,
+}
+
+fn nav_key(key: &KeyEvent) -> Option<Nav> {
+    Some(match key.code {
+        KeyCode::Char('j') | KeyCode::Down => Nav::Down,
+        KeyCode::Char('k') | KeyCode::Up => Nav::Up,
+        KeyCode::Char('h') | KeyCode::Left => Nav::Left,
+        KeyCode::Char('l') | KeyCode::Right => Nav::Right,
+        KeyCode::Esc => Nav::Close,
+        KeyCode::Enter => Nav::Confirm,
+        _ => return None,
+    })
 }
 
 fn command_to_action(cmd: Command, state: &AppState) -> Action {
@@ -93,16 +129,14 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
 /// captures all keys, so a global keybinding can't leak through behind one.
 fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action {
     match modal {
-        Modal::SummaryPopup => match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => Action::Summary(SummaryAction::ClosePopup),
-            KeyCode::Char('j') | KeyCode::Down => Action::Summary(SummaryAction::ScrollPopup(1)),
-            KeyCode::Char('k') | KeyCode::Up => Action::Summary(SummaryAction::ScrollPopup(-1)),
-            KeyCode::PageDown | KeyCode::Char(' ') => {
-                Action::Summary(SummaryAction::ScrollPopup(10))
-            }
-            KeyCode::PageUp => Action::Summary(SummaryAction::ScrollPopup(-10)),
-            _ => Action::None,
-        },
+        Modal::SummaryPopup => Action::Summary(match (nav_key(key), key.code) {
+            (Some(Nav::Close), _) | (_, KeyCode::Char('q')) => SummaryAction::ClosePopup,
+            (Some(Nav::Down), _) => SummaryAction::ScrollPopup(1),
+            (Some(Nav::Up), _) => SummaryAction::ScrollPopup(-1),
+            (_, KeyCode::PageDown | KeyCode::Char(' ')) => SummaryAction::ScrollPopup(10),
+            (_, KeyCode::PageUp) => SummaryAction::ScrollPopup(-10),
+            _ => return Action::None,
+        }),
         Modal::NewSession => new_session_key_to_action(key, state),
         Modal::AddRemote => add_remote_key_to_action(key),
         Modal::Rename => match key.code {
@@ -110,12 +144,12 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
             KeyCode::Esc => Action::RenameCancel,
             _ => Action::RenameInputKey(*key),
         },
-        Modal::ContextMenu => match key.code {
-            KeyCode::Char('j') | KeyCode::Down => Action::Menu(MenuAction::Next),
-            KeyCode::Char('k') | KeyCode::Up => Action::Menu(MenuAction::Prev),
-            KeyCode::Enter => Action::Menu(MenuAction::Confirm),
-            _ => Action::Menu(MenuAction::Dismiss),
-        },
+        Modal::ContextMenu => Action::Menu(match nav_key(key) {
+            Some(Nav::Down) => MenuAction::Next,
+            Some(Nav::Up) => MenuAction::Prev,
+            Some(Nav::Confirm) => MenuAction::Confirm,
+            _ => MenuAction::Dismiss,
+        }),
         // `active_modal` only reports PortForward when the overlay is set.
         Modal::PortForward => match state.overlay.port_forward.as_ref() {
             Some(overlay) => pf_key(key, overlay),
@@ -149,16 +183,9 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         return Action::Summary(SummaryAction::Cancel);
     }
 
-    if let KeyCode::Char(c @ '1'..='9') = key.code {
-        if !key.modifiers.contains(KeyModifiers::ALT) {
-            let idx = (c as usize) - ('1' as usize);
-            // Jump targets the unified flat list (local rows then
-            // remotes), matching the numbered tabs in the vertical
-            // layout so `3` reaches a remote `host:session` tab.
-            if idx < state.focusable_count() {
-                return Action::NumberKeyJump(idx);
-            }
-            return Action::None;
+    if !key.modifiers.contains(KeyModifiers::ALT) {
+        if let Some(action) = digit_jump(key, state) {
+            return action;
         }
     }
 
@@ -184,14 +211,14 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 fn settings_key_to_action(key: &KeyEvent) -> Action {
     // Adjust/toggle/open is left/right only — Enter and Space deliberately
     // do nothing, so a stray Enter never flips a setting or opens an editor.
-    match key.code {
-        KeyCode::Esc => Action::Settings(SettingsAction::Close),
-        KeyCode::Char('j') | KeyCode::Down => Action::Settings(SettingsAction::Next),
-        KeyCode::Char('k') | KeyCode::Up => Action::Settings(SettingsAction::Prev),
-        KeyCode::Char('h') | KeyCode::Left => Action::Settings(SettingsAction::AdjustPrev),
-        KeyCode::Char('l') | KeyCode::Right => Action::Settings(SettingsAction::Adjust),
-        _ => Action::None,
-    }
+    Action::Settings(match nav_key(key) {
+        Some(Nav::Close) => SettingsAction::Close,
+        Some(Nav::Down) => SettingsAction::Next,
+        Some(Nav::Up) => SettingsAction::Prev,
+        Some(Nav::Left) => SettingsAction::AdjustPrev,
+        Some(Nav::Right) => SettingsAction::Adjust,
+        _ => return Action::None,
+    })
 }
 
 fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
@@ -209,37 +236,33 @@ fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         };
     }
 
-    match key.code {
-        KeyCode::Esc => Action::Settings(SettingsAction::ExcludeClose),
-        KeyCode::Char('j') | KeyCode::Down => Action::Settings(SettingsAction::ExcludeNext),
-        KeyCode::Char('k') | KeyCode::Up => Action::Settings(SettingsAction::ExcludePrev),
-        KeyCode::Char('a') => Action::Settings(SettingsAction::ExcludeStartAdd),
-        KeyCode::Char('d') | KeyCode::Char('x') => Action::Settings(SettingsAction::ExcludeDelete),
-        _ => Action::None,
-    }
+    Action::Settings(match (nav_key(key), key.code) {
+        (Some(Nav::Close), _) => SettingsAction::ExcludeClose,
+        (Some(Nav::Down), _) => SettingsAction::ExcludeNext,
+        (Some(Nav::Up), _) => SettingsAction::ExcludePrev,
+        (_, KeyCode::Char('a')) => SettingsAction::ExcludeStartAdd,
+        (_, KeyCode::Char('d' | 'x')) => SettingsAction::ExcludeDelete,
+        _ => return Action::None,
+    })
 }
 
 fn keybindings_view_key_to_action(key: &KeyEvent) -> Action {
-    match key.code {
-        KeyCode::Esc => Action::Settings(SettingsAction::CloseKeybindingsView),
-        KeyCode::Char('j') | KeyCode::Down => {
-            Action::Settings(SettingsAction::KeybindingsScrollDown)
-        }
-        KeyCode::Char('k') | KeyCode::Up => Action::Settings(SettingsAction::KeybindingsScrollUp),
-        _ => Action::None,
-    }
+    Action::Settings(match nav_key(key) {
+        Some(Nav::Close) => SettingsAction::CloseKeybindingsView,
+        Some(Nav::Down) => SettingsAction::KeybindingsScrollDown,
+        Some(Nav::Up) => SettingsAction::KeybindingsScrollUp,
+        _ => return Action::None,
+    })
 }
 
 fn theme_picker_key_to_action(key: &KeyEvent) -> Action {
-    match key.code {
-        KeyCode::Esc => Action::Settings(SettingsAction::CloseThemePicker),
-        KeyCode::Char('j') | KeyCode::Down => Action::Settings(SettingsAction::ThemePickerNext),
-        KeyCode::Char('k') | KeyCode::Up => Action::Settings(SettingsAction::ThemePickerPrev),
-        KeyCode::Char('h') | KeyCode::Left => Action::Settings(SettingsAction::ThemePickerPrev),
-        KeyCode::Char('l') | KeyCode::Right => Action::Settings(SettingsAction::ThemePickerNext),
-        KeyCode::Enter | KeyCode::Char(' ') => Action::Settings(SettingsAction::ConfirmThemePicker),
-        _ => Action::None,
-    }
+    Action::Settings(match (nav_key(key), key.code) {
+        (Some(Nav::Close), _) => SettingsAction::CloseThemePicker,
+        (Some(Nav::Down | Nav::Right), _) => SettingsAction::ThemePickerNext,
+        (Some(Nav::Up | Nav::Left), _) => SettingsAction::ThemePickerPrev,
+        (Some(Nav::Confirm), _) | (_, KeyCode::Char(' ')) => SettingsAction::ConfirmThemePicker,
+        _ => return Action::None,
+    })
 }
 
 fn pf_key(key: &KeyEvent, overlay: &PortForwardOverlay) -> Action {

@@ -29,7 +29,7 @@ use super::{render_min_interval, App, CONFIG_POLL_INTERVAL, POLL_MS, REFRESH_INT
 /// schedules a render but lets the frame-rate gate throttle it; `Force`
 /// bypasses the gate (for discrete state changes — action, resize, worker
 /// result — that must show immediately, not wait out the per-frame floor).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(super) enum Redraw {
     No,
     Soft,
@@ -39,13 +39,10 @@ pub(super) enum Redraw {
 impl Redraw {
     /// Combine two redraw requests, keeping the more urgent
     /// (`Force` > `Soft` > `No`). Used to fold every pump's verdict into a
-    /// single per-iteration decision.
+    /// single per-iteration decision. The variants are declared least- to
+    /// most-urgent, so the derived `Ord` is that ranking.
     fn merge(self, other: Redraw) -> Redraw {
-        match (self, other) {
-            (Redraw::Force, _) | (_, Redraw::Force) => Redraw::Force,
-            (Redraw::Soft, _) | (_, Redraw::Soft) => Redraw::Soft,
-            _ => Redraw::No,
-        }
+        self.max(other)
     }
 
     /// Fold this verdict into the loop's `needs_render`/`force_render` flags.
@@ -301,6 +298,18 @@ impl App {
         }
     }
 
+    /// Dispatch an action derived from a key or mouse event. Returns
+    /// `(should_quit, redraw)`. `Action::None` — an unbound key, or bare mouse
+    /// motion, which with capture on arrives at 30–100+/s — changes nothing, so
+    /// it must not force a full redraw.
+    fn handle_input_action(&mut self, action: Action) -> (bool, Redraw) {
+        let is_noop = matches!(action, Action::None);
+        if self.dispatch(action) {
+            return (true, Redraw::No);
+        }
+        (false, if is_noop { Redraw::No } else { Redraw::Force })
+    }
+
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         let mut needs_render = true;
         let mut force_render = true;
@@ -381,37 +390,25 @@ impl App {
                         let action = action::key_to_action(&key, &self.state);
                         if self.warning_state.is_some() && Self::warning_blocks_action(&action) {
                             self.state.focus_mode = FocusMode::Sidebar;
-                            needs_render = true;
-                            force_render = true;
+                            Redraw::Force.apply(&mut needs_render, &mut force_render);
                             continue;
                         }
-                        // `Action::None` (an unbound key) changes nothing —
-                        // don't force a full redraw for it.
-                        let is_noop = matches!(action, Action::None);
-                        if self.dispatch(action) {
+                        let (quit, r) = self.handle_input_action(action);
+                        if quit {
                             break;
                         }
-                        if !is_noop {
-                            needs_render = true;
-                            force_render = true;
-                        }
+                        r.apply(&mut needs_render, &mut force_render);
                     }
                     Event::Mouse(mouse) => {
                         let action = action::mouse_to_action(&mouse, &self.state);
                         if self.warning_state.is_some() && Self::warning_blocks_action(&action) {
                             continue;
                         }
-                        // Bare motion maps to `Action::None`; with mouse
-                        // capture on, those arrive at 30–100+/s — forcing a
-                        // full draw for each one burns CPU for no change.
-                        let is_noop = matches!(action, Action::None);
-                        if self.dispatch(action) {
+                        let (quit, r) = self.handle_input_action(action);
+                        if quit {
                             break;
                         }
-                        if !is_noop {
-                            needs_render = true;
-                            force_render = true;
-                        }
+                        r.apply(&mut needs_render, &mut force_render);
                     }
                     Event::Paste(text) if self.state.focus_mode == FocusMode::Main => {
                         let mut bytes = b"\x1b[200~".to_vec();
