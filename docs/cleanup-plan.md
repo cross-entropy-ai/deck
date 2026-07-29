@@ -22,8 +22,9 @@
   commands goes through `shell_single_quote` / `shell_quote_remote_path`;
   no injection hole was found (audited kill/rename/switch/focus/order/
   new-session/ls paths).
-- The local/remote rule holds in the renderer: `&[&dyn SidebarSession]`,
-  no `is_remote` branching outside the sanctioned divider/label carve-out.
+- The local/remote rule holds in the renderer: it consumes
+  `&[SessionEntry]` and reads origin off `host`, with no `is_remote`
+  branching outside the sanctioned divider/label carve-out.
 - Reducer test coverage is genuinely strong (~90 tests). Clippy is clean.
 
 ---

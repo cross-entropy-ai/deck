@@ -94,17 +94,6 @@ impl App {
         let mut captured_hits = crate::state::HitRegions::default();
         let mut captured_summary_popup_max_scroll: usize = 0;
         terminal.draw(|frame| {
-            // Unified slice for the sidebar: `entries` is already in render
-            // order (local rows first, then remotes) and `SessionEntry` impls
-            // `SidebarSession`, so the sidebar reads straight from storage —
-            // no per-frame borrowed-view shells.
-            let sessions_dyn: Vec<&dyn ui::SidebarSession> = self
-                .state
-                .entries
-                .iter()
-                .map(|e| e as &dyn ui::SidebarSession)
-                .collect();
-
             let full = frame.area();
             let reload_height = ui::reload_row_count(reload_status, full.width);
             // Paint the reload bar as an overlay, not its own layout slot:
@@ -171,7 +160,7 @@ impl App {
                 frame,
                 sidebar_area,
                 ui::SidebarProps {
-                    sessions: &sessions_dyn,
+                    sessions: &self.state.entries,
                     built: &layout,
                     focus_target,
                     project_drag,

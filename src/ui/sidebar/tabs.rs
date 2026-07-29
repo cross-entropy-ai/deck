@@ -8,12 +8,12 @@ use unicode_width::UnicodeWidthStr;
 use crate::geometry::{tab_bar_layout, truncate, TAB_OVERFLOW_MARKER, TAB_SEPARATOR};
 
 use super::super::text::pad_line;
-use super::super::SidebarSession;
+use crate::state::{SessionEntry, SessionEntryKind};
 use super::container::draw_sidebar_container;
 use super::{menu_span, SidebarRenderCtx, MENU_LABEL};
 
 pub(super) struct TabsProps<'a> {
-    pub sessions: &'a [&'a dyn SidebarSession],
+    pub sessions: &'a [SessionEntry],
     pub focused: usize,
     pub sidebar_active: bool,
     pub show_borders: bool,
@@ -42,7 +42,7 @@ pub(super) fn draw_sidebar_tabs(
     let mut spans: Vec<Span> = Vec::new();
     let labels: Vec<String> = sessions
         .iter()
-        .map(|session| crate::geometry::tab_label(session.host(), session.name()))
+        .map(|session| crate::geometry::tab_label(session.host.as_deref(), session.display_name()))
         .collect();
     let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
     let layout = tab_bar_layout(&label_refs, focused, content.width);
@@ -69,7 +69,7 @@ pub(super) fn draw_sidebar_tabs(
     for (visible_pos, tab) in layout.tabs.iter().enumerate() {
         pad_to(tab.start, &mut spans, &mut cursor);
         let i = tab.index;
-        let session = sessions[i];
+        let session = &sessions[i];
         let is_focused = i == focused;
         let tab_width = tab.end - tab.start;
         let idx = format!("{}", i + 1);
@@ -79,7 +79,7 @@ pub(super) fn draw_sidebar_tabs(
         let label = truncate(&labels[i], label_room);
 
         let bg = if is_focused { theme.surface } else { theme.bg };
-        let name_fg = if session.unreachable() {
+        let name_fg = if matches!(session.kind, SessionEntryKind::Unreachable) {
             theme.dim
         } else if is_focused {
             theme.green

@@ -13,7 +13,6 @@ use crate::update::UpdateStatus;
 use ratatui_textarea::TextArea;
 
 use super::overlays::{draw_confirm_kill, draw_help, draw_rename_input};
-use super::SidebarSession;
 
 mod container;
 mod footer;
@@ -31,9 +30,9 @@ use tabs::{draw_sidebar_tabs, TabsProps};
 ///
 /// `sessions` is one slice of trait objects: all rows in flat layout order
 /// (local first, then remote). The renderer never branches on concrete types —
-/// per-row data goes through `SidebarSession`.
+/// per-row data comes straight off `SessionEntry`.
 pub struct SidebarProps<'a> {
-    pub sessions: &'a [&'a dyn SidebarSession],
+    pub sessions: &'a [crate::state::SessionEntry],
     pub built: &'a BuiltLayout,
     pub focus_target: Option<FocusTarget>,
     /// Active Projects drag as `(source row, current drop target)`.

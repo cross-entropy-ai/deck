@@ -14,11 +14,7 @@ impl AppState {
         let name = if loading {
             "(connecting…)".to_string()
         } else {
-            match e.kind {
-                SessionEntryKind::Unreachable => UNREACHABLE_LABEL.to_string(),
-                SessionEntryKind::NoSessions => NO_SESSIONS_LABEL.to_string(),
-                _ => e.name.clone(),
-            }
+            e.display_name().to_string()
         };
         let item = match view_mode {
             ViewMode::Compact => {

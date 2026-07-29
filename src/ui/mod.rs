@@ -11,7 +11,6 @@ mod text;
 pub mod widgets;
 
 use crate::keybindings::Keybindings;
-use crate::state::{SessionEntry, SessionEntryKind};
 
 pub use add_remote::draw_add_remote;
 pub use menu::draw_context_menu;
@@ -20,50 +19,6 @@ pub use reload::{draw_reload_bar, reload_row_count};
 pub use settings::{draw_settings_page, draw_theme_picker};
 pub use sidebar::{draw_sidebar, SidebarProps};
 pub use summary_popup::draw_summary_popup;
-
-/// The session-row abstraction the tabs-mode renderer consumes (the
-/// Expanded/Compact list builds rows from `SessionEntry` directly in `model`).
-/// Tabs mode reads only host/name/unreachable; the renderer must not branch
-/// on concrete types. `host()` is `None` for a local session, `Some(host)`
-/// for a remote one — the renderer passes it straight to `tab_label`.
-pub trait SidebarSession {
-    fn host(&self) -> Option<&str>;
-    fn name(&self) -> &str;
-    /// Whether this row is a real session rather than a connection/status
-    /// placeholder. Used by the Header's Projects count.
-    fn is_attachable(&self) -> bool {
-        true
-    }
-    /// Reaching this session's source failed (timeout, auth, ...).
-    /// Tab label is still drawn, just greyed out.
-    fn unreachable(&self) -> bool {
-        false
-    }
-}
-
-// One impl for the unified store. Origin comes from `host` (None = local,
-// Some = remote); the placeholder kinds paint their label. The renderer
-// never asks "is this remote?".
-impl SidebarSession for SessionEntry {
-    fn host(&self) -> Option<&str> {
-        self.host.as_deref()
-    }
-    fn name(&self) -> &str {
-        // The placeholder display strings live here, derived from `kind`,
-        // not stored as magic session names.
-        match self.kind {
-            SessionEntryKind::Unreachable => crate::state::UNREACHABLE_LABEL,
-            SessionEntryKind::NoSessions => crate::state::NO_SESSIONS_LABEL,
-            SessionEntryKind::Live { .. } | SessionEntryKind::Connecting => &self.name,
-        }
-    }
-    fn is_attachable(&self) -> bool {
-        SessionEntry::is_attachable(self)
-    }
-    fn unreachable(&self) -> bool {
-        matches!(self.kind, SessionEntryKind::Unreachable)
-    }
-}
 
 pub struct ExcludeEditorView<'a> {
     pub patterns: &'a [String],

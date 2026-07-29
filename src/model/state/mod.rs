@@ -240,6 +240,19 @@ impl SessionEntry {
         self.host.is_none()
     }
 
+    /// The row's display label. The placeholder strings are derived from
+    /// `kind` here rather than stored as magic session names, so a real
+    /// session called `(no sessions)` is never mistaken for a placeholder.
+    /// `Connecting` shows its raw name — the sectioned list substitutes
+    /// "(connecting…)" itself, while tabs mode draws the name.
+    pub fn display_name(&self) -> &str {
+        match self.kind {
+            SessionEntryKind::Unreachable => UNREACHABLE_LABEL,
+            SessionEntryKind::NoSessions => NO_SESSIONS_LABEL,
+            SessionEntryKind::Live { .. } | SessionEntryKind::Connecting => &self.name,
+        }
+    }
+
     /// Whether this `Live` row is the current (attached) session. Always
     /// false for placeholders and for remote rows (remote `is_current` isn't
     /// tracked).

@@ -10,7 +10,7 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
     let theme = &crate::theme::THEMES[0];
     let built = BuiltLayout::default();
     let keybindings = Keybindings::default();
-    let sessions: Vec<&dyn SidebarSession> = Vec::new();
+    let sessions: Vec<crate::state::SessionEntry> = Vec::new();
 
     let backend = TestBackend::new(30, 12);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -84,7 +84,7 @@ fn idle_summary_without_agents_is_compact_and_disabled() {
         .insert(crate::system::tmux::lane(None), Vec::new());
     state.rebuild_agent_entries();
     let built = state.agents_layout();
-    let sessions: Vec<&dyn SidebarSession> = Vec::new();
+    let sessions: Vec<crate::state::SessionEntry> = Vec::new();
 
     let backend = TestBackend::new(30, 20);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -151,11 +151,7 @@ fn overflowing_vertical_tabs_keep_focus_and_menu_visible() {
         .collect();
     state.focused = 6;
     let built = state.sidebar_layout(state.prefs.view_mode);
-    let sessions: Vec<&dyn SidebarSession> = state
-        .entries
-        .iter()
-        .map(|entry| entry as &dyn SidebarSession)
-        .collect();
+    let sessions = state.entries.clone();
 
     let backend = TestBackend::new(40, 12);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -225,7 +221,7 @@ fn render_hits(width: u16, height: u16, has_update: bool) -> HitRegions {
     let theme = &crate::theme::THEMES[0];
     let built = BuiltLayout::default();
     let keybindings = Keybindings::default();
-    let sessions: Vec<&dyn SidebarSession> = Vec::new();
+    let sessions: Vec<crate::state::SessionEntry> = Vec::new();
     let update = UpdateStatus {
         latest_version: "9.9.9".to_string(),
         current_version: "0.0.1".to_string(),
@@ -304,11 +300,7 @@ fn header_shows_live_counts_and_opens_new_local_session() {
     );
     state.rebuild_agent_entries();
     let built = state.sidebar_layout(state.prefs.view_mode);
-    let sessions: Vec<&dyn SidebarSession> = state
-        .entries
-        .iter()
-        .map(|entry| entry as &dyn SidebarSession)
-        .collect();
+    let sessions = state.entries.clone();
 
     let backend = TestBackend::new(50, 20);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -384,7 +376,7 @@ fn footer_is_contextual_and_drops_persistent_version_text() {
         let theme = &crate::theme::THEMES[0];
         let built = BuiltLayout::default();
         let keybindings = Keybindings::default();
-        let sessions: Vec<&dyn SidebarSession> = Vec::new();
+        let sessions: Vec<crate::state::SessionEntry> = Vec::new();
         let backend = TestBackend::new(50, 12);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -474,7 +466,7 @@ fn agents_tab_publishes_clickable_agent_entries() {
     state.rebuild_agent_entries();
     let built = state.agents_layout();
     let agent_entries = state.agent_entries.clone();
-    let sessions: Vec<&dyn SidebarSession> = Vec::new();
+    let sessions: Vec<crate::state::SessionEntry> = Vec::new();
 
     let backend = TestBackend::new(40, 24);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -562,11 +554,7 @@ fn remote_divider_buttons_register_below_their_top_margin() {
     });
     state.clamp_projects_focus();
     let built = state.sidebar_layout(ViewMode::Expanded);
-    let sessions: Vec<&dyn SidebarSession> = state
-        .entries
-        .iter()
-        .map(|e| e as &dyn SidebarSession)
-        .collect();
+    let sessions = state.entries.clone();
 
     let backend = TestBackend::new(40, 24);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -677,11 +665,7 @@ fn remote_divider_shows_forward_count() {
     state.clamp_projects_focus();
 
     let built = state.sidebar_layout(ViewMode::Expanded);
-    let sessions: Vec<&dyn SidebarSession> = state
-        .entries
-        .iter()
-        .map(|e| e as &dyn SidebarSession)
-        .collect();
+    let sessions = state.entries.clone();
 
     let backend = TestBackend::new(40, 24);
     let mut terminal = Terminal::new(backend).unwrap();
