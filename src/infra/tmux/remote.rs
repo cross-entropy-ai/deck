@@ -519,12 +519,22 @@ fn list_dir_with(
     let path = shell_quote_remote_path(path);
     match run_ssh(runner, host, &["ls", "-1pA", "--", path.as_str()]) {
         Ok(raw) => {
-            let mut names = crate::infra::parser::dir::parse_dir_listing(&raw);
+            let mut names = parse_dir_listing(&raw);
             names.sort();
             (names, None)
         }
         Err(err) => (Vec::new(), Some(dir_error_message(&err))),
     }
+}
+
+/// Keep only directory lines from an `ls -1pA` listing — those `ls -p`
+/// suffixed with `/` — and strip the trailing slash. Non-directory lines
+/// (no `/`) are dropped.
+fn parse_dir_listing(raw: &str) -> Vec<String> {
+    raw.lines()
+        .filter_map(|line| line.strip_suffix('/'))
+        .map(str::to_string)
+        .collect()
 }
 
 /// Short, one-line error for the picker's error slot. Distinguishes a

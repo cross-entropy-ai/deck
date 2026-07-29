@@ -19,7 +19,6 @@ use std::thread;
 
 use crate::exclude::{self, ExcludePattern};
 use crate::system::tmux::TmuxSystem;
-use crate::system::System;
 use crate::tmux;
 
 pub struct RefreshRequest {
@@ -205,8 +204,9 @@ fn collect_local(
     }
     .unwrap_or_default();
 
-    // Gather the local lane's sessions + agents through the tmux System.
-    let snap = TmuxSystem.snapshot(&TmuxSystem::local_lane(), req.show_agents);
+    // Gather the local lane's sessions + agents through the lane's owning System.
+    let lane = TmuxSystem::local_lane();
+    let snap = crate::system::for_lane(&lane).snapshot(&lane, req.show_agents);
     let (sessions, raw_agents) =
         snap.map_or_else(|| (Vec::new(), None), |s| (s.sessions, s.agents));
 
@@ -265,7 +265,8 @@ fn collect_remotes(
                     // and it skips the agent probe when not enabled or the host
                     // is unreachable (so a dead host doesn't spend two 5s ssh
                     // timeouts and hold the single-flight gate ~10s).
-                    let snap = TmuxSystem.snapshot(&TmuxSystem::host_lane(&host), probe_agents);
+                    let lane = TmuxSystem::host_lane(&host);
+                    let snap = crate::system::for_lane(&lane).snapshot(&lane, probe_agents);
                     (host, snap)
                 })
                 .ok()

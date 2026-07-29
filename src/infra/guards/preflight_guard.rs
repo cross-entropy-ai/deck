@@ -5,13 +5,9 @@ use crate::config::Config;
 use crate::infra::command::{CommandError, CommandRunner, RealRunner};
 use crate::tmux;
 
-/// Startup preflight guard for checks that must pass before deck enters the TUI.
-pub struct PreflightGuard;
-
-impl PreflightGuard {
-    pub fn run(attach_override: Option<&str>, create_new: bool) -> Result<(), String> {
-        run_preflight_checks_with_runner(&RealRunner, attach_override, create_new)
-    }
+/// Startup preflight: the checks that must pass before deck enters the TUI.
+pub fn run_preflight_checks(attach_override: Option<&str>, create_new: bool) -> Result<(), String> {
+    run_preflight_checks_with_runner(&RealRunner, attach_override, create_new)
 }
 
 fn run_preflight_checks_with_runner(

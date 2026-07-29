@@ -24,7 +24,6 @@ pub enum UpdateCheckMode {
 pub struct UpdateStatus {
     pub latest_version: String,
     pub current_version: String,
-    pub release_url: String,
     pub checked_at: u64,
 }
 
@@ -59,7 +58,7 @@ pub fn spawn_checker() -> UpdateChecker {
 fn do_check() -> UpdateResult {
     let current = env!("CARGO_PKG_VERSION").to_string();
     match fetch_latest() {
-        Ok((latest_version, release_url)) => {
+        Ok(latest_version) => {
             let newer = match compare(&current, &latest_version) {
                 Some(b) => b,
                 None => {
@@ -73,7 +72,6 @@ fn do_check() -> UpdateResult {
                 status: UpdateStatus {
                     latest_version,
                     current_version: current,
-                    release_url,
                     checked_at: now_secs(),
                 },
                 newer_than_current: newer,
@@ -83,7 +81,7 @@ fn do_check() -> UpdateResult {
     }
 }
 
-fn fetch_latest() -> Result<(String, String), String> {
+fn fetch_latest() -> Result<String, String> {
     let client = reqwest::blocking::Client::builder()
         .user_agent(format!("deck/{}", env!("CARGO_PKG_VERSION")))
         .timeout(REQUEST_TIMEOUT)
@@ -99,7 +97,19 @@ fn fetch_latest() -> Result<(String, String), String> {
         return Err(format!("HTTP {}", status));
     }
     let body = resp.text().map_err(|e| format!("read body: {}", e))?;
-    crate::infra::parser::release::parse_release_json(&body)
+    parse_release_json(&body)
+}
+
+/// Parse a GitHub release JSON body into its version. The leading `v` on the
+/// tag (`v0.2.0`) is stripped so the result compares cleanly with the crate
+/// version.
+fn parse_release_json(body: &str) -> Result<String, String> {
+    #[derive(Deserialize)]
+    struct Release {
+        tag_name: String,
+    }
+    let r: Release = serde_json::from_str(body).map_err(|e| format!("parse: {}", e))?;
+    Ok(r.tag_name.trim_start_matches('v').to_string())
 }
 
 /// Returns `Some(true)` iff `latest > current` under semver. `None` on parse failure.

@@ -13,12 +13,11 @@
 //! `argv` is matched. Headless / non-interactive forms are excluded. See
 //! deck's `docs/agent-integration.md` for signature research.
 //!
-//! The crate depends only on `regex` and carries no tmux, ssh, or deck-specific
+//! The crate has no dependencies and carries no tmux, ssh, or deck-specific
 //! state; runtime collection (running `ps`, capturing panes, timeouts) lives in
 //! deck.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentKind {
@@ -45,7 +44,6 @@ pub struct DetectedAgent {
     pub kind: AgentKind,
     pub session: String,
     pub window: String,
-    pub pane: String,
     /// Stable `%N` pane id — the switch/focus target.
     pub pane_id: String,
     /// Traffic-light health from the pane buffer (see [`classify_status`]).
@@ -103,13 +101,35 @@ const LIVE_TAIL_LINES: usize = 12;
 /// so it can match anywhere in the scanned tail without hitting stale lines.
 const CLAUDE_INTERRUPT_HINT: &str = "esc to interrupt";
 
+/// The two spellings of the "still going" ellipsis Claude Code prints.
+const ELLIPSIS: [&str; 2] = ["\u{2026}", "..."];
+
+// ponytail: the four "working" tells below are plain `str` matching (ASCII
+// digits, ASCII case-folding, `char::is_alphanumeric` for "word") rather than a
+// regex engine — Claude Code's status lines are ASCII verbs plus a fixed glyph
+// set, so full Unicode digit/case classes buy nothing here.
+
 /// Spinner progress tail with a live timer: "… (5m 21s", "… (30s)". Backup
 /// tell for spinner lines whose interrupt hint is truncated/wrapped off.
 /// Requiring a *duration* right after "(" rejects completed tool lines
 /// ("Reading 1 file… (ctrl+o to expand)") and stray prose ("… (see above)").
-fn working_timer_tail() -> &'static regex::Regex {
-    static R: OnceLock<regex::Regex> = OnceLock::new();
-    R.get_or_init(|| regex::Regex::new(r"(?:\u{2026}|\.\.\.)\s*\(\s*\d+\s*[hms]").unwrap())
+fn working_timer_tail(line: &str) -> bool {
+    line.char_indices().any(|(i, _)| {
+        ELLIPSIS
+            .iter()
+            .filter_map(|e| line[i..].strip_prefix(e))
+            .any(duration_paren)
+    })
+}
+
+/// A "(<number><h|m|s>" duration opening right after an ellipsis.
+fn duration_paren(after: &str) -> bool {
+    let Some(rest) = after.trim_start().strip_prefix('(') else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    digits > 0 && rest[digits..].trim_start().starts_with(['h', 'm', 's'])
 }
 
 /// A line led by a Claude Code animated spinner glyph (rotating sparkle/star
@@ -119,35 +139,62 @@ fn working_timer_tail() -> &'static regex::Regex {
 /// Caller gates it to the bottom [`LIVE_TAIL_LINES`] non-blank lines and runs
 /// it only after the completed-turn check, since the finished summary
 /// ("✶ Cogitated for 8s") reuses the same glyph.
-fn working_spinner_glyph() -> &'static regex::Regex {
-    static R: OnceLock<regex::Regex> = OnceLock::new();
-    R.get_or_init(|| {
-        regex::Regex::new(
-            r"^\s*[\u{2722}\u{2726}\u{2727}\u{2731}\u{2733}\u{2734}\u{2735}\u{2736}\u{2737}\u{2738}\u{2739}\u{273a}\u{273b}\u{273d}\u{2749}\u{274b}]",
-        )
-        .unwrap()
-    })
+fn working_spinner_glyph(line: &str) -> bool {
+    const SPINNERS: &[char] = &[
+        '\u{2722}', '\u{2726}', '\u{2727}', '\u{2731}', '\u{2733}', '\u{2734}', '\u{2735}',
+        '\u{2736}', '\u{2737}', '\u{2738}', '\u{2739}', '\u{273a}', '\u{273b}', '\u{273d}',
+        '\u{2749}', '\u{274b}',
+    ];
+    line.trim_start()
+        .starts_with(|c: char| SPINNERS.contains(&c))
 }
 
 /// A bare thinking spinner whose glyph isn't in [`working_spinner_glyph`]'s
 /// set, keyed on structure: leading symbol + gerund "…ing" before the trailing
 /// ellipsis ("⟳ Frobnicating…"). Caller-gated to the bottom [`LIVE_TAIL_LINES`].
-fn working_spinner_tail() -> &'static regex::Regex {
-    static R: OnceLock<regex::Regex> = OnceLock::new();
-    R.get_or_init(|| regex::Regex::new(r"(?i)^\s*[^\w\s].*ing(?:\u{2026}|\.\.\.)\s*$").unwrap())
+fn working_spinner_tail(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    lower.ends_with("ing\u{2026}") || lower.ends_with("ing...")
 }
 
 /// A tool call in flight with no parenthetical ("Reading 1 file…", "Running
 /// command…"). Tool verbs are a stable finite set, so a whitelist is safe and
 /// avoids matching stray prose. Requires the live trailing ellipsis a completed
 /// tool line lacks; caller gates it to the bottom [`LIVE_TAIL_LINES`].
-fn working_tool_tail() -> &'static regex::Regex {
-    static R: OnceLock<regex::Regex> = OnceLock::new();
-    R.get_or_init(|| {
-        regex::Regex::new(
-            r"(?i)^\s*(?:reading|writing|editing|updating|running|executing|searching|grepping|fetching|building|testing|installing|committing|pushing|analyzing|checking)\b.*(?:\u{2026}|\.\.\.)\s*$",
-        )
-        .unwrap()
+fn working_tool_tail(line: &str) -> bool {
+    const VERBS: &[&str] = &[
+        "reading",
+        "writing",
+        "editing",
+        "updating",
+        "running",
+        "executing",
+        "searching",
+        "grepping",
+        "fetching",
+        "building",
+        "testing",
+        "installing",
+        "committing",
+        "pushing",
+        "analyzing",
+        "checking",
+    ];
+    let trimmed = line.trim();
+    if !ELLIPSIS.iter().any(|e| trimmed.ends_with(e)) {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    VERBS.iter().any(|v| {
+        lower
+            .strip_prefix(v)
+            // A word boundary after the verb: "Readings…" is not a tool line.
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(|c| !(c.is_alphanumeric() || c == '_'))
     })
 }
 
@@ -186,7 +233,7 @@ fn claude_classify(buffer: &str) -> AgentStatus {
     for line in scanned.iter().rev() {
         let lower = line.to_ascii_lowercase();
         // Strong, high-precision tells — matchable anywhere in the tail.
-        if lower.contains(CLAUDE_INTERRUPT_HINT) || working_timer_tail().is_match(line) {
+        if lower.contains(CLAUDE_INTERRUPT_HINT) || working_timer_tail(line) {
             return AgentStatus::Working;
         }
         if CLAUDE_WAITING_MARKERS.iter().any(|m| lower.contains(m)) {
@@ -204,9 +251,9 @@ fn claude_classify(buffer: &str) -> AgentStatus {
         // LIVE_TAIL_LINES non-blank lines where a live spinner / tool line
         // sits.
         if content_seen <= LIVE_TAIL_LINES
-            && (working_spinner_glyph().is_match(line)
-                || working_spinner_tail().is_match(line)
-                || working_tool_tail().is_match(line))
+            && (working_spinner_glyph(line)
+                || working_spinner_tail(line)
+                || working_tool_tail(line))
         {
             return AgentStatus::Working;
         }
@@ -299,7 +346,6 @@ pub fn detect_agents(panes: &[PaneInfo], ps_output: &str) -> Vec<DetectedAgent> 
                     kind,
                     session: p.session.clone(),
                     window: p.window.clone(),
-                    pane: p.pane.clone(),
                     pane_id: p.pane_id.clone(),
                     // No buffer here; the gathering layer captures the pane
                     // and fills this in via `classify_status`.

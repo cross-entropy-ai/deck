@@ -395,7 +395,6 @@ fn detected(session: &str, pane_id: &str) -> crate::agent::DetectedAgent {
         kind: crate::agent::AgentKind::Claude,
         session: session.to_string(),
         window: "1".to_string(),
-        pane: "0".to_string(),
         pane_id: pane_id.to_string(),
         status: crate::agent::AgentStatus::Unknown,
     }
@@ -563,7 +562,6 @@ fn sidebar_footer_height_matches_renderer() {
     state.update_available = Some(UpdateStatus {
         latest_version: "9.9.9".to_string(),
         current_version: "0.0.0".to_string(),
-        release_url: String::new(),
         checked_at: 0,
     });
     assert_eq!(state.sidebar_footer_height(), 3);

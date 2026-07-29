@@ -6,7 +6,7 @@ mod system;
 mod ui;
 
 pub(crate) use app::action;
-pub(crate) use infra::guards::{instance_guard, preflight_guard, terminal_guard};
+pub(crate) use infra::guards::{instance_guard, terminal_guard};
 pub(crate) use infra::ssh::model::{add_remote, forwards};
 pub(crate) use infra::tmux::{local as tmux, remote as remote_tmux};
 pub(crate) use infra::{
@@ -23,8 +23,8 @@ use cli::{parse_args, ParsedCommand};
 
 use std::io;
 
+use infra::guards::preflight_guard::run_preflight_checks;
 use instance_guard::InstanceGuard;
-use preflight_guard::PreflightGuard;
 use terminal_guard::TerminalGuard;
 
 fn main() -> io::Result<()> {
@@ -62,7 +62,7 @@ fn main() -> io::Result<()> {
 
     let _instance_guard = InstanceGuard::acquire_for_current_process_or_exit(args.force)?;
 
-    if let Err(err) = PreflightGuard::run(args.attach_override.as_deref(), args.create_new) {
+    if let Err(err) = run_preflight_checks(args.attach_override.as_deref(), args.create_new) {
         eprintln!("deck: {err}");
         std::process::exit(1);
     }

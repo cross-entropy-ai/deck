@@ -229,7 +229,6 @@ fn render_hits(width: u16, height: u16, has_update: bool) -> HitRegions {
     let update = UpdateStatus {
         latest_version: "9.9.9".to_string(),
         current_version: "0.0.1".to_string(),
-        release_url: "https://example.invalid".to_string(),
         checked_at: 0,
     };
 
@@ -297,7 +296,6 @@ fn header_shows_live_counts_and_opens_new_local_session() {
             kind: crate::agent::AgentKind::Claude,
             session: "work".to_string(),
             window: "1".to_string(),
-            pane: "0".to_string(),
             pane_id: "%1".to_string(),
             status: crate::agent::AgentStatus::Working,
         }],
@@ -445,7 +443,6 @@ fn agents_tab_publishes_clickable_agent_entries() {
         kind: crate::agent::AgentKind::Claude,
         session: "sess".to_string(),
         window: "1".to_string(),
-        pane: "0".to_string(),
         pane_id: pane_id.to_string(),
         status: crate::agent::AgentStatus::Idle,
     };

@@ -1496,7 +1496,6 @@ mod agents_tab {
             kind: crate::agent::AgentKind::Claude,
             session: session.to_string(),
             window: "1".to_string(),
-            pane: "0".to_string(),
             pane_id: pane_id.to_string(),
             status: crate::agent::AgentStatus::Unknown,
         }

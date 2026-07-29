@@ -422,3 +422,12 @@ fn new_session_reports_success_and_failure() {
     }));
     assert!(!new_session_with(&failrunner, "box", "work", "~/proj"));
 }
+
+#[test]
+fn parse_dir_listing_keeps_dirs_drops_files() {
+    // `ls -1pA` suffixes directories (incl. dotfile dirs) with `/`.
+    let raw = "src/\nmain.rs\ntests/\n.config/\nREADME";
+    let mut got = parse_dir_listing(raw);
+    got.sort();
+    assert_eq!(got, vec![".config", "src", "tests"]);
+}

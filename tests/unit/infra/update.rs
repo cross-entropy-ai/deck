@@ -23,7 +23,6 @@ fn cache_is_fresh_boundary() {
     let status = UpdateStatus {
         latest_version: "0.2.0".into(),
         current_version: "0.1.3".into(),
-        release_url: String::new(),
         checked_at: 1000,
     };
     assert!(UpdateCache::is_fresh(&status, 1100, 200));
@@ -38,9 +37,31 @@ fn cache_is_fresh_handles_clock_skew() {
     let status = UpdateStatus {
         latest_version: "0.2.0".into(),
         current_version: "0.1.3".into(),
-        release_url: String::new(),
         checked_at: 2000,
     };
     // now < checked_at — clock moved backwards; treat as fresh.
     assert!(UpdateCache::is_fresh(&status, 1500, 200));
+}
+
+#[test]
+fn parse_release_strips_v_prefix() {
+    let body = r#"{"tag_name":"v0.2.0","html_url":"https://example.com/tag"}"#;
+    assert_eq!(parse_release_json(body).unwrap(), "0.2.0");
+}
+
+#[test]
+fn parse_release_without_v_prefix_ok() {
+    let body = r#"{"tag_name":"0.2.0"}"#;
+    assert_eq!(parse_release_json(body).unwrap(), "0.2.0");
+}
+
+#[test]
+fn parse_release_missing_field_errors() {
+    let body = r#"{"html_url":"https://example.com/tag"}"#;
+    assert!(parse_release_json(body).is_err());
+}
+
+#[test]
+fn parse_release_invalid_json_errors() {
+    assert!(parse_release_json("not json").is_err());
 }
