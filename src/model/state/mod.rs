@@ -770,23 +770,20 @@ impl AppState {
         let footer_height = self.sidebar_footer_height();
         let sessions_top = b + header_height;
         let sessions_bottom = sidebar_h.saturating_sub(b + footer_height);
-        if row < sessions_top || row >= sessions_bottom {
-            return None;
-        }
         // The list viewport sits above the Summary card (pinned to the bottom
         // of the Agents tab, between the list and the footer, not part of the
-        // sectioned list; `summary_card_height` is 0 elsewhere).
+        // sectioned list; `summary_card_height` is 0 elsewhere). `list_bottom`
+        // is never past `sessions_bottom`, so this one check covers both.
         let list_bottom = sessions_bottom.saturating_sub(self.summary_card_height());
         if row < sessions_top || row >= list_bottom {
             return None;
         }
-        let list_top = sessions_top;
-        let visible_height = list_bottom - list_top;
+        let visible_height = list_bottom - sessions_top;
         let built = self.current_layout(self.prefs.view_mode);
         let scroll = built
             .layout
             .scroll_offset(self.focus_target().map(|f| f.0), visible_height);
-        let viewport_y = row - list_top;
+        let viewport_y = row - sessions_top;
         Some((built, viewport_y, scroll, visible_height))
     }
 

@@ -9,7 +9,7 @@
 use ratatui_textarea::TextArea;
 
 use crate::new_session::{make_textarea, textarea_line};
-use crate::state::step_clamped;
+use crate::state::{clamp_cursor, step_clamped};
 
 /// Text input + filtered list of `items`, with a clamped selection.
 #[derive(Debug, Clone)]
@@ -51,11 +51,7 @@ impl FilterPicker {
     /// clamp `selected` into the new range (0 when empty).
     pub fn refilter(&mut self, filter_fn: impl Fn(&[String], &str) -> Vec<usize>) {
         self.filtered = filter_fn(&self.items, self.input_str());
-        if self.filtered.is_empty() {
-            self.selected = 0;
-        } else if self.selected >= self.filtered.len() {
-            self.selected = self.filtered.len() - 1;
-        }
+        clamp_cursor(&mut self.selected, self.filtered.len());
     }
 
     /// Move the selection by `direction` (+1 down / -1 up), clamped within

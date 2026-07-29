@@ -1,6 +1,6 @@
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthChar;
 
 use crate::keybindings::{format_key, Command, Keybindings};
 use crate::theme::Theme;
@@ -202,11 +202,6 @@ pub(super) fn md_line_spans(runs: &[MdRun], theme: &Theme, base: Style) -> Vec<S
             Span::styled(seg.clone(), s)
         })
         .collect()
-}
-
-/// Total display width of a `wrap_markdown` line's runs.
-pub(super) fn md_line_width(runs: &[MdRun]) -> usize {
-    runs.iter().map(|(s, _)| s.width()).sum()
 }
 
 pub(super) fn format_keys_for(keybindings: &Keybindings, cmd: Command) -> String {

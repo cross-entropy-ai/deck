@@ -52,22 +52,8 @@ impl Pty {
         let child = pair.slave.spawn_command(cmd).map_err(pty_err)?;
         drop(pair.slave);
 
-        Self::from_parts(pair.master, child, slave_tty, size)
-    }
-
-    /// Spawn a command in a new PTY.
-    pub fn spawn(program: &str, args: &[&str], size: PtySize) -> io::Result<Self> {
-        Self::spawn_with_env(program, args, size, &[])
-    }
-
-    fn from_parts(
-        master: Box<dyn MasterPty + Send>,
-        child: Box<dyn portable_pty::Child + Send + Sync>,
-        slave_tty: String,
-        _size: PtySize,
-    ) -> io::Result<Self> {
-        let writer = master.take_writer().map_err(pty_err)?;
-        let mut reader = master.try_clone_reader().map_err(pty_err)?;
+        let writer = pair.master.take_writer().map_err(pty_err)?;
+        let mut reader = pair.master.try_clone_reader().map_err(pty_err)?;
 
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
@@ -88,12 +74,17 @@ impl Pty {
         });
 
         Ok(Pty {
-            master,
+            master: pair.master,
             writer,
             rx,
             child,
             slave_tty,
         })
+    }
+
+    /// Spawn a command in a new PTY.
+    pub fn spawn(program: &str, args: &[&str], size: PtySize) -> io::Result<Self> {
+        Self::spawn_with_env(program, args, size, &[])
     }
 
     /// Drain all pending events from the reader thread (non-blocking).

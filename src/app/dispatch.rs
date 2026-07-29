@@ -128,7 +128,7 @@ impl App {
                     InstallMethod::DirectDownload => {
                         if target_triple().is_none() {
                             self.warning_state =
-                                Some(crate::state::WarningState::Proactive {
+                                Some(crate::state::WarningState {
                                     text: "Unsupported platform",
                                     detail: "deck doesn't ship a prebuilt binary for this \
                                              platform. Rebuild from source via \
@@ -146,7 +146,7 @@ impl App {
                         // We can't write to where deck lives (e.g.
                         // /usr/local/bin without brew). Point the user at
                         // the install methods instead.
-                        self.warning_state = Some(crate::state::WarningState::Proactive {
+                        self.warning_state = Some(crate::state::WarningState {
                             text: "deck can't self-update from this location",
                             detail: manual_upgrade_hint(&latest),
                         });
@@ -651,7 +651,7 @@ impl App {
         // deck inside tmux. Pop a warning over the main pane instead of
         // switching; navigating to any other session clears it.
         if self.own_session.as_deref() == Some(session) {
-            self.warning_state = Some(crate::state::WarningState::Proactive {
+            self.warning_state = Some(crate::state::WarningState {
                 text: "Can't open deck's own session here",
                 detail: format!(
                     "'{session}' is the tmux session deck is running in — opening it \

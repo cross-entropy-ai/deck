@@ -65,15 +65,9 @@ impl SessionControl for LocalControl {
                 let msg = match e.kind() {
                     std::io::ErrorKind::NotFound => "not found".to_string(),
                     std::io::ErrorKind::PermissionDenied => "permission denied".to_string(),
-                    _ => {
-                        let s = e.to_string();
-                        if s.chars().count() > 40 {
-                            let truncated: String = s.chars().take(39).collect();
-                            format!("{truncated}…")
-                        } else {
-                            s
-                        }
-                    }
+                    // Counts display columns rather than chars; these are
+                    // short one-line IO error strings either way.
+                    _ => crate::geometry::truncate(&e.to_string(), 40),
                 };
                 (Vec::new(), Some(msg))
             }

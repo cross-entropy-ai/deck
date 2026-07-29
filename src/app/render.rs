@@ -221,7 +221,7 @@ impl App {
                 _ => None,
             };
             let background_screen = match (warning_state, main_view) {
-                (Some(crate::state::WarningState::Proactive { .. }), _) => None,
+                (Some(_), _) => None,
                 (None, MainView::Terminal) if remote_placeholder.is_some() => None,
                 // Dead local pane (no sessions to attach to) renders the
                 // empty-state placeholder below instead of a stale screen.
@@ -246,35 +246,24 @@ impl App {
                     .style(main_base);
                 let main_inner = main_block.inner(main_area);
                 frame.render_widget(main_block, main_area);
-                if let Some(screen) = background_screen {
-                    bridge::render_screen(
-                        screen,
-                        main_inner,
-                        frame.buffer_mut(),
-                        theme.text,
-                        theme.bg,
-                    );
-                    if !sidebar_active && warning_state.is_none() {
-                        bridge::set_cursor(frame, screen, main_inner);
-                    }
-                }
                 main_inner
             } else {
                 frame.render_widget(Block::default().style(main_base), main_area);
-                if let Some(screen) = background_screen {
-                    bridge::render_screen(
-                        screen,
-                        main_area,
-                        frame.buffer_mut(),
-                        theme.text,
-                        theme.bg,
-                    );
-                    if !sidebar_active && warning_state.is_none() {
-                        bridge::set_cursor(frame, screen, main_area);
-                    }
-                }
                 main_area
             };
+
+            if let Some(screen) = background_screen {
+                bridge::render_screen(
+                    screen,
+                    main_inner,
+                    frame.buffer_mut(),
+                    theme.text,
+                    theme.bg,
+                );
+                if !sidebar_active && warning_state.is_none() {
+                    bridge::set_cursor(frame, screen, main_inner);
+                }
+            }
 
             // deck stays open on a dead local pane instead of quitting.
             if warning_state.is_none() && main_view == MainView::Terminal && local_active_dead {
@@ -314,29 +303,20 @@ impl App {
             }
 
             if let Some(warning_state) = warning_state {
-                let (title, border_color, main_style, sub_style, warning_text, detail_text) =
-                    match warning_state {
-                        crate::state::WarningState::Proactive { text, detail } => (
-                            " Heads up ",
-                            theme.warning,
-                            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
-                            Style::default().fg(theme.dim),
-                            *text,
-                            detail.as_str(),
-                        ),
-                    };
+                let main_style = Style::default().fg(theme.text).add_modifier(Modifier::BOLD);
+                let sub_style = Style::default().fg(theme.dim);
 
                 let warning = Paragraph::new(vec![
-                    Line::from(Span::styled(warning_text, main_style)),
+                    Line::from(Span::styled(warning_state.text, main_style)),
                     Line::raw(""),
-                    Line::from(Span::styled(detail_text, sub_style)),
+                    Line::from(Span::styled(warning_state.detail.as_str(), sub_style)),
                 ])
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
                         .border_set(ratatui::symbols::border::ROUNDED)
-                        .title(title)
-                        .border_style(Style::default().fg(border_color)),
+                        .title(" Heads up ")
+                        .border_style(Style::default().fg(theme.warning)),
                 )
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: true });

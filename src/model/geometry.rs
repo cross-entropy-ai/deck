@@ -507,8 +507,6 @@ pub enum HitKind {
     SummaryButton,
     /// The Summary card's "popup" (big view) button.
     SummaryPopup,
-    /// Anywhere on the Summary card (for routing wheel events).
-    SummaryCard,
     /// The footer "menu" button; carries its rect (mouse anchors the menu
     /// at its x/y).
     Menu(Rect),
@@ -562,9 +560,6 @@ impl HitRegions {
         }
         if let Some(i) = self.agents.iter().position(|h| h.rect.contains(pos)) {
             return Some(HitKind::Agent(i));
-        }
-        if self.summary.card.is_some_and(|r| r.contains(pos)) {
-            return Some(HitKind::SummaryCard);
         }
         None
     }

@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use crate::update::{
-    self, UpdateCache, UpdateChecker, UpdateRequest, UpdateResult, CACHE_TTL_SECS,
+    self, spawn_checker, UpdateCache, UpdateChecker, UpdateRequest, UpdateResult, CACHE_TTL_SECS,
 };
 
 use super::{App, UPDATE_CHECK_INTERVAL};
@@ -56,7 +56,7 @@ impl App {
                     // startup would hit GitHub each launch (cache dead) and arm
                     // the Drop-join stall (an in-flight request blocks teardown
                     // until the HTTP returns).
-                    self.update_checker = Some(UpdateChecker::spawn());
+                    self.update_checker = Some(spawn_checker());
                     // No prior timestamp means update-check was off at startup
                     // and just toggled on — check once now. The fresh-cache
                     // path already set `last_update_request`, so this fires
@@ -158,7 +158,7 @@ pub(super) fn bootstrap_update_check(
 }
 
 fn spawn_and_request_check() -> (Option<UpdateChecker>, Option<Instant>) {
-    let checker = UpdateChecker::spawn();
+    let checker = spawn_checker();
     checker.request(UpdateRequest::Check);
     (Some(checker), Some(Instant::now()))
 }

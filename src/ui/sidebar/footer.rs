@@ -67,13 +67,7 @@ fn actions(props: &FooterProps<'_>) -> Vec<FooterAction> {
     if let Some(key) = first_key(props.keybindings, Command::NewLocalSession) {
         out.push(FooterAction { key, label: "new" });
     }
-    let help_keys = props
-        .keybindings
-        .keys_for(Command::ToggleHelp)
-        .iter()
-        .map(format_key)
-        .collect::<Vec<_>>()
-        .join("/");
+    let help_keys = crate::ui::text::format_keys_for(props.keybindings, Command::ToggleHelp);
     if !help_keys.is_empty() {
         out.push(FooterAction {
             key: help_keys,
@@ -128,42 +122,29 @@ pub(super) fn draw_footer(
 
         let banner_row_y = area.y + rows.len() as u16;
 
-        if let Some(banner_text) = chosen {
-            let text_width = banner_text.width() as u16;
-            let upgrade_x = area.x + leading + text_width + gap;
+        // The `chosen` predicate above already guarantees the banner-plus-gap
+        // layout fits, so `Some` implies the wide branch and the width check
+        // only gates the bare-button fallback.
+        let prefix_w = chosen.as_ref().map_or(0, |t| t.width() as u16 + gap);
+        if chosen.is_some() || leading + upgrade_width <= area.width {
             upgrade_bounds = Some(Rect {
-                x: upgrade_x,
+                x: area.x + leading + prefix_w,
                 y: banner_row_y,
                 width: upgrade_width,
                 height: 1,
             });
-            rows.push(Line::from(vec![
-                Span::raw(" "),
-                Span::styled(banner_text, Style::default().fg(theme.dim)),
-                Span::raw("   "),
-                Span::styled(
-                    upgrade_label.to_string(),
-                    Style::default()
-                        .fg(theme.accent)
-                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-                ),
-            ]));
-        } else if leading + upgrade_width <= area.width {
-            upgrade_bounds = Some(Rect {
-                x: area.x + leading,
-                y: banner_row_y,
-                width: upgrade_width,
-                height: 1,
-            });
-            rows.push(Line::from(vec![
-                Span::raw(" "),
-                Span::styled(
-                    upgrade_label.to_string(),
-                    Style::default()
-                        .fg(theme.accent)
-                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-                ),
-            ]));
+            let mut spans = vec![Span::raw(" ")];
+            if let Some(banner_text) = chosen {
+                spans.push(Span::styled(banner_text, Style::default().fg(theme.dim)));
+                spans.push(Span::raw("   "));
+            }
+            spans.push(Span::styled(
+                upgrade_label.to_string(),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            ));
+            rows.push(Line::from(spans));
         } else {
             rows.push(Line::default());
         }

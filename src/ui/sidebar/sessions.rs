@@ -414,23 +414,14 @@ pub(super) fn draw_summary_card(
         let age_run = if show_age { age.width() + 1 } else { 0 };
         let gen_x = (left_w + filler + age_run) as u16;
         let popup_x = gen_x + gen_w as u16;
-        let clamp_w = |x: u16, w: usize| (w as u16).min(rect.width.saturating_sub(x));
-        if props.can_generate {
-            summary.button = Some(Rect {
-                x: rect.x + gen_x,
-                y: rect.y + 1,
-                width: clamp_w(gen_x, gen_w),
-                height: 1,
-            });
-        }
-        if is_ready {
-            summary.popup = Some(Rect {
-                x: rect.x + popup_x,
-                y: rect.y + 1,
-                width: clamp_w(popup_x, popup_w),
-                height: 1,
-            });
-        }
+        let btn = |x: u16, w: usize| Rect {
+            x: rect.x + x,
+            y: rect.y + 1,
+            width: (w as u16).min(rect.width.saturating_sub(x)),
+            height: 1,
+        };
+        summary.button = props.can_generate.then(|| btn(gen_x, gen_w));
+        summary.popup = is_ready.then(|| btn(popup_x, popup_w));
     }
     lines.push(pad_line(title_spans, theme.bg, width));
     let compact_unavailable = !props.can_generate && matches!(props.summary, SummaryState::Idle);

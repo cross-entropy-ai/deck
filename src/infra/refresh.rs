@@ -262,22 +262,12 @@ fn collect_remotes(
     let mut out = Vec::new();
     let mut agents_by_host = HashMap::new();
     for (host, handle) in remotes.iter().zip(handles) {
-        let (host_name, snap) = match handle.and_then(|h| h.join().ok()) {
-            Some(pair) => pair,
-            None => {
-                // Thread spawn or join failed — rare. Fall back to the
-                // original host string, mark unreachable.
-                out.push(RemoteSnapshotRow {
-                    host: host.clone(),
-                    name: String::new(),
-                    dir: String::new(),
-                    kind: crate::state::SessionEntryKind::Unreachable,
-                });
-                continue;
-            }
-        };
+        // A failed spawn/join (rare) falls back to the original host string;
+        // either that or a `None` snapshot means the lane is unreachable.
+        let (host_name, snap) = handle
+            .and_then(|h| h.join().ok())
+            .unwrap_or_else(|| (host.clone(), None));
         let Some(snap) = snap else {
-            // Unreachable lane.
             out.push(RemoteSnapshotRow {
                 host: host_name,
                 name: String::new(),

@@ -46,7 +46,7 @@ pub fn markdown_window(
     fg: Color,
     bg: Color,
 ) -> (Vec<Vec<Span<'static>>>, usize) {
-    use super::super::text::{md_line_spans, md_line_width, wrap_markdown};
+    use super::super::text::{md_line_spans, pad_line, wrap_markdown};
 
     let wrapped = wrap_markdown(text, content_w.max(1));
     let total = wrapped.len();
@@ -57,16 +57,15 @@ pub fn markdown_window(
 
     let out = (0..rows)
         .map(|i| {
-            let (mut spans, line_w) = match wrapped.get(scroll + i) {
-                Some(runs) => (md_line_spans(runs, theme, base), md_line_width(runs)),
-                None => (Vec::new(), 0),
-            };
-            if line_w < content_w {
-                spans.push(Span::styled(
-                    " ".repeat(content_w - line_w),
-                    Style::default().bg(bg),
-                ));
-            }
+            let mut spans = pad_line(
+                wrapped
+                    .get(scroll + i)
+                    .map(|runs| md_line_spans(runs, theme, base))
+                    .unwrap_or_default(),
+                bg,
+                content_w,
+            )
+            .spans;
             if let Some(glyph) = bar.get(i).copied().flatten() {
                 spans.push(Span::styled(glyph, Style::default().fg(theme.dim).bg(bg)));
             }

@@ -110,14 +110,12 @@ impl AppState {
         // The guard that makes a placeholder entry inert: there's no pane to
         // switch to, so the cursor can land on it but Enter/click no-op —
         // mirroring how Projects guards a `NoSessions` row (`is_attachable`).
-        match &entry.kind {
-            AgentEntryKind::Agent(agent) => Some(AgentTarget {
-                host: entry.host.clone(),
-                session: agent.session.clone(),
-                pane_id: agent.pane_id.clone(),
-            }),
-            AgentEntryKind::Placeholder { .. } => None,
-        }
+        let agent = entry.agent()?;
+        Some(AgentTarget {
+            host: entry.host.clone(),
+            session: agent.session.clone(),
+            pane_id: agent.pane_id.clone(),
+        })
     }
 
     /// The highest-priority full-input modal currently open, or `None` when the
@@ -284,10 +282,7 @@ impl AppState {
     /// [`reanchor_agent_focus`](Self::reanchor_agent_focus).
     pub fn focused_agent_key(&self) -> Option<(Option<String>, String)> {
         let entry = self.agent_entries.get(self.agent_focused)?;
-        match &entry.kind {
-            AgentEntryKind::Agent(agent) => Some((entry.host.clone(), agent.pane_id.clone())),
-            AgentEntryKind::Placeholder { .. } => None,
-        }
+        Some((entry.host.clone(), entry.agent()?.pane_id.clone()))
     }
 
     /// Re-point the Agents-tab cursor at the agent `key` (its position before

@@ -42,11 +42,9 @@ pub struct RenameState {
 
 impl RenameState {
     pub fn new(original_name: String, initial: String, host: Option<String>) -> Self {
-        let mut ta = TextArea::new(vec![initial]);
-        ta.move_cursor(ratatui_textarea::CursorMove::End);
         Self {
             original_name,
-            input: ta,
+            input: crate::new_session::make_textarea(&initial),
             host,
         }
     }
@@ -88,8 +86,9 @@ impl ExcludeEditorState {
 /// dispatch loop's "block actions while a warning is up" gate reads it from
 /// App directly.
 #[derive(Clone)]
-pub enum WarningState {
-    Proactive { text: &'static str, detail: String },
+pub struct WarningState {
+    pub text: &'static str,
+    pub detail: String,
 }
 
 /// UI state for transient sidebar overlays — help, kill-confirm, rename,

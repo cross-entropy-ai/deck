@@ -45,28 +45,15 @@ pub enum UpdateResult {
 /// dropping the checker ends the loop. Drop is **non-blocking** — `Worker`'s
 /// drop signals and detaches rather than `join()`ing a possibly mid-HTTP
 /// worker on the UI thread; an in-flight request just finishes unread.
-pub struct UpdateChecker {
-    worker: Worker<UpdateRequest, UpdateResult>,
-}
+pub type UpdateChecker = Worker<UpdateRequest, UpdateResult>;
 
-impl UpdateChecker {
-    pub fn spawn() -> Self {
-        let worker = Worker::spawn_service("deck-update-check", |req, tx| match req {
-            // Keep the loop alive as long as the UI keeps the channel open;
-            // dropping `UpdateChecker` (its `Worker`) ends the `recv` and
-            // the thread exits — no blocking join.
-            UpdateRequest::Check => tx.send(do_check()).is_ok(),
-        });
-        UpdateChecker { worker }
-    }
-
-    pub fn request(&self, req: UpdateRequest) {
-        self.worker.request(req);
-    }
-
-    pub fn try_recv(&self) -> Option<UpdateResult> {
-        self.worker.try_recv()
-    }
+pub fn spawn_checker() -> UpdateChecker {
+    Worker::spawn_service("deck-update-check", |req, tx| match req {
+        // Keep the loop alive as long as the UI keeps the channel open;
+        // dropping the checker (its `Worker`) ends the `recv` and the
+        // thread exits — no blocking join.
+        UpdateRequest::Check => tx.send(do_check()).is_ok(),
+    })
 }
 
 fn do_check() -> UpdateResult {
