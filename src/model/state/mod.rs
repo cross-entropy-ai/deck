@@ -219,6 +219,17 @@ pub const NO_SESSIONS_LABEL: &str = "(no sessions)";
 pub const UNREACHABLE_LABEL: &str = "(unreachable)";
 
 impl SessionEntry {
+    /// A synthetic status row for a remote host (`Connecting`/`Unreachable`/
+    /// `NoSessions`): no session name or dir, the label comes from `kind`.
+    pub fn placeholder(host: &str, kind: SessionEntryKind) -> Self {
+        Self {
+            host: Some(host.to_string()),
+            name: String::new(),
+            dir: String::new(),
+            kind,
+        }
+    }
+
     /// Whether deck can attach a PTY: a real `Live` session, not a synthetic
     /// Connecting/Unreachable/NoSessions placeholder. Attach/respawn must skip
     /// placeholders, else it spins forever trying to `tmux attach` a host with
@@ -608,6 +619,25 @@ impl AppState {
         self.keybindings = keybindings;
         // Theme indices may have shifted; keep the picker's cursor valid.
         self.settings.theme_picker_selected = theme_index;
+    }
+
+    /// This host's entry in the mirrored `Config.remotes`, if configured.
+    pub fn remote_config(&self, host: &str) -> Option<&crate::config::RemoteConfig> {
+        self.config_remotes.iter().find(|r| r.host == host)
+    }
+
+    /// Set the reload strip's status and (re)start its TTL.
+    pub fn set_reload_status(&mut self, status: ReloadStatus) {
+        self.reload_status = Some(status);
+        self.reload_status_at = Some(Instant::now());
+    }
+
+    /// Surface a transient warning in the sidebar's reload strip. The TUI owns
+    /// the alternate screen, so a bare `eprintln!` is wiped invisibly; route
+    /// operational warnings here. Reuses the reload toast's auto-expiry
+    /// (`RELOAD_STATUS_ERR_TTL`).
+    pub fn show_warning(&mut self, msg: impl Into<String>) {
+        self.set_reload_status(ReloadStatus::Err(msg.into()));
     }
 
     /// Drop the reload banner once its per-variant TTL has elapsed.

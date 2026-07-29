@@ -62,6 +62,21 @@ pub fn lane(host: Option<&str>) -> LaneId {
     }
 }
 
+/// Config's `Option<String>` host list -> the `LaneId` set a per-lane store
+/// (e.g. `collapsed_sections`) keys on.
+pub fn lanes_from_hosts(hosts: &[Option<String>]) -> std::collections::HashSet<LaneId> {
+    hosts.iter().map(|h| lane(h.as_deref())).collect()
+}
+
+/// The inverse of [`lanes_from_hosts`], for persisting a per-lane store. Lives
+/// here so callers don't reach for `host_of` to un-abstract a lane themselves.
+pub fn hosts_from_lanes(lanes: &std::collections::HashSet<LaneId>) -> Vec<Option<String>> {
+    lanes
+        .iter()
+        .map(|l| TmuxSystem::host_of(l).map(str::to_string))
+        .collect()
+}
+
 /// The generic `…` divider menu button this system owns (both lanes).
 fn menu_button() -> SectionButton {
     SectionButton {

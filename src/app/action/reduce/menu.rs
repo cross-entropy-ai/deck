@@ -2,7 +2,7 @@
 //! local-divider). Most confirmations delegate back to `apply_action` with a
 //! concrete `Action`; entry point is `reduce_menu`.
 
-use crate::effects::SideEffect;
+use crate::effects::{Effect, SideEffect};
 use crate::menu::{session_menu_disabled, ContextMenu, MenuItem, MenuKind};
 use crate::state::AppState;
 
@@ -71,8 +71,8 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                     }
                 }
                 MenuKind::Global => match selected_item {
-                    Some(MenuItem::NewLocalSession) => fx.open_new_session_picker(),
-                    Some(MenuItem::AddRemoteHost) => fx.open_add_remote_picker(),
+                    Some(MenuItem::NewLocalSession) => fx.push(Effect::OpenNewSessionPicker),
+                    Some(MenuItem::AddRemoteHost) => fx.push(Effect::OpenAddRemotePicker),
                     Some(MenuItem::ToggleLayout) => {
                         fx.merge(apply_action(state, Action::ToggleLayout))
                     }
@@ -82,11 +82,11 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                     Some(MenuItem::Settings) => {
                         fx.merge(apply_action(state, Action::Settings(SettingsAction::Open)))
                     }
-                    Some(MenuItem::Quit) => fx.quit(),
+                    Some(MenuItem::Quit) => fx.push(Effect::Quit),
                     _ => {}
                 },
                 MenuKind::HostDivider { host, .. } => match selected_item {
-                    Some(MenuItem::NewSession) => fx.open_remote_new_session_picker(host),
+                    Some(MenuItem::NewSession) => fx.push(Effect::OpenRemoteNewSessionPicker(host)),
                     Some(MenuItem::PortForward) => {
                         fx.merge(apply_action(state, Action::Pf(PfAction::Open(host))))
                     }
@@ -99,7 +99,7 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                     // PortForward / RemoveFromList are greyed out and
                     // unreachable here; only NewSession (local) fires.
                     if let Some(MenuItem::NewSession) = selected_item {
-                        fx.open_new_session_picker();
+                        fx.push(Effect::OpenNewSessionPicker);
                     }
                 }
             }

@@ -54,6 +54,19 @@ pub struct RemoteSnapshotRow {
     pub kind: crate::state::SessionEntryKind,
 }
 
+impl RemoteSnapshotRow {
+    /// A synthetic per-host status row (`Unreachable`/`NoSessions`): no session
+    /// name or dir, the label is derived from `kind` downstream.
+    fn placeholder(host: String, kind: crate::state::SessionEntryKind) -> Self {
+        Self {
+            host,
+            name: String::new(),
+            dir: String::new(),
+            kind,
+        }
+    }
+}
+
 /// An update from the refresh worker, split Local + Remote because remote
 /// queries can take seconds (ssh + tmux roundtrip) and must not stall the ~1s
 /// local tick. Each request produces exactly one synchronous `Local` update
@@ -268,12 +281,10 @@ fn collect_remotes(
             .and_then(|h| h.join().ok())
             .unwrap_or_else(|| (host.clone(), None));
         let Some(snap) = snap else {
-            out.push(RemoteSnapshotRow {
-                host: host_name,
-                name: String::new(),
-                dir: String::new(),
-                kind: crate::state::SessionEntryKind::Unreachable,
-            });
+            out.push(RemoteSnapshotRow::placeholder(
+                host_name,
+                crate::state::SessionEntryKind::Unreachable,
+            ));
             continue;
         };
         // Only insert when the probe actually ran (`Some`); a failed/skipped
@@ -283,12 +294,10 @@ fn collect_remotes(
         }
         let mut sessions = snap.sessions;
         if sessions.is_empty() {
-            out.push(RemoteSnapshotRow {
-                host: host_name,
-                name: String::new(),
-                dir: String::new(),
-                kind: crate::state::SessionEntryKind::NoSessions,
-            });
+            out.push(RemoteSnapshotRow::placeholder(
+                host_name,
+                crate::state::SessionEntryKind::NoSessions,
+            ));
         } else {
             // Honor per-session @deck_order from a remote reorder: ranked
             // sessions first (by rank), never-reordered ones after in tmux's

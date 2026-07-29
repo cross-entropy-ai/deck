@@ -1,4 +1,4 @@
-use crate::effects::{KillRequest, RemoteSwitchRequest, RenameRequest, SideEffect};
+use crate::effects::{Effect, KillRequest, RemoteSwitchRequest, RenameRequest, SideEffect};
 use crate::new_session::textarea_line;
 use crate::overlay::RenameState;
 use crate::state::{AppState, FocusMode, LayoutMode, MainView, SidebarTab, ViewMode};
@@ -26,8 +26,8 @@ fn close_settings_page(state: &mut AppState) {
     state.overlay.summary_lang_input = None;
 }
 
-/// Fill the `SideEffect` field for the focused row — `switch_session` for a
-/// local row, `switch_remote` for a remote one. Local-vs-remote dispatch reads
+/// Fill the `SideEffect` field for the focused row — `SwitchSession` for a
+/// local row, `SwitchRemote` for a remote one. Local-vs-remote dispatch reads
 /// `entry.host` off the focused `SessionEntry` (via `AppState::entry_at`)
 /// rather than taking apart the flat focus index.
 fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) -> bool {
@@ -36,7 +36,7 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) -> bool {
     };
     match state.entry_at(target) {
         Some(entry) if entry.is_local() => {
-            fx.switch_session(entry.name.clone());
+            fx.push(Effect::SwitchSession(entry.name.clone()));
             true
         }
         // Reached only for non-local entries (the `is_local` arm caught
@@ -44,14 +44,16 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) -> bool {
         // (connecting, unreachable, "no sessions") have no real session — skip
         // silently so a click doesn't fire a doomed remote switch.
         Some(entry) if entry.is_attachable() => {
-            fx.switch_remote(RemoteSwitchRequest {
+            fx.push(Effect::SwitchRemote(RemoteSwitchRequest {
                 host: entry.host.clone().expect("non-local entry has a host"),
                 name: entry.name.clone(),
-            });
+            }));
             true
         }
         Some(entry) => {
-            fx.show_remote_placeholder(entry.host.clone().expect("non-local entry has a host"));
+            fx.push(Effect::ShowRemotePlaceholder(
+                entry.host.clone().expect("non-local entry has a host"),
+            ));
             false
         }
         None => false,
@@ -114,7 +116,7 @@ fn switch_on_navigate(state: &AppState, fx: &mut SideEffect) {
 fn fill_switch_agent_effect(state: &AppState, fx: &mut SideEffect) -> bool {
     match state.focused_agent() {
         Some(target) => {
-            fx.switch_agent_pane(target);
+            fx.push(Effect::SwitchAgentPane(target));
             true
         }
         None => false,
@@ -173,7 +175,7 @@ fn reorder_session_to(state: &mut AppState, target: usize, fx: &mut SideEffect) 
         let moved = state.entries.remove(source);
         state.entries.insert(target, moved);
         state.focused = target;
-        fx.save_remote_session_order(host);
+        fx.push(Effect::SaveRemoteSessionOrder(host));
         return;
     }
 
@@ -208,7 +210,7 @@ fn reorder_session_to(state: &mut AppState, target: usize, fx: &mut SideEffect) 
     }
     // Persist once, on drop (or once per keyboard move), so a pointer crossing
     // several rows never spams tmux or a remote SSH connection.
-    fx.save_session_order();
+    fx.push(Effect::SaveSessionOrder);
 }
 
 pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
@@ -305,22 +307,22 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     state.session_order.retain(|n| n != &name);
                     state.focused = next_focused.min(local_count.saturating_sub(1));
 
-                    fx.kill_session(KillRequest {
+                    fx.push(Effect::KillSession(KillRequest {
                         name,
                         host: None,
                         switch_to,
-                    });
+                    }));
                     fx.refresh_sessions();
                 }
                 Some(host) => {
                     let name = entry.name.clone();
-                    fx.kill_session(KillRequest {
+                    fx.push(Effect::KillSession(KillRequest {
                         name,
                         host: Some(host),
                         // No local switch_to: dispatch returns the
                         // user to local view after a remote kill.
                         switch_to: None,
-                    });
+                    }));
                     fx.refresh_sessions();
                 }
             }
@@ -342,7 +344,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.clamp_agent_focus();
             fx.save_config();
             fx.refresh_sessions();
-            fx.remove_remote_host(host);
+            fx.push(Effect::RemoveRemoteHost(host));
         }
         Action::ReorderSession(direction) => {
             if state.agents_tab_active() {
@@ -383,11 +385,11 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 let new_name = textarea_line(&r.input).trim().to_string();
                 // Skip no-op renames.
                 if !new_name.is_empty() && new_name != r.original_name {
-                    fx.rename_session(RenameRequest {
+                    fx.push(Effect::RenameSession(RenameRequest {
                         old_name: r.original_name,
                         new_name,
                         host: r.host,
-                    });
+                    }));
                     fx.refresh_sessions();
                 }
             }
@@ -519,7 +521,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         | Action::SwitchToAgentPane(_) => {}
 
         Action::Quit => {
-            fx.quit();
+            fx.push(Effect::Quit);
         }
 
         // Handled entirely in dispatch (needs App-level access to raw
@@ -604,7 +606,7 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
     let mut fx = SideEffect::default();
     match action {
         NewSessionAction::OpenLocal => {
-            fx.open_new_session_picker();
+            fx.push(Effect::OpenNewSessionPicker);
             return fx;
         }
         NewSessionAction::Close => {
@@ -755,7 +757,7 @@ fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffec
             state.overlay.add_remote = None;
             fx.save_config();
             fx.refresh_sessions();
-            fx.add_remote_host(host);
+            fx.push(Effect::AddRemoteHost(host));
         }
     }
     fx

@@ -3,8 +3,7 @@
 //! the top-level dispatcher readable; entry point is `reduce_settings`.
 
 use crate::app::settings::SETTING_ROWS;
-use crate::effects::Effect;
-use crate::effects::SideEffect;
+use crate::effects::{Effect, SideEffect};
 use crate::state::{step_clamped, AppState, FocusMode, MainView};
 use crate::theme::THEMES;
 
@@ -55,7 +54,7 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             state.prefs.summary_enabled = !state.prefs.summary_enabled;
             fx.save_config();
         }
-        SettingsAction::OpenAddRemotePicker => fx.open_add_remote_picker(),
+        SettingsAction::OpenAddRemotePicker => fx.push(Effect::OpenAddRemotePicker),
         // ponytail: one aggregate row for every host — it opens the first host
         // that has forwards (else the first host); per-host editing stays on
         // each `@host` divider's `[⇄N]` badge button.
@@ -86,7 +85,7 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
                 step_clamped(state.settings.theme_picker_selected, THEMES.len(), 1);
             state.prefs.theme_index = state.settings.theme_picker_selected;
             fx.save_config();
-            fx.apply_tmux_theme();
+            fx.push(Effect::ApplyTmuxTheme);
         }
         SettingsAction::ThemePickerPrev => {
             // Side effects only fire when the cursor actually moves (unlike
@@ -96,7 +95,7 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
                     step_clamped(state.settings.theme_picker_selected, THEMES.len(), -1);
                 state.prefs.theme_index = state.settings.theme_picker_selected;
                 fx.save_config();
-                fx.apply_tmux_theme();
+                fx.push(Effect::ApplyTmuxTheme);
             }
         }
         SettingsAction::ConfirmThemePicker => {

@@ -25,12 +25,12 @@ impl App {
             .iter()
             .any(|e| e.host.as_deref() == Some(host))
         {
-            self.state.entries.push(crate::state::SessionEntry {
-                host: Some(host.to_string()),
-                name: String::new(),
-                dir: String::new(),
-                kind: crate::state::SessionEntryKind::Connecting,
-            });
+            self.state
+                .entries
+                .push(crate::state::SessionEntry::placeholder(
+                    host,
+                    crate::state::SessionEntryKind::Connecting,
+                ));
         }
     }
 
@@ -57,8 +57,7 @@ impl App {
         let mut cfg = match Config::try_load() {
             Ok(c) => c,
             Err(e) => {
-                self.state.reload_status = Some(ReloadStatus::Err(e));
-                self.state.reload_status_at = Some(std::time::Instant::now());
+                self.state.show_warning(e);
                 return;
             }
         };
@@ -83,10 +82,9 @@ impl App {
         // them with "Ok" (an eprintln! here would be invisible on the alt
         // screen); otherwise report success.
         if kb_warnings.is_empty() {
-            self.state.reload_status = Some(ReloadStatus::Ok);
-            self.state.reload_status_at = Some(std::time::Instant::now());
+            self.state.set_reload_status(ReloadStatus::Ok);
         } else {
-            self.show_warning(kb_warnings.join("; "));
+            self.state.show_warning(kb_warnings.join("; "));
         }
 
         // Diff old vs new remote forwards and send ops to the worker.

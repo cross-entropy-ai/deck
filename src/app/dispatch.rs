@@ -21,6 +21,16 @@ impl App {
         };
     }
 
+    /// Reduce several actions in order, merging their effects into one
+    /// `SideEffect` for a single `execute_side_effects` pass.
+    fn apply_all<const N: usize>(&mut self, actions: [Action; N]) -> SideEffect {
+        let mut fx = SideEffect::default();
+        for action in actions {
+            fx.merge(action::apply_action(&mut self.state, action));
+        }
+        fx
+    }
+
     pub(super) fn dispatch(&mut self, action: Action) -> bool {
         match action {
             Action::ForwardKey(ref bytes) => {
@@ -33,12 +43,7 @@ impl App {
                 false
             }
             Action::SidebarClickSession(idx) | Action::NumberKeyJump(idx) => {
-                let mut fx = SideEffect::default();
-                fx.merge(action::apply_action(
-                    &mut self.state,
-                    Action::FocusIndex(idx),
-                ));
-                fx.merge(action::apply_action(&mut self.state, Action::SwitchProject));
+                let fx = self.apply_all([Action::FocusIndex(idx), Action::SwitchProject]);
                 self.execute_side_effects(&fx);
                 self.settle_focus_after_switch();
                 false
@@ -48,12 +53,8 @@ impl App {
                     return false;
                 };
                 if movement.from == movement.to {
-                    let mut fx = SideEffect::default();
-                    fx.merge(action::apply_action(
-                        &mut self.state,
-                        Action::FocusIndex(movement.from),
-                    ));
-                    fx.merge(action::apply_action(&mut self.state, Action::SwitchProject));
+                    let fx =
+                        self.apply_all([Action::FocusIndex(movement.from), Action::SwitchProject]);
                     self.execute_side_effects(&fx);
                     self.settle_focus_after_switch();
                 } else {
@@ -87,15 +88,10 @@ impl App {
                 fx.has_quit()
             }
             Action::Menu(MenuAction::ClickItem(idx)) => {
-                let mut fx = SideEffect::default();
-                fx.merge(action::apply_action(
-                    &mut self.state,
+                let fx = self.apply_all([
                     Action::Menu(MenuAction::Hover(idx)),
-                ));
-                fx.merge(action::apply_action(
-                    &mut self.state,
                     Action::Menu(MenuAction::Confirm),
-                ));
+                ]);
                 self.execute_side_effects(&fx);
                 if self.warning_state.is_some() {
                     self.state.focus_mode = FocusMode::Sidebar;
@@ -156,7 +152,8 @@ impl App {
                 };
                 let args_ref: Vec<&str> = args_owned.iter().map(String::as_str).collect();
                 if let Err(e) = self.spawn_upgrade_pty(&program, &args_ref) {
-                    self.show_warning(format!("upgrade failed to start: {e}"));
+                    self.state
+                        .show_warning(format!("upgrade failed to start: {e}"));
                     return false;
                 }
                 self.state.main_view = MainView::Upgrade;
@@ -208,7 +205,7 @@ impl App {
             Action::NewSession(NewSessionAction::Confirm) => {
                 if let Some(req) = self.confirm_new_session() {
                     let mut fx = crate::effects::SideEffect::default();
-                    fx.create_session(req);
+                    fx.push(Effect::CreateSession(req));
                     fx.refresh_sessions();
                     self.execute_side_effects(&fx);
                 }
@@ -853,15 +850,6 @@ impl App {
         }
     }
 
-    /// Surface a transient warning in the sidebar's reload strip. The TUI owns
-    /// the alternate screen, so a bare `eprintln!` is wiped invisibly; route
-    /// operational warnings here. Reuses the reload toast's auto-expiry
-    /// (`RELOAD_STATUS_ERR_TTL`).
-    pub(super) fn show_warning(&mut self, msg: impl Into<String>) {
-        self.state.reload_status = Some(crate::state::ReloadStatus::Err(msg.into()));
-        self.state.reload_status_at = Some(std::time::Instant::now());
-    }
-
     /// Validate the add form. On failure: set status, form stays open, no
     /// worker call. On success: send `AddForward`, mark `submitting=true`, set
     /// status "applying...". **Lazy persist:** config is NOT modified here; the
@@ -888,6 +876,8 @@ impl App {
         // port) is already configured, before bothering ssh — else the user
         // sees a cryptic "bind: Address already in use", or a silent no-op when
         // ssh treats it as idempotent.
+        // ponytail: not `state.remote_config()` — `overlay` holds a live &mut
+        // into `self.state`, so only a disjoint field borrow compiles here.
         let already_exists = self
             .state
             .config_remotes
@@ -920,9 +910,7 @@ impl App {
             let idx = overlay.selected;
             let Some(spec) = self
                 .state
-                .config_remotes
-                .iter()
-                .find(|r| r.host == host)
+                .remote_config(&host)
                 .and_then(|r| r.forwards.get(idx))
                 .cloned()
             else {
@@ -943,11 +931,8 @@ impl App {
 
         let new_len = self
             .state
-            .config_remotes
-            .iter()
-            .find(|r| r.host == host)
-            .map(|r| r.forwards.len())
-            .unwrap_or(0);
+            .remote_config(&host)
+            .map_or(0, |r| r.forwards.len());
         if let Some(overlay) = self.state.overlay.port_forward.as_mut() {
             if overlay.selected >= new_len {
                 overlay.selected = new_len.saturating_sub(1);

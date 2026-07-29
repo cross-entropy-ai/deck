@@ -88,12 +88,7 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
 }
 
 fn forwards_len(state: &AppState, host: &str) -> usize {
-    state
-        .config_remotes
-        .iter()
-        .find(|r| r.host == host)
-        .map(|r| r.forwards.len())
-        .unwrap_or(0)
+    state.remote_config(host).map_or(0, |r| r.forwards.len())
 }
 
 /// Field navigation order for the port-forward add form. Dynamic mode

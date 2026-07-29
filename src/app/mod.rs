@@ -185,23 +185,15 @@ impl App {
         state.apply_config(&cfg, theme_index, keybindings);
         // Seeded once at startup only — a later reload must not stomp the
         // user's live collapse state (see `apply_config`).
-        state.collapsed_sections = cfg
-            .collapsed_sections
-            .iter()
-            .map(|h| crate::system::tmux::lane(h.as_deref()))
-            .collect();
-        state.collapsed_agent_sections = cfg
-            .collapsed_agent_sections
-            .iter()
-            .map(|h| crate::system::tmux::lane(h.as_deref()))
-            .collect();
+        state.collapsed_sections = crate::system::tmux::lanes_from_hosts(&cfg.collapsed_sections);
+        state.collapsed_agent_sections =
+            crate::system::tmux::lanes_from_hosts(&cfg.collapsed_agent_sections);
 
         // The TUI owns the alternate screen, so a startup eprintln! would be
         // wiped invisibly. Surface keybinding warnings in the reload strip
         // instead; its TTL clears them after a few seconds.
         if !kb_warnings.is_empty() {
-            state.reload_status = Some(crate::state::ReloadStatus::Err(kb_warnings.join("; ")));
-            state.reload_status_at = Some(std::time::Instant::now());
+            state.show_warning(kb_warnings.join("; "));
         }
 
         let (update_checker, last_update_request) = if cfg.update_check == UpdateCheckMode::Enabled
@@ -229,11 +221,11 @@ impl App {
         // update overwrites these.
         state.entries = remotes
             .iter()
-            .map(|host| crate::state::SessionEntry {
-                host: Some(host.clone()),
-                name: String::new(),
-                dir: String::new(),
-                kind: crate::state::SessionEntryKind::Connecting,
+            .map(|host| {
+                crate::state::SessionEntry::placeholder(
+                    host,
+                    crate::state::SessionEntryKind::Connecting,
+                )
             })
             .collect();
 

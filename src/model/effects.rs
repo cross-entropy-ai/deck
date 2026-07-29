@@ -57,22 +57,6 @@ pub struct SideEffect {
     effects: Vec<Effect>,
 }
 
-/// Generate `SideEffect` push-helpers from a `method(args) => Effect`
-/// table; each body is `self.push(<effect>)`.
-macro_rules! effect_pushers {
-    ($(
-        $(#[$meta:meta])*
-        $name:ident ( $($arg:ident : $ty:ty),* $(,)? ) => $build:expr ;
-    )*) => {
-        $(
-            $(#[$meta])*
-            pub fn $name(&mut self, $($arg: $ty),*) {
-                self.push($build);
-            }
-        )*
-    };
-}
-
 impl SideEffect {
     pub fn effects(&self) -> &[Effect] {
         &self.effects
@@ -86,27 +70,22 @@ impl SideEffect {
         self.effects.push(effect);
     }
 
-    effect_pushers! {
-        switch_session(name: String) => Effect::SwitchSession(name);
-        switch_remote(req: RemoteSwitchRequest) => Effect::SwitchRemote(req);
-        switch_agent_pane(target: AgentTarget) => Effect::SwitchAgentPane(target);
-        show_remote_placeholder(host: String) => Effect::ShowRemotePlaceholder(host);
-        kill_session(req: KillRequest) => Effect::KillSession(req);
-        rename_session(req: RenameRequest) => Effect::RenameSession(req);
-        create_session(req: CreateSessionRequest) => Effect::CreateSession(req);
-        remove_remote_host(host: String) => Effect::RemoveRemoteHost(host);
-        open_new_session_picker() => Effect::OpenNewSessionPicker;
-        open_remote_new_session_picker(host: String) => Effect::OpenRemoteNewSessionPicker(host);
-        open_add_remote_picker() => Effect::OpenAddRemotePicker;
-        add_remote_host(host: String) => Effect::AddRemoteHost(host);
-        reread_new_session_entries() => Effect::RereadNewSessionEntries;
-        resize_pty(full_redraw: bool) => Effect::ResizePty { full_redraw };
-        save_config() => Effect::SaveConfig;
-        save_session_order() => Effect::SaveSessionOrder;
-        save_remote_session_order(host: String) => Effect::SaveRemoteSessionOrder(host);
-        apply_tmux_theme() => Effect::ApplyTmuxTheme;
-        refresh_sessions() => Effect::RefreshSessions;
-        quit() => Effect::Quit;
+    // ponytail: only the high-traffic effects get a named pusher; everything
+    // else is pushed as `fx.push(Effect::X(..))` at its one or two call sites.
+    pub fn save_config(&mut self) {
+        self.push(Effect::SaveConfig);
+    }
+
+    pub fn refresh_sessions(&mut self) {
+        self.push(Effect::RefreshSessions);
+    }
+
+    pub fn resize_pty(&mut self, full_redraw: bool) {
+        self.push(Effect::ResizePty { full_redraw });
+    }
+
+    pub fn reread_new_session_entries(&mut self) {
+        self.push(Effect::RereadNewSessionEntries);
     }
 
     pub fn has_quit(&self) -> bool {

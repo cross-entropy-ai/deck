@@ -17,16 +17,8 @@ impl App {
             .to_config(
                 self.raw_keybindings.clone(),
                 self.state.config_remotes.clone(),
-                self.state
-                    .collapsed_sections
-                    .iter()
-                    .map(|k| crate::system::tmux::TmuxSystem::host_of(k).map(str::to_string))
-                    .collect(),
-                self.state
-                    .collapsed_agent_sections
-                    .iter()
-                    .map(|k| crate::system::tmux::TmuxSystem::host_of(k).map(str::to_string))
-                    .collect(),
+                crate::system::tmux::hosts_from_lanes(&self.state.collapsed_sections),
+                crate::system::tmux::hosts_from_lanes(&self.state.collapsed_agent_sections),
             )
             .save();
         // Adopt the new mtime so the config watcher in `run` doesn't see our
@@ -90,13 +82,9 @@ impl App {
                     UpdateResult::Err(msg) => {
                         // Background check failed. An eprintln! would be
                         // invisible (and could corrupt the alt screen), so show
-                        // it in the reload strip; it clears after the TTL. Set
-                        // fields directly — `self.update_checker` is borrowed,
-                        // so `show_warning` isn't callable.
-                        self.state.reload_status = Some(crate::state::ReloadStatus::Err(format!(
-                            "update check failed: {msg}"
-                        )));
-                        self.state.reload_status_at = Some(Instant::now());
+                        // it in the reload strip; it clears after the TTL.
+                        self.state
+                            .show_warning(format!("update check failed: {msg}"));
                     }
                 }
             }
