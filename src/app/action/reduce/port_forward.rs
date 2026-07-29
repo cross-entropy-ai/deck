@@ -54,27 +54,21 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
                 o.add_form = None;
             }
         }
-        PfAction::AddFieldNext => {
-            if let Some(o) = state.overlay.port_forward.as_mut() {
-                if let Some(f) = o.add_form.as_mut() {
-                    f.focus = next_field(f.focus, f.mode);
-                }
+        PfAction::AddFieldNext | PfAction::AddFieldPrev => {
+            let delta = if matches!(action, PfAction::AddFieldPrev) {
+                -1
+            } else {
+                1
+            };
+            if let Some(f) = pf_add_form(state) {
+                f.focus = cycle_option(pf_field_order(f.mode), f.focus, delta);
             }
         }
-        PfAction::AddFieldPrev => {
-            if let Some(o) = state.overlay.port_forward.as_mut() {
-                if let Some(f) = o.add_form.as_mut() {
-                    f.focus = prev_field(f.focus, f.mode);
-                }
-            }
-        }
-        PfAction::AddModeLeft => set_mode(&mut state.overlay.port_forward, -1),
-        PfAction::AddModeRight => set_mode(&mut state.overlay.port_forward, 1),
+        PfAction::AddModeLeft => set_mode(state, -1),
+        PfAction::AddModeRight => set_mode(state, 1),
         PfAction::AddInputKey(key) => {
-            if let Some(o) = state.overlay.port_forward.as_mut() {
-                if let Some(f) = o.add_form.as_mut() {
-                    handle_pf_input(f, key);
-                }
+            if let Some(f) = pf_add_form(state) {
+                handle_pf_input(f, key);
             }
         }
 
@@ -118,28 +112,23 @@ fn pf_field_order(mode: ForwardMode) -> &'static [PfField] {
     }
 }
 
-fn next_field(f: PfField, mode: ForwardMode) -> PfField {
-    cycle_option(pf_field_order(mode), f, 1)
+/// The add form, if the port-forward overlay is open with one.
+fn pf_add_form(state: &mut AppState) -> Option<&mut PfAddForm> {
+    state.overlay.port_forward.as_mut()?.add_form.as_mut()
 }
 
-fn prev_field(f: PfField, mode: ForwardMode) -> PfField {
-    cycle_option(pf_field_order(mode), f, -1)
-}
-
-fn set_mode(o: &mut Option<PortForwardOverlay>, delta: i32) {
-    if let Some(o) = o.as_mut() {
-        if let Some(f) = o.add_form.as_mut() {
-            let modes = [
-                ForwardMode::Local,
-                ForwardMode::Remote,
-                ForwardMode::Dynamic,
-            ];
-            f.mode = cycle_option(&modes, f.mode, delta);
-            if matches!(f.mode, ForwardMode::Dynamic)
-                && matches!(f.focus, PfField::TargetHost | PfField::TargetPort)
-            {
-                f.focus = PfField::ListenPort;
-            }
+fn set_mode(state: &mut AppState, delta: i32) {
+    if let Some(f) = pf_add_form(state) {
+        let modes = [
+            ForwardMode::Local,
+            ForwardMode::Remote,
+            ForwardMode::Dynamic,
+        ];
+        f.mode = cycle_option(&modes, f.mode, delta);
+        if matches!(f.mode, ForwardMode::Dynamic)
+            && matches!(f.focus, PfField::TargetHost | PfField::TargetPort)
+        {
+            f.focus = PfField::ListenPort;
         }
     }
 }
@@ -184,35 +173,33 @@ fn handle_pf_input(f: &mut PfAddForm, key: crossterm::event::KeyEvent) {
 /// reason. Falls back to ssh's own words (minus noisy prefixes) for cases we
 /// don't recognize, so nothing is ever silently swallowed.
 fn humanize_forward_error(raw: &str) -> String {
+    // Needles are tried in order; first match wins. The last row is ssh's
+    // ControlMaster mux path, which reports this when `-O forward` is rejected
+    // — almost always because the listen port is already taken.
+    #[rustfmt::skip]
+    const KNOWN: &[(&[&str], &str)] = &[
+        (&["address already in use"], "That local port is already in use on this machine."),
+        (&["remote port forwarding failed"], "The host refused it — that port may already be in use there."),
+        (&["administratively prohibited", "open failed"], "The server blocked forwarding (check its AllowTcpForwarding setting)."),
+        (&["permission denied"], "The host denied the connection (permission denied)."),
+        (&["connection refused"], "Connection refused by the target."),
+        (&["could not resolve", "name or service not known"], "Couldn't resolve the target host name."),
+        (&["timed out", "timeout"], "The host didn't respond in time (timed out)."),
+        (&["port forwarding failed", "forward request failed", "mux_client_forward"],
+         "Couldn't set up the forward — the listen port may already be in use."),
+    ];
     let lc = raw.to_ascii_lowercase();
-    if lc.contains("address already in use") {
-        "That local port is already in use on this machine.".into()
-    } else if lc.contains("remote port forwarding failed") {
-        "The host refused it — that port may already be in use there.".into()
-    } else if lc.contains("administratively prohibited") || lc.contains("open failed") {
-        "The server blocked forwarding (check its AllowTcpForwarding setting).".into()
-    } else if lc.contains("permission denied") {
-        "The host denied the connection (permission denied).".into()
-    } else if lc.contains("connection refused") {
-        "Connection refused by the target.".into()
-    } else if lc.contains("could not resolve") || lc.contains("name or service not known") {
-        "Couldn't resolve the target host name.".into()
-    } else if lc.contains("timed out") || lc.contains("timeout") {
-        "The host didn't respond in time (timed out).".into()
-    } else if lc.contains("port forwarding failed")
-        || lc.contains("forward request failed")
-        || lc.contains("mux_client_forward")
+    if let Some((_, msg)) = KNOWN
+        .iter()
+        .find(|(needles, _)| needles.iter().any(|n| lc.contains(n)))
     {
-        // ssh's ControlMaster mux path reports this when `-O forward` is
-        // rejected — almost always because the listen port is already taken.
-        "Couldn't set up the forward — the listen port may already be in use.".into()
+        return (*msg).to_string();
+    }
+    let cleaned = raw.trim().trim_start_matches("Warning: ").trim();
+    if cleaned.is_empty() {
+        "ssh rejected the forward.".into()
     } else {
-        let cleaned = raw.trim().trim_start_matches("Warning: ").trim();
-        if cleaned.is_empty() {
-            "ssh rejected the forward.".into()
-        } else {
-            format!("Couldn't add the forward: {cleaned}")
-        }
+        format!("Couldn't add the forward: {cleaned}")
     }
 }
 

@@ -606,111 +606,100 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
     match action {
         NewSessionAction::OpenLocal => {
             fx.open_new_session_picker();
+            return fx;
         }
         NewSessionAction::Close => {
             state.overlay.new_session = None;
+            return fx;
         }
+        _ => {}
+    }
+    let Some(ns) = state.overlay.new_session.as_mut() else {
+        return fx;
+    };
+    match action {
+        NewSessionAction::OpenLocal | NewSessionAction::Close => unreachable!("handled above"),
         NewSessionAction::InputKey(key) => {
-            if let Some(ns) = state.overlay.new_session.as_mut() {
-                use crate::new_session::PickerFocus;
-                match ns.focus {
-                    PickerFocus::Name => {
-                        ns.name.input(key);
-                    }
-                    PickerFocus::Dir => {
-                        let parent_before = crate::new_session::split_input(ns.input_str())
-                            .0
-                            .to_string();
-                        ns.picker.input.input(key);
-                        ns.refilter();
-                        let parent_after = crate::new_session::split_input(ns.input_str())
-                            .0
-                            .to_string();
-                        if parent_before != parent_after {
-                            fx.reread_new_session_entries();
-                        }
+            use crate::new_session::PickerFocus;
+            match ns.focus {
+                PickerFocus::Name => {
+                    ns.name.input(key);
+                }
+                PickerFocus::Dir => {
+                    let parent_before = crate::new_session::split_input(ns.input_str())
+                        .0
+                        .to_string();
+                    ns.picker.input.input(key);
+                    ns.refilter();
+                    let parent_after = crate::new_session::split_input(ns.input_str())
+                        .0
+                        .to_string();
+                    if parent_before != parent_after {
+                        fx.reread_new_session_entries();
                     }
                 }
-                ns.picker.error = None;
             }
+            ns.picker.error = None;
         }
         NewSessionAction::SwitchFocus => {
-            if let Some(ns) = state.overlay.new_session.as_mut() {
-                ns.focus = match ns.focus {
-                    crate::new_session::PickerFocus::Name => crate::new_session::PickerFocus::Dir,
-                    crate::new_session::PickerFocus::Dir => crate::new_session::PickerFocus::Name,
-                };
-                ns.picker.error = None;
-            }
+            ns.focus = match ns.focus {
+                crate::new_session::PickerFocus::Name => crate::new_session::PickerFocus::Dir,
+                crate::new_session::PickerFocus::Dir => crate::new_session::PickerFocus::Name,
+            };
+            ns.picker.error = None;
         }
         NewSessionAction::DirUp => {
-            if let Some(ns) = state.overlay.new_session.as_mut() {
-                let parent_before = crate::new_session::split_input(ns.input_str())
-                    .0
-                    .to_string();
-                let mut s = ns.input_str().to_string();
-                if s.ends_with('/') && s.len() > 1 {
-                    s.pop();
-                }
-                let new_end = s.rfind('/').map(|i| i + 1).unwrap_or(0);
-                s.truncate(new_end);
-                ns.set_path(&s);
-                let parent_after = crate::new_session::split_input(ns.input_str())
-                    .0
-                    .to_string();
-                if parent_before != parent_after {
-                    fx.reread_new_session_entries();
-                }
+            let parent_before = crate::new_session::split_input(ns.input_str())
+                .0
+                .to_string();
+            let mut s = ns.input_str().to_string();
+            if s.ends_with('/') && s.len() > 1 {
+                s.pop();
+            }
+            let new_end = s.rfind('/').map(|i| i + 1).unwrap_or(0);
+            s.truncate(new_end);
+            ns.set_path(&s);
+            let parent_after = crate::new_session::split_input(ns.input_str())
+                .0
+                .to_string();
+            if parent_before != parent_after {
+                fx.reread_new_session_entries();
             }
         }
         NewSessionAction::DirEnter => {
-            if let Some(ns) = state.overlay.new_session.as_mut() {
-                if let Some(&idx) = ns.picker.filtered.get(ns.picker.selected) {
-                    let entry = ns.picker.items[idx].clone();
-                    let (parent, _leaf) = crate::new_session::split_input(ns.input_str());
-                    let new_path = format!("{}{}/", parent, entry);
-                    ns.set_path(&new_path);
-                    fx.reread_new_session_entries();
-                }
+            if let Some(&idx) = ns.picker.filtered.get(ns.picker.selected) {
+                let entry = ns.picker.items[idx].clone();
+                let (parent, _leaf) = crate::new_session::split_input(ns.input_str());
+                let new_path = format!("{}{}/", parent, entry);
+                ns.set_path(&new_path);
+                fx.reread_new_session_entries();
             }
         }
         NewSessionAction::Confirm => {
             // Handled at dispatch (needs fs::metadata).
         }
-        NewSessionAction::Prev => {
-            if let Some(ns) = state.overlay.new_session.as_mut() {
-                ns.picker.step(-1);
-            }
-        }
-        NewSessionAction::Next => {
-            if let Some(ns) = state.overlay.new_session.as_mut() {
-                ns.picker.step(1);
-            }
-        }
+        NewSessionAction::Prev => ns.picker.step(-1),
+        NewSessionAction::Next => ns.picker.step(1),
         NewSessionAction::Clear => {
-            if let Some(ns) = state.overlay.new_session.as_mut() {
-                ns.set_path("");
-                fx.reread_new_session_entries();
-            }
+            ns.set_path("");
+            fx.reread_new_session_entries();
         }
         NewSessionAction::DeleteSegment => {
-            if let Some(ns) = state.overlay.new_session.as_mut() {
-                // Trim trailing chars back to (and including) the previous `/`.
-                let s = ns.input_str().to_string();
-                let mut new_end = s.len();
-                while new_end > 0 && !s[..new_end].ends_with('/') {
-                    let prev = s[..new_end]
-                        .chars()
-                        .last()
-                        .map(|c| c.len_utf8())
-                        .unwrap_or(0);
-                    new_end -= prev;
-                }
-                ns.set_path(&s[..new_end]);
-                // Always reread: the user explicitly cleared the segment they
-                // were typing and expects a fresh listing of the parent dir.
-                fx.reread_new_session_entries();
+            // Trim trailing chars back to (and including) the previous `/`.
+            let s = ns.input_str().to_string();
+            let mut new_end = s.len();
+            while new_end > 0 && !s[..new_end].ends_with('/') {
+                let prev = s[..new_end]
+                    .chars()
+                    .last()
+                    .map(|c| c.len_utf8())
+                    .unwrap_or(0);
+                new_end -= prev;
             }
+            ns.set_path(&s[..new_end]);
+            // Always reread: the user explicitly cleared the segment they
+            // were typing and expects a fresh listing of the parent dir.
+            fx.reread_new_session_entries();
         }
     }
     fx
@@ -747,20 +736,19 @@ fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffec
                 .as_ref()
                 .and_then(|ar| ar.chosen_host());
             let host = match chosen {
-                None => {
+                Some(h) if !state.config_remotes.iter().any(|r| r.host == h) => h,
+                other => {
+                    let msg = if other.is_none() {
+                        "enter a hostname"
+                    } else {
+                        "already added"
+                    };
                     if let Some(ar) = state.overlay.add_remote.as_mut() {
-                        ar.picker.error = Some("enter a hostname".into());
+                        ar.picker.error = Some(msg.into());
                     }
                     return fx;
                 }
-                Some(h) => h,
             };
-            if state.config_remotes.iter().any(|r| r.host == host) {
-                if let Some(ar) = state.overlay.add_remote.as_mut() {
-                    ar.picker.error = Some("already added".into());
-                }
-                return fx;
-            }
             state.config_remotes.push(crate::config::RemoteConfig {
                 host: host.clone(),
                 forwards: vec![],

@@ -311,14 +311,12 @@ fn format_forward(f: &ForwardSpec) -> String {
         .map(|b| format!("{}:", b))
         .unwrap_or_default();
     // -L and -R format identically bar the flag; -D has no target.
-    let flag = match f.mode {
-        ForwardMode::Local => "-L",
-        ForwardMode::Remote => "-R",
-        ForwardMode::Dynamic => return format!("-D {}{}", bind, f.listen_port),
-    };
+    if matches!(f.mode, ForwardMode::Dynamic) {
+        return format!("-D {}{}", bind, f.listen_port);
+    }
     format!(
         "{} {}{}  \u{2192} {}:{}",
-        flag,
+        f.mode.flag(),
         bind,
         f.listen_port,
         f.target_host.as_deref().unwrap_or(""),

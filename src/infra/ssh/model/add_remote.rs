@@ -39,11 +39,7 @@ impl AddRemoteState {
             return Some(host.to_string());
         }
         let typed = self.input_str().trim();
-        if typed.is_empty() {
-            None
-        } else {
-            Some(typed.to_string())
-        }
+        (!typed.is_empty()).then(|| typed.to_string())
     }
 }
 

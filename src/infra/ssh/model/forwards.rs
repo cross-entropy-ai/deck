@@ -33,16 +33,22 @@ pub enum ForwardMode {
     Dynamic,
 }
 
+impl ForwardMode {
+    /// The ssh flag this mode maps to.
+    pub fn flag(self) -> &'static str {
+        match self {
+            ForwardMode::Local => "-L",
+            ForwardMode::Remote => "-R",
+            ForwardMode::Dynamic => "-D",
+        }
+    }
+}
+
 impl ForwardSpec {
     /// The pair `("-L" | "-R" | "-D", "<bind?>:listen:<target_host:target_port?>")`
     /// suitable for `Command::arg(flag).arg(value)`. Use this when you need the
     /// flag and value as separate arg slots (e.g., `ssh -O forward -L 8080:host:80`).
     pub fn ssh_flag_and_value(&self) -> (&'static str, String) {
-        let flag = match self.mode {
-            ForwardMode::Local => "-L",
-            ForwardMode::Remote => "-R",
-            ForwardMode::Dynamic => "-D",
-        };
         let bind_prefix = match &self.bind_addr {
             Some(b) => format!("{}:", b),
             None => String::new(),
@@ -55,7 +61,7 @@ impl ForwardSpec {
                 format!("{}{}:{}:{}", bind_prefix, self.listen_port, th, tp)
             }
         };
-        (flag, value)
+        (self.mode.flag(), value)
     }
 
     /// Render this rule as the corresponding `ssh -L/-R/-D` argument
@@ -87,18 +93,18 @@ pub enum ForwardOp {
 }
 
 pub fn diff_forwards(old: &[ForwardSpec], new: &[ForwardSpec]) -> Vec<ForwardOp> {
-    let mut ops = Vec::new();
-    for o in old {
-        if !new.contains(o) {
-            ops.push(ForwardOp::Cancel(o.clone()));
-        }
-    }
-    for n in new {
-        if !old.contains(n) {
-            ops.push(ForwardOp::Add(n.clone()));
-        }
-    }
-    ops
+    // Cancels first, then adds — callers rely on that order.
+    old.iter()
+        .filter(|o| !new.contains(o))
+        .cloned()
+        .map(ForwardOp::Cancel)
+        .chain(
+            new.iter()
+                .filter(|n| !old.contains(n))
+                .cloned()
+                .map(ForwardOp::Add),
+        )
+        .collect()
 }
 
 // --- Port forward overlay ---
@@ -191,11 +197,7 @@ impl PfAddForm {
             .parse()
             .map_err(|_| PfFormError::ListenPortRange)?;
         let bind_raw = self.field_text(PfField::BindAddr).trim();
-        let bind_addr = if bind_raw.is_empty() {
-            None
-        } else {
-            Some(bind_raw.to_string())
-        };
+        let bind_addr = (!bind_raw.is_empty()).then(|| bind_raw.to_string());
 
         match self.mode {
             ForwardMode::Dynamic => Ok(ForwardSpec {

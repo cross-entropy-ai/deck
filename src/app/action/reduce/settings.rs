@@ -119,11 +119,10 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         }
 
         SettingsAction::ToggleUpdateCheck => {
-            state.prefs.update_check_mode = match state.prefs.update_check_mode {
-                crate::update::UpdateCheckMode::Enabled => crate::update::UpdateCheckMode::Disabled,
-                crate::update::UpdateCheckMode::Disabled => crate::update::UpdateCheckMode::Enabled,
-            };
-            if state.prefs.update_check_mode == crate::update::UpdateCheckMode::Disabled {
+            use crate::update::UpdateCheckMode::{Disabled, Enabled};
+            let was_enabled = state.prefs.update_check_mode == Enabled;
+            state.prefs.update_check_mode = if was_enabled { Disabled } else { Enabled };
+            if was_enabled {
                 state.update_available = None;
             }
             fx.save_config();
@@ -151,16 +150,9 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
                 }
             }
         }
-        SettingsAction::ExcludeStartAdd => {
+        SettingsAction::ExcludeStartAdd | SettingsAction::ExcludeCancelAdd => {
             if let Some(ref mut editor) = state.overlay.exclude_editor {
-                editor.adding = true;
-                editor.reset_input();
-                editor.error = None;
-            }
-        }
-        SettingsAction::ExcludeCancelAdd => {
-            if let Some(ref mut editor) = state.overlay.exclude_editor {
-                editor.adding = false;
+                editor.adding = matches!(action, SettingsAction::ExcludeStartAdd);
                 editor.reset_input();
                 editor.error = None;
             }
