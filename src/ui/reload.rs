@@ -5,6 +5,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
+use crate::geometry::split_at_width;
 use crate::state::ReloadStatus;
 use crate::theme::Theme;
 
@@ -22,19 +23,21 @@ fn wrap_width(s: &str, width: usize) -> Vec<String> {
         return Vec::new();
     }
     let mut out: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    let mut cur_w = 0usize;
-    for ch in s.chars() {
-        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-        if cur_w + cw > width && !cur.is_empty() {
-            out.push(std::mem::take(&mut cur));
-            cur_w = 0;
+    let mut rest = s;
+    while !rest.is_empty() {
+        let (head, tail) = split_at_width(rest, width);
+        if head.is_empty() {
+            // A lone char wider than the row: emit it and overflow, rather
+            // than spin forever on a zero-width split.
+            let mut chars = rest.chars();
+            if let Some(ch) = chars.next() {
+                out.push(ch.to_string());
+            }
+            rest = chars.as_str();
+        } else {
+            out.push(head.to_string());
+            rest = tail;
         }
-        cur.push(ch);
-        cur_w += cw;
-    }
-    if !cur.is_empty() {
-        out.push(cur);
     }
     out
 }
@@ -47,11 +50,8 @@ fn wrapped_body_lines(body: &str, width: usize) -> Vec<String> {
     let cont_w = width.saturating_sub(RELOAD_CONT_INDENT.width());
     let mut lines = wrap_width(body, first_w.max(1));
     if lines.len() > 1 && cont_w > 0 && cont_w != first_w {
-        let head = lines.remove(0);
-        let tail: String = lines.concat();
-        let mut rewrapped = vec![head];
-        rewrapped.extend(wrap_width(&tail, cont_w));
-        lines = rewrapped;
+        let tail = lines.split_off(1).concat();
+        lines.extend(wrap_width(&tail, cont_w));
     }
     lines
 }

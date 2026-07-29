@@ -38,19 +38,24 @@ pub fn truncate(s: &str, max_width: usize) -> String {
         // Only room for the ellipsis itself; no content fits beside it.
         return "…".to_string();
     }
-    let mut out = String::new();
-    let mut width = 0usize;
+    // One column short of `max_width`, leaving room for the ellipsis.
+    let (head, _) = split_at_width(s, max_width - 1);
+    format!("{head}…")
+}
 
-    for ch in s.chars() {
+/// Split `s` into the longest prefix whose display width fits `max` columns
+/// and the remainder. The prefix is empty when even the first char is wider
+/// than `max` — callers decide whether to overflow or skip.
+pub fn split_at_width(s: &str, max: usize) -> (&str, &str) {
+    let mut width = 0usize;
+    for (i, ch) in s.char_indices() {
         let ch_width = ch.width().unwrap_or(0);
-        if width + ch_width + 1 > max_width {
-            break;
+        if width + ch_width > max {
+            return s.split_at(i);
         }
-        out.push(ch);
         width += ch_width;
     }
-
-    format!("{out}…")
+    (s, "")
 }
 
 // --- Tab / banner / header / footer geometry ---

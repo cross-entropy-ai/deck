@@ -219,7 +219,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             }
             return Action::None;
         }
-        let b = if state.prefs.show_borders { 1u16 } else { 0 };
+        let b = state.border_inset();
         let (col_off, row_off) = match state.effective_layout_mode() {
             LayoutMode::Horizontal => (state.prefs.sidebar_width + 1 + b, b),
             LayoutMode::Vertical => (b, state.effective_sidebar_height() + b),

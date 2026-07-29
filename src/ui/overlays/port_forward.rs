@@ -147,54 +147,49 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
     .render(rows[1], buf);
 
     let target_active = !matches!(form.mode, ForwardMode::Dynamic);
-    render_field_row(
-        buf,
-        rows[3],
-        form,
-        theme,
-        FieldRow {
-            field: PfField::BindAddr,
-            label: "  bind addr:   ",
-            textarea: &form.bind_addr,
-            enabled: true,
-        },
-    );
-    render_field_row(
-        buf,
-        rows[4],
-        form,
-        theme,
-        FieldRow {
-            field: PfField::ListenPort,
-            label: "  listen port: ",
-            textarea: &form.listen_port,
-            enabled: true,
-        },
-    );
-    render_field_row(
-        buf,
-        rows[5],
-        form,
-        theme,
-        FieldRow {
-            field: PfField::TargetHost,
-            label: "  target host: ",
-            textarea: &form.target_host,
-            enabled: target_active,
-        },
-    );
-    render_field_row(
-        buf,
-        rows[6],
-        form,
-        theme,
-        FieldRow {
-            field: PfField::TargetPort,
-            label: "  target port: ",
-            textarea: &form.target_port,
-            enabled: target_active,
-        },
-    );
+    for (row, field, label, textarea, enabled) in [
+        (
+            3,
+            PfField::BindAddr,
+            "  bind addr:   ",
+            &form.bind_addr,
+            true,
+        ),
+        (
+            4,
+            PfField::ListenPort,
+            "  listen port: ",
+            &form.listen_port,
+            true,
+        ),
+        (
+            5,
+            PfField::TargetHost,
+            "  target host: ",
+            &form.target_host,
+            target_active,
+        ),
+        (
+            6,
+            PfField::TargetPort,
+            "  target port: ",
+            &form.target_port,
+            target_active,
+        ),
+    ] {
+        render_field_row(
+            buf,
+            rows[row],
+            form,
+            theme,
+            FieldRow {
+                field,
+                label,
+                textarea,
+                enabled,
+            },
+        );
+    }
 
     Paragraph::new(flow_line(form, theme)).render(rows[8], buf);
     // Surface the add result here (e.g. validation error, "already

@@ -15,6 +15,11 @@ use crate::ui::widgets::{
 use super::text::format_keys_for;
 use super::{ExcludeEditorView, SettingsView};
 
+/// Widest display width in `it`, never below `floor`.
+fn max_width<'a>(it: impl Iterator<Item = &'a str>, floor: usize) -> usize {
+    it.map(UnicodeWidthStr::width).max().unwrap_or(0).max(floor)
+}
+
 pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView, theme: &Theme) {
     frame.render_widget(Block::default().style(Style::default().bg(theme.bg)), area);
 
@@ -49,7 +54,7 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
         .saturating_sub(1); // footer
                             // Worst-case entry height bounds the window so a selected tall entry
                             // can't be pushed past the bottom.
-    let max_entry_height = entries.iter().map(entry_height).max().unwrap_or(1).max(1);
+    let max_entry_height = entries.iter().map(entry_height).max().unwrap_or(1);
     let visible = (body_rows / max_entry_height).max(1);
     let start = scroll_window(settings.selected, entries.len(), visible);
     let end = (start + visible).min(entries.len());
@@ -146,18 +151,8 @@ fn draw_keybindings_view(
         })
         .collect();
 
-    let name_width = rows
-        .iter()
-        .map(|(n, _, _)| UnicodeWidthStr::width(*n))
-        .max()
-        .unwrap_or(16)
-        .max(16);
-    let keys_width = rows
-        .iter()
-        .map(|(_, k, _)| UnicodeWidthStr::width(k.as_str()))
-        .max()
-        .unwrap_or(8)
-        .max(8);
+    let name_width = max_width(rows.iter().map(|(n, _, _)| *n), 16);
+    let keys_width = max_width(rows.iter().map(|(_, k, _)| k.as_str()), 8);
 
     let popup_width = (name_width as u16 + keys_width as u16 + 16)
         .min(area.width.saturating_sub(4))
@@ -237,13 +232,10 @@ pub fn draw_theme_picker(
     selected_idx: usize,
     theme: &Theme,
 ) {
-    let width = theme_names
-        .iter()
-        .map(|name| UnicodeWidthStr::width(*name))
-        .max()
-        .unwrap_or(12)
-        .min(area.width.saturating_sub(4) as usize)
-        + 6;
+    // ponytail: the 12-col floor now applies to any short list, not just an
+    // empty one — the only caller passes every theme name, whose widest is 24.
+    let width =
+        max_width(theme_names.iter().copied(), 12).min(area.width.saturating_sub(4) as usize) + 6;
     let popup_width = (width as u16).min(area.width.saturating_sub(2)).max(12);
     let popup_height = clamp_popup_height(area, theme_names.len() as u16 + 2, 3);
     let popup_area = centered_rect(area, popup_width, popup_height);
@@ -346,17 +338,10 @@ fn draw_summary_language_editor(
 
 fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView, theme: &Theme) {
     let pattern_count = editor.patterns.len();
-    let max_pattern_width = editor
-        .patterns
-        .iter()
-        .map(|p| UnicodeWidthStr::width(p.as_str()))
-        .max()
-        .unwrap_or(0)
-        .max(20);
+    let max_pattern_width = max_width(editor.patterns.iter().map(String::as_str), 20);
 
-    let content_lines = pattern_count
-        + if editor.adding { 1 } else { 0 }
-        + if editor.error.is_some() { 1 } else { 0 };
+    let content_lines =
+        pattern_count + usize::from(editor.adding) + usize::from(editor.error.is_some());
     // content rows + blank + help row + top/bottom borders = +4
     let height = clamp_popup_height(area, content_lines as u16 + 4, 5);
     let width = (max_pattern_width as u16 + 8)

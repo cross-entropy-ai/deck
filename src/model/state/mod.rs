@@ -744,8 +744,13 @@ impl AppState {
         }
     }
 
+    /// Columns/rows one border edge takes: 1 when borders are shown, else 0.
+    pub fn border_inset(&self) -> u16 {
+        u16::from(self.prefs.show_borders)
+    }
+
     pub fn pty_size(&self) -> (u16, u16) {
-        let bo = if self.prefs.show_borders { 2u16 } else { 0 };
+        let bo = self.border_inset() * 2;
         match self.effective_layout_mode() {
             LayoutMode::Horizontal => {
                 let cols = self
@@ -771,7 +776,7 @@ impl AppState {
     /// renderer (`ui::sidebar::draw_sidebar`) so the two can't drift — when they
     /// did, the bottom visible session row was click-dead.
     pub fn sidebar_footer_height(&self) -> u16 {
-        let b = if self.prefs.show_borders { 2u16 } else { 0 };
+        let b = self.border_inset() * 2;
         let content_width = match self.effective_layout_mode() {
             LayoutMode::Horizontal => self.prefs.sidebar_width.saturating_sub(b),
             LayoutMode::Vertical => self.term_width.saturating_sub(b),
@@ -787,7 +792,7 @@ impl AppState {
     /// the header banner, footer, or outside the sidebar. Shared by the row and
     /// divider hit-testers so they agree on geometry and the applied scroll offset.
     fn session_row_hit(&self, row: u16) -> Option<(BuiltLayout, u16, u16, u16)> {
-        let b = if self.prefs.show_borders { 1u16 } else { 0 };
+        let b = self.border_inset();
         let sidebar_h = match self.effective_layout_mode() {
             LayoutMode::Horizontal => self.term_height,
             LayoutMode::Vertical => self.effective_sidebar_height(),
@@ -909,7 +914,7 @@ impl AppState {
 
     /// Map a screen column to a tab index in vertical/tabs mode.
     pub fn session_at_col(&self, col: u16, row: u16) -> Option<usize> {
-        let b = if self.prefs.show_borders { 1u16 } else { 0 };
+        let b = self.border_inset();
         if row != b {
             return None;
         }
