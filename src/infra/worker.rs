@@ -36,8 +36,8 @@ use std::thread;
 pub struct Cancel(Arc<AtomicBool>);
 
 impl Cancel {
-    /// True once the owning [`Worker`] has been dropped (or
-    /// [`Worker::cancel`] was called). Cheap to poll in a hot loop.
+    /// True once the owning [`Worker`] has been dropped. Cheap to poll in a
+    /// hot loop.
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Relaxed)
     }
@@ -58,7 +58,7 @@ pub struct Worker<Req, Res> {
     req_tx: Option<Sender<Req>>,
     /// Results from the worker thread.
     res_rx: Receiver<Res>,
-    /// Flipped on `Drop`/`cancel` so the job can bail early.
+    /// Flipped on `Drop` so the job can bail early.
     cancel: Arc<AtomicBool>,
 }
 

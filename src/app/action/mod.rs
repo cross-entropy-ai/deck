@@ -133,6 +133,11 @@ pub enum SettingsAction {
     CycleAgentsProbeInterval(i32),
     /// Toggle the inline Summary card on/off (settings, left/right/Enter).
     ToggleSummary,
+    /// Open the add-remote-host picker (settings "Remotes" row).
+    OpenAddRemotePicker,
+    /// Open a configured host's port-forward overlay (settings "Port
+    /// forwards" row).
+    OpenPortForwards,
 
     ExcludeOpen,
     ExcludeClose,

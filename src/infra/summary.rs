@@ -33,6 +33,8 @@ pub const CANCELLED_MSG: &str = "summary cancelled";
 /// an older version is refreshed to the new default (see `Config::load`), so
 /// improvements reach existing users — at the cost of resetting a hand-edited
 /// prompt when the default moves.
+// ponytail: not bumped for the `session:window` wording fix — a bump would
+// reset hand-edited prompts, which a doc-accuracy fix doesn't warrant.
 pub const DEFAULT_SUMMARY_PROMPT_VERSION: u32 = 3;
 
 /// Marker the template replaces with the rendered `<session>` blocks. A
@@ -55,7 +57,7 @@ pub const DEFAULT_SUMMARY_PROMPT: &str = "\
 You are deck, a tmux session manager. Several coding agents (Claude Code or \
 Codex) are running in tmux panes. Below is the recent terminal buffer of each \
 agent's pane, one <session> block per pane, where the id is its tmux \
-session:window.pane location (and host=\"…\" marks a remote host).
+session:window location (and host=\"…\" marks a remote host).
 
 {{SESSIONS}}
 
@@ -77,7 +79,7 @@ separate sentence instead.";
 pub struct SummaryPane {
     /// `None` = local, `Some(host)` = a remote ssh host.
     pub host: Option<String>,
-    /// Display id for the `<session>` block — the agent's `session:window.pane`
+    /// Display id for the `<session>` block — the agent's `session:window`
     /// location.
     pub id: String,
     /// The tmux `-t` target used to capture the buffer: the agent's stable

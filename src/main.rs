@@ -14,7 +14,7 @@ pub(crate) use infra::{
 };
 pub(crate) use model::{
     config, effects, exclude, geometry, keybindings, lane, menu, new_session, overlay, picker,
-    settings as settings_framework, state, summary as summary_card, theme,
+    state, summary as summary_card, theme,
 };
 pub(crate) use ui::bridge;
 

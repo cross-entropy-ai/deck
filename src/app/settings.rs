@@ -1,49 +1,19 @@
-//! The settings page as a descriptor table — the source of truth for the
-//! shell's *core* rows: their order and what each shows and does. Adding a core
-//! setting means adding one [`SettingRow`]; the renderer (`app::render`) and
-//! reducer (`app::action::reduce`) both iterate this slice, so a row's label,
-//! value, help, and adjust action can't drift apart.
+//! The settings page as a descriptor table — the source of truth for its rows:
+//! their order and what each shows and does. Adding a setting means adding one
+//! [`SettingRow`]; the renderer (`app::render`) and reducer
+//! (`app::action::reduce`) both iterate this slice, so a row's label, value,
+//! help, and adjust action can't drift apart.
 //!
-//! Mounted systems append their own rows after these via
-//! [`crate::system::System::settings`] (e.g. tmux's "Remotes"); the page is
-//! `SETTING_ROWS` + [`system_setting_defs`], and [`total_setting_rows`] is the
-//! combined count both layers navigate by.
-//!
-//! Lives in `app`, not `model`: each core row's `adjust` produces an
-//! [`Action`], which `model` doesn't depend on. The value/help closures read
-//! `&AppState` so dynamic text (frame-rate caveat, update-check "last checked"
-//! line) stays beside the value and action it describes. (System rows instead
-//! produce an [`Effect`](crate::effects::Effect), keeping infra decoupled.)
+//! Lives in `app`, not `model`: each row's `adjust` produces an [`Action`],
+//! which `model` doesn't depend on. The value/help closures read `&AppState` so
+//! dynamic text (frame-rate caveat, update-check "last checked" line) stays
+//! beside the value and action it describes.
 
 use crate::action::{Action, SettingsAction, SummaryAction};
 use crate::state::{AppState, LayoutMode, ViewMode};
 use crate::theme::THEMES;
 
 use super::update::format_update_check_help;
-
-use crate::settings_framework::{SettingDef, SettingsCtx, SettingsProvider};
-
-/// The registered settings providers, in order. A subsystem adds rows to the
-/// page by implementing the [`SettingsProvider`] contract and listing itself
-/// here — the same hand-listed-slice convention as `system::SYSTEMS`. ssh owns
-/// its rows in `infra::ssh::settings`, independent of any `System`.
-static SETTINGS_PROVIDERS: &[SettingsProvider] = &[crate::ssh::settings::rows];
-
-/// Provider-contributed settings rows (appended after [`SETTING_ROWS`]), built
-/// from the current state. The page's total row count is `SETTING_ROWS.len()`
-/// plus these; an index past the core rows selects `provider_setting_defs[i -
-/// SETTING_ROWS.len()]`.
-pub fn provider_setting_defs(state: &AppState) -> Vec<SettingDef> {
-    let ctx = SettingsCtx {
-        remotes: &state.config_remotes,
-    };
-    SETTINGS_PROVIDERS.iter().flat_map(|p| p(&ctx)).collect()
-}
-
-/// Total settings rows on the page: core + provider-contributed.
-pub fn total_setting_rows(state: &AppState) -> usize {
-    SETTING_ROWS.len() + provider_setting_defs(state).len()
-}
 
 /// One row of the settings page. The closures borrow `&AppState` so the
 /// renderer builds display strings each frame; `adjust` maps a direction
@@ -154,5 +124,25 @@ pub const SETTING_ROWS: &[SettingRow] = &[
         },
         help: |_| "Left/right cycles how often the Agents tab probes".to_string(),
         adjust: |dir| Action::Settings(SettingsAction::CycleAgentsProbeInterval(dir)),
+    },
+    SettingRow {
+        label: "Remotes",
+        value: |s| format!("{} hosts", s.config_remotes.len()),
+        help: |_| "Left/right adds a remote SSH host".to_string(),
+        adjust: |_| Action::Settings(SettingsAction::OpenAddRemotePicker),
+    },
+    SettingRow {
+        label: "Port forwards",
+        value: |s| match s
+            .config_remotes
+            .iter()
+            .map(|r| r.forwards.len())
+            .sum::<usize>()
+        {
+            0 => "none".to_string(),
+            n => format!("{n} forwards"),
+        },
+        help: |_| "Left/right opens a configured host's port forwards".to_string(),
+        adjust: |_| Action::Settings(SettingsAction::OpenPortForwards),
     },
 ];

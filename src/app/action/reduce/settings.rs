@@ -2,7 +2,8 @@
 //! keybindings view, exclude-pattern editor). Split out of `reduce` to keep
 //! the top-level dispatcher readable; entry point is `reduce_settings`.
 
-use crate::app::settings::{provider_setting_defs, total_setting_rows, SETTING_ROWS};
+use crate::app::settings::SETTING_ROWS;
+use crate::effects::Effect;
 use crate::state::{step_clamped, AppState, FocusMode, MainView, SideEffect};
 use crate::theme::THEMES;
 
@@ -23,12 +24,10 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             state.settings.theme_picker_open = false;
         }
         SettingsAction::Next => {
-            state.settings.selected =
-                step_clamped(state.settings.selected, total_setting_rows(state), 1);
+            state.settings.selected = step_clamped(state.settings.selected, SETTING_ROWS.len(), 1);
         }
         SettingsAction::Prev => {
-            state.settings.selected =
-                step_clamped(state.settings.selected, total_setting_rows(state), -1);
+            state.settings.selected = step_clamped(state.settings.selected, SETTING_ROWS.len(), -1);
         }
         SettingsAction::Adjust | SettingsAction::AdjustPrev => {
             let direction = if matches!(action, SettingsAction::AdjustPrev) {
@@ -36,18 +35,11 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             } else {
                 1
             };
-            // Look up the selected row and fire its adjust. Core rows live in
-            // the descriptor table (→ an `Action`); rows past it are
-            // provider-contributed (→ an `Effect`, pushed directly). Either way
-            // the row, not a positional match, is the source of truth.
-            let sel = state.settings.selected;
-            if let Some(row) = SETTING_ROWS.get(sel) {
+            // Look up the selected row and fire its adjust — the row, not a
+            // positional match, is the source of truth.
+            if let Some(row) = SETTING_ROWS.get(state.settings.selected) {
                 let inner = apply_action(state, (row.adjust)(direction));
                 fx.merge(inner);
-            } else if let Some(def) = provider_setting_defs(state).get(sel - SETTING_ROWS.len()) {
-                for e in (def.effect)(direction) {
-                    fx.push(e);
-                }
             }
         }
         SettingsAction::CycleFrameRateLimit(direction) => {
@@ -61,6 +53,20 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         SettingsAction::ToggleSummary => {
             state.prefs.summary_enabled = !state.prefs.summary_enabled;
             fx.save_config();
+        }
+        SettingsAction::OpenAddRemotePicker => fx.open_add_remote_picker(),
+        // ponytail: one aggregate row for every host — it opens the first host
+        // that has forwards (else the first host); per-host editing stays on
+        // each `@host` divider's `[⇄N]` badge button.
+        SettingsAction::OpenPortForwards => {
+            if let Some(r) = state
+                .config_remotes
+                .iter()
+                .find(|r| !r.forwards.is_empty())
+                .or_else(|| state.config_remotes.first())
+            {
+                fx.push(Effect::OpenForwardOverlay(r.host.clone()));
+            }
         }
         SettingsAction::OpenThemePicker => {
             // Opens as a standalone overlay over the current view: from the

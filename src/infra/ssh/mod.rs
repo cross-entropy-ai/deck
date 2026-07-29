@@ -9,6 +9,5 @@ pub mod client;
 pub mod divider;
 pub mod model;
 pub mod port_forward;
-pub mod settings;
 
 pub use client::*;

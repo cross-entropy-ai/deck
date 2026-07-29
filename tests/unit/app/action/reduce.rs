@@ -731,30 +731,80 @@ fn settings_adjust_keybindings_opens_view_after_exclude_row() {
 
 #[test]
 fn settings_next_clamps_to_total_row_count() {
-    // Next clamps at the last row of the whole page — core descriptor rows
-    // plus the system-contributed rows appended after them.
-    use crate::app::settings::total_setting_rows;
+    // Next clamps at the last row of the page.
+    use crate::app::settings::SETTING_ROWS;
     let mut state = make_test_state(1);
     state.settings.selected = 0;
-    let total = total_setting_rows(&state);
+    let total = SETTING_ROWS.len();
     for _ in 0..(total + 5) {
         apply_action(&mut state, Action::Settings(SettingsAction::Next));
     }
     assert_eq!(state.settings.selected, total - 1);
 }
 
+fn settings_row_index(label: &str) -> usize {
+    crate::app::settings::SETTING_ROWS
+        .iter()
+        .position(|r| r.label == label)
+        .unwrap()
+}
+
 #[test]
-fn settings_provider_row_fires_its_effect() {
-    // The appended provider rows (ssh's) sit just past the core table;
-    // adjusting the first pushes the provider's Effect, not an Action.
-    use crate::app::settings::SETTING_ROWS;
+fn settings_remotes_row_opens_the_add_remote_picker() {
     let mut state = make_test_state(1);
-    state.settings.selected = SETTING_ROWS.len(); // first provider row
+    state.settings.selected = settings_row_index("Remotes");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(fx
         .effects()
         .iter()
         .any(|e| matches!(e, crate::effects::Effect::OpenAddRemotePicker)));
+}
+
+#[test]
+fn port_forwards_row_aggregates_across_hosts_and_targets_a_host() {
+    use crate::config::RemoteConfig;
+    use crate::forwards::{ForwardMode, ForwardSpec};
+
+    let spec = |port: u16| ForwardSpec {
+        mode: ForwardMode::Local,
+        bind_addr: None,
+        listen_port: port,
+        target_host: Some("localhost".into()),
+        target_port: Some(80),
+    };
+    let mut state = make_test_state(1);
+    state.config_remotes = vec![
+        RemoteConfig {
+            host: "a".into(),
+            forwards: vec![],
+        },
+        RemoteConfig {
+            host: "b".into(),
+            forwards: vec![spec(8080), spec(9090)],
+        },
+    ];
+    let row = &crate::app::settings::SETTING_ROWS[settings_row_index("Port forwards")];
+    assert_eq!((row.value)(&state), "2 forwards");
+
+    state.settings.selected = settings_row_index("Port forwards");
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    // Opens the first host that actually has forwards ("b"), not "a".
+    assert!(matches!(
+        fx.effects(),
+        [crate::effects::Effect::OpenForwardOverlay(h)] if h == "b"
+    ));
+}
+
+#[test]
+fn port_forwards_row_is_noop_without_hosts() {
+    let mut state = make_test_state(1);
+    state.config_remotes.clear();
+    let row = &crate::app::settings::SETTING_ROWS[settings_row_index("Port forwards")];
+    assert_eq!((row.value)(&state), "none");
+
+    state.settings.selected = settings_row_index("Port forwards");
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    assert!(fx.effects().is_empty());
 }
 
 #[test]

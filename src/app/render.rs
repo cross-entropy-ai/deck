@@ -371,12 +371,12 @@ impl App {
         Ok(())
     }
 
-    /// Core `SETTING_ROWS` reduced to display strings, then each provider's
-    /// rows appended (e.g. ssh's "Remotes"). Done here, holding `&AppState`, so
-    /// `draw_settings_page` stays a pure `ui` fn over `Vec<SettingRowView>`.
+    /// `SETTING_ROWS` reduced to display strings. Done here, holding
+    /// `&AppState`, so `draw_settings_page` stays a pure `ui` fn over
+    /// `Vec<SettingRowView>`.
     fn build_settings_view(&self) -> SettingsView<'_> {
         let s = &self.state;
-        let mut rows: Vec<SettingRowView> = SETTING_ROWS
+        let rows: Vec<SettingRowView> = SETTING_ROWS
             .iter()
             .map(|row| SettingRowView {
                 label: row.label,
@@ -384,15 +384,6 @@ impl App {
                 help: (row.help)(s),
             })
             .collect();
-        rows.extend(
-            super::settings::provider_setting_defs(s)
-                .into_iter()
-                .map(|d| SettingRowView {
-                    label: d.label,
-                    value: d.value,
-                    help: d.help,
-                }),
-        );
         SettingsView {
             selected: s.settings.selected,
             rows,
