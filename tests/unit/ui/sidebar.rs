@@ -34,7 +34,7 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
                     show_borders: true,
                     sidebar_tab: crate::state::SidebarTab::Projects,
                     agent_entries: &[],
-                    summary: &crate::state::SummaryState::Idle,
+                    summary: &crate::summary_card::SummaryState::Idle,
                     summary_age: None,
                     spinner_idx: 0,
                     summary_scroll: 0,
@@ -71,7 +71,8 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
 
 #[test]
 fn idle_summary_without_agents_is_compact_and_disabled() {
-    use crate::state::{AppState, SidebarTab, SummaryState};
+    use crate::state::{AppState, SidebarTab};
+    use crate::summary_card::SummaryState;
     use ratatui::{backend::TestBackend, Terminal};
 
     let theme = &crate::theme::THEMES[0];
@@ -134,7 +135,8 @@ fn idle_summary_without_agents_is_compact_and_disabled() {
 
 #[test]
 fn overflowing_vertical_tabs_keep_focus_and_menu_visible() {
-    use crate::state::{AppState, SessionEntry, SessionEntryKind, SummaryState};
+    use crate::state::{AppState, SessionEntry, SessionEntryKind};
+    use crate::summary_card::SummaryState;
     use ratatui::{backend::TestBackend, Terminal};
 
     let theme = &crate::theme::THEMES[0];
@@ -212,7 +214,9 @@ use ratatui::layout::Rect;
 use ratatui::Terminal;
 
 use crate::geometry::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
-use crate::state::{HitKind, HitRegions, SidebarTab, SummaryState};
+use crate::geometry::{HitKind, HitRegions};
+use crate::state::SidebarTab;
+use crate::summary_card::SummaryState;
 use crate::update::UpdateStatus;
 
 /// Render the sidebar at `width` x `height` on the Projects tab and return
@@ -591,7 +595,7 @@ fn remote_divider_buttons_register_below_their_top_margin() {
         .unwrap();
 
     // The remote divider publishes both of its buttons, in order.
-    let h1: Vec<&crate::state::DividerHit> = captured
+    let h1: Vec<&crate::geometry::DividerHit> = captured
         .dividers
         .iter()
         .filter(|h| TmuxSystem::host_of(&h.lane) == Some("h1"))
@@ -702,7 +706,7 @@ fn remote_divider_shows_forward_count() {
         .unwrap();
 
     // Buttons register left→right as badge, reconnect, more.
-    let h1: Vec<&crate::state::DividerHit> = captured
+    let h1: Vec<&crate::geometry::DividerHit> = captured
         .dividers
         .iter()
         .filter(|h| TmuxSystem::host_of(&h.lane) == Some("h1"))

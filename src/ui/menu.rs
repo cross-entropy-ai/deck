@@ -4,7 +4,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::geometry::context_menu_rect;
-use crate::state::MenuItem;
+use crate::menu::MenuItem;
 use crate::theme::Theme;
 use crate::ui::widgets::{full_width_row, popup_frame, PopupStyle};
 
@@ -111,7 +111,7 @@ pub fn draw_context_menu(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::MenuItem;
+    use crate::menu::MenuItem;
     use crate::theme::THEMES;
     use ratatui::{backend::TestBackend, Terminal};
 

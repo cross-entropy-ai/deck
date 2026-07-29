@@ -45,7 +45,7 @@ impl App {
         // pure allocation churn.
         let context_menu = s.overlay.context_menu.as_ref();
         let summary_popup = match (&s.summary.state, s.overlay.summary_popup) {
-            (crate::state::SummaryState::Ready { text, .. }, true) => Some(text.as_str()),
+            (crate::summary_card::SummaryState::Ready { text, .. }, true) => Some(text.as_str()),
             _ => None,
         };
         let summary_popup_scroll = s.summary.popup_scroll;
@@ -91,7 +91,7 @@ impl App {
         let reload_status = s.reload_status.as_ref();
         let dragging_sep = s.dragging_separator;
 
-        let mut captured_hits = crate::state::HitRegions::default();
+        let mut captured_hits = crate::geometry::HitRegions::default();
         let mut captured_summary_popup_max_scroll: usize = 0;
         terminal.draw(|frame| {
             let full = frame.area();
@@ -139,7 +139,7 @@ impl App {
             // The Summary card shows how long ago its text landed; compute the
             // "Xm ago" age here so the renderer stays free of wall-clock reads.
             let summary_age = match &self.state.summary.state {
-                crate::state::SummaryState::Ready { generated_at, .. } => {
+                crate::summary_card::SummaryState::Ready { generated_at, .. } => {
                     Some(crate::update::relative_age(
                         crate::update::now_secs().saturating_sub(*generated_at),
                     ))

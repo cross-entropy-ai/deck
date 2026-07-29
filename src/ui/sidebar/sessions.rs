@@ -11,10 +11,9 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
-use crate::state::{
-    AgentEntry, AgentHit, AgentTarget, BuiltLayout, DividerHit, FocusTarget, SummaryHits,
-    SummaryState,
-};
+use crate::geometry::{AgentEntry, AgentHit, AgentTarget, BuiltLayout, DividerHit, SummaryHits};
+use crate::state::FocusTarget;
+use crate::summary_card::SummaryState;
 
 /// Braille spinner frames for the Summary card's "Generating…" state.
 pub(super) const SUMMARY_SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];

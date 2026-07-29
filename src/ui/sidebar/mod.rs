@@ -3,11 +3,12 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::Frame;
 
-use crate::geometry::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
-use crate::keybindings::Keybindings;
-use crate::state::{
-    AgentEntry, BuiltLayout, FocusTarget, HitRegions, KillConfirmHits, SidebarTab, SummaryHits,
+use crate::geometry::{
+    banner_visible, sidebar_footer_height, AgentEntry, BuiltLayout, HitRegions, KillConfirmHits,
+    SummaryHits, SIDEBAR_HEADER_HEIGHT,
 };
+use crate::keybindings::Keybindings;
+use crate::state::{FocusTarget, SidebarTab};
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
 use ratatui_textarea::TextArea;
@@ -47,7 +48,7 @@ pub struct SidebarProps<'a> {
     /// Flattened agent list for the Agents tab (see `AppState::agent_entries`).
     pub agent_entries: &'a [AgentEntry],
     /// State of the Agents-tab Summary card.
-    pub summary: &'a crate::state::SummaryState,
+    pub summary: &'a crate::summary_card::SummaryState,
     /// Precomputed "Xm ago" age of the Ready summary, `None` otherwise.
     pub summary_age: Option<&'a str>,
     /// Current braille spinner frame index for the card's generating state.

@@ -6,10 +6,9 @@
 //! boxes can't leak global keys and clicks behind the overlay.
 
 use super::{key_to_action, mouse_to_action, Action, MenuAction};
-use crate::state::{
-    AppState, ContextMenu, ExcludeEditorState, FocusMode, MainView, MenuKind, Modal, RenameState,
-    SessionEntry, SessionEntryKind,
-};
+use crate::menu::{ContextMenu, MenuKind};
+use crate::overlay::{ExcludeEditorState, Modal, RenameState};
+use crate::state::{AppState, FocusMode, MainView, SessionEntry, SessionEntryKind};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::time::{Duration, Instant};
 
@@ -61,7 +60,7 @@ fn open_modal(state: &mut AppState, modal: Modal) {
             });
         }
         Modal::PortForward => {
-            state.overlay.port_forward = Some(crate::state::PortForwardOverlay {
+            state.overlay.port_forward = Some(crate::forwards::PortForwardOverlay {
                 host: "h".into(),
                 selected: 0,
                 add_form: None,

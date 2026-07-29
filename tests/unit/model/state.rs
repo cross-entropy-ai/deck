@@ -571,7 +571,7 @@ fn sidebar_footer_height_matches_renderer() {
 
 #[test]
 fn local_divider_menu_greys_remote_only_items() {
-    use crate::state::{ContextMenu, MenuItem, MenuKind};
+    use crate::menu::{ContextMenu, MenuItem, MenuKind};
     let menu = ContextMenu {
         kind: MenuKind::LocalDivider,
         x: 0,
@@ -716,7 +716,7 @@ fn vertical_tabs_hit_test_remote_sessions() {
 
 #[test]
 fn context_menu_navigation_skips_disabled_items() {
-    use crate::state::{ContextMenu, MenuItem, MenuKind};
+    use crate::menu::{ContextMenu, MenuItem, MenuKind};
     // A placeholder remote menu: every session item disabled.
     let all_disabled = ContextMenu {
         kind: MenuKind::Session {

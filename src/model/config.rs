@@ -144,7 +144,7 @@ impl Default for Config {
             summary_prompt: crate::summary::DEFAULT_SUMMARY_PROMPT.to_string(),
             summary_prompt_version: 0,
             summary_model: crate::summary::DEFAULT_SUMMARY_MODEL.to_string(),
-            summary_height: crate::state::DEFAULT_SUMMARY_HEIGHT,
+            summary_height: crate::summary_card::DEFAULT_SUMMARY_HEIGHT,
             summary_language: String::new(),
             agents_probe_interval: crate::state::DEFAULT_AGENTS_PROBE_INTERVAL,
             summary_enabled: true,

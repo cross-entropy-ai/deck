@@ -4,7 +4,8 @@
 
 use crate::app::settings::SETTING_ROWS;
 use crate::effects::Effect;
-use crate::state::{step_clamped, AppState, FocusMode, MainView, SideEffect};
+use crate::effects::SideEffect;
+use crate::state::{step_clamped, AppState, FocusMode, MainView};
 use crate::theme::THEMES;
 
 use super::{apply_action, SettingsAction};
@@ -129,7 +130,7 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         }
 
         SettingsAction::ExcludeOpen => {
-            state.overlay.exclude_editor = Some(crate::state::ExcludeEditorState::new());
+            state.overlay.exclude_editor = Some(crate::overlay::ExcludeEditorState::new());
         }
         SettingsAction::ExcludeClose => {
             state.overlay.exclude_editor = None;

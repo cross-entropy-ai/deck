@@ -7,8 +7,8 @@ use ratatui::widgets::{Paragraph, Widget};
 use ratatui::Frame;
 use ratatui_textarea::TextArea;
 
+use crate::geometry::KillConfirmHits;
 use crate::keybindings::{Command, Keybindings};
-use crate::state::KillConfirmHits;
 use crate::theme::Theme;
 use crate::ui::widgets::{field_row, TextAreaColors};
 

@@ -1,9 +1,10 @@
 use super::{
     apply_action, Action, MenuAction, NewSessionAction, PfAction, SettingsAction, SummaryAction,
 };
+use crate::overlay::RenameState;
 use crate::state::{
-    AppState, FocusMode, LayoutMode, MainView, RenameState, SessionEntry, SessionEntryKind,
-    ViewMode, NO_SESSIONS_LABEL,
+    AppState, FocusMode, LayoutMode, MainView, SessionEntry, SessionEntryKind, ViewMode,
+    NO_SESSIONS_LABEL,
 };
 
 fn make_session(name: &str) -> SessionEntry {
@@ -83,7 +84,7 @@ fn sidebar_click_remote_no_sessions_does_not_refresh() {
         .push(remote_row("remote-a", NO_SESSIONS_LABEL));
     let target = state.local_count();
 
-    let mut fx = crate::state::SideEffect::default();
+    let mut fx = crate::effects::SideEffect::default();
     fx.merge(apply_action(&mut state, Action::FocusIndex(target)));
     fx.merge(apply_action(&mut state, Action::SwitchProject));
 
@@ -369,18 +370,18 @@ fn open_local_divider_menu_greys_remote_items_and_starts_on_new_session() {
         Action::Menu(MenuAction::OpenLocalDivider { x: 5, y: 5 }),
     );
     let menu = state.overlay.context_menu.as_ref().expect("menu open");
-    assert!(matches!(menu.kind, crate::state::MenuKind::LocalDivider));
+    assert!(matches!(menu.kind, crate::menu::MenuKind::LocalDivider));
     // Highlight starts on the first enabled item, never a greyed one.
     assert_eq!(
         menu.items()[menu.selected],
-        crate::state::MenuItem::NewSession
+        crate::menu::MenuItem::NewSession
     );
     assert!(menu
         .disabled()
-        .contains(&crate::state::MenuItem::PortForward));
+        .contains(&crate::menu::MenuItem::PortForward));
     assert!(menu
         .disabled()
-        .contains(&crate::state::MenuItem::RemoveFromList));
+        .contains(&crate::menu::MenuItem::RemoveFromList));
 }
 
 #[test]
@@ -1036,7 +1037,7 @@ fn open_host_divider_menu_uses_host_kind() {
     );
     let menu = state.overlay.context_menu.as_ref().expect("menu opened");
     match &menu.kind {
-        crate::state::MenuKind::HostDivider { host, .. } => assert_eq!(host, "h1"),
+        crate::menu::MenuKind::HostDivider { host, .. } => assert_eq!(host, "h1"),
         _ => panic!("expected HostDivider"),
     }
 }
@@ -1054,7 +1055,7 @@ fn open_port_forward_clears_menu_and_opens_overlay() {
 #[test]
 fn pf_add_open_creates_default_form() {
     let mut state = make_test_state(1);
-    state.overlay.port_forward = Some(crate::state::PortForwardOverlay {
+    state.overlay.port_forward = Some(crate::forwards::PortForwardOverlay {
         host: "h".into(),
         selected: 0,
         add_form: None,
@@ -1064,7 +1065,7 @@ fn pf_add_open_creates_default_form() {
     let o = state.overlay.port_forward.as_ref().unwrap();
     let f = o.add_form.as_ref().unwrap();
     assert_eq!(f.mode, crate::forwards::ForwardMode::Local);
-    assert_eq!(f.focus, crate::state::PfField::ListenPort);
+    assert_eq!(f.focus, crate::forwards::PfField::ListenPort);
 }
 
 #[test]
@@ -1133,7 +1134,7 @@ fn pf_task_result_marks_host_unreachable_on_master_failure() {
 
 fn open_form_with_focus(
     state: &mut crate::state::AppState,
-    field: crate::state::PfField,
+    field: crate::forwards::PfField,
     value: &str,
 ) {
     use ratatui_textarea::{CursorMove, TextArea};
@@ -1142,28 +1143,28 @@ fn open_form_with_focus(
         t.move_cursor(CursorMove::End);
         t
     };
-    state.overlay.port_forward = Some(crate::state::PortForwardOverlay {
+    state.overlay.port_forward = Some(crate::forwards::PortForwardOverlay {
         host: "h".into(),
         selected: 0,
-        add_form: Some(crate::state::PfAddForm {
+        add_form: Some(crate::forwards::PfAddForm {
             mode: crate::forwards::ForwardMode::Local,
             focus: field,
-            bind_addr: if matches!(field, crate::state::PfField::BindAddr) {
+            bind_addr: if matches!(field, crate::forwards::PfField::BindAddr) {
                 ta(value)
             } else {
                 ta("")
             },
-            listen_port: if matches!(field, crate::state::PfField::ListenPort) {
+            listen_port: if matches!(field, crate::forwards::PfField::ListenPort) {
                 ta(value)
             } else {
                 ta("")
             },
-            target_host: if matches!(field, crate::state::PfField::TargetHost) {
+            target_host: if matches!(field, crate::forwards::PfField::TargetHost) {
                 ta(value)
             } else {
                 ta("")
             },
-            target_port: if matches!(field, crate::state::PfField::TargetPort) {
+            target_port: if matches!(field, crate::forwards::PfField::TargetPort) {
                 ta(value)
             } else {
                 ta("")
@@ -1178,7 +1179,7 @@ fn open_form_with_focus(
 fn pf_add_input_drops_non_digits_in_port_fields() {
     use crossterm::event::KeyCode;
     let mut state = make_test_state(0);
-    open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "");
+    open_form_with_focus(&mut state, crate::forwards::PfField::ListenPort, "");
     for c in ['8', 'a', '0', '.', '8', '0'] {
         crate::action::apply_action(
             &mut state,
@@ -1193,14 +1194,14 @@ fn pf_add_input_drops_non_digits_in_port_fields() {
         .add_form
         .as_ref()
         .unwrap();
-    assert_eq!(f.field_text(crate::state::PfField::ListenPort), "8080");
+    assert_eq!(f.field_text(crate::forwards::PfField::ListenPort), "8080");
 }
 
 #[test]
 fn pf_add_input_allows_non_digits_in_host_fields() {
     use crossterm::event::KeyCode;
     let mut state = make_test_state(0);
-    open_form_with_focus(&mut state, crate::state::PfField::TargetHost, "");
+    open_form_with_focus(&mut state, crate::forwards::PfField::TargetHost, "");
     for c in ['h', '-', '1', '.', 'x'] {
         crate::action::apply_action(
             &mut state,
@@ -1215,7 +1216,7 @@ fn pf_add_input_allows_non_digits_in_host_fields() {
         .add_form
         .as_ref()
         .unwrap();
-    assert_eq!(f.field_text(crate::state::PfField::TargetHost), "h-1.x");
+    assert_eq!(f.field_text(crate::forwards::PfField::TargetHost), "h-1.x");
 }
 
 #[test]
@@ -1223,7 +1224,7 @@ fn pf_add_input_rejects_out_of_range_ports() {
     use crossterm::event::KeyCode;
     let mut state = make_test_state(0);
     // "6553" is fine, but appending '6' would yield "65536" > u16::MAX.
-    open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "6553");
+    open_form_with_focus(&mut state, crate::forwards::PfField::ListenPort, "6553");
     crate::action::apply_action(
         &mut state,
         Action::Pf(PfAction::AddInputKey(key(KeyCode::Char('6')))),
@@ -1236,7 +1237,7 @@ fn pf_add_input_rejects_out_of_range_ports() {
         .add_form
         .as_ref()
         .unwrap();
-    assert_eq!(f.field_text(crate::state::PfField::ListenPort), "6553");
+    assert_eq!(f.field_text(crate::forwards::PfField::ListenPort), "6553");
 
     // "65535" should be acceptable.
     crate::action::apply_action(
@@ -1251,14 +1252,14 @@ fn pf_add_input_rejects_out_of_range_ports() {
         .add_form
         .as_ref()
         .unwrap();
-    assert_eq!(f.field_text(crate::state::PfField::ListenPort), "65535");
+    assert_eq!(f.field_text(crate::forwards::PfField::ListenPort), "65535");
 }
 
 #[test]
 fn pf_add_input_blocks_whitespace_in_host_fields() {
     use crossterm::event::KeyCode;
     let mut state = make_test_state(0);
-    open_form_with_focus(&mut state, crate::state::PfField::TargetHost, "");
+    open_form_with_focus(&mut state, crate::forwards::PfField::TargetHost, "");
     for c in ['1', ' ', '2', '\t', '7'] {
         crate::action::apply_action(
             &mut state,
@@ -1273,7 +1274,7 @@ fn pf_add_input_blocks_whitespace_in_host_fields() {
         .add_form
         .as_ref()
         .unwrap();
-    assert_eq!(f.field_text(crate::state::PfField::TargetHost), "127");
+    assert_eq!(f.field_text(crate::forwards::PfField::TargetHost), "127");
 }
 
 #[test]
@@ -1304,7 +1305,7 @@ fn remove_remote_from_list_drops_host_and_signals_stop() {
 
 #[test]
 fn host_divider_menu_has_new_session_first_and_remove_last() {
-    use crate::state::{MenuItem, MenuKind};
+    use crate::menu::{MenuItem, MenuKind};
     let items = MenuKind::HostDivider { host: "h".into() }.items();
     assert_eq!(items.first().copied(), Some(MenuItem::NewSession));
     assert!(items.contains(&MenuItem::PortForward));
@@ -1314,7 +1315,7 @@ fn host_divider_menu_has_new_session_first_and_remove_last() {
 
 #[test]
 fn global_menu_starts_with_new_local_session() {
-    use crate::state::{MenuItem, MenuKind};
+    use crate::menu::{MenuItem, MenuKind};
     assert_eq!(
         MenuKind::Global.items().first().copied(),
         Some(MenuItem::NewLocalSession)
@@ -1341,7 +1342,8 @@ fn direct_new_local_session_action_opens_local_picker() {
 
 #[test]
 fn placeholder_remote_menu_disables_rename_and_close() {
-    use crate::state::{session_menu_disabled, MenuItem, SessionEntryKind, UNREACHABLE_LABEL};
+    use crate::menu::{session_menu_disabled, MenuItem};
+    use crate::state::{SessionEntryKind, UNREACHABLE_LABEL};
     let cases = [
         ("(no sessions)", SessionEntryKind::NoSessions),
         (UNREACHABLE_LABEL, SessionEntryKind::Unreachable),
@@ -1376,7 +1378,7 @@ fn remote(host: &str, name: &str) -> SessionEntry {
 
 #[test]
 fn remote_session_with_siblings_disables_nothing() {
-    use crate::state::session_menu_disabled;
+    use crate::menu::session_menu_disabled;
     // Host "h" has two live sessions, so killing either is fine.
     let sessions = vec![remote("h", "work"), remote("h", "other")];
     assert!(session_menu_disabled(&sessions[0], &sessions).is_empty());
@@ -1392,7 +1394,7 @@ fn remote_session_with_siblings_disables_nothing() {
 
 #[test]
 fn last_remote_session_disables_close_only() {
-    use crate::state::{session_menu_disabled, MenuItem};
+    use crate::menu::{session_menu_disabled, MenuItem};
     // "solo" is the only session on its host; a session on a *different*
     // host doesn't count toward it.
     let sessions = vec![remote("h", "solo"), remote("other", "x")];
@@ -1410,7 +1412,7 @@ fn last_remote_session_disables_close_only() {
 #[test]
 fn pf_add_field_next_changes_focus() {
     let mut state = make_test_state(0);
-    open_form_with_focus(&mut state, crate::state::PfField::ListenPort, "8");
+    open_form_with_focus(&mut state, crate::forwards::PfField::ListenPort, "8");
     crate::action::apply_action(&mut state, Action::Pf(PfAction::AddFieldNext));
     let f = state
         .overlay
@@ -1420,7 +1422,7 @@ fn pf_add_field_next_changes_focus() {
         .add_form
         .as_ref()
         .unwrap();
-    assert_eq!(f.focus, crate::state::PfField::TargetHost);
+    assert_eq!(f.focus, crate::forwards::PfField::TargetHost);
 }
 
 #[test]
@@ -1486,7 +1488,8 @@ fn toggle_section_expands_back() {
 #[cfg(test)]
 mod agents_tab {
     use super::*;
-    use crate::state::{Effect, SidebarTab};
+    use crate::effects::Effect;
+    use crate::state::SidebarTab;
 
     fn agent(session: &str, pane_id: &str) -> crate::agent::DetectedAgent {
         crate::agent::DetectedAgent {
@@ -1541,7 +1544,7 @@ mod agents_tab {
         state.rebuild_agent_entries();
         // An agent was active from a prior switch; returning to the tab
         // puts the cursor back on it rather than resetting to row 0.
-        state.active_agent = Some(crate::state::AgentTarget {
+        state.active_agent = Some(crate::geometry::AgentTarget {
             host: None,
             session: "b".into(),
             pane_id: "%2".into(),
@@ -1553,7 +1556,8 @@ mod agents_tab {
     #[test]
     fn esc_while_generating_on_agents_tab_cancels() {
         use crate::action::key_to_action;
-        use crate::state::{SidebarTab, SummaryState};
+        use crate::state::SidebarTab;
+        use crate::summary_card::SummaryState;
         use crossterm::event::{KeyCode, KeyEvent};
 
         let mut state = make_test_state(3);
@@ -1572,7 +1576,8 @@ mod agents_tab {
     #[test]
     fn esc_when_not_generating_does_not_cancel() {
         use crate::action::key_to_action;
-        use crate::state::{SidebarTab, SummaryState};
+        use crate::state::SidebarTab;
+        use crate::summary_card::SummaryState;
         use crossterm::event::{KeyCode, KeyEvent};
 
         let mut state = make_test_state(3);
@@ -1590,7 +1595,7 @@ mod agents_tab {
 
     #[test]
     fn cancel_restores_prior_summary_state() {
-        use crate::state::SummaryState;
+        use crate::summary_card::SummaryState;
 
         // Generating after a previous Ready summary: cancel restores Ready.
         let mut state = make_test_state(0);

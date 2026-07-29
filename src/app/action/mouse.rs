@@ -1,6 +1,8 @@
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
-use crate::state::{AppState, FocusTarget, HitKind, LayoutMode, MainView, Modal};
+use crate::geometry::HitKind;
+use crate::overlay::Modal;
+use crate::state::{AppState, FocusTarget, LayoutMode, MainView};
 
 use super::{Action, MenuAction, NewSessionAction, SettingsAction, SummaryAction};
 

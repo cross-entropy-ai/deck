@@ -8,7 +8,7 @@ use ratatui_textarea::TextArea;
 
 use crate::config::RemoteConfig;
 use crate::forwards::{ForwardMode, ForwardSpec};
-use crate::state::{PfAddForm, PfField, PortForwardOverlay};
+use crate::forwards::{PfAddForm, PfField, PortForwardOverlay};
 use crate::theme::Theme;
 use crate::ui::widgets::{centered_rect, field_row, popup_frame, PopupStyle, TextAreaColors};
 

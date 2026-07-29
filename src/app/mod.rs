@@ -18,9 +18,10 @@ use std::time::{Duration, Instant};
 
 use crate::config::{Config, KeyBindingValue};
 use crate::keybindings::Keybindings;
+use crate::overlay::WarningState;
 use crate::pty::Pty;
 use crate::refresh::RefreshWorker;
-use crate::state::{AppState, MainView, WarningState};
+use crate::state::{AppState, MainView};
 use crate::theme::THEMES;
 use crate::tmux;
 use crate::update::UpdateCheckMode;
@@ -130,7 +131,7 @@ pub struct App {
 /// Result of a remote agent-pane focus attempt, sent back from the
 /// worker thread to the event loop.
 pub(super) struct FocusOutcome {
-    pub target: crate::state::AgentTarget,
+    pub target: crate::geometry::AgentTarget,
     /// Which branch the remote focus took — `ExactPane` is the only one
     /// that earns the agent highlight (see `apply_focus_outcome`).
     pub result: crate::tmux::PaneFocus,

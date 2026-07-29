@@ -1,6 +1,7 @@
 use crate::action::{self, Action, MenuAction, NewSessionAction, PfAction, SummaryAction};
+use crate::effects::{Effect, SideEffect};
 use crate::session::SessionControl;
-use crate::state::{Effect, FocusMode, MainView, SideEffect};
+use crate::state::{FocusMode, MainView};
 use crate::theme::THEMES;
 use crate::tmux;
 
@@ -128,7 +129,7 @@ impl App {
                     InstallMethod::DirectDownload => {
                         if target_triple().is_none() {
                             self.warning_state =
-                                Some(crate::state::WarningState {
+                                Some(crate::overlay::WarningState {
                                     text: "Unsupported platform",
                                     detail: "deck doesn't ship a prebuilt binary for this \
                                              platform. Rebuild from source via \
@@ -146,7 +147,7 @@ impl App {
                         // We can't write to where deck lives (e.g.
                         // /usr/local/bin without brew). Point the user at
                         // the install methods instead.
-                        self.warning_state = Some(crate::state::WarningState {
+                        self.warning_state = Some(crate::overlay::WarningState {
                             text: "deck can't self-update from this location",
                             detail: manual_upgrade_hint(&latest),
                         });
@@ -189,7 +190,7 @@ impl App {
             } => {
                 // Decision A: the System owns what its divider buttons do. Ask
                 // it for the effects and run them through the normal pipeline.
-                let mut fx = crate::state::SideEffect::default();
+                let mut fx = crate::effects::SideEffect::default();
                 for e in crate::system::for_lane(&lane).on_button(&lane, &command, x, y) {
                     fx.push(e);
                 }
@@ -206,7 +207,7 @@ impl App {
             }
             Action::NewSession(NewSessionAction::Confirm) => {
                 if let Some(req) = self.confirm_new_session() {
-                    let mut fx = crate::state::SideEffect::default();
+                    let mut fx = crate::effects::SideEffect::default();
                     fx.create_session(req);
                     fx.refresh_sessions();
                     self.execute_side_effects(&fx);
@@ -412,7 +413,7 @@ impl App {
     /// The result drains back via the one-shot `summary_worker` into
     /// `Ready`/`Error`. No-op while a generation is already in flight.
     fn start_summary_generation(&mut self) {
-        if self.state.summary.state == crate::state::SummaryState::Generating {
+        if self.state.summary.state == crate::summary_card::SummaryState::Generating {
             return;
         }
         // Summary is an Agents-tab feature; the only Generate affordance lives
@@ -441,7 +442,7 @@ impl App {
 
         // Remember what to fall back to if the user cancels mid-flight.
         self.state.summary.before_generating = Some(self.state.summary.state.clone());
-        self.state.summary.state = crate::state::SummaryState::Generating;
+        self.state.summary.state = crate::summary_card::SummaryState::Generating;
         self.state.summary.scroll = 0;
         // One-shot worker: dropping it (on cancel/regenerate) flips the
         // `Cancel` flag, which `run_claude` polls to kill the child (#12).
@@ -456,7 +457,7 @@ impl App {
     /// `run_claude` kills the `claude` child, and the card is restored to its
     /// pre-Generate state. No-op unless a generation is running.
     fn cancel_summary_generation(&mut self) {
-        if self.state.summary.state != crate::state::SummaryState::Generating {
+        if self.state.summary.state != crate::summary_card::SummaryState::Generating {
             return;
         }
         // Drop signals + detaches (never joins) — see `Worker`'s Drop.
@@ -491,7 +492,7 @@ impl App {
         }
     }
 
-    fn switch_to_agent_pane(&mut self, target: crate::state::AgentTarget) {
+    fn switch_to_agent_pane(&mut self, target: crate::geometry::AgentTarget) {
         // Stamp this click as the newest focus intent; any in-flight focus
         // from a prior click is now stale and won't commit.
         self.focus_seq += 1;
@@ -607,7 +608,7 @@ impl App {
     /// Whether a focus target is still actionable: a remote host must still be
     /// connected and the agent still detected on its host (`None` = local).
     /// Guards stale completions whose host was removed or agent has exited.
-    fn agent_focus_target_live(&self, target: &crate::state::AgentTarget) -> bool {
+    fn agent_focus_target_live(&self, target: &crate::geometry::AgentTarget) -> bool {
         if let Some(host) = target.host.as_deref() {
             if !self.remote.is_live(host) {
                 return false;
@@ -631,7 +632,7 @@ impl App {
         self.focus_seq += 1;
     }
 
-    fn commit_focus(&mut self, target: crate::state::AgentTarget) {
+    fn commit_focus(&mut self, target: crate::geometry::AgentTarget) {
         // Move both section-list cursors onto the agent we switched to, so the
         // highlight tracks the viewed pane like j/k does; an agent-footer click
         // otherwise switches the view without touching the highlight.
@@ -651,7 +652,7 @@ impl App {
         // deck inside tmux. Pop a warning over the main pane instead of
         // switching; navigating to any other session clears it.
         if self.own_session.as_deref() == Some(session) {
-            self.warning_state = Some(crate::state::WarningState {
+            self.warning_state = Some(crate::overlay::WarningState {
                 text: "Can't open deck's own session here",
                 detail: format!(
                     "'{session}' is the tmux session deck is running in — opening it \
@@ -666,7 +667,7 @@ impl App {
         true
     }
 
-    fn execute_side_effects(&mut self, fx: &crate::state::SideEffect) {
+    fn execute_side_effects(&mut self, fx: &crate::effects::SideEffect) {
         for effect in fx.effects() {
             match effect {
                 Effect::SwitchSession(name) => {

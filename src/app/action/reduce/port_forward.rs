@@ -2,10 +2,9 @@
 //! field navigation/input, and applying worker task results. Entry point is
 //! `reduce_pf`; the rest are form helpers private to this module.
 
-use crate::forwards::ForwardMode;
-use crate::state::{
-    cycle_option, step_clamped, AppState, PfAddForm, PfField, PortForwardOverlay, SideEffect,
-};
+use crate::effects::SideEffect;
+use crate::forwards::{ForwardMode, PfAddForm, PfField, PortForwardOverlay};
+use crate::state::{cycle_option, step_clamped, AppState};
 
 use super::PfAction;
 

@@ -5,7 +5,8 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
-use crate::state::{SidebarTab, TabRects};
+use crate::geometry::TabRects;
+use crate::state::SidebarTab;
 use crate::theme::Theme;
 
 const PROJECTS_ICON: &str = "\u{e795}";

@@ -144,7 +144,7 @@ impl App {
         self.open_new_session_picker_for(self.new_session_target(Some(host)));
     }
 
-    pub(super) fn confirm_new_session(&mut self) -> Option<crate::state::CreateSessionRequest> {
+    pub(super) fn confirm_new_session(&mut self) -> Option<crate::effects::CreateSessionRequest> {
         let (name, remote_host) = {
             let ns = self.state.overlay.new_session.as_ref()?;
             (ns.name_str().trim().to_string(), ns.remote_host.clone())
@@ -158,7 +158,7 @@ impl App {
     fn set_new_session_error(
         &mut self,
         err: impl Into<String>,
-    ) -> Option<crate::state::CreateSessionRequest> {
+    ) -> Option<crate::effects::CreateSessionRequest> {
         if let Some(ns) = self.state.overlay.new_session.as_mut() {
             ns.picker.error = Some(err.into());
         }
@@ -172,7 +172,7 @@ impl App {
         &mut self,
         name: String,
         host: String,
-    ) -> Option<crate::state::CreateSessionRequest> {
+    ) -> Option<crate::effects::CreateSessionRequest> {
         let existing = crate::state::attachable_on_host(&self.state.entries, Some(&host))
             .map(|e| e.name.as_str());
         if let Some(err) = validate_unique_session_name(&name, existing) {
@@ -181,7 +181,7 @@ impl App {
         let dir = self.state.overlay.new_session.as_ref()?.input_str().trim();
         let dir = if dir.is_empty() { "~" } else { dir }.to_string();
         self.state.overlay.new_session = None;
-        Some(crate::state::CreateSessionRequest {
+        Some(crate::effects::CreateSessionRequest {
             name,
             dir,
             host: Some(host),
@@ -191,7 +191,7 @@ impl App {
     fn confirm_local_new_session(
         &mut self,
         name: String,
-    ) -> Option<crate::state::CreateSessionRequest> {
+    ) -> Option<crate::effects::CreateSessionRequest> {
         let existing_names: Vec<String> =
             self.state.local_entries().map(|e| e.name.clone()).collect();
         let existing = existing_names.iter().map(String::as_str);
@@ -211,7 +211,7 @@ impl App {
             Ok(m) if m.is_dir() => {
                 let dir = resolved.to_string_lossy().to_string();
                 self.state.overlay.new_session = None;
-                Some(crate::state::CreateSessionRequest {
+                Some(crate::effects::CreateSessionRequest {
                     name,
                     dir,
                     host: None,

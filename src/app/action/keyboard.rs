@@ -1,7 +1,9 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::forwards::{PfField, PortForwardOverlay};
 use crate::keybindings::Command;
-use crate::state::{AppState, FocusMode, MainView, Modal, PfField, PortForwardOverlay};
+use crate::overlay::Modal;
+use crate::state::{AppState, FocusMode, MainView};
 
 use super::{
     Action, AddRemoteAction, MenuAction, NewSessionAction, PfAction, SettingsAction, SummaryAction,
@@ -141,7 +143,9 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
 fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     // Esc cancels an in-flight summary generation (Agents-tab card). Killing
     // the `claude` child and restoring the prior card is handled in dispatch.
-    if key.code == KeyCode::Esc && state.summary.state == crate::state::SummaryState::Generating {
+    if key.code == KeyCode::Esc
+        && state.summary.state == crate::summary_card::SummaryState::Generating
+    {
         return Action::Summary(SummaryAction::Cancel);
     }
 

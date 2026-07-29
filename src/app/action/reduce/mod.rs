@@ -1,8 +1,7 @@
+use crate::effects::{KillRequest, RemoteSwitchRequest, RenameRequest, SideEffect};
 use crate::new_session::textarea_line;
-use crate::state::{
-    AppState, FocusMode, KillRequest, LayoutMode, MainView, RemoteSwitchRequest, RenameRequest,
-    RenameState, SideEffect, SidebarTab, ViewMode,
-};
+use crate::overlay::RenameState;
+use crate::state::{AppState, FocusMode, LayoutMode, MainView, SidebarTab, ViewMode};
 
 use super::{
     Action, AddRemoteAction, MenuAction, NewSessionAction, PfAction, SettingsAction, SummaryAction,
@@ -556,7 +555,7 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
         SummaryAction::OpenPopup => {
             if matches!(
                 state.summary.state,
-                crate::state::SummaryState::Ready { .. }
+                crate::summary_card::SummaryState::Ready { .. }
             ) {
                 state.overlay.summary_popup = true;
                 state.summary.popup_scroll = 0;

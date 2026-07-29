@@ -6,32 +6,16 @@ use ratatui_sectioned_list::widget::BasicItem;
 use ratatui_sectioned_list::{ItemKind, RowDragState};
 use serde::{Deserialize, Serialize};
 
-use crate::geometry::{context_menu_rect, shorten_dir, tab_bar_layout, tab_label};
+use crate::geometry::{
+    context_menu_rect, shorten_dir, tab_bar_layout, tab_label, AgentEntry, AgentEntryKind,
+    AgentTarget, BuiltLayout, HitRegions, SectionLayoutOpts, SectionMeta, SidebarLayout,
+};
 use crate::keybindings::Keybindings;
 use crate::lane::LaneId;
+use crate::overlay::{Modal, OverlayState};
+use crate::summary_card::{SummaryCard, SummaryState, SUMMARY_MAX_HEIGHT, SUMMARY_MIN_HEIGHT};
 use crate::system::tmux::lane;
 use crate::update::{UpdateCheckMode, UpdateStatus};
-
-// Re-export the model types so the pervasive `crate::state::X` references
-// across the UI / app / test layers keep resolving. Each type's real home
-// is the named module.
-pub use crate::effects::{
-    CreateSessionRequest, Effect, KillRequest, RemoteSwitchRequest, RenameRequest, SideEffect,
-};
-pub use crate::forwards::{PfAddForm, PfField, PortForwardOverlay};
-pub use crate::geometry::{
-    AgentEntry, AgentEntryKind, AgentHit, AgentTarget, BuiltLayout, DividerHit, HitKind,
-    HitRegions, KillConfirmHits, SectionLayoutOpts, SectionMeta, SidebarLayout, SummaryHits,
-    TabRects,
-};
-pub use crate::menu::{session_menu_disabled, ContextMenu, MenuItem, MenuKind};
-pub use crate::overlay::{ExcludeEditorState, Modal, OverlayState, RenameState, WarningState};
-// The Summary card lives in `model::summary`; re-export its types + the
-// height constants here so the `crate::state::SummaryState` /
-// `crate::state::DEFAULT_SUMMARY_HEIGHT` references keep resolving.
-pub use crate::summary_card::{
-    SummaryCard, SummaryState, DEFAULT_SUMMARY_HEIGHT, SUMMARY_MAX_HEIGHT, SUMMARY_MIN_HEIGHT,
-};
 
 mod focus;
 mod layout;

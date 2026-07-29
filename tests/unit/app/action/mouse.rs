@@ -1,7 +1,6 @@
 use super::{mouse_to_action, Action, SummaryAction};
-use crate::state::{
-    AgentHit, AgentTarget, AppState, FocusTarget, LayoutMode, SessionEntry, SessionEntryKind,
-};
+use crate::geometry::{AgentHit, AgentTarget};
+use crate::state::{AppState, FocusTarget, LayoutMode, SessionEntry, SessionEntryKind};
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use std::time::{Duration, Instant};

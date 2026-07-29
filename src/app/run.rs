@@ -20,7 +20,8 @@ use crossterm::event::{self, Event, KeyEventKind};
 use ratatui::DefaultTerminal;
 
 use crate::action::{self, Action, PfAction};
-use crate::state::{FocusMode, MainView, SummaryState};
+use crate::state::{FocusMode, MainView};
+use crate::summary_card::SummaryState;
 
 use super::{render_min_interval, App, CONFIG_POLL_INTERVAL, POLL_MS, REFRESH_INTERVAL};
 
