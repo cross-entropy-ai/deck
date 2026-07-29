@@ -53,11 +53,7 @@ impl AppState {
     /// if nothing is focusable (empty list). The index is into the active
     /// tab's row space — sessions on Projects, agents on Agents.
     pub fn focus_target(&self) -> Option<FocusTarget> {
-        if self.cursor() < self.focusable_count() {
-            Some(FocusTarget(self.cursor()))
-        } else {
-            None
-        }
+        (self.cursor() < self.focusable_count()).then(|| FocusTarget(self.cursor()))
     }
 
     /// Move both section cursors onto `target`: the Projects `focused` session

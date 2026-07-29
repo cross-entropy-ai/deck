@@ -218,11 +218,9 @@ impl App {
                 })
             }
             Ok(_) => self.set_new_session_error("not a directory"),
-            Err(e) => self.set_new_session_error(match e.kind() {
-                std::io::ErrorKind::NotFound => "not found",
-                std::io::ErrorKind::PermissionDenied => "permission denied",
-                _ => "cannot stat",
-            }),
+            Err(e) => self.set_new_session_error(
+                crate::infra::io_error_label(e.kind()).unwrap_or("cannot stat"),
+            ),
         }
     }
 

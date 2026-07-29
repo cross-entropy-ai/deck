@@ -114,13 +114,10 @@ fn switch_on_navigate(state: &AppState, fx: &mut SideEffect) {
 /// Routed through `Effect::SwitchAgentPane` so dispatch focuses the pane
 /// exactly like an agent-row click. Returns whether an agent was queued.
 fn fill_switch_agent_effect(state: &AppState, fx: &mut SideEffect) -> bool {
-    match state.focused_agent() {
-        Some(target) => {
-            fx.push(Effect::SwitchAgentPane(target));
-            true
-        }
-        None => false,
-    }
+    state
+        .focused_agent()
+        .map(|target| fx.push(Effect::SwitchAgentPane(target)))
+        .is_some()
 }
 
 /// Activate a sidebar tab. No-op if already active. Persists the choice.
@@ -602,6 +599,12 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
     fx
 }
 
+/// `s` truncated to (and including) its last `/`, or empty when it has none.
+/// `rfind` returns a char boundary, so no manual UTF-8 walk is needed.
+fn to_parent(s: &str) -> &str {
+    &s[..s.rfind('/').map_or(0, |i| i + 1)]
+}
+
 fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEffect {
     let mut fx = SideEffect::default();
     match action {
@@ -657,9 +660,7 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
             if s.ends_with('/') && s.len() > 1 {
                 s.pop();
             }
-            let new_end = s.rfind('/').map(|i| i + 1).unwrap_or(0);
-            s.truncate(new_end);
-            ns.set_path(&s);
+            ns.set_path(to_parent(&s));
             let parent_after = crate::new_session::split_input(ns.input_str())
                 .0
                 .to_string();
@@ -688,16 +689,7 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
         NewSessionAction::DeleteSegment => {
             // Trim trailing chars back to (and including) the previous `/`.
             let s = ns.input_str().to_string();
-            let mut new_end = s.len();
-            while new_end > 0 && !s[..new_end].ends_with('/') {
-                let prev = s[..new_end]
-                    .chars()
-                    .last()
-                    .map(|c| c.len_utf8())
-                    .unwrap_or(0);
-                new_end -= prev;
-            }
-            ns.set_path(&s[..new_end]);
+            ns.set_path(to_parent(&s));
             // Always reread: the user explicitly cleared the segment they
             // were typing and expects a fresh listing of the parent dir.
             fx.reread_new_session_entries();

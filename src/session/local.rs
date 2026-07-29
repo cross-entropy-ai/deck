@@ -62,13 +62,12 @@ impl SessionControl for LocalControl {
                 (names, None)
             }
             Err(e) => {
-                let msg = match e.kind() {
-                    std::io::ErrorKind::NotFound => "not found".to_string(),
-                    std::io::ErrorKind::PermissionDenied => "permission denied".to_string(),
-                    // Counts display columns rather than chars; these are
-                    // short one-line IO error strings either way.
-                    _ => crate::geometry::truncate(&e.to_string(), 40),
-                };
+                // `truncate` counts display columns rather than chars; these
+                // are short one-line IO error strings either way.
+                let msg = crate::infra::io_error_label(e.kind()).map_or_else(
+                    || crate::geometry::truncate(&e.to_string(), 40),
+                    str::to_string,
+                );
                 (Vec::new(), Some(msg))
             }
         }

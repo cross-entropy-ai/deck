@@ -111,9 +111,7 @@ pub(crate) fn parse_window_activity(raw: &str) -> HashMap<String, u64> {
         if let Some((name, ts_str)) = line.split_once('\t') {
             let ts: u64 = ts_str.parse().unwrap_or(0);
             let entry = map.entry(name.to_string()).or_insert(0);
-            if ts > *entry {
-                *entry = ts;
-            }
+            *entry = (*entry).max(ts);
         }
     }
     map

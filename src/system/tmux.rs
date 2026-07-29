@@ -135,11 +135,9 @@ impl System for TmuxSystem {
                 // Unreachable (the ssh+tmux list failed) → `None`, no probe:
                 // probing too would double the 5s ssh stall on a dead host.
                 let sessions = remote_tmux::list_sessions(host)?;
-                let agents = if probe_agents {
-                    remote_tmux::agent_probe(host)
-                } else {
-                    None
-                };
+                let agents = probe_agents
+                    .then(|| remote_tmux::agent_probe(host))
+                    .flatten();
                 Some(LaneSnapshot { sessions, agents })
             }
         }

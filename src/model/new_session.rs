@@ -47,7 +47,7 @@ pub fn make_textarea(s: &str) -> TextArea<'static> {
 
 /// First (only) line of a single-line `TextArea`, as a borrowed `&str`.
 pub fn textarea_line<'a>(ta: &'a TextArea<'a>) -> &'a str {
-    ta.lines().first().map(String::as_str).unwrap_or("")
+    ta.lines().first().map_or("", String::as_str)
 }
 
 /// Resolve a user-typed path to an absolute, normalized `PathBuf`. Leading

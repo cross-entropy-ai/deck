@@ -88,30 +88,45 @@ pub enum SidebarTab {
     Agents,
 }
 
-pub const FRAME_RATE_LIMIT_OPTIONS: [u16; 4] = [2, 5, 10, 30];
-pub const DEFAULT_FRAME_RATE_LIMIT: u16 = 30;
+/// Frame-rate options as `(fps, settings label)`. Cycling order — the array is
+/// a cycle, so it's rotated to put the default first and `option_row` can fall
+/// back to row 0.
+// ponytail: cycling is the only consumer of the order, so rotating the array is
+// invisible; nothing renders these as a list.
+pub const FRAME_RATE_LIMIT_OPTIONS: [(u16, &str); 4] = [
+    (30, "Smooth 30 FPS"),
+    (2, "Power Saver 2 FPS"),
+    (5, "Balanced 5 FPS"),
+    (10, "Responsive 10 FPS"),
+];
+pub const DEFAULT_FRAME_RATE_LIMIT: u16 = FRAME_RATE_LIMIT_OPTIONS[0].0;
 
-/// How often the Agents tab probes for agents + their status, in seconds.
-/// Cycled in settings; labelled fast / normal / slow / very slow.
-pub const AGENTS_PROBE_INTERVAL_OPTIONS: [u64; 4] = [1, 2, 5, 10];
-pub const DEFAULT_AGENTS_PROBE_INTERVAL: u64 = 2;
+/// How often the Agents tab probes for agents + their status, in seconds, as
+/// `(secs, settings label)`. Cycled in settings; default first as above.
+pub const AGENTS_PROBE_INTERVAL_OPTIONS: [(u64, &str); 4] = [
+    (2, "2s (normal)"),
+    (5, "5s (slow)"),
+    (10, "10s (very slow)"),
+    (1, "1s (fast)"),
+];
+pub const DEFAULT_AGENTS_PROBE_INTERVAL: u64 = AGENTS_PROBE_INTERVAL_OPTIONS[0].0;
+
+/// The `(value, label)` row for `value`, falling back to the default row when
+/// `value` isn't one of the options.
+fn option_row<T: Copy + PartialEq>(table: &[(T, &'static str)], value: T) -> (T, &'static str) {
+    table
+        .iter()
+        .copied()
+        .find(|&(v, _)| v == value)
+        .unwrap_or(table[0])
+}
 
 pub fn normalize_agents_probe_interval(secs: u64) -> u64 {
-    if AGENTS_PROBE_INTERVAL_OPTIONS.contains(&secs) {
-        secs
-    } else {
-        DEFAULT_AGENTS_PROBE_INTERVAL
-    }
+    option_row(&AGENTS_PROBE_INTERVAL_OPTIONS, secs).0
 }
 
 pub fn agents_probe_interval_label(secs: u64) -> &'static str {
-    match normalize_agents_probe_interval(secs) {
-        1 => "1s (fast)",
-        2 => "2s (normal)",
-        5 => "5s (slow)",
-        10 => "10s (very slow)",
-        _ => "2s (normal)",
-    }
+    option_row(&AGENTS_PROBE_INTERVAL_OPTIONS, secs).1
 }
 
 /// Step `delta` positions through `options` from `current`, wrapping at both
@@ -127,15 +142,10 @@ pub fn cycle_option<T: Copy + PartialEq>(options: &[T], current: T, delta: i32) 
 /// ends (no wrap); `len == 0` yields 0. Shared by the bounded list cursors
 /// (settings rows, theme picker, exclude editor, port-forward focus, pickers).
 pub fn step_clamped(current: usize, len: usize, direction: i32) -> usize {
-    if len == 0 {
+    let Some(last) = len.checked_sub(1) else {
         return 0;
-    }
-    let last = len - 1;
-    if direction >= 0 {
-        current.saturating_add(direction as usize).min(last)
-    } else {
-        current.saturating_sub(direction.unsigned_abs() as usize)
-    }
+    };
+    current.saturating_add_signed(direction as isize).min(last)
 }
 
 /// Apply a scroll `delta` to `current`, clamped to `0..=max`. Shared by the
@@ -156,25 +166,15 @@ pub fn clamp_set(target: &mut u16, value: u16, min: u16, max: u16) -> bool {
 /// Clamp `*cursor` to the last valid index of a `len`-length list (0 when
 /// empty). Shared by the Projects/Agents focus clamps.
 pub fn clamp_cursor(cursor: &mut usize, len: usize) {
-    *cursor = if len == 0 { 0 } else { (*cursor).min(len - 1) };
+    *cursor = (*cursor).min(len.saturating_sub(1));
 }
 
 pub fn normalize_frame_rate_limit(fps: u16) -> u16 {
-    if FRAME_RATE_LIMIT_OPTIONS.contains(&fps) {
-        fps
-    } else {
-        DEFAULT_FRAME_RATE_LIMIT
-    }
+    option_row(&FRAME_RATE_LIMIT_OPTIONS, fps).0
 }
 
 pub fn frame_rate_limit_label(fps: u16) -> &'static str {
-    match normalize_frame_rate_limit(fps) {
-        2 => "Power Saver 2 FPS",
-        5 => "Balanced 5 FPS",
-        10 => "Responsive 10 FPS",
-        30 => "Smooth 30 FPS",
-        _ => "Balanced 5 FPS",
-    }
+    option_row(&FRAME_RATE_LIMIT_OPTIONS, fps).1
 }
 
 // --- Session data ---
@@ -654,19 +654,17 @@ impl AppState {
     }
 
     pub fn cycle_frame_rate_limit(&mut self, direction: i32) {
-        self.prefs.frame_rate_limit = cycle_option(
-            &FRAME_RATE_LIMIT_OPTIONS,
-            normalize_frame_rate_limit(self.prefs.frame_rate_limit),
-            direction,
-        );
+        let cur = option_row(&FRAME_RATE_LIMIT_OPTIONS, self.prefs.frame_rate_limit);
+        self.prefs.frame_rate_limit = cycle_option(&FRAME_RATE_LIMIT_OPTIONS, cur, direction).0;
     }
 
     pub fn cycle_agents_probe_interval(&mut self, direction: i32) {
-        self.prefs.agents_probe_interval_secs = cycle_option(
+        let cur = option_row(
             &AGENTS_PROBE_INTERVAL_OPTIONS,
-            normalize_agents_probe_interval(self.prefs.agents_probe_interval_secs),
-            direction,
+            self.prefs.agents_probe_interval_secs,
         );
+        self.prefs.agents_probe_interval_secs =
+            cycle_option(&AGENTS_PROBE_INTERVAL_OPTIONS, cur, direction).0;
     }
 
     /// Whether the Agents tab is the active sidebar view. The tab selector only
@@ -944,12 +942,11 @@ impl AppState {
         let content_width = self.term_width.saturating_sub(b.saturating_mul(2));
         let layout = tab_bar_layout(&label_refs, self.focused, content_width);
         let local_col = col.saturating_sub(b);
-        for tab in layout.tabs {
-            if local_col >= tab.start && local_col < tab.end {
-                return Some(tab.index);
-            }
-        }
-        None
+        layout
+            .tabs
+            .iter()
+            .find(|t| (t.start..t.end).contains(&local_col))
+            .map(|t| t.index)
     }
 
     /// The entry at flat focus index `idx`, or `None` if out of range.

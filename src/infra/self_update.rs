@@ -91,13 +91,11 @@ fn is_brew_managed(exe: &Path) -> bool {
 /// is what the direct-download upgrade ultimately does.
 fn is_dir_writable(dir: &Path) -> bool {
     let probe = dir.join(format!(".deck-write-probe.{}", std::process::id()));
-    match std::fs::File::create(&probe) {
-        Ok(_) => {
-            let _ = std::fs::remove_file(&probe);
-            true
-        }
-        Err(_) => false,
+    let ok = std::fs::File::create(&probe).is_ok();
+    if ok {
+        let _ = std::fs::remove_file(&probe);
     }
+    ok
 }
 
 /// Direct (non-brew) self-upgrade to `version` via the `self_update` crate:

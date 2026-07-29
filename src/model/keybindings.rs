@@ -213,7 +213,7 @@ impl Keybindings {
     }
 
     pub fn keys_for(&self, cmd: Command) -> &[KeyChord] {
-        self.reverse.get(&cmd).map(|v| v.as_slice()).unwrap_or(&[])
+        self.reverse.get(&cmd).map_or(&[], |v| v.as_slice())
     }
 }
 

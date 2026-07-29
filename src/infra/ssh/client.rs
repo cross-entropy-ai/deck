@@ -107,11 +107,9 @@ fn ssh_config_path() -> PathBuf {
 /// Read `~/.ssh/config` and return its concrete `Host` aliases. A missing or
 /// unreadable file yields an empty list (the picker still accepts typed input).
 pub fn config_hosts() -> Vec<String> {
-    let path = ssh_config_path();
-    match std::fs::read_to_string(path) {
-        Ok(content) => crate::infra::parser::ssh_config::parse_config_hosts(&content),
-        Err(_) => Vec::new(),
-    }
+    std::fs::read_to_string(ssh_config_path())
+        .map(|content| crate::infra::parser::ssh_config::parse_config_hosts(&content))
+        .unwrap_or_default()
 }
 
 /// Append the snippet to `~/.ssh/config`, creating the file if needed.

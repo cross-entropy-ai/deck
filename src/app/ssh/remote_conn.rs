@@ -337,10 +337,7 @@ impl RemoteConnManager {
 
     /// This connection's client-tty marker id, or `0` when unknown.
     pub(crate) fn marker_id(&self, host: &str) -> u64 {
-        self.conns
-            .get(host)
-            .map(|c| c.client_marker_id)
-            .unwrap_or(0)
+        self.conns.get(host).map_or(0, |c| c.client_marker_id)
     }
 
     /// Whether an outcome stamped with `marker_id` still matches its host's
@@ -348,10 +345,7 @@ impl RemoteConnManager {
     /// generation, so it's always current; a remote reconnect mints a new
     /// marker id, rejecting outcomes from a dropped/older PTY.
     pub(crate) fn marker_matches(&self, host: Option<&str>, marker_id: u64) -> bool {
-        match host {
-            None => true,
-            Some(h) => self.marker_id(h) == marker_id,
-        }
+        host.is_none_or(|h| self.marker_id(h) == marker_id)
     }
 
     pub(crate) fn is_live(&self, host: &str) -> bool {
@@ -437,13 +431,7 @@ impl RemoteConnManager {
         // Clear the host's deferred/in-flight switch state by construction:
         // offboard is the sole host-removal path, so forgetting this is
         // impossible.
-        if self
-            .pending_switch
-            .as_ref()
-            .is_some_and(|req| req.host == host)
-        {
-            self.pending_switch = None;
-        }
+        self.pending_switch.take_if(|req| req.host == host);
         self.switch_verify.remove(host);
         self.detach_active(host)
     }
@@ -452,11 +440,8 @@ impl RemoteConnManager {
     /// report it. Shared by offboard and the dead-host reap (D7) so the
     /// "was this the viewed host?" choreography lives in one place.
     pub(crate) fn detach_active(&mut self, host: &str) -> DetachOutcome {
-        if self.active_is(host) {
-            self.active = None;
-            DetachOutcome { was_active: true }
-        } else {
-            DetachOutcome { was_active: false }
+        DetachOutcome {
+            was_active: self.active.take_if(|a| a.as_str() == host).is_some(),
         }
     }
 
@@ -504,13 +489,7 @@ impl RemoteConnManager {
                 if let RemoteSpawnEvent::Failed { host, .. } = ev {
                     // The deferred switch can't happen on a failed spawn;
                     // drop it so a later unrelated reconnect doesn't fire it.
-                    if self
-                        .pending_switch
-                        .as_ref()
-                        .is_some_and(|req| req.host == host)
-                    {
-                        self.pending_switch = None;
-                    }
+                    self.pending_switch.take_if(|req| req.host == host);
                     self.conns
                         .insert(host, RemoteConn::placeholder(RemoteConnStatus::Failed));
                 }
@@ -585,7 +564,7 @@ impl RemoteConnManager {
         // Collect the re-arms to fire after the borrow ends (the spawner
         // call doesn't touch `conns`, but keeping the mutation localized is
         // cleaner).
-        let mut to_rearm: Vec<(String, u64, u64)> = Vec::new();
+        let mut to_rearm: Vec<(String, u64)> = Vec::new();
         for (host, conn) in self.conns.iter_mut() {
             if conn.marker_ready || !conn.is_live() {
                 continue;
@@ -602,7 +581,7 @@ impl RemoteConnManager {
                 MarkerRetryAction::Retry => {
                     retry.attempts += 1;
                     retry.last_attempt = now;
-                    to_rearm.push((host.clone(), conn.client_marker_id, 0));
+                    to_rearm.push((host.clone(), conn.client_marker_id));
                 }
                 MarkerRetryAction::GiveUp => {
                     retry.exhausted = true;
@@ -610,7 +589,7 @@ impl RemoteConnManager {
                 }
             }
         }
-        for (host, marker_id, _) in to_rearm {
+        for (host, marker_id) in to_rearm {
             let gen = self.generation(&host);
             self.spawner.rearm_marker(&host, marker_id, gen);
         }

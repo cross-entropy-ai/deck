@@ -12,3 +12,16 @@ pub mod summary;
 pub mod tmux;
 pub mod update;
 pub mod worker;
+
+/// Short one-line label for the two IO failures every path/dir check reports
+/// identically. `None` means "not one of those" — the caller supplies its own
+/// fallback wording.
+// ponytail: pure fn over `ErrorKind`, not a local/remote branch; the remote
+// picker sniffs `ls` stderr instead and keeps its own strings.
+pub fn io_error_label(kind: std::io::ErrorKind) -> Option<&'static str> {
+    match kind {
+        std::io::ErrorKind::NotFound => Some("not found"),
+        std::io::ErrorKind::PermissionDenied => Some("permission denied"),
+        _ => None,
+    }
+}

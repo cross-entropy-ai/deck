@@ -141,10 +141,9 @@ pub fn shorten_dir(dir: &str) -> String {
     // the process-global env lock + allocates each call.
     static HOME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let home = HOME.get_or_init(|| std::env::var("HOME").unwrap_or_default());
-    if !home.is_empty() && dir.starts_with(home) {
-        format!("~{}", &dir[home.len()..])
-    } else {
-        dir.to_string()
+    match dir.strip_prefix(home.as_str()) {
+        Some(rest) if !home.is_empty() => format!("~{rest}"),
+        _ => dir.to_string(),
     }
 }
 

@@ -71,11 +71,7 @@ impl App {
                         let old_last_checked = self.state.update_last_checked_secs;
                         let old_available = self.state.update_available.clone();
                         self.state.update_last_checked_secs = Some(status.checked_at);
-                        self.state.update_available = if newer_than_current {
-                            Some(status)
-                        } else {
-                            None
-                        };
+                        self.state.update_available = newer_than_current.then_some(status);
                         changed |= old_last_checked != self.state.update_last_checked_secs
                             || old_available != self.state.update_available;
                     }

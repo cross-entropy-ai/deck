@@ -209,10 +209,10 @@ impl App {
             // is already on a local row. If they navigated into a remote
             // group, a local current-session change (e.g. last switch_client
             // respawn) must NOT pull focus back to the local section.
-            let user_on_local = match self.state.focus_target() {
-                None => true,
-                Some(t) => self.state.entry_at(t).is_none_or(|e| e.is_local()),
-            };
+            let user_on_local = self
+                .state
+                .focus_target()
+                .is_none_or(|t| self.state.entry_at(t).is_none_or(|e| e.is_local()));
             if user_on_local {
                 if let Some(pos) = self.state.entries.iter().position(|e| e.is_current()) {
                     self.state.focused = pos;
