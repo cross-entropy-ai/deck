@@ -744,10 +744,21 @@ impl App {
                         },
                     );
                 }
-                Effect::CreateSession(req) => match &req.host {
-                    None => self.create_new_session(&req.name, &req.dir),
-                    Some(host) => self.create_remote_session(host, &req.name, &req.dir),
-                },
+                Effect::CreateSession(req) => {
+                    // Create on the executor (per-lane FIFO); the post-create
+                    // switch happens when the `Created` outcome lands (see
+                    // `post_create_switch`), since whether to switch depends
+                    // on the create succeeding. `dir` arrives ready for its
+                    // lane — absolute locally, `~`-keeping for the remote
+                    // shell (see `confirm_remote_new_session`).
+                    self.submit_session(
+                        req.host.clone(),
+                        crate::session::executor::SessionOp::NewSession {
+                            name: req.name.clone(),
+                            dir: req.dir.clone(),
+                        },
+                    );
+                }
                 Effect::ResizePty { full_redraw } => {
                     self.resize_pty();
                     if *full_redraw {

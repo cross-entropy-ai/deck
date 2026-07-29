@@ -316,7 +316,7 @@ impl App {
                         .borders(Borders::ALL)
                         .border_set(ratatui::symbols::border::ROUNDED)
                         .title(" Heads up ")
-                        .border_style(Style::default().fg(theme.warning)),
+                        .border_style(Style::default().fg(theme.yellow)),
                 )
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: true });

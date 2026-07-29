@@ -14,12 +14,9 @@ pub struct Theme {
     pub green: Color,
     pub teal: Color,
     pub yellow: Color,
-    /// Semantic slots, distinct from the decorative palette so a theme can tune
-    /// "this is an error" without recoloring a decorative accent. Currently
-    /// `warning` == `yellow`, `success` == `green`.
+    /// Semantic slot, distinct from the decorative palette so a theme can tune
+    /// "this is an error" without recoloring a decorative accent.
     pub error: Color,
-    pub warning: Color,
-    pub success: Color,
 }
 
 pub const THEMES: &[Theme] = &[
@@ -37,8 +34,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(148, 226, 213),
         yellow: Color::Rgb(249, 226, 175),
         error: Color::Rgb(243, 139, 168),
-        warning: Color::Rgb(249, 226, 175),
-        success: Color::Rgb(166, 227, 161),
     },
     Theme {
         name: "Tokyo Night (Dark)",
@@ -54,8 +49,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(115, 218, 202),
         yellow: Color::Rgb(224, 175, 104),
         error: Color::Rgb(187, 154, 247),
-        warning: Color::Rgb(224, 175, 104),
-        success: Color::Rgb(158, 206, 106),
     },
     Theme {
         name: "Gruvbox (Dark)",
@@ -71,8 +64,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(142, 192, 124),
         yellow: Color::Rgb(250, 189, 47),
         error: Color::Rgb(211, 134, 155),
-        warning: Color::Rgb(250, 189, 47),
-        success: Color::Rgb(184, 187, 38),
     },
     Theme {
         name: "Nord (Dark)",
@@ -88,8 +79,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(143, 188, 187),
         yellow: Color::Rgb(235, 203, 139),
         error: Color::Rgb(180, 142, 173),
-        warning: Color::Rgb(235, 203, 139),
-        success: Color::Rgb(163, 190, 140),
     },
     Theme {
         name: "Dracula (Dark)",
@@ -105,8 +94,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(139, 233, 253),
         yellow: Color::Rgb(241, 250, 140),
         error: Color::Rgb(255, 121, 198),
-        warning: Color::Rgb(241, 250, 140),
-        success: Color::Rgb(80, 250, 123),
     },
     Theme {
         name: "Claude (Dark)",
@@ -122,8 +109,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(94, 196, 208),
         yellow: Color::Rgb(226, 180, 90),
         error: Color::Rgb(212, 144, 208),
-        warning: Color::Rgb(226, 180, 90),
-        success: Color::Rgb(152, 200, 122),
     },
     Theme {
         name: "Absolutely (Dark)",
@@ -139,8 +124,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(94, 196, 176),
         yellow: Color::Rgb(224, 168, 70),
         error: Color::Rgb(255, 95, 56),
-        warning: Color::Rgb(224, 168, 70),
-        success: Color::Rgb(0, 200, 83),
     },
     Theme {
         name: "Codex (Dark)",
@@ -156,8 +139,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(41, 182, 216),
         yellow: Color::Rgb(224, 163, 46),
         error: Color::Rgb(224, 46, 42),
-        warning: Color::Rgb(224, 163, 46),
-        success: Color::Rgb(0, 162, 64),
     },
     Theme {
         name: "Raycast (Dark)",
@@ -173,8 +154,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(79, 200, 192),
         yellow: Color::Rgb(224, 179, 74),
         error: Color::Rgb(207, 47, 152),
-        warning: Color::Rgb(224, 179, 74),
-        success: Color::Rgb(89, 212, 153),
     },
     Theme {
         name: "Rose Pine (Dark)",
@@ -190,8 +169,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(62, 143, 176),
         yellow: Color::Rgb(246, 193, 119),
         error: Color::Rgb(235, 111, 146),
-        warning: Color::Rgb(246, 193, 119),
-        success: Color::Rgb(156, 207, 216),
     },
     Theme {
         name: "GitHub (Dark)",
@@ -207,8 +184,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(94, 196, 208),
         yellow: Color::Rgb(224, 175, 104),
         error: Color::Rgb(248, 81, 73),
-        warning: Color::Rgb(224, 175, 104),
-        success: Color::Rgb(63, 185, 80),
     },
     Theme {
         name: "Linear (Dark)",
@@ -224,8 +199,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(94, 196, 208),
         yellow: Color::Rgb(224, 175, 104),
         error: Color::Rgb(255, 126, 120),
-        warning: Color::Rgb(224, 175, 104),
-        success: Color::Rgb(105, 201, 103),
     },
     Theme {
         name: "One (Dark)",
@@ -241,8 +214,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(94, 196, 208),
         yellow: Color::Rgb(224, 175, 104),
         error: Color::Rgb(224, 85, 97),
-        warning: Color::Rgb(224, 175, 104),
-        success: Color::Rgb(140, 194, 101),
     },
     Theme {
         name: "Vercel (Dark)",
@@ -258,8 +229,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(94, 196, 208),
         yellow: Color::Rgb(224, 175, 104),
         error: Color::Rgb(241, 51, 66),
-        warning: Color::Rgb(224, 175, 104),
-        success: Color::Rgb(0, 173, 58),
     },
     Theme {
         name: "Catppuccin Latte (Light)",
@@ -275,8 +244,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(23, 146, 153),
         yellow: Color::Rgb(156, 110, 16),
         error: Color::Rgb(210, 15, 57),
-        warning: Color::Rgb(156, 110, 16),
-        success: Color::Rgb(64, 160, 43),
     },
     Theme {
         name: "Claude (Light)",
@@ -292,8 +259,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(16, 112, 112),
         yellow: Color::Rgb(133, 96, 10),
         error: Color::Rgb(136, 62, 149),
-        warning: Color::Rgb(133, 96, 10),
-        success: Color::Rgb(61, 117, 32),
     },
     Theme {
         name: "Absolutely (Light)",
@@ -309,8 +274,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(47, 144, 128),
         yellow: Color::Rgb(176, 120, 24),
         error: Color::Rgb(255, 95, 56),
-        warning: Color::Rgb(176, 120, 24),
-        success: Color::Rgb(0, 200, 83),
     },
     Theme {
         name: "Codex (Light)",
@@ -326,8 +289,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(14, 138, 160),
         yellow: Color::Rgb(176, 125, 16),
         error: Color::Rgb(224, 46, 42),
-        warning: Color::Rgb(176, 125, 16),
-        success: Color::Rgb(0, 162, 64),
     },
     Theme {
         name: "Raycast (Light)",
@@ -343,8 +304,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(14, 138, 150),
         yellow: Color::Rgb(176, 125, 16),
         error: Color::Rgb(154, 27, 110),
-        warning: Color::Rgb(176, 125, 16),
-        success: Color::Rgb(0, 107, 79),
     },
     Theme {
         name: "Rose Pine (Light)",
@@ -360,8 +319,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(40, 105, 131),
         yellow: Color::Rgb(234, 157, 52),
         error: Color::Rgb(180, 99, 122),
-        warning: Color::Rgb(234, 157, 52),
-        success: Color::Rgb(86, 148, 159),
     },
     Theme {
         name: "GitHub (Light)",
@@ -377,8 +334,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(14, 130, 150),
         yellow: Color::Rgb(160, 110, 16),
         error: Color::Rgb(207, 34, 46),
-        warning: Color::Rgb(160, 110, 16),
-        success: Color::Rgb(26, 127, 55),
     },
     Theme {
         name: "Linear (Light)",
@@ -394,8 +349,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(14, 130, 150),
         yellow: Color::Rgb(160, 110, 16),
         error: Color::Rgb(201, 68, 70),
-        warning: Color::Rgb(160, 110, 16),
-        success: Color::Rgb(82, 164, 80),
     },
     Theme {
         name: "One (Light)",
@@ -411,8 +364,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(14, 130, 150),
         yellow: Color::Rgb(160, 110, 16),
         error: Color::Rgb(228, 86, 73),
-        warning: Color::Rgb(160, 110, 16),
-        success: Color::Rgb(59, 186, 84),
     },
     Theme {
         name: "Proof (Light)",
@@ -428,8 +379,6 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(14, 130, 150),
         yellow: Color::Rgb(160, 110, 16),
         error: Color::Rgb(186, 38, 35),
-        warning: Color::Rgb(160, 110, 16),
-        success: Color::Rgb(61, 117, 93),
     },
     Theme {
         name: "Vercel (Light)",
@@ -445,7 +394,5 @@ pub const THEMES: &[Theme] = &[
         teal: Color::Rgb(14, 130, 150),
         yellow: Color::Rgb(160, 110, 16),
         error: Color::Rgb(235, 0, 29),
-        warning: Color::Rgb(160, 110, 16),
-        success: Color::Rgb(40, 169, 72),
     },
 ];

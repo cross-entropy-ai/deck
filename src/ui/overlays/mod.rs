@@ -130,7 +130,7 @@ pub(super) fn draw_confirm_kill(
             Span::styled(
                 name,
                 Style::default()
-                    .fg(theme.warning)
+                    .fg(theme.yellow)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled("?", Style::default().fg(theme.text)),
@@ -159,7 +159,7 @@ pub(super) fn draw_confirm_kill(
         .add_modifier(Modifier::BOLD);
     let yes_style = Style::default()
         .fg(theme.bg)
-        .bg(theme.warning)
+        .bg(theme.yellow)
         .add_modifier(Modifier::BOLD);
 
     Paragraph::new(Line::from(Span::styled(NO_LABEL, no_style)))

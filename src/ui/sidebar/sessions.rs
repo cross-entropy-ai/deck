@@ -35,9 +35,9 @@ fn recolor_agent_dot(
     // Color is keyed off the *status*, not the glyph shape. Shape still carries
     // meaning independently, so the status remains readable without color.
     let color = match status {
-        AgentStatus::Working => theme.success, // green
-        AgentStatus::Idle => theme.muted,      // neutral, not a failure
-        AgentStatus::Waiting => theme.warning, // yellow (needs the user)
+        AgentStatus::Working => theme.green,
+        AgentStatus::Idle => theme.muted,     // neutral, not a failure
+        AgentStatus::Waiting => theme.yellow, // needs the user
         AgentStatus::Unknown => theme.subtle,  // unknown, but still legible
     };
     let Some(line) = text.lines.first_mut() else {
@@ -518,9 +518,9 @@ mod tests {
     #[test]
     fn agent_dot_colored_by_status_not_glyph() {
         let theme = &crate::theme::THEMES[0];
-        assert_eq!(dot_color(AgentStatus::Working), Some(theme.success));
+        assert_eq!(dot_color(AgentStatus::Working), Some(theme.green));
         assert_eq!(dot_color(AgentStatus::Idle), Some(theme.muted));
-        assert_eq!(dot_color(AgentStatus::Waiting), Some(theme.warning));
+        assert_eq!(dot_color(AgentStatus::Waiting), Some(theme.yellow));
         assert_eq!(dot_color(AgentStatus::Unknown), Some(theme.subtle));
     }
 

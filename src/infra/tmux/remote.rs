@@ -95,10 +95,7 @@ fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Sess
 /// ssh). `None` if unreachable (section stays "probing"); `Some(empty)`
 /// for a reachable host with no agents.
 pub fn agent_probe(host: &str) -> Option<Vec<DetectedAgent>> {
-    agent_probe_with(default_runner(), host)
-}
-
-fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<DetectedAgent>> {
+    let runner = default_runner();
     // Commands joined by a bare `;` (shell separator, run in sequence).
     // `$'…'` protects the `#`/tabs in the tmux format; `2>/dev/null`
     // swallows tmux's "no server" noise so a server-less host still yields
@@ -136,7 +133,7 @@ fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Detect
     // the probe), then the shared classifier runs — same as the local path.
     if !agents.is_empty() {
         let pane_ids: Vec<String> = agents.iter().map(|a| a.pane_id.clone()).collect();
-        let buffers = capture_panes_with(runner, host, &pane_ids);
+        let buffers = capture_panes(host, &pane_ids);
         for a in &mut agents {
             if let Some(buf) = buffers.get(&a.pane_id) {
                 a.status = crate::agent::classify_status(a.kind, buf);
@@ -153,19 +150,12 @@ const CAPTURE_MARKER: &str = "__deck_cap__";
 /// Capture several remote panes in a SINGLE ssh hop, returning `pane_id ->
 /// buffer`. Shared by the agent status probe and the summary generator so
 /// neither pays one ssh roundtrip per pane. Empty map on failure / no panes.
+/// Pane ids are deck-known `%N` handles.
 pub(crate) fn capture_panes(host: &str, pane_ids: &[String]) -> HashMap<String, String> {
-    capture_panes_with(default_runner(), host, pane_ids)
-}
-
-/// Worker for [`capture_panes`]; pane ids are deck-known `%N` handles.
-fn capture_panes_with(
-    runner: &dyn CommandRunner,
-    host: &str,
-    pane_ids: &[String],
-) -> HashMap<String, String> {
     if pane_ids.is_empty() {
         return HashMap::new();
     }
+    let runner = default_runner();
     // One remote command: `export PATH` (a `for` loop can't take a leading
     // `PATH=…` assignment, so it goes inside; mirrors `run_ssh`'s prefix so
     // a brew tmux resolves), then loop panes printing a marker line + each

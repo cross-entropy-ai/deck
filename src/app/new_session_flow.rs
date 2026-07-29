@@ -243,37 +243,6 @@ impl App {
         self.submit_session(host, crate::session::executor::SessionOp::ListDir { path });
     }
 
-    pub(super) fn create_new_session(&mut self, name: &str, dir: &str) {
-        let expanded = crate::new_session::expand_path(dir, &crate::config::home_dir());
-        let dir_str = expanded.to_string_lossy().to_string();
-
-        // Create on the executor; the post-create switch happens when the
-        // `Created` outcome lands (see `post_create_switch`), since whether
-        // to switch depends on the create succeeding.
-        self.submit_session(
-            None,
-            crate::session::executor::SessionOp::NewSession {
-                name: name.to_string(),
-                dir: dir_str,
-            },
-        );
-    }
-
-    /// Create a session on a remote host (executor's per-host FIFO) and switch
-    /// to it once created. `dir` keeps its `~` for the remote shell to expand.
-    /// The `refresh_sessions` side effect re-queries the host so the new row
-    /// shows under its `@host` group; the switch is wired in
-    /// `post_create_switch`, run when `Created` drains back.
-    pub(super) fn create_remote_session(&mut self, host: &str, name: &str, dir: &str) {
-        self.submit_session(
-            Some(host.to_string()),
-            crate::session::executor::SessionOp::NewSession {
-                name: name.to_string(),
-                dir: dir.to_string(),
-            },
-        );
-    }
-
     /// Switch to a just-created session, run when `Created` drains. Local:
     /// re-point the client. Remote: switch immediately if the attach PTY is
     /// live; otherwise the host had no tmux server, so reconnect now and defer

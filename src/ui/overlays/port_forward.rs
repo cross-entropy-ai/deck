@@ -205,7 +205,7 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
         // Inset the rect 2 cells from each border so the message (and wrapped
         // lines) lines up with the form fields' indent, not the frame.
         let fg = if s.starts_with("applying") {
-            theme.warning
+            theme.yellow
         } else {
             theme.error
         };

@@ -477,13 +477,14 @@ impl RemoteConnManager {
     // --- spawn events ---
 
     /// Apply a drained spawn event via the pure [`reconcile_spawn_event`]
-    /// decision, doing the IO it implies. Returns a [`SwitchToFire`] when a
-    /// held switch should now run (the caller owns `switch_to_remote`, so the
-    /// manager can't call it directly).
+    /// decision, doing the IO it implies. Returns a
+    /// [`crate::state::RemoteSwitchRequest`] when a held switch should now run
+    /// (the caller owns `switch_to_remote`, so the manager can't call it
+    /// directly).
     pub(in crate::app) fn apply_spawn_event(
         &mut self,
         ev: RemoteSpawnEvent,
-    ) -> Option<SwitchToFire> {
+    ) -> Option<crate::state::RemoteSwitchRequest> {
         match reconcile_spawn_event(&self.conns, &self.generations, &ev) {
             SpawnDecision::Drop => None,
             SpawnDecision::ApplySpawned => {
@@ -539,20 +540,8 @@ impl RemoteConnManager {
 
     /// Take the pending switch iff it targets `host` (so the caller can
     /// fire it). Used when a host's marker confirms.
-    fn take_pending_switch_for(&mut self, host: &str) -> Option<SwitchToFire> {
-        if self
-            .pending_switch
-            .as_ref()
-            .is_some_and(|req| req.host == host)
-        {
-            let req = self.pending_switch.take().unwrap();
-            Some(SwitchToFire {
-                host: req.host,
-                name: req.name,
-            })
-        } else {
-            None
-        }
+    fn take_pending_switch_for(&mut self, host: &str) -> Option<crate::state::RemoteSwitchRequest> {
+        self.pending_switch.take_if(|req| req.host == host)
     }
 
     // --- switch verify ---
@@ -566,13 +555,16 @@ impl RemoteConnManager {
     /// only when the host is still active and its marker advanced since submit
     /// (the connection respawned while the op sat in the FIFO, so it no-op'd
     /// against a dead marker). Removes the verify entry either way.
-    pub(crate) fn verify_switch(&mut self, host: &str) -> Option<SwitchToFire> {
+    pub(crate) fn verify_switch(
+        &mut self,
+        host: &str,
+    ) -> Option<crate::state::RemoteSwitchRequest> {
         let (name, submitted_marker) = self.switch_verify.remove(host)?;
         if !self.active_is(host) {
             return None;
         }
         let current_marker = self.marker_id(host);
-        (current_marker != submitted_marker).then_some(SwitchToFire {
+        (current_marker != submitted_marker).then_some(crate::state::RemoteSwitchRequest {
             host: host.to_string(),
             name,
         })
@@ -625,13 +617,6 @@ impl RemoteConnManager {
     pub(in crate::app) fn try_recv(&self) -> Option<RemoteSpawnEvent> {
         self.spawner.try_recv()
     }
-}
-
-/// A switch the manager decided should fire but can't run itself
-/// (`switch_to_remote` lives on `App`). The caller pulls it and dispatches.
-pub(crate) struct SwitchToFire {
-    pub(crate) host: String,
-    pub(crate) name: String,
 }
 
 /// Whether a detach/offboard removed the currently-viewed host. On

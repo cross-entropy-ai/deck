@@ -29,43 +29,13 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                 // only emits OpenSession on a real row.
                 None => MenuKind::Global,
             };
-            let mut menu = ContextMenu {
-                kind,
-                x,
-                y,
-                selected: 0,
-            };
-            // Don't start the highlight on a greyed item.
-            menu.selected = menu.first_enabled();
-            state.overlay.context_menu = Some(menu);
+            open(state, kind, x, y);
         }
-        MenuAction::OpenGlobal { x, y } => {
-            state.overlay.context_menu = Some(ContextMenu {
-                kind: MenuKind::Global,
-                x,
-                y,
-                selected: 0,
-            });
-        }
+        MenuAction::OpenGlobal { x, y } => open(state, MenuKind::Global, x, y),
         MenuAction::OpenHostDivider { host, x, y } => {
-            state.overlay.context_menu = Some(ContextMenu {
-                kind: MenuKind::HostDivider { host: host.clone() },
-                x,
-                y,
-                selected: 0,
-            });
+            open(state, MenuKind::HostDivider { host }, x, y)
         }
-        MenuAction::OpenLocalDivider { x, y } => {
-            let mut menu = ContextMenu {
-                kind: MenuKind::LocalDivider,
-                x,
-                y,
-                selected: 0,
-            };
-            // Don't start the highlight on a greyed item.
-            menu.selected = menu.first_enabled();
-            state.overlay.context_menu = Some(menu);
-        }
+        MenuAction::OpenLocalDivider { x, y } => open(state, MenuKind::LocalDivider, x, y),
         MenuAction::Next => {
             if let Some(ref mut menu) = state.overlay.context_menu {
                 menu.selected = menu.next_enabled();
@@ -90,68 +60,43 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
             match menu.kind {
                 MenuKind::Session { focus, .. } => {
                     state.focused = focus.0;
-                    let inner = match selected_item {
-                        Some(MenuItem::Rename) => apply_action(state, Action::StartRename),
-                        Some(MenuItem::Close) => apply_action(state, Action::KillSession),
-                        _ => SideEffect::default(),
-                    };
-                    fx.merge(inner);
+                    match selected_item {
+                        Some(MenuItem::Rename) => fx.merge(apply_action(state, Action::StartRename)),
+                        Some(MenuItem::Close) => fx.merge(apply_action(state, Action::KillSession)),
+                        _ => {}
+                    }
                 }
-                MenuKind::Global => {
-                    let inner = match selected_item {
-                        Some(MenuItem::NewLocalSession) => {
-                            let mut inner = SideEffect::default();
-                            inner.open_new_session_picker();
-                            inner
-                        }
-                        Some(MenuItem::AddRemoteHost) => {
-                            let mut inner = SideEffect::default();
-                            inner.open_add_remote_picker();
-                            inner
-                        }
-                        Some(MenuItem::ToggleLayout) => apply_action(state, Action::ToggleLayout),
-                        Some(MenuItem::ToggleBorders) => apply_action(state, Action::ToggleBorders),
-                        Some(MenuItem::Settings) => {
-                            apply_action(state, Action::Settings(SettingsAction::Open))
-                        }
-                        Some(MenuItem::Quit) => {
-                            let mut inner = SideEffect::default();
-                            inner.quit();
-                            inner
-                        }
-                        _ => SideEffect::default(),
-                    };
-                    fx.merge(inner);
-                }
-                MenuKind::HostDivider { host, .. } => {
-                    let inner = match selected_item {
-                        Some(MenuItem::NewSession) => {
-                            let mut inner = SideEffect::default();
-                            inner.open_remote_new_session_picker(host.clone());
-                            inner
-                        }
-                        Some(MenuItem::PortForward) => {
-                            apply_action(state, Action::Pf(PfAction::Open(host.clone())))
-                        }
-                        Some(MenuItem::RemoveFromList) => {
-                            apply_action(state, Action::RemoveRemoteFromList(host.clone()))
-                        }
-                        _ => SideEffect::default(),
-                    };
-                    fx.merge(inner);
-                }
+                MenuKind::Global => match selected_item {
+                    Some(MenuItem::NewLocalSession) => fx.open_new_session_picker(),
+                    Some(MenuItem::AddRemoteHost) => fx.open_add_remote_picker(),
+                    Some(MenuItem::ToggleLayout) => {
+                        fx.merge(apply_action(state, Action::ToggleLayout))
+                    }
+                    Some(MenuItem::ToggleBorders) => {
+                        fx.merge(apply_action(state, Action::ToggleBorders))
+                    }
+                    Some(MenuItem::Settings) => {
+                        fx.merge(apply_action(state, Action::Settings(SettingsAction::Open)))
+                    }
+                    Some(MenuItem::Quit) => fx.quit(),
+                    _ => {}
+                },
+                MenuKind::HostDivider { host, .. } => match selected_item {
+                    Some(MenuItem::NewSession) => fx.open_remote_new_session_picker(host),
+                    Some(MenuItem::PortForward) => {
+                        fx.merge(apply_action(state, Action::Pf(PfAction::Open(host))))
+                    }
+                    Some(MenuItem::RemoveFromList) => {
+                        fx.merge(apply_action(state, Action::RemoveRemoteFromList(host)))
+                    }
+                    _ => {}
+                },
                 MenuKind::LocalDivider => {
                     // PortForward / RemoveFromList are greyed out and
                     // unreachable here; only NewSession (local) fires.
-                    let inner = match selected_item {
-                        Some(MenuItem::NewSession) => {
-                            let mut inner = SideEffect::default();
-                            inner.open_new_session_picker();
-                            inner
-                        }
-                        _ => SideEffect::default(),
-                    };
-                    fx.merge(inner);
+                    if let Some(MenuItem::NewSession) = selected_item {
+                        fx.open_new_session_picker();
+                    }
                 }
             }
         }
@@ -170,4 +115,18 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
         MenuAction::ClickItem(_) => {}
     }
     fx
+}
+
+/// Open `kind` anchored at `(x, y)`, starting the highlight on the first
+/// non-greyed item. (`Global` / `HostDivider` grey nothing, so that's index 0
+/// for them.)
+fn open(state: &mut AppState, kind: MenuKind, x: u16, y: u16) {
+    let mut menu = ContextMenu {
+        kind,
+        x,
+        y,
+        selected: 0,
+    };
+    menu.selected = menu.first_enabled();
+    state.overlay.context_menu = Some(menu);
 }

@@ -41,7 +41,7 @@ impl AppState {
         let theme = self.active_theme();
         match e.kind {
             SessionEntryKind::Unreachable => item.color(theme.error),
-            SessionEntryKind::Connecting => item.color(theme.warning),
+            SessionEntryKind::Connecting => item.color(theme.yellow),
             SessionEntryKind::NoSessions => item.color(theme.muted),
             SessionEntryKind::Live { .. } => item,
         }

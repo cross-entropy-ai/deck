@@ -56,6 +56,29 @@ fn focus_command(set_client_tty: &str, session: &str, pane_id: &str) -> String {
     )
 }
 
+/// Run a `$C`-guarded snippet over the transport, returning its trimmed
+/// stdout. `build` gets the `$C` assignment to prefix (a literal tty locally,
+/// a `cat` of the marker file remotely) — the only thing that differs, so the
+/// local/remote split stops here.
+fn run_snippet(
+    runner: &dyn CommandRunner,
+    transport: &FocusTransport,
+    build: impl Fn(&str) -> String,
+) -> Result<String, crate::infra::command::CommandError> {
+    match transport {
+        FocusTransport::Local { client_tty } => {
+            let cmd = build(&format!("C={}", shell_single_quote(client_tty)));
+            runner
+                .run("sh", &["-c", &cmd], LOCAL_TIMEOUT)
+                .map(|o| o.stdout_trimmed())
+        }
+        FocusTransport::Remote { host, marker_id } => {
+            let set_c = crate::remote_tmux::read_client_tty(host, *marker_id);
+            run_ssh(runner, host, &[build(&set_c).as_str()])
+        }
+    }
+}
+
 /// Run the focus rule over the transport, classifying by the echoed marker:
 /// `ExactPane` (window/pane selected and our client switched), or `Failed`
 /// (bailed / transport errored — caller commits nothing).
@@ -65,23 +88,7 @@ pub(crate) fn run_focus_with(
     session: &str,
     pane_id: &str,
 ) -> PaneFocus {
-    let out = match transport {
-        FocusTransport::Local { client_tty } => {
-            let cmd = focus_command(
-                &format!("C={}", shell_single_quote(client_tty)),
-                session,
-                pane_id,
-            );
-            runner
-                .run("sh", &["-c", &cmd], LOCAL_TIMEOUT)
-                .map(|o| o.stdout_trimmed())
-        }
-        FocusTransport::Remote { host, marker_id } => {
-            let set_c = crate::remote_tmux::read_client_tty(host, *marker_id);
-            let cmd = focus_command(&set_c, session, pane_id);
-            run_ssh(runner, host, &[cmd.as_str()])
-        }
-    };
+    let out = run_snippet(runner, transport, |c| focus_command(c, session, pane_id));
     match out {
         Ok(o) if o.contains(FOCUS_EXACT_MARKER) => PaneFocus::ExactPane,
         _ => PaneFocus::Failed,
@@ -102,18 +109,7 @@ pub(crate) fn active_pane_with(
     runner: &dyn CommandRunner,
     transport: &FocusTransport,
 ) -> Option<String> {
-    let out = match transport {
-        FocusTransport::Local { client_tty } => {
-            let cmd = active_pane_command(&format!("C={}", shell_single_quote(client_tty)));
-            runner
-                .run("sh", &["-c", &cmd], LOCAL_TIMEOUT)
-                .map(|o| o.stdout_trimmed())
-        }
-        FocusTransport::Remote { host, marker_id } => {
-            let set_c = crate::remote_tmux::read_client_tty(host, *marker_id);
-            run_ssh(runner, host, &[active_pane_command(&set_c).as_str()])
-        }
-    };
+    let out = run_snippet(runner, transport, active_pane_command);
     // Only a real `%N` id counts; empty stdout means the script bailed
     // (no client tty), which must not be read as a pane.
     out.ok().map(|o| o.trim().to_string()).filter(|id| {

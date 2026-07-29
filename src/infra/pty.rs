@@ -261,40 +261,35 @@ fn encode_modified_special(code: KeyCode, mods: KeyModifiers) -> Option<Vec<u8>>
     Some(bytes)
 }
 
+/// F1-F4 are SS3 + letter (CSI `1;mod` + letter once modified); F5-F12 are
+/// CSI code + `~`, over a non-contiguous code table (no 16, no 22).
+const F1_4_LETTERS: [u8; 4] = [b'P', b'Q', b'R', b'S'];
+const F5_12_CODES: [u8; 8] = [15, 17, 18, 19, 20, 21, 23, 24];
+
 fn encode_modified_f_key(n: u8, m: u8) -> Vec<u8> {
     match n {
-        // F1-F4: SS3 becomes CSI 1;mod + letter
-        1 => format!("\x1b[1;{m}P").into_bytes(),
-        2 => format!("\x1b[1;{m}Q").into_bytes(),
-        3 => format!("\x1b[1;{m}R").into_bytes(),
-        4 => format!("\x1b[1;{m}S").into_bytes(),
-        // F5+: CSI code;mod ~
-        5 => format!("\x1b[15;{m}~").into_bytes(),
-        6 => format!("\x1b[17;{m}~").into_bytes(),
-        7 => format!("\x1b[18;{m}~").into_bytes(),
-        8 => format!("\x1b[19;{m}~").into_bytes(),
-        9 => format!("\x1b[20;{m}~").into_bytes(),
-        10 => format!("\x1b[21;{m}~").into_bytes(),
-        11 => format!("\x1b[23;{m}~").into_bytes(),
-        12 => format!("\x1b[24;{m}~").into_bytes(),
+        1..=4 => {
+            let c = F1_4_LETTERS[n as usize - 1] as char;
+            format!("\x1b[1;{m}{c}").into_bytes()
+        }
+        5..=12 => {
+            let code = F5_12_CODES[n as usize - 5];
+            format!("\x1b[{code};{m}~").into_bytes()
+        }
         _ => vec![],
     }
 }
 
 fn encode_f_key(n: u8) -> Vec<u8> {
     match n {
-        1 => b"\x1bOP".to_vec(),
-        2 => b"\x1bOQ".to_vec(),
-        3 => b"\x1bOR".to_vec(),
-        4 => b"\x1bOS".to_vec(),
-        5 => b"\x1b[15~".to_vec(),
-        6 => b"\x1b[17~".to_vec(),
-        7 => b"\x1b[18~".to_vec(),
-        8 => b"\x1b[19~".to_vec(),
-        9 => b"\x1b[20~".to_vec(),
-        10 => b"\x1b[21~".to_vec(),
-        11 => b"\x1b[23~".to_vec(),
-        12 => b"\x1b[24~".to_vec(),
+        1..=4 => {
+            let c = F1_4_LETTERS[n as usize - 1] as char;
+            format!("\x1bO{c}").into_bytes()
+        }
+        5..=12 => {
+            let code = F5_12_CODES[n as usize - 5];
+            format!("\x1b[{code}~").into_bytes()
+        }
         _ => vec![],
     }
 }
@@ -324,5 +319,28 @@ mod tests {
         assert_eq!(cmd_k, b"\x1b[107;9u");
         let plain = encode_key(&KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT));
         assert_eq!(plain, b"A");
+    }
+
+    #[test]
+    fn f_keys_encode_both_ranges_and_reject_out_of_range() {
+        // F1-F4 are SS3 + letter; F5-F12 are CSI code + `~` with a
+        // non-contiguous code table (no 16, no 22).
+        assert_eq!(encode_f_key(1), b"\x1bOP");
+        assert_eq!(encode_f_key(4), b"\x1bOS");
+        assert_eq!(encode_f_key(5), b"\x1b[15~");
+        assert_eq!(encode_f_key(11), b"\x1b[23~");
+        assert_eq!(encode_f_key(12), b"\x1b[24~");
+        assert!(encode_f_key(0).is_empty());
+        assert!(encode_f_key(13).is_empty());
+    }
+
+    #[test]
+    fn modified_f_keys_encode_both_ranges() {
+        // Modified F1-F4 lose SS3 and become CSI 1;mod + letter.
+        assert_eq!(encode_modified_f_key(1, 5), b"\x1b[1;5P");
+        assert_eq!(encode_modified_f_key(4, 3), b"\x1b[1;3S");
+        assert_eq!(encode_modified_f_key(5, 5), b"\x1b[15;5~");
+        assert_eq!(encode_modified_f_key(12, 9), b"\x1b[24;9~");
+        assert!(encode_modified_f_key(13, 5).is_empty());
     }
 }
