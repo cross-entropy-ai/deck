@@ -122,6 +122,7 @@ impl App {
             &mut self.local_terminal.alive,
             local_is_active,
             local_view_active,
+            self.state.active_theme(),
         ) {
             Redraw::Soft
         } else {
@@ -158,6 +159,7 @@ impl App {
         let mut redraw = Redraw::No;
         let active_host = self.remote.active().cloned();
         let main_view_terminal = self.state.main_view == MainView::Terminal;
+        let theme = self.state.active_theme();
         let mut died_hosts: Vec<String> = Vec::new();
         for (host, conn) in self.remote.conns_mut().iter_mut() {
             let Some(pane) = conn.pane.as_mut() else {
@@ -170,6 +172,7 @@ impl App {
                 &mut pane.alive,
                 host_is_active,
                 host_is_active && main_view_terminal,
+                theme,
             ) {
                 redraw = redraw.merge(Redraw::Soft);
             }
@@ -188,6 +191,7 @@ impl App {
     /// Drain the upgrade PTY, if one is running.
     fn pump_upgrade_pty(&mut self) -> Redraw {
         let upgrade_view_active = self.state.main_view == MainView::Upgrade;
+        let theme = self.state.active_theme();
         if let Some(ref mut inst) = self.upgrade_instance {
             if Self::drain_pane(
                 &mut inst.pty,
@@ -195,6 +199,7 @@ impl App {
                 &mut inst.alive,
                 false,
                 upgrade_view_active,
+                theme,
             ) {
                 return Redraw::Soft;
             }

@@ -1,8 +1,10 @@
 use std::io::{self, Write};
 
 use portable_pty::PtySize;
+use ratatui::style::Color;
 
 use crate::pty::{Pty, PtyEvent};
+use crate::theme::Theme;
 
 use super::{App, TerminalPane};
 
@@ -22,6 +24,27 @@ impl TerminalPane {
         self.parser.screen_mut().set_size(rows, cols);
         let _ = self.pty.resize(pane_size(rows, cols));
     }
+}
+
+/// Reply to any OSC 10 / OSC 11 (default fg / bg) query in `data`, answering
+/// from the pane's own theme: the pane is painted `theme.text` on `theme.bg`
+/// (see `bridge::render_screen`), so the host terminal's colors would be the
+/// wrong answer even if we could round-trip the query through stdin.
+// ponytail: substring match inside one read chunk, single-query form only
+// (`\x1b]11;?`). Buffer across reads / parse multi-param OSC if a program ever
+// splits the write or batches `10;?;11;?`.
+fn color_query_reply(data: &[u8], theme: &Theme) -> String {
+    let mut reply = String::new();
+    for (code, color) in [(10, theme.text), (11, theme.bg)] {
+        let query = format!("\x1b]{code};?");
+        let asked = data.windows(query.len()).any(|w| w == query.as_bytes());
+        // Named/indexed colors carry no RGB here; leave those unanswered
+        // rather than guessing.
+        if let (true, Color::Rgb(r, g, b)) = (asked, color) {
+            reply += &format!("\x1b]{code};rgb:{r:02x}{r:02x}/{g:02x}{g:02x}/{b:02x}{b:02x}\x1b\\");
+        }
+    }
+    reply
 }
 
 /// Spawn `program` in a PTY sized to the main pane, with COLUMNS/LINES
@@ -112,6 +135,7 @@ impl App {
         alive: &mut bool,
         osc52_active: bool,
         view_active: bool,
+        theme: &Theme,
     ) -> bool {
         let mut needs_render = false;
         for event in pty.drain() {
@@ -119,6 +143,12 @@ impl App {
                 PtyEvent::Output(data) => {
                     if osc52_active {
                         Self::forward_osc52(&data);
+                    }
+                    // Answered for every pane, viewed or not: it's the child
+                    // asking about its own colors, not a clipboard write.
+                    let reply = color_query_reply(&data, theme);
+                    if !reply.is_empty() {
+                        let _ = pty.write(reply.as_bytes());
                     }
                     parser.process(&data);
                     if view_active {
@@ -148,5 +178,27 @@ impl App {
         let (rows, cols) = self.state.pty_size();
         self.upgrade_instance = Some(spawn_sized_pane(program, args, rows, cols)?);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn color_query_answers_fg_and_bg_from_theme() {
+        // Catppuccin Mocha: bg 30,30,46. Both queries in one chunk,
+        // ST-terminated (the BEL form matches too: we key off the
+        // `\x1b]N;?` prefix, not the terminator).
+        let theme = &crate::theme::THEMES[0];
+        let reply = color_query_reply(b"\x1b]10;?\x1b\\\x1b]11;?\x1b\\", theme);
+        assert!(
+            reply.contains("\x1b]11;rgb:1e1e/1e1e/2e2e\x1b\\"),
+            "{reply:?}"
+        );
+        assert!(reply.starts_with("\x1b]10;rgb:"), "{reply:?}");
+        // A palette set (not a query) must not draw a reply.
+        assert_eq!(color_query_reply(b"\x1b]11;#ff0000\x07", theme), "");
+        assert_eq!(color_query_reply(b"hello world", theme), "");
     }
 }
