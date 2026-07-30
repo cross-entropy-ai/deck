@@ -9,6 +9,7 @@ pub mod self_update;
 pub mod shutdown;
 pub mod ssh;
 pub mod summary;
+pub mod termbg;
 pub mod tmux;
 pub mod update;
 pub mod worker;

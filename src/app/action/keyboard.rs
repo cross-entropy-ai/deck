@@ -111,7 +111,9 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
         Command::ReorderUp => Action::ReorderSession(-1),
         Command::ReorderDown => Action::ReorderSession(1),
         Command::OpenSettings => Action::Settings(SettingsAction::Open),
-        Command::OpenThemePicker => Action::Settings(SettingsAction::OpenThemePicker),
+        Command::OpenThemePicker => Action::Settings(SettingsAction::OpenThemePicker(
+            crate::theme::ThemeSlot::Fixed,
+        )),
         Command::ToggleBorders => Action::ToggleBorders,
         Command::ToggleLayout => Action::ToggleLayout,
         Command::ToggleViewMode => Action::ToggleViewMode,

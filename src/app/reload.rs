@@ -5,7 +5,6 @@
 use crate::config::Config;
 use crate::keybindings::{self, Keybindings};
 use crate::state::ReloadStatus;
-use crate::theme::THEMES;
 use crate::tmux;
 
 use super::App;
@@ -67,12 +66,22 @@ impl App {
 
         let (compiled, kb_warnings) = Keybindings::from_config(&cfg.keybindings);
 
-        let new_theme_index = THEMES.iter().position(|t| t.name == cfg.theme).unwrap_or(0);
-        let theme_changed = new_theme_index != self.state.prefs.theme_index;
+        let new_theme_index = crate::theme::index_of(&cfg.theme);
+        // Compare the *effective* theme, so edits to `theme_auto` or the
+        // dark/light slots re-apply the tmux theme too, not just `theme`.
+        let old_theme_index = self.state.active_theme_index();
+        let was_auto = self.state.prefs.theme_auto;
 
         // The shared config→state field list lives in `apply_config` (also
         // used at startup) so reload can't silently miss a field.
         self.state.apply_config(&cfg, new_theme_index, compiled);
+
+        // Auto just came on from the file: nothing has probed the terminal yet
+        // this run, so do it now instead of assuming dark.
+        if self.state.prefs.theme_auto && !was_auto {
+            self.probe_terminal_bg();
+        }
+        let theme_changed = self.state.active_theme_index() != old_theme_index;
 
         // Reset sub-UIs whose indices may no longer be valid.
         self.state.overlay.exclude_editor = None;
@@ -163,7 +172,7 @@ impl App {
 
         self.resize_pty();
         if theme_changed {
-            tmux::apply_theme(&THEMES[self.state.prefs.theme_index]);
+            tmux::apply_theme(self.state.active_theme());
         }
         self.request_refresh();
     }

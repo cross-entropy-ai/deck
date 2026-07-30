@@ -244,7 +244,9 @@ fn open_theme_picker_from_sidebar_bypasses_settings() {
     state.main_view = MainView::Terminal;
     apply_action(
         &mut state,
-        Action::Settings(SettingsAction::OpenThemePicker),
+        Action::Settings(SettingsAction::OpenThemePicker(
+            crate::theme::ThemeSlot::Fixed,
+        )),
     );
     assert!(state.settings.theme_picker_open);
     // The picker overlays the current view rather than entering the
@@ -306,7 +308,7 @@ fn theme_picker_next_at_end_still_saves() {
 #[test]
 fn settings_adjust_layout_resizes_and_saves() {
     let mut state = make_test_state(1);
-    state.settings.selected = 2;
+    state.settings.selected = settings_row_index("Layout");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_eq!(state.prefs.layout_mode, LayoutMode::Vertical);
     assert!(fx.has_resize_pty());
@@ -694,7 +696,7 @@ fn toggle_view_mode_flips_and_saves() {
 fn settings_adjust_frame_rate_cycles_and_saves() {
     let mut state = make_test_state(1);
     state.prefs.frame_rate_limit = 5;
-    state.settings.selected = 5;
+    state.settings.selected = settings_row_index("Frame rate");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_eq!(state.prefs.frame_rate_limit, 10);
     assert!(fx.has_save_config());
@@ -704,7 +706,7 @@ fn settings_adjust_frame_rate_cycles_and_saves() {
 fn frame_rate_cycle_wraps_in_both_directions() {
     let mut state = make_test_state(1);
     state.prefs.frame_rate_limit = 2;
-    state.settings.selected = 5;
+    state.settings.selected = settings_row_index("Frame rate");
     apply_action(&mut state, Action::Settings(SettingsAction::AdjustPrev));
     assert_eq!(state.prefs.frame_rate_limit, 30);
 
@@ -715,7 +717,7 @@ fn frame_rate_cycle_wraps_in_both_directions() {
 #[test]
 fn settings_adjust_exclude_opens_editor_after_frame_rate_row() {
     let mut state = make_test_state(1);
-    state.settings.selected = 6;
+    state.settings.selected = settings_row_index("Exclude");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(state.overlay.exclude_editor.is_some());
     assert!(!fx.has_save_config());
@@ -724,7 +726,7 @@ fn settings_adjust_exclude_opens_editor_after_frame_rate_row() {
 #[test]
 fn settings_adjust_keybindings_opens_view_after_exclude_row() {
     let mut state = make_test_state(1);
-    state.settings.selected = 7;
+    state.settings.selected = settings_row_index("Keybindings");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(state.settings.keybindings_view_open);
     assert!(!fx.has_save_config());

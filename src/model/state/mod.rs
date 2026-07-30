@@ -304,6 +304,9 @@ pub struct SettingsState {
     /// Theme picker overlay (open inside the settings page).
     pub theme_picker_open: bool,
     pub theme_picker_selected: usize,
+    /// Which theme the open picker is choosing: the fixed one, or the
+    /// dark/light slot "follow terminal" mode picks from.
+    pub theme_picker_slot: crate::theme::ThemeSlot,
 
     /// Keybindings viewer overlay (read-only).
     pub keybindings_view_open: bool,
@@ -325,6 +328,12 @@ pub struct SettingsState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Prefs {
     pub theme_index: usize,
+    /// Follow the host terminal's appearance: use `dark_theme_index` or
+    /// `light_theme_index` (per the probed terminal background, see
+    /// `AppState::terminal_is_dark`) instead of `theme_index`.
+    pub theme_auto: bool,
+    pub dark_theme_index: usize,
+    pub light_theme_index: usize,
     pub layout_mode: LayoutMode,
     pub show_borders: bool,
     /// Use the terminal's default (transparent) background instead of the
@@ -367,6 +376,12 @@ impl Prefs {
     pub fn from_config(cfg: &crate::config::Config, theme_index: usize) -> Self {
         Self {
             theme_index,
+            theme_auto: cfg.theme_auto,
+            // Resolved here rather than by the caller (unlike `theme_index`,
+            // which callers also diff against the live prefs): nothing outside
+            // needs these two indices before the prefs exist.
+            dark_theme_index: crate::theme::index_of(&cfg.dark_theme),
+            light_theme_index: crate::theme::index_of(&cfg.light_theme),
             layout_mode: cfg.layout,
             show_borders: cfg.show_borders,
             transparent_bg: cfg.transparent_bg,
@@ -401,6 +416,11 @@ impl Prefs {
     ) -> crate::config::Config {
         crate::config::Config {
             theme: crate::theme::THEMES[self.theme_index].name.to_string(),
+            theme_auto: self.theme_auto,
+            dark_theme: crate::theme::THEMES[self.dark_theme_index].name.to_string(),
+            light_theme: crate::theme::THEMES[self.light_theme_index]
+                .name
+                .to_string(),
             layout: self.layout_mode,
             show_borders: self.show_borders,
             sidebar_tab: self.sidebar_tab,
@@ -422,6 +442,29 @@ impl Prefs {
             agents_probe_interval: self.agents_probe_interval_secs,
             summary_enabled: self.summary_enabled,
             transparent_bg: self.transparent_bg,
+        }
+    }
+
+    /// The theme index a picker slot currently holds.
+    pub fn theme_slot(&self, slot: crate::theme::ThemeSlot) -> usize {
+        match slot {
+            crate::theme::ThemeSlot::Fixed => self.theme_index,
+            crate::theme::ThemeSlot::Dark => self.dark_theme_index,
+            crate::theme::ThemeSlot::Light => self.light_theme_index,
+        }
+    }
+
+    /// Point a picker slot at `index`. Choosing a fixed theme also leaves
+    /// "follow terminal" mode — otherwise the pick would have no visible
+    /// effect and the picker would look broken.
+    pub fn set_theme_slot(&mut self, slot: crate::theme::ThemeSlot, index: usize) {
+        match slot {
+            crate::theme::ThemeSlot::Fixed => {
+                self.theme_index = index;
+                self.theme_auto = false;
+            }
+            crate::theme::ThemeSlot::Dark => self.dark_theme_index = index,
+            crate::theme::ThemeSlot::Light => self.light_theme_index = index,
         }
     }
 }
@@ -450,6 +493,11 @@ pub struct AppState {
     /// See [`Prefs`]. Read widely as `state.prefs.<field>`; loaded via
     /// [`AppState::apply_config`], written back via [`Prefs::to_config`].
     pub prefs: Prefs,
+    /// Whether the *host terminal's* background is dark, as answered by the
+    /// OSC 11 probe (`infra::termbg`). Runtime-only, not persisted; drives
+    /// `active_theme` when `prefs.theme_auto` is on. Assumed dark, which is
+    /// what a terminal that never answers the probe gets.
+    pub terminal_is_dark: bool,
     /// Settings page navigation + theme picker / keybindings viewer
     /// overlays. See `SettingsState`.
     pub settings: SettingsState,
@@ -577,6 +625,7 @@ impl AppState {
             // this from the loaded config before any read in production; tests
             // that build a bare state override the fields they care about.
             prefs: Prefs::from_config(&crate::config::Config::default(), 0),
+            terminal_is_dark: true,
             settings: SettingsState::default(),
             agent_focused: 0,
             summary: SummaryCard::default(),
@@ -1052,7 +1101,20 @@ impl AppState {
     /// read the theme here rather than taking it as a parameter (hit-test call
     /// sites build the same layout and don't carry a theme).
     pub fn active_theme(&self) -> &'static crate::theme::Theme {
-        &crate::theme::THEMES[self.prefs.theme_index]
+        &crate::theme::THEMES[self.active_theme_index()]
+    }
+
+    /// Index of the theme in force: the fixed choice, or — in "follow
+    /// terminal" mode — whichever of the dark/light slots matches the probed
+    /// terminal background.
+    pub fn active_theme_index(&self) -> usize {
+        if !self.prefs.theme_auto {
+            self.prefs.theme_index
+        } else if self.terminal_is_dark {
+            self.prefs.dark_theme_index
+        } else {
+            self.prefs.light_theme_index
+        }
     }
 
     /// Clamp and set sidebar width. Returns true if it changed.

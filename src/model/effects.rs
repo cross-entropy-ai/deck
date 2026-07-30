@@ -48,6 +48,9 @@ pub enum Effect {
     SaveSessionOrder,
     SaveRemoteSessionOrder(String),
     ApplyTmuxTheme,
+    /// Re-run the OSC 11 probe of the host terminal's background, so
+    /// "follow terminal" theme mode picks the matching dark/light theme.
+    ProbeTerminalBg,
     RefreshSessions,
     Quit,
 }

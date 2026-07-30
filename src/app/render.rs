@@ -27,7 +27,7 @@ impl App {
         }
         let s = &self.state;
         let sidebar_active = s.focus_mode == FocusMode::Sidebar;
-        let base_theme = THEMES[s.prefs.theme_index];
+        let base_theme = *s.active_theme();
         let effective_theme;
         let theme = if s.prefs.transparent_bg {
             effective_theme = crate::theme::Theme {

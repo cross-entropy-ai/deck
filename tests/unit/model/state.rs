@@ -987,6 +987,9 @@ fn prefs_config_round_trip_is_identity() {
     // it into prefs, write it back out, and re-derive — the prefs must match.
     let cfg = crate::config::Config {
         theme: crate::theme::THEMES[2].name.to_string(),
+        theme_auto: true,
+        dark_theme: crate::theme::THEMES[1].name.to_string(),
+        light_theme: crate::theme::THEMES[3].name.to_string(),
         layout: LayoutMode::Vertical,
         show_borders: false,
         sidebar_tab: SidebarTab::Agents,
@@ -1203,4 +1206,31 @@ fn crossing_to_another_row_shows_drag_indicators_immediately() {
     assert!(state.project_drag_indicators().is_none());
     assert_eq!(state.update_project_drag(5), Some(1), "second card");
     assert_eq!(state.project_drag_indicators(), Some((0, 1)));
+}
+
+#[test]
+fn auto_theme_follows_the_probed_terminal_background() {
+    let mut state = AppState::new(80, 24);
+    state.prefs.theme_index = 0;
+    state.prefs.dark_theme_index = 1;
+    state.prefs.light_theme_index = 2;
+
+    // Off: the fixed choice wins no matter what the terminal is.
+    state.prefs.theme_auto = false;
+    state.terminal_is_dark = false;
+    assert_eq!(state.active_theme_index(), 0);
+
+    // On: the slot matching the probed background wins.
+    state.prefs.theme_auto = true;
+    assert_eq!(state.active_theme_index(), 2);
+    state.terminal_is_dark = true;
+    assert_eq!(state.active_theme_index(), 1);
+
+    // Picking a fixed theme is how the user leaves auto mode — otherwise the
+    // pick would apply to nothing visible.
+    state
+        .prefs
+        .set_theme_slot(crate::theme::ThemeSlot::Fixed, 3);
+    assert!(!state.prefs.theme_auto);
+    assert_eq!(state.active_theme_index(), 3);
 }

@@ -11,7 +11,7 @@
 
 use crate::action::{Action, SettingsAction, SummaryAction};
 use crate::state::{AppState, LayoutMode, ViewMode};
-use crate::theme::THEMES;
+use crate::theme::{ThemeSlot, THEMES};
 
 use super::update::format_update_check_help;
 
@@ -33,8 +33,41 @@ pub const SETTING_ROWS: &[SettingRow] = &[
     SettingRow {
         label: "Theme",
         value: |s| THEMES[s.prefs.theme_index].name.to_string(),
-        help: |_| "Left/right opens the theme list".to_string(),
-        adjust: |_| Action::Settings(SettingsAction::OpenThemePicker),
+        help: |s| {
+            if s.prefs.theme_auto {
+                "Left/right opens the theme list (picking one leaves Auto)"
+            } else {
+                "Left/right opens the theme list"
+            }
+            .to_string()
+        },
+        adjust: |_| Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Fixed)),
+    },
+    SettingRow {
+        label: "Auto theme",
+        value: |s| {
+            if !s.prefs.theme_auto {
+                "Off".to_string()
+            } else if s.terminal_is_dark {
+                "On (terminal is dark)".to_string()
+            } else {
+                "On (terminal is light)".to_string()
+            }
+        },
+        help: |_| "Follow the terminal's own background color (OSC 11)".to_string(),
+        adjust: |_| Action::Settings(SettingsAction::ToggleThemeAuto),
+    },
+    SettingRow {
+        label: "Auto · dark",
+        value: |s| THEMES[s.prefs.dark_theme_index].name.to_string(),
+        help: |_| "Theme used when the terminal background is dark".to_string(),
+        adjust: |_| Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Dark)),
+    },
+    SettingRow {
+        label: "Auto · light",
+        value: |s| THEMES[s.prefs.light_theme_index].name.to_string(),
+        help: |_| "Theme used when the terminal background is light".to_string(),
+        adjust: |_| Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Light)),
     },
     SettingRow {
         label: "Transparent",

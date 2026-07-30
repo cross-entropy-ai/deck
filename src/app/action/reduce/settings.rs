@@ -68,14 +68,27 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
                 fx.push(Effect::OpenForwardOverlay(r.host.clone()));
             }
         }
-        SettingsAction::OpenThemePicker => {
+        SettingsAction::OpenThemePicker(slot) => {
             // Opens as a standalone overlay over the current view: from the
             // sidebar (`t`) it doesn't enter the settings page, from settings
             // it layers on top. Leaving `main_view`/`focus_mode` untouched lets
             // closing the picker return to wherever it was opened from.
             state.settings.theme_picker_open = true;
-            state.settings.theme_picker_selected =
-                state.prefs.theme_index.min(THEMES.len().saturating_sub(1));
+            state.settings.theme_picker_slot = slot;
+            state.settings.theme_picker_selected = state
+                .prefs
+                .theme_slot(slot)
+                .min(THEMES.len().saturating_sub(1));
+        }
+        SettingsAction::ToggleThemeAuto => {
+            state.prefs.theme_auto = !state.prefs.theme_auto;
+            fx.save_config();
+            // Re-probe on the way in: the terminal may have flipped appearance
+            // since startup, and if auto was off at startup we never probed.
+            if state.prefs.theme_auto {
+                fx.push(Effect::ProbeTerminalBg);
+            }
+            fx.push(Effect::ApplyTmuxTheme);
         }
         SettingsAction::CloseThemePicker => {
             state.settings.theme_picker_open = false;
@@ -83,7 +96,10 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         SettingsAction::ThemePickerNext => {
             state.settings.theme_picker_selected =
                 step_clamped(state.settings.theme_picker_selected, THEMES.len(), 1);
-            state.prefs.theme_index = state.settings.theme_picker_selected;
+            state.prefs.set_theme_slot(
+                state.settings.theme_picker_slot,
+                state.settings.theme_picker_selected,
+            );
             fx.save_config();
             fx.push(Effect::ApplyTmuxTheme);
         }
@@ -93,7 +109,10 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             if state.settings.theme_picker_selected > 0 {
                 state.settings.theme_picker_selected =
                     step_clamped(state.settings.theme_picker_selected, THEMES.len(), -1);
-                state.prefs.theme_index = state.settings.theme_picker_selected;
+                state.prefs.set_theme_slot(
+                    state.settings.theme_picker_slot,
+                    state.settings.theme_picker_selected,
+                );
                 fx.save_config();
                 fx.push(Effect::ApplyTmuxTheme);
             }

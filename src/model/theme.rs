@@ -396,3 +396,19 @@ pub const THEMES: &[Theme] = &[
         error: Color::Rgb(235, 0, 29),
     },
 ];
+
+/// Which theme slot a picker edits: the fixed choice, or one of the two
+/// "follow terminal" slots. See `Prefs::theme_auto`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ThemeSlot {
+    #[default]
+    Fixed,
+    Dark,
+    Light,
+}
+
+/// Index of the theme named `name`, falling back to the first theme (the
+/// default) when a config names one that no longer exists.
+pub fn index_of(name: &str) -> usize {
+    THEMES.iter().position(|t| t.name == name).unwrap_or(0)
+}

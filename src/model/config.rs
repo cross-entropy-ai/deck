@@ -66,6 +66,14 @@ impl<'de> Deserialize<'de> for KeyBindingValue {
 #[serde(default)]
 pub struct Config {
     pub theme: String,
+    /// Follow the host terminal's appearance instead of `theme`: deck probes
+    /// the terminal's background color (OSC 11) and uses `dark_theme` or
+    /// `light_theme`. Terminals that don't answer the probe fall back to
+    /// `dark_theme`.
+    pub theme_auto: bool,
+    /// The themes `theme_auto` picks between, by name.
+    pub dark_theme: String,
+    pub light_theme: String,
     pub layout: LayoutMode,
     pub show_borders: bool,
     /// Which sidebar tab is active on launch: `projects` (tmux sessions)
@@ -126,6 +134,9 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             theme: "Catppuccin Mocha (Dark)".to_string(),
+            theme_auto: false,
+            dark_theme: "Catppuccin Mocha (Dark)".to_string(),
+            light_theme: "Catppuccin Latte (Light)".to_string(),
             layout: LayoutMode::Horizontal,
             show_borders: true,
             sidebar_tab: SidebarTab::Projects,

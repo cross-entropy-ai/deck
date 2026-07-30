@@ -2,7 +2,6 @@ use crate::action::{self, Action, MenuAction, NewSessionAction, PfAction, Summar
 use crate::effects::{Effect, SideEffect};
 use crate::session::SessionControl;
 use crate::state::{FocusMode, MainView};
-use crate::theme::THEMES;
 use crate::tmux;
 
 use super::new_session_flow::new_session_list_query;
@@ -822,7 +821,10 @@ impl App {
                     self.dispatch(action);
                 }
                 Effect::ApplyTmuxTheme => {
-                    tmux::apply_theme(&THEMES[self.state.prefs.theme_index]);
+                    tmux::apply_theme(self.state.active_theme());
+                }
+                Effect::ProbeTerminalBg => {
+                    self.probe_terminal_bg();
                 }
                 Effect::RefreshSessions => {
                     self.request_refresh();

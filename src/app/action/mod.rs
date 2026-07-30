@@ -116,7 +116,13 @@ pub enum SettingsAction {
     Prev,
     Adjust,
     AdjustPrev,
-    OpenThemePicker,
+    /// Open the theme picker for one slot: the fixed theme (the sidebar `t`
+    /// key and the "Theme" row) or the dark/light slot "follow terminal" mode
+    /// chooses from.
+    OpenThemePicker(crate::theme::ThemeSlot),
+    /// Turn "follow terminal" mode on/off. Turning it on re-probes the host
+    /// terminal's background.
+    ToggleThemeAuto,
     CloseThemePicker,
     ThemePickerNext,
     ThemePickerPrev,

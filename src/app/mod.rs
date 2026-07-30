@@ -260,7 +260,13 @@ impl App {
             suppress_next_periodic_refresh: false,
         };
 
-        tmux::apply_theme(&THEMES[theme_index]);
+        // Resolve "follow terminal" before the first frame: the probe reads the
+        // real tty, so it has to happen before the event loop starts consuming
+        // input. Terminals that don't answer keep the assumed dark.
+        if app.state.prefs.theme_auto {
+            app.probe_terminal_bg();
+        }
+        tmux::apply_theme(app.state.active_theme());
         app.request_refresh();
 
         // Send Bootstrap once so the worker establishes ControlMasters and
@@ -278,6 +284,19 @@ impl App {
         }
 
         Ok(app)
+    }
+
+    /// Ask the host terminal whether its background is dark (OSC 11) and store
+    /// the answer for `active_theme`. A terminal that doesn't answer leaves the
+    /// previous value alone, so "follow terminal" degrades to the dark theme
+    /// rather than flipping around.
+    ///
+    /// Only safe to call while nothing else is reading terminal input — at
+    /// startup, or from effect dispatch between event-loop polls.
+    pub(super) fn probe_terminal_bg(&mut self) {
+        if let Some(dark) = crate::termbg::terminal_is_dark(crate::termbg::PROBE_TIMEOUT) {
+            self.state.terminal_is_dark = dark;
+        }
     }
 
     /// The terminal pane that owns the main view: local by default, or the
