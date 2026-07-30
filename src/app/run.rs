@@ -426,6 +426,13 @@ impl App {
                         needs_render = true;
                         force_render = true;
                     }
+                    // Coming back from wherever the user just flipped their
+                    // system appearance: re-resolve Auto mode's dark/light pick.
+                    Event::FocusGained => {
+                        let flipped = self.reprobe_terminal_bg_on_focus();
+                        let redraw = if flipped { Redraw::Force } else { Redraw::No };
+                        redraw.apply(&mut needs_render, &mut force_render);
+                    }
                     _ => {}
                 }
             }

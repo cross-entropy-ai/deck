@@ -126,6 +126,10 @@ pub struct App {
     /// refresh. Explicit refresh-causing actions still run, and the following
     /// periodic tick resumes normally.
     pub(super) suppress_next_periodic_refresh: bool,
+    /// Set once the host terminal ignores an OSC 11 probe: it won't answer the
+    /// next one either, so stop re-probing it on focus (each attempt costs the
+    /// full probe timeout with terminal input blocked).
+    pub(super) terminal_bg_unanswered: bool,
 }
 
 /// Result of a remote agent-pane focus attempt, sent back from the
@@ -258,6 +262,7 @@ impl App {
             focus_seq: 0,
             own_session: tmux::own_session(),
             suppress_next_periodic_refresh: false,
+            terminal_bg_unanswered: false,
         };
 
         // Resolve "follow terminal" before the first frame: the probe reads the
@@ -294,9 +299,33 @@ impl App {
     /// Only safe to call while nothing else is reading terminal input — at
     /// startup, or from effect dispatch between event-loop polls.
     pub(super) fn probe_terminal_bg(&mut self) {
-        if let Some(dark) = crate::termbg::terminal_is_dark(crate::termbg::PROBE_TIMEOUT) {
-            self.state.terminal_is_dark = dark;
+        match crate::termbg::terminal_is_dark(crate::termbg::PROBE_TIMEOUT) {
+            Some(dark) => self.state.terminal_is_dark = dark,
+            // Remember the silence: every probe against a terminal that doesn't
+            // implement OSC 11 blocks input for the full timeout, so re-probing
+            // it on each focus-gain would be a recurring input stall.
+            None => self.terminal_bg_unanswered = true,
         }
+    }
+
+    /// Re-probe when the terminal regains focus, so Auto mode notices a system
+    /// appearance change made while deck sat in the background. Returns whether
+    /// the effective theme moved.
+    ///
+    /// Focus is the trigger because the terminal's own "color scheme changed"
+    /// notification (DEC mode 2031 → `CSI ? 997 ; N n`) never reaches us:
+    /// crossterm's CSI parser handles only `?…u` and `?…c` and drops the rest.
+    pub(super) fn reprobe_terminal_bg_on_focus(&mut self) -> bool {
+        if !self.state.prefs.theme_auto || self.terminal_bg_unanswered {
+            return false;
+        }
+        let before = self.state.active_theme_index();
+        self.probe_terminal_bg();
+        let changed = self.state.active_theme_index() != before;
+        if changed {
+            tmux::apply_theme(self.state.active_theme());
+        }
+        changed
     }
 
     /// The terminal pane that owns the main view: local by default, or the
