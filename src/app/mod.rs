@@ -176,9 +176,11 @@ impl App {
         // Backfill defaults for any commands the user hasn't listed and
         // persist once if that added anything, so the file stays
         // self-documenting.
-        if crate::keybindings::ensure_complete(&mut cfg.keybindings) {
-            cfg.save();
-        }
+        let startup_save_error = if crate::keybindings::ensure_complete(&mut cfg.keybindings) {
+            cfg.save().err()
+        } else {
+            None
+        };
 
         let theme_index = THEMES.iter().position(|t| t.name == cfg.theme).unwrap_or(0);
         let (keybindings, kb_warnings) = Keybindings::from_config(&cfg.keybindings);
@@ -198,6 +200,9 @@ impl App {
         // instead; its TTL clears them after a few seconds.
         if !kb_warnings.is_empty() {
             state.show_warning(kb_warnings.join("; "));
+        }
+        if let Some(e) = startup_save_error {
+            state.show_warning(format!("config save failed: {e}"));
         }
 
         let (update_checker, last_update_request) = if cfg.update_check == UpdateCheckMode::Enabled
@@ -400,7 +405,7 @@ impl App {
             .state
             .active_agent
             .as_ref()
-            .and_then(|t| t.host.as_deref())
+            .and_then(|t| crate::system::tmux::TmuxSystem::host_of(&t.lane))
             == Some(host)
         {
             self.state.active_agent = None;

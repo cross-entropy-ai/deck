@@ -3,29 +3,7 @@
 //! local + remote create paths with their post-create switch.
 
 use super::App;
-
-/// tmux session-name format rules, shared by local and remote creation
-/// (uniqueness is checked separately against the relevant session list).
-fn session_name_format_error(name: &str) -> Option<&'static str> {
-    match name {
-        "" => Some("name required"),
-        n if n.contains('.') => Some("name cannot contain '.'"),
-        n if n.contains(':') => Some("name cannot contain ':'"),
-        _ => None,
-    }
-}
-
-fn validate_unique_session_name<'a>(
-    name: &str,
-    existing: impl IntoIterator<Item = &'a str>,
-) -> Option<&'static str> {
-    session_name_format_error(name).or_else(|| {
-        existing
-            .into_iter()
-            .any(|s| s == name)
-            .then_some("name already in use")
-    })
-}
+use crate::new_session::validate_unique_session_name;
 
 struct NewSessionTarget {
     host: Option<String>,
@@ -180,12 +158,17 @@ impl App {
         }
         let dir = self.state.overlay.new_session.as_ref()?.input_str().trim();
         let dir = if dir.is_empty() { "~" } else { dir }.to_string();
+        let lane = self
+            .state
+            .entries
+            .iter()
+            .find(|entry| entry.host.as_deref() == Some(host.as_str()))
+            .map(|entry| entry.lane.clone());
+        let Some(lane) = lane else {
+            return self.set_new_session_error("session lane is unavailable");
+        };
         self.state.overlay.new_session = None;
-        Some(crate::effects::CreateSessionRequest {
-            name,
-            dir,
-            host: Some(host),
-        })
+        Some(crate::effects::CreateSessionRequest { name, dir, lane })
     }
 
     fn confirm_local_new_session(
@@ -210,12 +193,16 @@ impl App {
         match std::fs::metadata(&resolved) {
             Ok(m) if m.is_dir() => {
                 let dir = resolved.to_string_lossy().to_string();
+                let lane = self
+                    .state
+                    .local_entries()
+                    .next()
+                    .map(|entry| entry.lane.clone());
+                let Some(lane) = lane else {
+                    return self.set_new_session_error("local session lane is unavailable");
+                };
                 self.state.overlay.new_session = None;
-                Some(crate::effects::CreateSessionRequest {
-                    name,
-                    dir,
-                    host: None,
-                })
+                Some(crate::effects::CreateSessionRequest { name, dir, lane })
             }
             Ok(_) => self.set_new_session_error("not a directory"),
             Err(e) => self.set_new_session_error(
@@ -238,21 +225,35 @@ impl App {
         else {
             return;
         };
-        self.submit_session(host, crate::session::executor::SessionOp::ListDir { path });
+        let Some(lane) = self
+            .state
+            .entries
+            .iter()
+            .find(|entry| entry.host.as_deref() == host.as_deref())
+            .map(|entry| entry.lane.clone())
+        else {
+            return;
+        };
+        self.submit_session(lane, crate::session::executor::SessionOp::ListDir { path });
     }
 
     /// Switch to a just-created session, run when `Created` drains. Local:
     /// re-point the client. Remote: switch immediately if the attach PTY is
     /// live; otherwise the host had no tmux server, so reconnect now and defer
     /// the switch until the PTY comes up (the spawner's `Spawned` event fires it).
-    pub(super) fn post_create_switch(&mut self, host: Option<String>, name: &str) {
+    pub(super) fn post_create_switch(
+        &mut self,
+        lane: &crate::lane::LaneId,
+        host: Option<String>,
+        name: &str,
+    ) {
         match host {
-            None => self.switch_client(name),
+            None => self.switch_client(lane.clone(), name),
             Some(host) => {
                 if self.remote.is_live(&host) {
-                    self.switch_to_remote(&host, name);
+                    self.switch_to_remote(lane.clone(), &host, name);
                 } else {
-                    self.remote.set_pending_switch(&host, name);
+                    self.remote.set_pending_switch(lane.clone(), &host, name);
                     self.respawn_remote_host(&host);
                 }
             }

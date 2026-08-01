@@ -111,7 +111,8 @@ fn reachable_host_with_sessions_lists_them() {
 #[test]
 fn persist_session_order_chains_quoted_set_options_over_ssh() {
     let runner = FakeRunner::new(ok(""));
-    persist_session_order_with(&runner, "box", &["a".to_string(), "b".to_string()]);
+    persist_session_order_with(&runner, "box", &["a".to_string(), "b".to_string()])
+        .expect("persist order");
     let calls = runner.calls();
     assert_eq!(calls.len(), 1, "one ssh hop");
     // Names and the `;` separator are single-quoted so the remote shell
@@ -130,8 +131,14 @@ fn persist_session_order_chains_quoted_set_options_over_ssh() {
 #[test]
 fn persist_session_order_empty_is_noop() {
     let runner = FakeRunner::new(ok(""));
-    persist_session_order_with(&runner, "box", &[]);
+    persist_session_order_with(&runner, "box", &[]).expect("empty order is valid");
     assert!(runner.calls().is_empty());
+}
+
+#[test]
+fn persist_session_order_returns_ssh_failure() {
+    let runner = FakeRunner::failing();
+    assert!(persist_session_order_with(&runner, "box", &["a".to_string()]).is_err());
 }
 
 #[test]
@@ -177,7 +184,7 @@ fn switch_client_targets_deck_client_explicitly() {
     // client — same scoping as focus_pane — and no-op when the marker is
     // missing rather than switch an untargeted client.
     let runner = FakeRunner::new(ok(""));
-    switch_client_with(&runner, "box", 7, "work");
+    switch_client_with(&runner, "box", 7, "work").expect("switch client");
     let calls = runner.calls();
     assert_eq!(calls.len(), 1, "one ssh hop");
     assert!(

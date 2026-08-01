@@ -58,11 +58,11 @@ deck
 ```
 
 > [!NOTE]
-> **Requires `tmux`** installed and available on `PATH`. If there are no sessions, deck tries to create a detached session named `default` so it can start.
+> **Requires `tmux`** installed and available on `PATH`. On startup with no tmux sessions, deck creates a detached bootstrap session named `default`. The New Session picker suggests the next free `session-N` name.
 
 deck runs two panes. The **sidebar** lists your tmux sessions. The **main pane** stays attached to the focused session.
 
-Configuration lives in `~/.config/deck/config.json`.
+Configuration lives in `~/.config/deck/config.yaml`. Existing deck or tmux-sidebar JSON configuration is migrated on first load.
 
 > [!TIP]
 > Click a session to switch, drag a project to reorder it, right-click to rename or close it, or drag the edge between panes to resize.

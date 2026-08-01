@@ -1,6 +1,6 @@
 //! Async session control-plane executor.
 //!
-//! Each backend key (`Option<String>` host, `None` = local) gets its own FIFO
+//! Each [`LaneId`] gets its own FIFO
 //! worker thread: ops on one backend run in submission order, different
 //! backends run in parallel. The `SessionControl` backend is captured at
 //! submit time on the UI thread so it sees the current tty/marker. Outcomes
@@ -16,37 +16,62 @@ use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
-use super::SessionControl;
+use super::{SessionControl, SessionControlError};
 use crate::lane::LaneId;
-use crate::system::tmux::lane;
 
 /// What to run on a worker. Built on the UI thread; the backend that runs
 /// it is captured separately at submit time.
 pub enum SessionOp {
-    Switch { name: String },
-    Rename { old: String, new: String },
-    Kill { name: String },
-    NewSession { name: String, dir: String },
-    PersistOrder { order: Vec<String> },
-    ListDir { path: String },
+    Switch {
+        name: String,
+    },
+    Rename {
+        old: String,
+        new: String,
+        /// Original local manual-order slot. Used only as a fallback if a
+        /// refresh observes the backend rename before this outcome lands.
+        order_index: Option<usize>,
+    },
+    Kill {
+        name: String,
+    },
+    NewSession {
+        name: String,
+        dir: String,
+    },
+    PersistOrder {
+        order: Vec<String>,
+    },
+    ListDir {
+        path: String,
+    },
 }
 
-/// Delivered back to the UI thread once an op finishes. `host` tags which
-/// backend ran it (`None` = local) so the completion handler can route.
+/// Delivered back to the UI thread once an op finishes. `lane` identifies the
+/// exact mounted backend lane that ran it so the completion handler can route.
 pub struct SessionOutcome {
-    pub host: Option<String>,
+    pub lane: LaneId,
     pub result: OpOutcome,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum OpOutcome {
     Switched,
-    Renamed,
+    Renamed {
+        old: String,
+        new: String,
+        order_index: Option<usize>,
+    },
     Killed,
     Created {
         name: String,
         created: bool,
     },
     OrderPersisted,
+    Failed {
+        operation: SessionOperation,
+        error: SessionControlError,
+    },
     DirListed {
         path: String,
         entries: Vec<String>,
@@ -54,10 +79,29 @@ pub enum OpOutcome {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionOperation {
+    Switch,
+    Rename,
+    Kill,
+    PersistOrder,
+}
+
+impl std::fmt::Display for SessionOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Switch => "switch session",
+            Self::Rename => "rename session",
+            Self::Kill => "kill session",
+            Self::PersistOrder => "save session order",
+        })
+    }
+}
+
 struct Job {
     backend: Box<dyn SessionControl + Send>,
     op: SessionOp,
-    host: Option<String>,
+    lane: LaneId,
 }
 
 /// Owns one FIFO worker thread per backend key and a single result channel
@@ -79,28 +123,20 @@ impl SessionExecutor {
         }
     }
 
-    /// Enqueue `op` on `host`'s FIFO worker, run via `backend` (captured now so
+    /// Enqueue `op` on `lane`'s FIFO worker, run via `backend` (captured now so
     /// it sees the current tty/marker). Spawns the worker lazily on first use.
     /// Fire-and-forget: a dead worker is silently dropped; next refresh reconciles.
-    pub fn submit(
-        &mut self,
-        host: Option<String>,
-        backend: Box<dyn SessionControl + Send>,
-        op: SessionOp,
-    ) {
+    pub fn submit(&mut self, lane: LaneId, backend: Box<dyn SessionControl + Send>, op: SessionOp) {
         // Cache the sender only after the thread starts, so a failed spawn
         // can't park a dead sender that swallows later ops (the op is dropped;
         // next refresh reconciles). Common path (worker exists) looks up via
         // borrowed `&str` key to avoid allocating; first-use builds a `LaneId`.
-        let tx = match self.senders.get(lane(host.as_deref()).as_str()) {
+        let tx = match self.senders.get(lane.as_str()) {
             Some(tx) => tx,
             None => {
                 let outcome_tx = self.outcome_tx.clone();
                 let (tx, rx) = mpsc::channel::<Job>();
-                let name = match &host {
-                    None => "deck-session-local".to_string(),
-                    Some(h) => format!("deck-session-{h}"),
-                };
+                let name = format!("deck-session-{}-{}", lane.system(), lane.lane());
                 if thread::Builder::new()
                     .name(name)
                     .spawn(move || worker_loop(rx, outcome_tx))
@@ -108,17 +144,17 @@ impl SessionExecutor {
                 {
                     return;
                 }
-                self.senders.entry(lane(host.as_deref())).or_insert(tx)
+                self.senders.entry(lane.clone()).or_insert(tx)
             }
         };
-        let _ = tx.send(Job { backend, op, host });
+        let _ = tx.send(Job { backend, op, lane });
     }
 
     /// Drop `host`'s FIFO worker lane: removing its sender ends the worker's
     /// `recv` loop and lets the parked thread exit. Called on host-offboard so
     /// it doesn't leak a parked worker; a later op re-spawns a fresh one.
-    pub fn remove(&mut self, key: &Option<String>) {
-        self.senders.remove(lane(key.as_deref()).as_str());
+    pub fn remove(&mut self, lane: &LaneId) {
+        self.senders.remove(lane.as_str());
     }
 
     /// Non-blocking drain of one completed outcome, if any.
@@ -138,7 +174,7 @@ fn worker_loop(rx: Receiver<Job>, outcome_tx: Sender<SessionOutcome>) {
     // submission order. recv() ends the loop once the executor (and thus the
     // sender) is dropped at shutdown.
     while let Ok(job) = rx.recv() {
-        let host = job.host.clone();
+        let lane = job.lane.clone();
         // Isolate a panicking backend call so it can't kill the worker and
         // leave a sticky sender that swallows every later op. On panic we skip
         // the outcome but keep draining.
@@ -146,12 +182,12 @@ fn worker_loop(rx: Receiver<Job>, outcome_tx: Sender<SessionOutcome>) {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(job.backend, job.op)));
         match outcome {
             Ok(result) => {
-                if outcome_tx.send(SessionOutcome { host, result }).is_err() {
+                if outcome_tx.send(SessionOutcome { lane, result }).is_err() {
                     break;
                 }
             }
             Err(_) => {
-                debug_assert!(false, "session executor op panicked for {host:?}");
+                debug_assert!(false, "session executor op panicked for {lane:?}");
             }
         }
     }
@@ -159,26 +195,46 @@ fn worker_loop(rx: Receiver<Job>, outcome_tx: Sender<SessionOutcome>) {
 
 fn run(backend: Box<dyn SessionControl + Send>, op: SessionOp) -> OpOutcome {
     match op {
-        SessionOp::Switch { name } => {
-            backend.switch_to(&name);
-            OpOutcome::Switched
-        }
-        SessionOp::Rename { old, new } => {
-            backend.rename(&old, &new);
-            OpOutcome::Renamed
-        }
-        SessionOp::Kill { name } => {
-            backend.kill(&name);
-            OpOutcome::Killed
-        }
+        SessionOp::Switch { name } => backend.switch_to(&name).map_or_else(
+            |error| OpOutcome::Failed {
+                operation: SessionOperation::Switch,
+                error,
+            },
+            |()| OpOutcome::Switched,
+        ),
+        SessionOp::Rename {
+            old,
+            new,
+            order_index,
+        } => backend.rename(&old, &new).map_or_else(
+            |error| OpOutcome::Failed {
+                operation: SessionOperation::Rename,
+                error,
+            },
+            |()| OpOutcome::Renamed {
+                old,
+                new,
+                order_index,
+            },
+        ),
+        SessionOp::Kill { name } => backend.kill(&name).map_or_else(
+            |error| OpOutcome::Failed {
+                operation: SessionOperation::Kill,
+                error,
+            },
+            |()| OpOutcome::Killed,
+        ),
         SessionOp::NewSession { name, dir } => {
             let created = backend.create(&name, &dir);
             OpOutcome::Created { name, created }
         }
-        SessionOp::PersistOrder { order } => {
-            backend.persist_order(&order);
-            OpOutcome::OrderPersisted
-        }
+        SessionOp::PersistOrder { order } => backend.persist_order(&order).map_or_else(
+            |error| OpOutcome::Failed {
+                operation: SessionOperation::PersistOrder,
+                error,
+            },
+            |()| OpOutcome::OrderPersisted,
+        ),
         SessionOp::ListDir { path } => {
             let (entries, error) = backend.list_dir(&path);
             OpOutcome::DirListed {
@@ -198,53 +254,138 @@ mod tests {
     /// touching tmux/ssh.
     struct NoopBackend;
     impl SessionControl for NoopBackend {
-        fn switch_to(&self, _name: &str) {}
-        fn rename(&self, _old: &str, _new: &str) {}
-        fn kill(&self, _name: &str) {}
+        fn switch_to(&self, _name: &str) -> super::super::SessionControlResult {
+            Ok(())
+        }
+        fn rename(&self, _old: &str, _new: &str) -> super::super::SessionControlResult {
+            Ok(())
+        }
+        fn kill(&self, _name: &str) -> super::super::SessionControlResult {
+            Ok(())
+        }
         fn create(&self, _name: &str, _dir: &str) -> bool {
             true
         }
-        fn persist_order(&self, _order: &[String]) {}
+        fn persist_order(&self, _order: &[String]) -> super::super::SessionControlResult {
+            Ok(())
+        }
+        fn list_dir(&self, _path: &str) -> (Vec<String>, Option<String>) {
+            (Vec::new(), None)
+        }
+    }
+
+    struct FailingBackend;
+    impl SessionControl for FailingBackend {
+        fn switch_to(&self, _name: &str) -> super::super::SessionControlResult {
+            Err(SessionControlError::new("backend unavailable"))
+        }
+        fn rename(&self, _old: &str, _new: &str) -> super::super::SessionControlResult {
+            Err(SessionControlError::new("backend unavailable"))
+        }
+        fn kill(&self, _name: &str) -> super::super::SessionControlResult {
+            Err(SessionControlError::new("backend unavailable"))
+        }
+        fn create(&self, _name: &str, _dir: &str) -> bool {
+            false
+        }
+        fn persist_order(&self, _order: &[String]) -> super::super::SessionControlResult {
+            Err(SessionControlError::new("backend unavailable"))
+        }
         fn list_dir(&self, _path: &str) -> (Vec<String>, Option<String>) {
             (Vec::new(), None)
         }
     }
 
     #[test]
+    fn mutation_failures_are_returned_as_typed_outcomes() {
+        let cases = [
+            (
+                SessionOp::Switch { name: "a".into() },
+                SessionOperation::Switch,
+            ),
+            (
+                SessionOp::Rename {
+                    old: "a".into(),
+                    new: "b".into(),
+                    order_index: None,
+                },
+                SessionOperation::Rename,
+            ),
+            (SessionOp::Kill { name: "a".into() }, SessionOperation::Kill),
+            (
+                SessionOp::PersistOrder {
+                    order: vec!["a".into()],
+                },
+                SessionOperation::PersistOrder,
+            ),
+        ];
+
+        for (op, expected_operation) in cases {
+            assert_eq!(
+                run(Box::new(FailingBackend), op),
+                OpOutcome::Failed {
+                    operation: expected_operation,
+                    error: SessionControlError::new("backend unavailable"),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn successful_rename_carries_names_for_commit_on_ui_thread() {
+        assert_eq!(
+            run(
+                Box::new(NoopBackend),
+                SessionOp::Rename {
+                    old: "before".into(),
+                    new: "after".into(),
+                    order_index: Some(2),
+                }
+            ),
+            OpOutcome::Renamed {
+                old: "before".into(),
+                new: "after".into(),
+                order_index: Some(2),
+            }
+        );
+    }
+
+    #[test]
     fn offboard_prunes_executor_sender() {
         let mut exec = SessionExecutor::new();
-        let host = Some("web".to_string());
+        let lane = crate::system::tmux::TmuxSystem::host_lane("web");
         // First submit spawns the worker and caches the sender.
         exec.submit(
-            host.clone(),
+            lane.clone(),
             Box::new(NoopBackend),
             SessionOp::Switch {
                 name: "main".to_string(),
             },
         );
         assert!(
-            exec.senders.contains_key(lane(host.as_deref()).as_str()),
+            exec.senders.contains_key(lane.as_str()),
             "submit should cache the host's FIFO sender"
         );
 
         // Offboard reaps the lane.
-        exec.remove(&host);
+        exec.remove(&lane);
         assert!(
-            !exec.senders.contains_key(lane(host.as_deref()).as_str()),
+            !exec.senders.contains_key(lane.as_str()),
             "remove should prune the offboarded host's sender"
         );
 
         // A live host (the local None lane) is untouched by removing another.
+        let local_lane = crate::system::tmux::TmuxSystem::local_lane();
         exec.submit(
-            None,
+            local_lane.clone(),
             Box::new(NoopBackend),
             SessionOp::Switch {
                 name: "local".to_string(),
             },
         );
-        exec.remove(&host);
+        exec.remove(&lane);
         assert!(
-            exec.senders.contains_key(lane(None).as_str()),
+            exec.senders.contains_key(local_lane.as_str()),
             "removing one host must not disturb another lane"
         );
     }

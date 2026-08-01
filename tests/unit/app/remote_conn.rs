@@ -149,8 +149,9 @@ fn offboard_clears_pending_switch_and_switch_verify_and_bumps_generation() {
     let mut mgr = super::RemoteConnManager::start(&["h".to_string()], test_pty_size());
     let gen_before = mgr.generation("h");
 
-    mgr.set_pending_switch("h", "sess");
-    mgr.record_switch_submit("h", "sess", 5);
+    let lane = crate::system::tmux::TmuxSystem::host_lane("h");
+    mgr.set_pending_switch(lane.clone(), "h", "sess");
+    mgr.record_switch_submit(lane, "h", "sess", 5);
 
     let detach = mgr.offboard("h");
     assert!(!detach.was_active, "host was never the active pane");
@@ -273,7 +274,8 @@ fn verify_switch_refires_only_when_marker_advanced_and_host_still_active() {
         c.status = RemoteConnStatus::Connected;
         c.client_marker_id = 5;
     }
-    mgr.record_switch_submit("h", "sess", 5);
+    let lane = crate::system::tmux::TmuxSystem::host_lane("h");
+    mgr.record_switch_submit(lane.clone(), "h", "sess", 5);
     // Marker unchanged → switch ran fine, no re-fire.
     assert!(mgr.verify_switch("h").is_none());
 
@@ -282,7 +284,7 @@ fn verify_switch_refires_only_when_marker_advanced_and_host_still_active() {
     if let Some(c) = mgr.conns_mut().get_mut("h") {
         c.client_marker_id = 8;
     }
-    mgr.record_switch_submit("h", "sess", 5);
+    mgr.record_switch_submit(lane, "h", "sess", 5);
     let fire = mgr.verify_switch("h").expect("marker advanced → re-fire");
     assert_eq!(fire.host, "h");
     assert_eq!(fire.name, "sess");
@@ -292,7 +294,12 @@ fn verify_switch_refires_only_when_marker_advanced_and_host_still_active() {
 fn verify_switch_no_refire_when_user_navigated_away() {
     let mut mgr = super::RemoteConnManager::start(&["h".to_string()], test_pty_size());
     // Submitted while active, but the user has since gone back to local.
-    mgr.record_switch_submit("h", "sess", 5);
+    mgr.record_switch_submit(
+        crate::system::tmux::TmuxSystem::host_lane("h"),
+        "h",
+        "sess",
+        5,
+    );
     mgr.clear_active();
     if let Some(c) = mgr.conns_mut().get_mut("h") {
         c.client_marker_id = 8; // marker advanced, but moot
@@ -354,7 +361,7 @@ fn duplicate_marker_ready_fires_the_held_switch_only_once() {
         c.status = RemoteConnStatus::Connected;
         c.client_marker_id = 7;
     }
-    mgr.set_pending_switch("h", "sess");
+    mgr.set_pending_switch(crate::system::tmux::TmuxSystem::host_lane("h"), "h", "sess");
 
     let first = mgr.apply_spawn_event(marker_ready_event("h", 7, gen));
     assert!(first.is_some(), "first MarkerReady fires the held switch");

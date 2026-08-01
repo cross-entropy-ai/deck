@@ -2,7 +2,7 @@ mod keyboard;
 mod mouse;
 mod reduce;
 
-pub use keyboard::key_to_action;
+pub use keyboard::{key_to_action, paste_to_action};
 pub use mouse::mouse_to_action;
 pub use reduce::apply_action;
 

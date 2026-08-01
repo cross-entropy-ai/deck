@@ -81,21 +81,24 @@ fn list_sessions_with(runner: &dyn CommandRunner) -> Vec<SessionInfo> {
 /// Persist session display order via the `@deck_order` user option
 /// (0-based rank). The option lives on the tmux server, so order survives
 /// a deck restart without the config file; read back by `list_sessions`.
-/// Best-effort: a failed write just falls back to tmux's default order.
-pub fn persist_session_order(order: &[String]) {
+/// Failures are returned to the session executor for an in-UI warning.
+pub fn persist_session_order(order: &[String]) -> Result<(), CommandError> {
     persist_session_order_with(default_runner(), order)
 }
 
-fn persist_session_order_with(runner: &dyn CommandRunner, order: &[String]) {
+fn persist_session_order_with(
+    runner: &dyn CommandRunner,
+    order: &[String],
+) -> Result<(), CommandError> {
     if order.is_empty() {
-        return;
+        return Ok(());
     }
     // Batch into a single tmux invocation: `set-option -t a @deck_order 0 ;
     // set-option -t b @deck_order 1 ; ...` (same `;`-chaining as apply_theme).
     // Bare names, not `exact_target` — see `order_set_option_args`.
     let args = order_set_option_args(order, ";", |name| name.to_string());
     let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
-    let _ = runner.run("tmux", &args_ref, TMUX_TIMEOUT);
+    runner.run("tmux", &args_ref, TMUX_TIMEOUT).map(|_| ())
 }
 
 /// Every pane on the local tmux server with the identity agent detection
@@ -161,19 +164,31 @@ fn parse_client_session_for_tty(raw: &str, client_tty: &str) -> Option<String> {
 }
 
 /// Switch the current client to a different session.
-pub fn switch_session(name: &str) {
-    let _ = tmux(&["switch-client", "-t", &exact_target(name)]);
+pub fn switch_session(name: &str) -> Result<(), CommandError> {
+    tmux_with(
+        default_runner(),
+        &["switch-client", "-t", &exact_target(name)],
+    )
+    .map(|_| ())
 }
 
 /// Kill a tmux session by name.
-pub fn kill_session(name: &str) {
-    let _ = tmux(&["kill-session", "-t", &exact_target(name)]);
+pub fn kill_session(name: &str) -> Result<(), CommandError> {
+    tmux_with(
+        default_runner(),
+        &["kill-session", "-t", &exact_target(name)],
+    )
+    .map(|_| ())
 }
 
 /// Rename a tmux session.
-pub fn rename_session(old_name: &str, new_name: &str) {
+pub fn rename_session(old_name: &str, new_name: &str) -> Result<(), CommandError> {
     // `-t` is the lookup target (exact match); `new_name` is the new label.
-    let _ = tmux(&["rename-session", "-t", &exact_target(old_name), new_name]);
+    tmux_with(
+        default_runner(),
+        &["rename-session", "-t", &exact_target(old_name), new_name],
+    )
+    .map(|_| ())
 }
 
 /// Create a new detached session with the given name and starting directory.
@@ -184,14 +199,18 @@ pub fn new_session(name: &str, dir: &str) -> Option<String> {
 }
 
 /// Switch a specific tmux client (by TTY) to a different session.
-pub fn switch_client_for_tty(client_tty: &str, session: &str) {
-    let _ = tmux(&[
-        "switch-client",
-        "-c",
-        client_tty,
-        "-t",
-        &exact_target(session),
-    ]);
+pub fn switch_client_for_tty(client_tty: &str, session: &str) -> Result<(), CommandError> {
+    tmux_with(
+        default_runner(),
+        &[
+            "switch-client",
+            "-c",
+            client_tty,
+            "-t",
+            &exact_target(session),
+        ],
+    )
+    .map(|_| ())
 }
 
 /// Outcome of an agent-pane focus (local or remote). `ExactPane`: the

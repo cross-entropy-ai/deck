@@ -36,15 +36,29 @@ pub enum Modal {
 pub struct RenameState {
     pub original_name: String,
     pub input: TextArea<'static>,
+    /// Stable routing identity retained while the overlay is open.
+    pub lane: crate::lane::LaneId,
     /// `Some(host)` when the rename targets a remote session.
     pub host: Option<String>,
 }
 
 impl RenameState {
+    #[cfg(test)]
     pub fn new(original_name: String, initial: String, host: Option<String>) -> Self {
+        let lane = crate::system::tmux::lane(host.as_deref());
+        Self::new_with_lane(original_name, initial, lane, host)
+    }
+
+    pub fn new_with_lane(
+        original_name: String,
+        initial: String,
+        lane: crate::lane::LaneId,
+        host: Option<String>,
+    ) -> Self {
         Self {
             original_name,
             input: crate::new_session::make_textarea(&initial),
+            lane,
             host,
         }
     }

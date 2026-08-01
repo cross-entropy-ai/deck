@@ -375,6 +375,7 @@ impl Default for BuiltLayout {
 /// run — the lists are small, so the symmetry is worth the copies.
 #[derive(Debug, Clone)]
 pub struct AgentEntry {
+    pub lane: LaneId,
     pub host: Option<String>,
     pub kind: AgentEntryKind,
 }
@@ -415,12 +416,12 @@ pub struct DividerHit {
     pub command: String,
 }
 
-/// A detected agent's switch target, keyed by host (`None` = local).
+/// A detected agent's switch target, keyed by its mounted backend lane.
 /// `pane_id` is the stable `%N` handle that focuses the exact pane;
 /// `session` is the `switch-client` target (renames, doesn't renumber).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentTarget {
-    pub host: Option<String>,
+    pub lane: LaneId,
     pub session: String,
     pub pane_id: String,
 }

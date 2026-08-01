@@ -23,11 +23,11 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         }
     }
 
-    // cmd-1..cmd-9 switch to the Nth session from anywhere outside a modal,
-    // regardless of which half has focus. Needs a terminal that reports the
-    // Super modifier (kitty keyboard protocol).
+    // Cmd/Super-1..9 remains a global compatibility shortcut: plain digits are
+    // configurable commands below, while the terminal-dependent Super form
+    // must work from the PTY without making plain digits global too.
     if key.modifiers.contains(KeyModifiers::SUPER) {
-        if let Some(action) = digit_jump(key, state) {
+        if let Some(action) = global_digit_jump(key, state) {
             return action;
         }
     }
@@ -52,20 +52,40 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     }
 }
 
-/// `1`-`9` jump to the Nth row of the unified flat list (local rows then
-/// remotes), matching the numbered tabs in the vertical layout so `3` reaches a
-/// remote `host:session` tab. An out-of-range digit is swallowed, not passed on.
-/// `None` means the key isn't a digit.
-fn digit_jump(key: &KeyEvent, state: &AppState) -> Option<Action> {
+/// Turn terminal paste into the same PTY-forwarding action used by typed input,
+/// so warnings and modal/view policy are applied before dispatch writes bytes.
+pub fn paste_to_action(text: &str, state: &AppState) -> Action {
+    if state.focus_mode != FocusMode::Main
+        || state.main_view == MainView::Settings
+        || state.active_modal().is_some()
+    {
+        return Action::None;
+    }
+
+    let mut bytes = Vec::with_capacity(text.len() + 12);
+    bytes.extend_from_slice(b"\x1b[200~");
+    bytes.extend_from_slice(text.as_bytes());
+    bytes.extend_from_slice(b"\x1b[201~");
+    Action::ForwardKey(bytes)
+}
+
+/// Map a zero-based *visible* slot to its underlying flat focus index. Hidden
+/// rows in collapsed sections do not consume number shortcuts.
+fn visible_row_jump(slot: usize, state: &AppState) -> Action {
+    (0..state.focusable_count())
+        .filter(|&idx| !state.is_focus_collapsed(idx))
+        .nth(slot)
+        .map_or(Action::None, Action::NumberKeyJump)
+}
+
+/// Global Cmd/Super-1..9 compatibility shortcut. `None` means the key isn't a
+/// digit; an out-of-range digit is swallowed rather than forwarded to the PTY.
+fn global_digit_jump(key: &KeyEvent, state: &AppState) -> Option<Action> {
     let KeyCode::Char(c @ '1'..='9') = key.code else {
         return None;
     };
-    let idx = (c as usize) - ('1' as usize);
-    Some(if idx < state.focusable_count() {
-        Action::NumberKeyJump(idx)
-    } else {
-        Action::None
-    })
+    let slot = (c as usize) - ('1' as usize);
+    Some(visible_row_jump(slot, state))
 }
 
 /// The navigation keys the list-like overlays share, so their spellings live in
@@ -107,6 +127,20 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
         Command::FocusPrev => Action::FocusPrev,
         Command::SwitchProject => Action::SwitchProject,
         Command::NewLocalSession => Action::NewSession(NewSessionAction::OpenLocal),
+        Command::OpenPortForwards => open_port_forwards_action(state),
+        Command::SelectSession1
+        | Command::SelectSession2
+        | Command::SelectSession3
+        | Command::SelectSession4
+        | Command::SelectSession5
+        | Command::SelectSession6
+        | Command::SelectSession7
+        | Command::SelectSession8
+        | Command::SelectSession9 => visible_row_jump(
+            cmd.visible_row_slot()
+                .expect("select-session command has a visible row slot"),
+            state,
+        ),
         Command::KillSession => Action::KillSession,
         Command::ReorderUp => Action::ReorderSession(-1),
         Command::ReorderDown => Action::ReorderSession(1),
@@ -125,6 +159,20 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
         Command::TriggerUpgrade => Action::TriggerUpgrade,
         Command::ReloadConfig => Action::ReloadConfig,
     }
+}
+
+fn open_port_forwards_action(state: &AppState) -> Action {
+    // Port-forward is a per-host/session action — Projects tab only.
+    if !state.agents_tab_active() {
+        if let Some(host) = state
+            .focus_target()
+            .and_then(|target| state.entry_at(target))
+            .and_then(|entry| entry.host.clone())
+        {
+            return Action::Pf(PfAction::Open(host));
+        }
+    }
+    Action::None
 }
 
 /// Route a key to the per-modal handler for the active modal. Every modal
@@ -185,26 +233,8 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         return Action::Summary(SummaryAction::Cancel);
     }
 
-    if !key.modifiers.contains(KeyModifiers::ALT) {
-        if let Some(action) = digit_jump(key, state) {
-            return action;
-        }
-    }
-
     if let Some(cmd) = state.keybindings.lookup(key) {
         return command_to_action(cmd, state);
-    }
-
-    if key.code == KeyCode::Char('f') {
-        // Port-forward is a per-host/session action — Projects tab only.
-        if !state.agents_tab_active() {
-            if let Some(target) = state.focus_target() {
-                if let Some(host) = state.entry_at(target).and_then(|e| e.host.clone()) {
-                    return Action::Pf(PfAction::Open(host));
-                }
-            }
-        }
-        return Action::None;
     }
 
     Action::None

@@ -21,14 +21,23 @@ use std::collections::HashMap;
 static TMUX_SYSTEM: tmux::TmuxSystem = tmux::TmuxSystem;
 static SYSTEMS: &[&dyn System] = &[&TMUX_SYSTEM];
 
-/// The [`System`] that owns `lane`, resolved by its `system` id. Falls back to
-/// the first registered system for an unknown id (there is only one today).
-pub fn for_lane(lane: &LaneId) -> &'static dyn System {
+/// The [`System`] that owns `lane`, resolved by its `system` id.
+///
+/// Unknown ids are explicit: silently routing an unregistered lane through a
+/// different backend would execute control operations against the wrong
+/// system.
+pub fn for_lane(lane: &LaneId) -> Option<&'static dyn System> {
+    SYSTEMS.iter().copied().find(|s| s.id() == lane.system())
+}
+
+/// Enumerate all configured lanes across mounted systems in registration
+/// order. High-level layout code uses this instead of constructing a
+/// particular backend's lane ids.
+pub fn lanes(ctx: &SectionCtx<'_>) -> Vec<LaneId> {
     SYSTEMS
         .iter()
-        .copied()
-        .find(|s| s.id() == lane.system())
-        .unwrap_or(SYSTEMS[0])
+        .flat_map(|system| system.lanes(ctx))
+        .collect()
 }
 
 use crate::agent::DetectedAgent;
@@ -46,6 +55,10 @@ pub trait System: Send + Sync {
     /// Stable id for this system (e.g. `"tmux"`). Must match the `system`
     /// half of every [`LaneId`] this system hands out.
     fn id(&self) -> &str;
+
+    /// Configured lanes in display order. Include lanes that currently have no
+    /// sessions so the shell can render their empty/loading sections.
+    fn lanes(&self, ctx: &SectionCtx<'_>) -> Vec<LaneId>;
 
     /// The [`SectionDef`] for a single lane: the divider's title and buttons.
     /// The shell enumerates the lanes to lay out from its session list (so
@@ -115,4 +128,21 @@ pub struct LaneSnapshot {
     /// was inactive) or the agent probe failed — distinct from `Some(vec![])`
     /// (probed, none found), which the shell uses to drop stale agents.
     pub agents: Option<Vec<DetectedAgent>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_lane_does_not_fall_back_to_tmux() {
+        let lane = LaneId::new("fake-second-system", "primary");
+        assert!(for_lane(&lane).is_none());
+    }
+
+    #[test]
+    fn registered_lane_resolves_its_owner() {
+        let lane = tmux::TmuxSystem::local_lane();
+        assert_eq!(for_lane(&lane).map(System::id), Some(tmux::TMUX));
+    }
 }

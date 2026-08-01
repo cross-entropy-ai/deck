@@ -5,7 +5,8 @@
 //! of representative inputs — so help / confirm-kill / the settings input
 //! boxes can't leak global keys and clicks behind the overlay.
 
-use super::{key_to_action, mouse_to_action, Action, MenuAction};
+use super::{key_to_action, mouse_to_action, paste_to_action, Action, MenuAction};
+use crate::config::KeyBindingValue;
 use crate::menu::{ContextMenu, MenuKind};
 use crate::overlay::{ExcludeEditorState, Modal, RenameState};
 use crate::state::{AppState, FocusMode, MainView, SessionEntry, SessionEntryKind};
@@ -16,6 +17,7 @@ fn make_state() -> AppState {
     let mut state = AppState::new(120, 40);
     state.entries = (0..3)
         .map(|i| SessionEntry {
+            lane: crate::system::tmux::TmuxSystem::local_lane(),
             host: None,
             name: format!("sess-{i}"),
             dir: format!("/tmp/sess-{i}"),
@@ -193,6 +195,124 @@ fn super_digit_jumps_to_session_from_either_focus() {
         let key = KeyEvent::new(KeyCode::Char('9'), KeyModifiers::SUPER);
         assert!(matches!(key_to_action(&key, &state), Action::None));
     }
+}
+
+#[test]
+fn plain_digits_use_configurable_sidebar_commands_but_still_type_in_main() {
+    let mut state = make_state();
+    let key = KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE);
+
+    assert!(matches!(
+        key_to_action(&key, &state),
+        Action::NumberKeyJump(1)
+    ));
+
+    state.focus_mode = FocusMode::Main;
+    assert!(matches!(
+        key_to_action(&key, &state),
+        Action::ForwardKey(bytes) if bytes == b"2"
+    ));
+}
+
+#[test]
+fn numeric_command_counts_only_visible_rows() {
+    let mut state = make_state();
+    state.entries = vec![
+        state.entries[0].clone(),
+        SessionEntry {
+            lane: crate::system::tmux::lane(Some("hidden")),
+            host: Some("hidden".into()),
+            name: "hidden-a".into(),
+            dir: "/tmp/hidden-a".into(),
+            kind: SessionEntryKind::Live { is_current: false },
+        },
+        SessionEntry {
+            lane: crate::system::tmux::lane(Some("hidden")),
+            host: Some("hidden".into()),
+            name: "hidden-b".into(),
+            dir: "/tmp/hidden-b".into(),
+            kind: SessionEntryKind::Live { is_current: false },
+        },
+        SessionEntry {
+            lane: crate::system::tmux::lane(Some("visible")),
+            host: Some("visible".into()),
+            name: "visible-b".into(),
+            dir: "/tmp/visible-b".into(),
+            kind: SessionEntryKind::Live { is_current: false },
+        },
+    ];
+    state
+        .collapsed_sections
+        .insert(crate::system::tmux::lane(Some("hidden")));
+
+    let key = KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE);
+    assert!(matches!(
+        key_to_action(&key, &state),
+        Action::NumberKeyJump(3)
+    ));
+}
+
+#[test]
+fn port_forward_shortcut_can_be_rebound() {
+    let mut state = make_state();
+    state.entries = vec![SessionEntry {
+        lane: crate::system::tmux::lane(Some("prod")),
+        host: Some("prod".into()),
+        name: "main".into(),
+        dir: "/srv/main".into(),
+        kind: SessionEntryKind::Live { is_current: false },
+    }];
+    let raw = std::collections::BTreeMap::from([
+        (
+            "open_port_forwards".to_string(),
+            KeyBindingValue::Single("p".into()),
+        ),
+        ("select_session_1".to_string(), KeyBindingValue::Unbind),
+    ]);
+    state.keybindings = crate::keybindings::Keybindings::from_config(&raw).0;
+
+    assert!(matches!(
+        key_to_action(
+            &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE),
+            &state
+        ),
+        Action::None
+    ));
+    assert!(matches!(
+        key_to_action(
+            &KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
+            &state
+        ),
+        Action::Pf(crate::action::PfAction::Open(host)) if host == "prod"
+    ));
+}
+
+#[test]
+fn paste_is_bracketed_and_uses_the_forwarding_warning_policy() {
+    let mut state = make_state();
+    state.focus_mode = FocusMode::Main;
+
+    let action = paste_to_action("hello\nworld", &state);
+
+    assert!(matches!(
+        &action,
+        Action::ForwardKey(bytes) if bytes == b"\x1b[200~hello\nworld\x1b[201~"
+    ));
+    assert!(crate::app::App::warning_blocks_action(&action));
+}
+
+#[test]
+fn paste_does_not_bypass_sidebar_settings_or_modal_input_owners() {
+    let mut state = make_state();
+    assert!(matches!(paste_to_action("x", &state), Action::None));
+
+    state.focus_mode = FocusMode::Main;
+    state.main_view = MainView::Settings;
+    assert!(matches!(paste_to_action("x", &state), Action::None));
+
+    state.main_view = MainView::Terminal;
+    state.overlay.show_help = true;
+    assert!(matches!(paste_to_action("x", &state), Action::None));
 }
 
 fn mouse_at(kind: MouseEventKind, col: u16, row: u16) -> MouseEvent {

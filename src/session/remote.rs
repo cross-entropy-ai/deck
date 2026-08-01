@@ -4,7 +4,7 @@
 
 use crate::remote_tmux;
 
-use super::SessionControl;
+use super::{SessionControl, SessionControlError, SessionControlResult};
 
 /// Remote control-plane backend for a single host.
 pub struct RemoteControl {
@@ -24,24 +24,28 @@ impl RemoteControl {
 }
 
 impl SessionControl for RemoteControl {
-    fn switch_to(&self, name: &str) {
-        remote_tmux::switch_client(&self.host, self.marker_id, name);
+    fn switch_to(&self, name: &str) -> SessionControlResult {
+        remote_tmux::switch_client(&self.host, self.marker_id, name)
+            .map_err(|error| SessionControlError::new(error.to_string()))
     }
 
-    fn rename(&self, old: &str, new: &str) {
-        remote_tmux::rename_session(&self.host, old, new);
+    fn rename(&self, old: &str, new: &str) -> SessionControlResult {
+        remote_tmux::rename_session(&self.host, old, new)
+            .map_err(|error| SessionControlError::new(error.to_string()))
     }
 
-    fn kill(&self, name: &str) {
-        remote_tmux::kill_session(&self.host, name);
+    fn kill(&self, name: &str) -> SessionControlResult {
+        remote_tmux::kill_session(&self.host, name)
+            .map_err(|error| SessionControlError::new(error.to_string()))
     }
 
     fn create(&self, name: &str, dir: &str) -> bool {
         remote_tmux::new_session(&self.host, name, dir)
     }
 
-    fn persist_order(&self, order: &[String]) {
-        remote_tmux::persist_session_order(&self.host, order);
+    fn persist_order(&self, order: &[String]) -> SessionControlResult {
+        remote_tmux::persist_session_order(&self.host, order)
+            .map_err(|error| SessionControlError::new(error.to_string()))
     }
 
     fn list_dir(&self, path: &str) -> (Vec<String>, Option<String>) {

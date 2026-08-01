@@ -141,7 +141,7 @@ impl App {
         while let Some(ev) = self.remote.try_recv() {
             redraw = Redraw::Force;
             if let Some(fire) = self.remote.apply_spawn_event(ev) {
-                self.switch_to_remote(&fire.host, &fire.name);
+                self.switch_to_remote(fire.lane, &fire.host, &fire.name);
             }
         }
         redraw
@@ -415,11 +415,18 @@ impl App {
                         }
                         r.apply(&mut needs_render, &mut force_render);
                     }
-                    Event::Paste(text) if self.state.focus_mode == FocusMode::Main => {
-                        let mut bytes = b"\x1b[200~".to_vec();
-                        bytes.extend_from_slice(text.as_bytes());
-                        bytes.extend_from_slice(b"\x1b[201~");
-                        self.write_to_active_pty(&bytes);
+                    Event::Paste(text) => {
+                        let action = action::paste_to_action(&text, &self.state);
+                        if self.warning_state.is_some() && Self::warning_blocks_action(&action) {
+                            self.state.focus_mode = FocusMode::Sidebar;
+                            Redraw::Force.apply(&mut needs_render, &mut force_render);
+                            continue;
+                        }
+                        let (quit, r) = self.handle_input_action(action);
+                        if quit {
+                            break;
+                        }
+                        r.apply(&mut needs_render, &mut force_render);
                     }
                     Event::Resize(w, h) => {
                         self.dispatch(Action::Resize(w, h));

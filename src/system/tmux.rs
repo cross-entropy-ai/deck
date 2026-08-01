@@ -118,6 +118,16 @@ impl System for TmuxSystem {
         TMUX
     }
 
+    fn lanes(&self, ctx: &SectionCtx<'_>) -> Vec<LaneId> {
+        std::iter::once(Self::local_lane())
+            .chain(
+                ctx.remotes
+                    .iter()
+                    .map(|remote| Self::host_lane(&remote.host)),
+            )
+            .collect()
+    }
+
     fn section_for(&self, lane: &LaneId, ctx: &SectionCtx) -> SectionDef {
         section_def(ctx, lane)
     }

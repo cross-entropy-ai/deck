@@ -189,6 +189,9 @@ pub fn frame_rate_limit_label(fps: u16) -> &'static str {
 /// `kind` carries the liveness/placeholder distinction — see [`SessionEntryKind`].
 #[derive(Debug, Clone)]
 pub struct SessionEntry {
+    /// Stable routing identity. `host` remains temporarily for tmux-specific
+    /// labels and configuration lookups, but control paths use this lane.
+    pub lane: crate::lane::LaneId,
     /// `None` = local tmux server; `Some(host)` = a remote host over ssh.
     pub host: Option<String>,
     pub name: String,
@@ -227,6 +230,7 @@ impl SessionEntry {
     /// `NoSessions`): no session name or dir, the label comes from `kind`.
     pub fn placeholder(host: &str, kind: SessionEntryKind) -> Self {
         Self {
+            lane: crate::system::tmux::TmuxSystem::host_lane(host),
             host: Some(host.to_string()),
             name: String::new(),
             dir: String::new(),
@@ -1042,6 +1046,7 @@ impl AppState {
     /// onto a session switched to out-of-band (e.g. an agent-footer click), so
     /// the highlight tracks the viewed session like keyboard nav does (j/k moves
     /// cursor *and* switches). Mirrors `FocusTarget` numbering: locals, then remotes.
+    #[cfg(test)]
     pub fn focusable_index_for(&self, host: Option<&str>, session: &str) -> Option<usize> {
         self.entries
             .iter()

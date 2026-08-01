@@ -61,6 +61,16 @@ commands! {
     FocusPrev        => "focus_prev",        "navigate",                [key!(k), key!(up)];
     SwitchProject    => "switch_project",    "switch session",          [key!(enter)];
     NewLocalSession  => "new_local_session",  "new local session",       [key!(n)];
+    OpenPortForwards => "open_port_forwards", "open port forwards",      [key!(f)];
+    SelectSession1   => "select_session_1",   "select visible row 1",    [key!('1')];
+    SelectSession2   => "select_session_2",   "select visible row 2",    [key!('2')];
+    SelectSession3   => "select_session_3",   "select visible row 3",    [key!('3')];
+    SelectSession4   => "select_session_4",   "select visible row 4",    [key!('4')];
+    SelectSession5   => "select_session_5",   "select visible row 5",    [key!('5')];
+    SelectSession6   => "select_session_6",   "select visible row 6",    [key!('6')];
+    SelectSession7   => "select_session_7",   "select visible row 7",    [key!('7')];
+    SelectSession8   => "select_session_8",   "select visible row 8",    [key!('8')];
+    SelectSession9   => "select_session_9",   "select visible row 9",    [key!('9')];
     KillSession      => "kill_session",      "kill session",            [key!(x)];
     ReorderUp        => "reorder_up",        "move session up",         [key!(alt - up)];
     ReorderDown      => "reorder_down",      "move session down",       [key!(alt - down)];
@@ -86,6 +96,26 @@ impl Command {
 
     pub fn is_global(self) -> bool {
         matches!(self, Command::ToggleFocus)
+    }
+
+    /// Zero-based visible-row slot for the configurable number shortcuts.
+    pub fn visible_row_slot(self) -> Option<usize> {
+        Some(match self {
+            Self::SelectSession1 => 0,
+            Self::SelectSession2 => 1,
+            Self::SelectSession3 => 2,
+            Self::SelectSession4 => 3,
+            Self::SelectSession5 => 4,
+            Self::SelectSession6 => 5,
+            Self::SelectSession7 => 6,
+            Self::SelectSession8 => 7,
+            Self::SelectSession9 => 8,
+            _ => return None,
+        })
+    }
+
+    fn is_new_policy_shortcut(self) -> bool {
+        self == Self::OpenPortForwards || self.visible_row_slot().is_some()
     }
 }
 
@@ -236,9 +266,27 @@ pub fn ensure_complete(raw: &mut BTreeMap<String, KeyBindingValue>) -> bool {
             continue;
         }
         let keys = cmd.default_keys();
-        let value = match keys.as_slice() {
-            [one] => KeyBindingValue::Single(format_key(one)),
-            many => KeyBindingValue::Multi(many.iter().map(format_key).collect()),
+        // These shortcuts used to be hard-coded outside the binding table.
+        // On migration, an existing user binding on `f`/a digit must keep the
+        // precedence it had before this command existed, so introduce the new
+        // command as unbound when one of its defaults is already occupied.
+        let conflicts_with_existing = cmd.is_new_policy_shortcut()
+            && raw.values().any(|value| match value {
+                KeyBindingValue::Unbind => false,
+                KeyBindingValue::Single(spec) => {
+                    parse_key(spec).is_ok_and(|bound| keys.contains(&bound))
+                }
+                KeyBindingValue::Multi(specs) => specs
+                    .iter()
+                    .any(|spec| parse_key(spec).is_ok_and(|bound| keys.contains(&bound))),
+            });
+        let value = if conflicts_with_existing {
+            KeyBindingValue::Unbind
+        } else {
+            match keys.as_slice() {
+                [one] => KeyBindingValue::Single(format_key(one)),
+                many => KeyBindingValue::Multi(many.iter().map(format_key).collect()),
+            }
         };
         raw.insert(cmd.name().to_string(), value);
         inserted = true;

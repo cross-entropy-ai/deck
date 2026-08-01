@@ -40,12 +40,13 @@ impl App {
     /// resurrect it after a re-add. `detach_host_view` (D7) then runs the
     /// view-side choreography (snap to local if active, drop agent highlight,
     /// supersede focus).
-    pub(super) fn offboard_remote_host(&mut self, host: &str) {
+    pub(super) fn offboard_remote_host(&mut self, host: &str, lane: Option<&crate::lane::LaneId>) {
         let detach = self.remote.offboard(host);
         // Reap the host's executor FIFO lane so a removed host doesn't leak
-        // its parked worker + sender (bug #22). Keyed by `Option<String>`
-        // host the way the rest of deck keys local-vs-remote.
-        self.session_exec.remove(&Some(host.to_string()));
+        // its parked worker + sender (bug #22).
+        if let Some(lane) = lane {
+            self.session_exec.remove(lane);
+        }
         self.detach_host_view(host, detach);
     }
 
@@ -110,7 +111,13 @@ impl App {
                         .send(crate::app::ssh::port_forward_task::Op::StopHost {
                             host: old.host.clone(),
                         });
-                self.offboard_remote_host(&old.host);
+                let lane = self
+                    .state
+                    .entries
+                    .iter()
+                    .find(|entry| entry.host.as_deref() == Some(old.host.as_str()))
+                    .map(|entry| entry.lane.clone());
+                self.offboard_remote_host(&old.host, lane.as_ref());
             }
         }
 

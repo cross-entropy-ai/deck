@@ -8,6 +8,24 @@ use ratatui_textarea::{CursorMove, TextArea};
 
 use crate::picker::FilterPicker;
 
+/// Validate a tmux session name against deck's supported format and the
+/// names already present on the target server. Creation and rename share this
+/// boundary so they cannot disagree about valid or duplicate names.
+pub(crate) fn validate_unique_session_name<'a>(
+    name: &str,
+    existing: impl IntoIterator<Item = &'a str>,
+) -> Option<&'static str> {
+    match name {
+        "" => Some("name required"),
+        n if n.contains('.') => Some("name cannot contain '.'"),
+        n if n.contains(':') => Some("name cannot contain ':'"),
+        _ => existing
+            .into_iter()
+            .any(|session| session == name)
+            .then_some("name already in use"),
+    }
+}
+
 /// Split `input` into `(parent, leaf)`: `parent` is the directory portion
 /// (with any trailing `/`), `leaf` the segment being typed. E.g. `""` →
 /// `("", "")`, `"~/foo/"` → `("~/foo/", "")`, `"~/foo/ba"` → `("~/foo/", "ba")`,

@@ -2,6 +2,7 @@ use super::*;
 
 fn make_session(name: &str) -> SessionEntry {
     SessionEntry {
+        lane: crate::system::tmux::TmuxSystem::local_lane(),
         host: None,
         name: name.to_string(),
         dir: format!("/tmp/{name}"),
@@ -36,6 +37,7 @@ fn kind_for(unreachable: bool, loading: bool) -> SessionEntryKind {
 
 fn remote_row(host: &str, unreachable: bool, loading: bool) -> SessionEntry {
     SessionEntry {
+        lane: crate::system::tmux::TmuxSystem::host_lane(host),
         host: Some(host.to_string()),
         name: "s".to_string(),
         dir: "/tmp".to_string(),
@@ -166,11 +168,12 @@ fn steer_marker_follows_the_active_pane() {
 
     // Active pane holds agent "b" → marker lands on it, and the section-list
     // cursor follows the marker onto "b" (index 1).
-    state.steer_marker_to_pane(None, "%2");
+    let local_lane = crate::system::tmux::TmuxSystem::local_lane();
+    state.steer_marker_to_pane(&local_lane, "%2");
     assert_eq!(
         state.active_agent,
         Some(AgentTarget {
-            host: None,
+            lane: local_lane.clone(),
             session: "b".to_string(),
             pane_id: "%2".to_string(),
         })
@@ -178,7 +181,7 @@ fn steer_marker_follows_the_active_pane() {
     assert_eq!(state.agent_focused, 1, "cursor follows the marker onto b");
 
     // Switch to a pane with no agent → marker clears, cursor stays put.
-    state.steer_marker_to_pane(None, "%9");
+    state.steer_marker_to_pane(&local_lane, "%9");
     assert_eq!(state.active_agent, None);
     assert_eq!(
         state.agent_focused, 1,
@@ -190,17 +193,17 @@ fn steer_marker_follows_the_active_pane() {
 fn steer_marker_leaves_marker_when_host_unprobed() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.active_agent = Some(AgentTarget {
-        host: None,
+        lane: crate::system::tmux::TmuxSystem::local_lane(),
         session: "a".to_string(),
         pane_id: "%1".to_string(),
     });
     // A remote host whose agents were never probed (absent from the map):
     // absence means "not known", so a probe there must not blank the marker.
-    state.steer_marker_to_pane(Some("box"), "%5");
+    state.steer_marker_to_pane(&crate::system::tmux::TmuxSystem::host_lane("box"), "%5");
     assert_eq!(
         state.active_agent,
         Some(AgentTarget {
-            host: None,
+            lane: crate::system::tmux::TmuxSystem::local_lane(),
             session: "a".to_string(),
             pane_id: "%1".to_string(),
         }),
@@ -276,7 +279,13 @@ fn projects_cursor_reanchors_to_same_session_across_rebuild() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.focused = 1; // cursor on "beta"
     let key = state.focused_session_key();
-    assert_eq!(key, Some((None, "beta".to_string())));
+    assert_eq!(
+        key,
+        Some((
+            crate::system::tmux::TmuxSystem::local_lane(),
+            "beta".to_string()
+        ))
+    );
 
     // Refresh prepends a session, shifting "beta" from index 1 to 2.
     state.entries = vec![
@@ -1076,6 +1085,7 @@ fn flat_index_decodes_to_host_and_kind() {
             remote_row("h", false, false), // Live
             remote_row("d", true, false),  // Unreachable
             SessionEntry {
+                lane: crate::system::tmux::TmuxSystem::host_lane("e"),
                 host: Some("e".into()),
                 name: String::new(),
                 dir: String::new(),
@@ -1114,6 +1124,7 @@ fn kill_policy_over_entries_guards_placeholder_and_last_remote() {
         &mut state,
         vec![
             SessionEntry {
+                lane: crate::system::tmux::TmuxSystem::host_lane("e"),
                 host: Some("e".into()),
                 name: String::new(),
                 dir: String::new(),
@@ -1146,6 +1157,7 @@ fn no_sessions_name_is_a_normal_live_session_now() {
         &mut state,
         vec![
             SessionEntry {
+                lane: crate::system::tmux::TmuxSystem::host_lane("h"),
                 host: Some("h".into()),
                 name: crate::state::NO_SESSIONS_LABEL.to_string(),
                 dir: "/tmp".into(),

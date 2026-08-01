@@ -308,15 +308,16 @@ impl Config {
         changed
     }
 
-    pub fn save(&self) {
-        let _ = self.save_to(&config_path());
+    pub fn save(&self) -> Result<(), String> {
+        self.save_to(&config_path())
     }
 
     fn save_to(&self, path: &std::path::Path) -> Result<(), String> {
         if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
         }
-        confy::store_path(path, self).map_err(|e| e.to_string())
+        confy::store_path(path, self).map_err(|e| format!("cannot write {}: {e}", path.display()))
     }
 }
 

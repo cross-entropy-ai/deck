@@ -69,6 +69,22 @@ fn non_default_frame_rate_is_saved() {
 }
 
 #[test]
+fn save_reports_parent_directory_creation_failure() {
+    let root = std::env::temp_dir().join(format!("deck-config-save-error-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let not_a_directory = root.join("not-a-directory");
+    fs::write(&not_a_directory, "blocking file").unwrap();
+
+    let err = Config::default()
+        .save_to(&not_a_directory.join("config.yaml"))
+        .unwrap_err();
+
+    assert!(err.contains("cannot create"), "unexpected error: {err}");
+    let _ = fs::remove_file(not_a_directory);
+    let _ = fs::remove_dir(root);
+}
+
+#[test]
 fn load_prunes_a_persisted_default_frame_rate() {
     // A file that explicitly stored the (new) default gets it stripped on load.
     let path = std::env::temp_dir().join("deck-frl-prune.yaml");

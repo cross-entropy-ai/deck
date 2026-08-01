@@ -12,6 +12,9 @@
 
 use std::cell::Cell;
 use std::collections::HashMap;
+use std::fmt;
+use std::io;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
@@ -85,26 +88,81 @@ pub enum RefreshUpdate {
         /// hosts are absent (stay "not probed").
         agents: HashMap<String, Vec<crate::agent::DetectedAgent>>,
     },
+    /// A background failure that the UI must surface instead of silently
+    /// leaving the sidebar on its last successful snapshot.
+    Failure(RefreshFailure),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefreshFailure {
+    WorkerSpawn(String),
+    WorkerPanicked,
+    WorkerStopped,
+    RemoteSpawn(String),
+    RemotePanicked,
+}
+
+impl RefreshFailure {
+    fn stops_worker(&self) -> bool {
+        matches!(
+            self,
+            Self::WorkerSpawn(_) | Self::WorkerPanicked | Self::WorkerStopped
+        )
+    }
+}
+
+impl fmt::Display for RefreshFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WorkerSpawn(err) => write!(f, "could not start worker: {err}"),
+            Self::WorkerPanicked => f.write_str("worker panicked and stopped"),
+            Self::WorkerStopped => f.write_str("worker stopped unexpectedly"),
+            Self::RemoteSpawn(err) => write!(f, "could not start remote refresh: {err}"),
+            Self::RemotePanicked => f.write_str("remote refresh panicked"),
+        }
+    }
 }
 
 pub struct RefreshWorker {
     req_tx: Sender<RefreshRequest>,
     update_rx: Receiver<RefreshUpdate>,
     alive: Cell<bool>,
+    terminal_failure_reported: Cell<bool>,
 }
 
 impl RefreshWorker {
     pub fn spawn() -> Self {
+        Self::spawn_with(|task| {
+            thread::Builder::new()
+                .name("deck-refresh".into())
+                .spawn(task)
+                .map(drop)
+        })
+    }
+
+    fn spawn_with<S>(spawn: S) -> Self
+    where
+        S: FnOnce(Box<dyn FnOnce() + Send + 'static>) -> io::Result<()>,
+    {
         let (req_tx, req_rx) = mpsc::channel::<RefreshRequest>();
         let (update_tx, update_rx) = mpsc::channel::<RefreshUpdate>();
-        thread::Builder::new()
-            .name("deck-refresh".into())
-            .spawn(move || worker_loop(req_rx, update_tx))
-            .expect("spawn refresh worker");
+        let spawn_failure_tx = update_tx.clone();
+        let panic_tx = update_tx.clone();
+        let task = Box::new(move || {
+            if panic::catch_unwind(AssertUnwindSafe(|| worker_loop(req_rx, update_tx))).is_err() {
+                let _ = panic_tx.send(RefreshUpdate::Failure(RefreshFailure::WorkerPanicked));
+            }
+        });
+        if let Err(err) = spawn(task) {
+            let _ = spawn_failure_tx.send(RefreshUpdate::Failure(RefreshFailure::WorkerSpawn(
+                err.to_string(),
+            )));
+        }
         Self {
             req_tx,
             update_rx,
             alive: Cell::new(true),
+            terminal_failure_reported: Cell::new(false),
         }
     }
 
@@ -119,19 +177,69 @@ impl RefreshWorker {
 
     pub fn try_recv(&self) -> Option<RefreshUpdate> {
         match self.update_rx.try_recv() {
-            Ok(u) => Some(u),
+            Ok(update) => {
+                if matches!(&update, RefreshUpdate::Failure(err) if err.stops_worker()) {
+                    self.alive.set(false);
+                    self.terminal_failure_reported.set(true);
+                }
+                Some(update)
+            }
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => {
-                self.mark_dead();
-                None
+                self.alive.set(false);
+                (!self.terminal_failure_reported.replace(true))
+                    .then_some(RefreshUpdate::Failure(RefreshFailure::WorkerStopped))
             }
         }
     }
 
     fn mark_dead(&self) {
-        if self.alive.replace(false) {
-            debug_assert!(false, "refresh worker died");
-        }
+        self.alive.set(false);
+    }
+}
+
+/// Resets the remote single-flight gate even if the remote task unwinds.
+struct RemoteFlightGuard(Arc<AtomicBool>);
+
+impl Drop for RemoteFlightGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+type BackgroundTask = Box<dyn FnOnce() + Send + 'static>;
+
+/// Start one guarded remote task. Keeping the spawner injectable makes the two
+/// rare failure paths deterministic in unit tests without relying on OS thread
+/// exhaustion.
+fn spawn_remote_task<S, W>(
+    in_flight: &Arc<AtomicBool>,
+    update_tx: &Sender<RefreshUpdate>,
+    spawn: S,
+    work: W,
+) where
+    S: FnOnce(BackgroundTask) -> io::Result<()>,
+    W: FnOnce() -> RefreshUpdate + Send + 'static,
+{
+    if in_flight.swap(true, Ordering::Acquire) {
+        return;
+    }
+
+    let task_flag = Arc::clone(in_flight);
+    let task_tx = update_tx.clone();
+    let task = Box::new(move || {
+        let _guard = RemoteFlightGuard(task_flag);
+        let update = panic::catch_unwind(AssertUnwindSafe(work))
+            .unwrap_or(RefreshUpdate::Failure(RefreshFailure::RemotePanicked));
+        let _ = task_tx.send(update);
+    });
+
+    if let Err(err) = spawn(task) {
+        // The task never started, so its RAII guard cannot run.
+        in_flight.store(false, Ordering::Release);
+        let _ = update_tx.send(RefreshUpdate::Failure(RefreshFailure::RemoteSpawn(
+            err.to_string(),
+        )));
     }
 }
 
@@ -177,18 +285,23 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
         // Remote update async in a detached thread, gated by
         // `remote_in_flight` so back-to-back ticks don't dispatch overlapping
         // ssh storms. The next tick after this finishes starts its own round.
-        if !req.remotes.is_empty() && !remote_in_flight.swap(true, Ordering::Acquire) {
+        if !req.remotes.is_empty() {
             let remotes = req.remotes.clone();
             let probe_agents = req.show_agents;
-            let tx = update_tx.clone();
-            let flag = remote_in_flight.clone();
-            let _ = thread::Builder::new()
-                .name("deck-refresh-remote".into())
-                .spawn(move || {
+            spawn_remote_task(
+                &remote_in_flight,
+                &update_tx,
+                |task| {
+                    thread::Builder::new()
+                        .name("deck-refresh-remote".into())
+                        .spawn(task)
+                        .map(drop)
+                },
+                move || {
                     let (rows, agents) = collect_remotes(&remotes, probe_agents);
-                    let _ = tx.send(RefreshUpdate::Remote { rows, agents });
-                    flag.store(false, Ordering::Release);
-                });
+                    RefreshUpdate::Remote { rows, agents }
+                },
+            );
         }
     }
 }
@@ -206,7 +319,8 @@ fn collect_local(
 
     // Gather the local lane's sessions + agents through the lane's owning System.
     let lane = TmuxSystem::local_lane();
-    let snap = crate::system::for_lane(&lane).snapshot(&lane, req.show_agents);
+    let snap =
+        crate::system::for_lane(&lane).and_then(|system| system.snapshot(&lane, req.show_agents));
     let (sessions, raw_agents) =
         snap.map_or_else(|| (Vec::new(), None), |s| (s.sessions, s.agents));
 
@@ -266,7 +380,8 @@ fn collect_remotes(
                     // is unreachable (so a dead host doesn't spend two 5s ssh
                     // timeouts and hold the single-flight gate ~10s).
                     let lane = TmuxSystem::host_lane(&host);
-                    let snap = crate::system::for_lane(&lane).snapshot(&lane, probe_agents);
+                    let snap = crate::system::for_lane(&lane)
+                        .and_then(|system| system.snapshot(&lane, probe_agents));
                     (host, snap)
                 })
                 .ok()

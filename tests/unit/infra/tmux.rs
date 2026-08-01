@@ -120,7 +120,8 @@ fn list_sessions_with_runner_returns_parsed_rows() {
 #[test]
 fn persist_session_order_batches_set_option_calls() {
     let runner = FakeRunner::new();
-    persist_session_order_with(&runner, &["alpha".to_string(), "beta".to_string()]);
+    persist_session_order_with(&runner, &["alpha".to_string(), "beta".to_string()])
+        .expect("persist order");
     let calls = runner.calls();
     assert_eq!(calls.len(), 1, "one batched tmux invocation");
     // Bare names, NOT `=alpha`: tmux's option commands reject the exact-match
@@ -142,8 +143,18 @@ fn exact_target_forces_exact_match() {
 #[test]
 fn persist_session_order_empty_is_noop() {
     let runner = FakeRunner::new();
-    persist_session_order_with(&runner, &[]);
+    persist_session_order_with(&runner, &[]).expect("empty order is valid");
     assert!(runner.calls().is_empty());
+}
+
+#[test]
+fn persist_session_order_returns_runner_failure() {
+    let runner = FakeRunner::new();
+    let args = order_set_option_args(&["alpha".to_string()], ";", |name| name.to_string());
+    let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+    runner.set(&args_ref, FakeResponse::Timeout);
+
+    assert!(persist_session_order_with(&runner, &["alpha".to_string()]).is_err());
 }
 
 #[test]

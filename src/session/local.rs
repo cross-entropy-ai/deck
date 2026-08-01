@@ -4,7 +4,7 @@
 
 use crate::tmux;
 
-use super::SessionControl;
+use super::{SessionControl, SessionControlError, SessionControlResult};
 
 /// Local control-plane backend.
 pub struct LocalControl {
@@ -24,28 +24,30 @@ impl LocalControl {
 }
 
 impl SessionControl for LocalControl {
-    fn switch_to(&self, name: &str) {
+    fn switch_to(&self, name: &str) -> SessionControlResult {
         if self.client_tty.is_empty() {
-            tmux::switch_session(name);
+            tmux::switch_session(name)
         } else {
-            tmux::switch_client_for_tty(&self.client_tty, name);
+            tmux::switch_client_for_tty(&self.client_tty, name)
         }
+        .map_err(|error| SessionControlError::new(error.to_string()))
     }
 
-    fn rename(&self, old: &str, new: &str) {
-        tmux::rename_session(old, new);
+    fn rename(&self, old: &str, new: &str) -> SessionControlResult {
+        tmux::rename_session(old, new).map_err(|error| SessionControlError::new(error.to_string()))
     }
 
-    fn kill(&self, name: &str) {
-        tmux::kill_session(name);
+    fn kill(&self, name: &str) -> SessionControlResult {
+        tmux::kill_session(name).map_err(|error| SessionControlError::new(error.to_string()))
     }
 
     fn create(&self, name: &str, dir: &str) -> bool {
         tmux::new_session(name, dir).is_some()
     }
 
-    fn persist_order(&self, order: &[String]) {
-        tmux::persist_session_order(order);
+    fn persist_order(&self, order: &[String]) -> SessionControlResult {
+        tmux::persist_session_order(order)
+            .map_err(|error| SessionControlError::new(error.to_string()))
     }
 
     fn list_dir(&self, path: &str) -> (Vec<String>, Option<String>) {

@@ -3,6 +3,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
 use crate::tmux;
 
 /// How long we wait for the old deck to quit after SIGTERM before falling back
@@ -14,6 +17,7 @@ const GRACEFUL_KILL_POLL: Duration = Duration::from_millis(50);
 #[derive(Debug)]
 pub enum AcquireError {
     Io(io::Error),
+    StaleLockCleanup { path: PathBuf, source: io::Error },
     AlreadyRunning { pid: Option<u32> },
     ForceKillDenied { pid: u32 },
 }
@@ -63,11 +67,26 @@ impl InstanceGuard {
                 eprintln!("deck: cannot terminate pid {pid}: permission denied");
                 std::process::exit(1);
             }
+            Err(AcquireError::StaleLockCleanup { path, source }) => Err(io::Error::new(
+                source.kind(),
+                format!(
+                    "failed to remove stale instance lock {}: {source}",
+                    path.display()
+                ),
+            )),
             Err(AcquireError::Io(err)) => Err(err),
         }
     }
 
     fn acquire_at(lock_path: PathBuf, current_pid: u32) -> Result<Self, AcquireError> {
+        Self::acquire_at_with(lock_path, current_pid, remove_lock_file)
+    }
+
+    fn acquire_at_with(
+        lock_path: PathBuf,
+        current_pid: u32,
+        remove_fn: fn(&Path) -> io::Result<()>,
+    ) -> Result<Self, AcquireError> {
         loop {
             match Self::create_lock(&lock_path, current_pid) {
                 Ok(()) => {
@@ -86,7 +105,7 @@ impl InstanceGuard {
                             return Err(AcquireError::AlreadyRunning { pid: Some(pid) });
                         }
                         _ => {
-                            let _ = fs::remove_file(&lock_path);
+                            Self::remove_stale_lock(&lock_path, remove_fn)?;
                             continue;
                         }
                     }
@@ -100,6 +119,15 @@ impl InstanceGuard {
         lock_path: PathBuf,
         current_pid: u32,
         kill_fn: fn(u32) -> Result<(), KillError>,
+    ) -> Result<Self, AcquireError> {
+        Self::acquire_forcing_at_with(lock_path, current_pid, kill_fn, remove_lock_file)
+    }
+
+    fn acquire_forcing_at_with(
+        lock_path: PathBuf,
+        current_pid: u32,
+        kill_fn: fn(u32) -> Result<(), KillError>,
+        remove_fn: fn(&Path) -> io::Result<()>,
     ) -> Result<Self, AcquireError> {
         match Self::create_lock(&lock_path, current_pid) {
             Ok(()) => {
@@ -133,12 +161,53 @@ impl InstanceGuard {
             }
         }
 
-        let _ = fs::remove_file(&lock_path);
-        Self::acquire_at(lock_path, current_pid)
+        Self::remove_stale_lock(&lock_path, remove_fn)?;
+        Self::acquire_at_with(lock_path, current_pid, remove_fn)
     }
 
     fn default_lock_path() -> PathBuf {
-        PathBuf::from(format!("/tmp/{}.lock", env!("CARGO_PKG_NAME")))
+        let xdg_runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+        let fallback_dir = fallback_lock_dir();
+        Self::lock_path_for(
+            xdg_runtime_dir.as_deref(),
+            &fallback_dir,
+            current_user_id(),
+            runtime_dir_is_suitable,
+        )
+    }
+
+    fn lock_path_for<F>(
+        xdg_runtime_dir: Option<&Path>,
+        temp_dir: &Path,
+        uid: u32,
+        runtime_dir_is_suitable: F,
+    ) -> PathBuf
+    where
+        F: Fn(&Path, u32) -> bool,
+    {
+        if let Some(runtime_dir) =
+            xdg_runtime_dir.filter(|path| path.is_absolute() && runtime_dir_is_suitable(path, uid))
+        {
+            return runtime_dir.join(format!("{}.lock", env!("CARGO_PKG_NAME")));
+        }
+
+        temp_dir.join(format!("{}-{uid}.lock", env!("CARGO_PKG_NAME")))
+    }
+
+    fn remove_stale_lock(
+        lock_path: &Path,
+        remove_fn: fn(&Path) -> io::Result<()>,
+    ) -> Result<(), AcquireError> {
+        match remove_fn(lock_path) {
+            Ok(()) => Ok(()),
+            // Another contender may have removed the stale lock first. The
+            // following create_new attempt safely decides which process wins.
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(source) => Err(AcquireError::StaleLockCleanup {
+                path: lock_path.to_path_buf(),
+                source,
+            }),
+        }
     }
 
     fn create_lock(lock_path: &Path, current_pid: u32) -> io::Result<()> {
@@ -155,6 +224,43 @@ impl InstanceGuard {
         let raw = fs::read_to_string(lock_path).ok()?;
         raw.trim().parse().ok()
     }
+}
+
+fn remove_lock_file(path: &Path) -> io::Result<()> {
+    fs::remove_file(path)
+}
+
+#[cfg(unix)]
+fn fallback_lock_dir() -> PathBuf {
+    PathBuf::from("/tmp")
+}
+
+#[cfg(not(unix))]
+fn fallback_lock_dir() -> PathBuf {
+    std::env::temp_dir()
+}
+
+#[cfg(unix)]
+fn current_user_id() -> u32 {
+    unsafe { libc::geteuid() }
+}
+
+#[cfg(not(unix))]
+fn current_user_id() -> u32 {
+    std::process::id()
+}
+
+#[cfg(unix)]
+fn runtime_dir_is_suitable(path: &Path, uid: u32) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    metadata.is_dir() && metadata.uid() == uid && metadata.permissions().mode() & 0o077 == 0
+}
+
+#[cfg(not(unix))]
+fn runtime_dir_is_suitable(path: &Path, _uid: u32) -> bool {
+    path.is_dir()
 }
 
 impl Drop for InstanceGuard {

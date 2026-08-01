@@ -11,6 +11,33 @@ pub mod executor;
 pub mod local;
 pub mod remote;
 
+/// A control-plane command reached its backend but did not complete.
+///
+/// The transport-specific error is rendered at the boundary so the session
+/// abstraction does not expose tmux/ssh command types to its consumers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionControlError {
+    detail: String,
+}
+
+impl SessionControlError {
+    pub fn new(detail: impl Into<String>) -> Self {
+        Self {
+            detail: detail.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for SessionControlError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for SessionControlError {}
+
+pub type SessionControlResult = Result<(), SessionControlError>;
+
 /// The session control plane, shared by local and remote backends.
 ///
 /// One impl per transport: [`local::LocalControl`] (in-process tmux) and
@@ -19,14 +46,14 @@ pub mod remote;
 /// executor's per-backend worker threads, keeping slow calls off the UI thread.
 pub trait SessionControl {
     /// Switch this backend's own client to `name`.
-    fn switch_to(&self, name: &str);
+    fn switch_to(&self, name: &str) -> SessionControlResult;
 
     /// Rename session `old` to `new`.
-    fn rename(&self, old: &str, new: &str);
+    fn rename(&self, old: &str, new: &str) -> SessionControlResult;
 
     /// Kill session `name`. Any pre-switch off the doomed session is App-level
     /// orchestration done before the op is submitted.
-    fn kill(&self, name: &str);
+    fn kill(&self, name: &str) -> SessionControlResult;
 
     /// Create a detached session `name` starting in `dir`. Returns whether
     /// the create succeeded.
@@ -34,7 +61,7 @@ pub trait SessionControl {
 
     /// Persist `order` (session names in display order) via the `@deck_order`
     /// user option.
-    fn persist_order(&self, order: &[String]);
+    fn persist_order(&self, order: &[String]) -> SessionControlResult;
 
     /// List subdirectories under `path` for the new-session dir browser.
     /// Returns the names and an optional one-line error (`None` on success).

@@ -258,7 +258,7 @@ pub(super) fn draw_sessions(
                     {
                         agents.push(AgentHit {
                             target: AgentTarget {
-                                host: entry.host.clone(),
+                                lane: entry.lane.clone(),
                                 session: agent.session.clone(),
                                 pane_id: agent.pane_id.clone(),
                             },

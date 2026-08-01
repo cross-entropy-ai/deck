@@ -62,7 +62,11 @@ impl AppState {
     /// the real active pane (`steer_marker_to_pane`). Each cursor moves only if
     /// the target is in that list.
     pub fn focus_cursors_on(&mut self, target: &AgentTarget) {
-        if let Some(idx) = self.focusable_index_for(target.host.as_deref(), &target.session) {
+        if let Some(idx) = self
+            .entries
+            .iter()
+            .position(|entry| entry.lane == target.lane && entry.name == target.session)
+        {
             self.focused = idx;
         }
         if let Some(idx) = self.agent_entry_index_for(target) {
@@ -78,14 +82,14 @@ impl AppState {
     /// `active_agent` and leaves the cursor put. No-op when the host's agents
     /// aren't probed yet, so a probe racing ahead of detection can't blank a
     /// valid highlight (absence = "not known", not "no agent here").
-    pub fn steer_marker_to_pane(&mut self, host: Option<&str>, pane_id: &str) {
-        let target = match self.agents.get(lane(host).as_str()) {
+    pub fn steer_marker_to_pane(&mut self, lane: &crate::lane::LaneId, pane_id: &str) {
+        let target = match self.agents.get(lane.as_str()) {
             None => return,
             Some(list) => list
                 .iter()
                 .find(|a| a.pane_id == pane_id)
                 .map(|a| AgentTarget {
-                    host: host.map(str::to_string),
+                    lane: lane.clone(),
                     session: a.session.clone(),
                     pane_id: a.pane_id.clone(),
                 }),
@@ -108,7 +112,7 @@ impl AppState {
         // mirroring how Projects guards a `NoSessions` row (`is_attachable`).
         let agent = entry.agent()?;
         Some(AgentTarget {
-            host: entry.host.clone(),
+            lane: entry.lane.clone(),
             session: agent.session.clone(),
             pane_id: agent.pane_id.clone(),
         })
@@ -246,10 +250,10 @@ impl AppState {
     /// Identity (host, session name) of the focused Projects row, captured
     /// before a refresh rebuilds `entries` so the cursor can re-anchor to the
     /// same session afterwards. The Projects twin of `focused_agent_key`.
-    pub fn focused_session_key(&self) -> Option<(Option<String>, String)> {
+    pub fn focused_session_key(&self) -> Option<(crate::lane::LaneId, String)> {
         self.entries
             .get(self.focused)
-            .map(|e| (e.host.clone(), e.name.clone()))
+            .map(|e| (e.lane.clone(), e.name.clone()))
     }
 
     /// Re-point the Projects cursor at the session `key` (its position before
@@ -258,8 +262,12 @@ impl AppState {
     /// a neighbor. Falls back to clamping when the session is gone. Projects twin
     /// of `reanchor_agent_focus`; use instead of `clamp_projects_focus` after a
     /// refresh rebuilds the rows.
-    pub fn reanchor_projects_focus(&mut self, key: Option<(Option<String>, String)>) {
-        match key.and_then(|(host, name)| self.focusable_index_for(host.as_deref(), &name)) {
+    pub fn reanchor_projects_focus(&mut self, key: Option<(crate::lane::LaneId, String)>) {
+        match key.and_then(|(lane, name)| {
+            self.entries
+                .iter()
+                .position(|entry| entry.lane == lane && entry.name == name)
+        }) {
             Some(idx) => self.focused = idx,
             None => self.clamp_projects_focus(),
         }
@@ -276,9 +284,9 @@ impl AppState {
     /// Captured *before* a refresh rebuilds the agent list so the cursor can be
     /// re-anchored afterwards — see
     /// [`reanchor_agent_focus`](Self::reanchor_agent_focus).
-    pub fn focused_agent_key(&self) -> Option<(Option<String>, String)> {
+    pub fn focused_agent_key(&self) -> Option<(crate::lane::LaneId, String)> {
         let entry = self.agent_entries.get(self.agent_focused)?;
-        Some((entry.host.clone(), entry.agent()?.pane_id.clone()))
+        Some((entry.lane.clone(), entry.agent()?.pane_id.clone()))
     }
 
     /// Re-point the Agents-tab cursor at the agent `key` (its position before
@@ -289,11 +297,10 @@ impl AppState {
     /// onto a different agent than the pane shows. Falls back to clamping when
     /// the agent is gone (finished, idle, or host dropped). Use instead of
     /// `clamp_agent_focus` after the agent list changes.
-    pub fn reanchor_agent_focus(&mut self, key: Option<(Option<String>, String)>) {
-        let found = key.and_then(|(host, pane_id)| {
+    pub fn reanchor_agent_focus(&mut self, key: Option<(crate::lane::LaneId, String)>) {
+        let found = key.and_then(|(lane, pane_id)| {
             self.agent_entries.iter().position(|entry| {
-                entry.host.as_deref() == host.as_deref()
-                    && entry.agent().is_some_and(|a| a.pane_id == pane_id)
+                entry.lane == lane && entry.agent().is_some_and(|a| a.pane_id == pane_id)
             })
         });
         let total = self.agent_entries.len();

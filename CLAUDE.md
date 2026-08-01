@@ -12,9 +12,10 @@ deck is a terminal sidebar TUI for browsing and switching tmux sessions, written
 cargo build                    # dev build
 cargo build --release          # release build
 cargo check                    # type-check without building
-cargo test                     # run all tests
+cargo test --workspace         # run all workspace tests
 cargo test <test_name>         # run a single test
-cargo clippy                   # lint
+cargo clippy --workspace       # lint all workspace crates
+cargo fmt --all -- --check     # check formatting for all workspace crates
 ./target/release/deck          # run the release binary (needs tmux)
 ```
 

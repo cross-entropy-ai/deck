@@ -3,10 +3,11 @@
 //! `Effect`s; `app::dispatch` iterates them in order and does the tmux/ssh/PTY work.
 
 use crate::geometry::AgentTarget;
+use crate::lane::LaneId;
 
 #[derive(Debug)]
 pub enum Effect {
-    SwitchSession(String),
+    SwitchSession(SessionSwitchRequest),
     /// Switch the main view to a remote session. Carries (host, name)
     /// — App's dispatch layer routes the `tmux switch-client` over ssh.
     SwitchRemote(RemoteSwitchRequest),
@@ -22,7 +23,7 @@ pub enum Effect {
     /// Create a new tmux session with `req.name` at `req.dir`.
     CreateSession(CreateSessionRequest),
     /// Detach a remote host from deck (equivalent to `deck remote remove <host>`).
-    RemoveRemoteHost(String),
+    RemoveRemoteHost(RemoveRemoteRequest),
     /// Reconnect/respawn a remote host's ssh+tmux PTY. Emitted by a System's
     /// `on_button` (the `[⟳]` divider button); App rebuilds the connection.
     ReconnectHost(String),
@@ -138,9 +139,7 @@ macro_rules! effect_predicates {
 #[cfg(test)]
 impl SideEffect {
     effect_finders! {
-        first_switch_session: SwitchSession => &str;
         first_remote_placeholder: ShowRemotePlaceholder => &str;
-        first_remove_remote_host: RemoveRemoteHost => &str;
         first_save_remote_session_order: SaveRemoteSessionOrder => &str;
         first_open_remote_new_session_picker: OpenRemoteNewSessionPicker => &str;
     }
@@ -148,6 +147,20 @@ impl SideEffect {
     effect_finders! {
         first_kill_session: KillSession => &KillRequest;
         first_rename_session: RenameSession => &RenameRequest;
+    }
+
+    pub fn first_switch_session(&self) -> Option<&str> {
+        self.effects.iter().find_map(|effect| match effect {
+            Effect::SwitchSession(req) => Some(req.name.as_str()),
+            _ => None,
+        })
+    }
+
+    pub fn first_remove_remote_host(&self) -> Option<&str> {
+        self.effects.iter().find_map(|effect| match effect {
+            Effect::RemoveRemoteHost(req) => Some(req.host.as_str()),
+            _ => None,
+        })
     }
 
     effect_predicates! {
@@ -161,14 +174,25 @@ impl SideEffect {
     }
 }
 
+#[derive(Debug)]
+pub struct SessionSwitchRequest {
+    pub lane: LaneId,
+    pub name: String,
+}
+
+#[derive(Debug)]
+pub struct RemoveRemoteRequest {
+    pub lane: LaneId,
+    pub host: String,
+}
+
 /// Info needed to execute a kill: which session to kill, and optionally
 /// which session to switch to first (if killing the current session).
 #[derive(Debug)]
 pub struct KillRequest {
     pub name: String,
-    /// `Some(host)` targets the remote tmux server on that host;
-    /// `None` targets the local tmux server.
-    pub host: Option<String>,
+    /// Exact mounted backend lane that owns the session.
+    pub lane: LaneId,
     /// LOCAL session to switch to after the kill (only meaningful when
     /// killing the currently attached local session). For remote kills,
     /// dispatch returns to the local view and this is `None`.
@@ -180,8 +204,8 @@ pub struct KillRequest {
 pub struct RenameRequest {
     pub old_name: String,
     pub new_name: String,
-    /// `Some(host)` targets the remote tmux server on that host.
-    pub host: Option<String>,
+    /// Exact mounted backend lane that owns the session.
+    pub lane: LaneId,
 }
 
 /// Info needed to execute "create a new tmux session".
@@ -189,14 +213,14 @@ pub struct RenameRequest {
 pub struct CreateSessionRequest {
     pub name: String,
     pub dir: String,
-    /// `Some(host)` creates the session on that remote host over ssh;
-    /// `None` creates it on the local tmux server.
-    pub host: Option<String>,
+    /// Exact mounted backend lane on which to create the session.
+    pub lane: LaneId,
 }
 
 /// Info needed to switch the main view to a remote tmux session.
 #[derive(Debug)]
 pub struct RemoteSwitchRequest {
+    pub lane: LaneId,
     pub host: String,
     pub name: String,
 }

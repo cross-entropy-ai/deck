@@ -9,6 +9,7 @@ use crate::state::{
 
 fn make_session(name: &str) -> SessionEntry {
     SessionEntry {
+        lane: crate::system::tmux::TmuxSystem::local_lane(),
         host: None,
         name: name.to_string(),
         dir: format!("/tmp/{}", name),
@@ -106,6 +107,23 @@ fn focus_index_out_of_range_ignored() {
     state.focused = 2;
     apply_action(&mut state, Action::FocusIndex(10));
     assert_eq!(state.focused, 2);
+}
+
+#[test]
+fn focus_index_into_collapsed_group_is_ignored() {
+    let mut state = make_test_state(1);
+    set_remote(
+        &mut state,
+        vec![remote_row("hidden", "a"), remote_row("visible", "b")],
+    );
+    state
+        .collapsed_sections
+        .insert(crate::system::tmux::lane(Some("hidden")));
+    state.focused = 0;
+
+    apply_action(&mut state, Action::FocusIndex(1));
+
+    assert_eq!(state.focused, 0);
 }
 
 #[test]
@@ -526,6 +544,7 @@ fn remote_row(host: &str, name: &str) -> SessionEntry {
         SessionEntryKind::Live { is_current: false }
     };
     SessionEntry {
+        lane: crate::system::tmux::TmuxSystem::host_lane(host),
         host: Some(host.to_string()),
         name: if matches!(kind, SessionEntryKind::NoSessions) {
             String::new()
@@ -882,6 +901,44 @@ fn rename_confirm_noop_when_unchanged() {
 }
 
 #[test]
+fn rename_confirm_rejects_invalid_name_and_keeps_editor_open() {
+    let mut state = make_test_state(1);
+    state.overlay.renaming = Some(RenameState::new(
+        "sess-0".to_string(),
+        "invalid.name".to_string(),
+        None,
+    ));
+
+    let fx = apply_action(&mut state, Action::RenameConfirm);
+
+    assert!(fx.first_rename_session().is_none());
+    assert_eq!(rename_input_text(&state), "invalid.name");
+    assert!(matches!(
+        state.reload_status.as_ref(),
+        Some(crate::state::ReloadStatus::Err(message)) if message == "name cannot contain '.'"
+    ));
+}
+
+#[test]
+fn rename_confirm_rejects_duplicate_on_same_backend() {
+    let mut state = make_test_state(2);
+    state.overlay.renaming = Some(RenameState::new(
+        "sess-0".to_string(),
+        "sess-1".to_string(),
+        None,
+    ));
+
+    let fx = apply_action(&mut state, Action::RenameConfirm);
+
+    assert!(fx.first_rename_session().is_none());
+    assert!(state.overlay.renaming.is_some());
+    assert!(matches!(
+        state.reload_status.as_ref(),
+        Some(crate::state::ReloadStatus::Err(message)) if message == "name already in use"
+    ));
+}
+
+#[test]
 fn rename_cancel_clears_overlay() {
     let mut state = make_test_state(1);
     state.overlay.renaming = Some(rename_state("hello"));
@@ -1110,6 +1167,7 @@ fn pf_task_result_persists_forward_when_overlay_closed() {
 fn pf_task_result_marks_host_unreachable_on_master_failure() {
     let mut state = make_test_state(0);
     state.entries = vec![SessionEntry {
+        lane: crate::system::tmux::TmuxSystem::host_lane("h1"),
         host: Some("h1".into()),
         name: "session-a".into(),
         dir: "/tmp".into(),
@@ -1352,6 +1410,7 @@ fn placeholder_remote_menu_disables_rename_and_close() {
     ];
     for (label, kind) in cases {
         let row = SessionEntry {
+            lane: crate::system::tmux::TmuxSystem::host_lane("h"),
             host: Some("h".into()),
             name: String::new(),
             dir: String::new(),
@@ -1371,6 +1430,7 @@ fn placeholder_remote_menu_disables_rename_and_close() {
 
 fn remote(host: &str, name: &str) -> SessionEntry {
     SessionEntry {
+        lane: crate::system::tmux::TmuxSystem::host_lane(host),
         host: Some(host.into()),
         name: name.into(),
         dir: "/srv".into(),
@@ -1386,6 +1446,7 @@ fn remote_session_with_siblings_disables_nothing() {
     assert!(session_menu_disabled(&sessions[0], &sessions).is_empty());
 
     let local = SessionEntry {
+        lane: crate::system::tmux::TmuxSystem::local_lane(),
         host: None,
         name: "s".into(),
         dir: "/".into(),
@@ -1546,7 +1607,7 @@ mod agents_tab {
         // An agent was active from a prior switch; returning to the tab
         // puts the cursor back on it rather than resetting to row 0.
         state.active_agent = Some(crate::geometry::AgentTarget {
-            host: None,
+            lane: crate::system::tmux::TmuxSystem::local_lane(),
             session: "b".into(),
             pane_id: "%2".into(),
         });
@@ -1674,7 +1735,7 @@ mod agents_tab {
         apply_action(&mut state, Action::FocusNext); // cursor -> row 1 (%2)
         let fx = apply_action(&mut state, Action::SwitchProject);
         let switched = fx.effects().iter().any(
-            |e| matches!(e, Effect::SwitchAgentPane(t) if t.pane_id == "%2" && t.host.is_none()),
+            |e| matches!(e, Effect::SwitchAgentPane(t) if t.pane_id == "%2" && t.lane == crate::system::tmux::TmuxSystem::local_lane()),
         );
         assert!(switched, "Enter on Agents tab focuses the agent's pane");
     }

@@ -41,6 +41,11 @@ impl App {
             RefreshUpdate::Remote { rows, agents } => {
                 self.apply_remote(rows, agents);
             }
+            RefreshUpdate::Failure(err) => {
+                self.state
+                    .show_warning(format!("session refresh failed: {err}"));
+                return;
+            }
         }
         // `entries` + `agents` are settled: rebuild the stored Agents-tab list
         // (model A — stored, like `entries`), then re-anchor the cursor.
@@ -87,6 +92,7 @@ impl App {
                 .entry(r.host.clone())
                 .or_default()
                 .push(SessionEntry {
+                    lane: crate::system::tmux::TmuxSystem::host_lane(&r.host),
                     host: Some(r.host),
                     name: r.name,
                     dir: r.dir,
@@ -189,6 +195,7 @@ impl App {
             .filter(|e| !e.is_local())
             .collect();
         let local_block = rows.into_iter().map(|r| SessionEntry {
+            lane: crate::system::tmux::TmuxSystem::local_lane(),
             host: None,
             kind: SessionEntryKind::Live {
                 is_current: r.name == current,

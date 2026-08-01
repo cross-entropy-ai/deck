@@ -1,5 +1,12 @@
 use super::*;
 
+fn assert_failure(update: RefreshUpdate, expected: RefreshFailure) {
+    match update {
+        RefreshUpdate::Failure(actual) => assert_eq!(actual, expected),
+        _ => panic!("expected refresh failure"),
+    }
+}
+
 #[test]
 fn worker_coalesces_pending_requests() {
     let worker = RefreshWorker::spawn();
@@ -44,4 +51,105 @@ fn worker_coalesces_pending_requests() {
         count < 10,
         "expected coalesce, got {count} snapshots for 10 requests"
     );
+}
+
+#[test]
+fn worker_spawn_failure_is_reported_once() {
+    let worker =
+        RefreshWorker::spawn_with(|_task| Err(io::Error::other("injected worker spawn failure")));
+
+    assert_failure(
+        worker.try_recv().expect("spawn failure update"),
+        RefreshFailure::WorkerSpawn("injected worker spawn failure".into()),
+    );
+    assert!(!worker.alive.get());
+    assert!(worker.try_recv().is_none(), "failure should be one-shot");
+}
+
+#[test]
+fn worker_disconnect_is_reported_even_if_request_noticed_it_first() {
+    let (req_tx, req_rx) = mpsc::channel();
+    let (update_tx, update_rx) = mpsc::channel();
+    drop(req_rx);
+    drop(update_tx);
+    let worker = RefreshWorker {
+        req_tx,
+        update_rx,
+        alive: Cell::new(true),
+        terminal_failure_reported: Cell::new(false),
+    };
+
+    worker.request(RefreshRequest {
+        slave_tty: String::new(),
+        exclude_patterns: vec![],
+        remotes: vec![],
+        show_agents: false,
+    });
+
+    assert_failure(
+        worker.try_recv().expect("worker stopped update"),
+        RefreshFailure::WorkerStopped,
+    );
+    assert!(worker.try_recv().is_none(), "failure should be one-shot");
+}
+
+#[test]
+fn remote_spawn_failure_releases_single_flight_gate() {
+    let in_flight = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = mpsc::channel();
+
+    spawn_remote_task(
+        &in_flight,
+        &tx,
+        |_task| Err(io::Error::other("injected remote spawn failure")),
+        || panic!("work must not run when spawn fails"),
+    );
+
+    assert!(!in_flight.load(Ordering::Acquire));
+    assert_failure(
+        rx.try_recv().expect("remote spawn failure update"),
+        RefreshFailure::RemoteSpawn("injected remote spawn failure".into()),
+    );
+}
+
+#[test]
+fn remote_panic_releases_single_flight_gate_and_is_reported() {
+    let in_flight = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = mpsc::channel();
+
+    spawn_remote_task(
+        &in_flight,
+        &tx,
+        |task| {
+            task();
+            Ok(())
+        },
+        || panic!("injected remote panic"),
+    );
+
+    assert!(!in_flight.load(Ordering::Acquire));
+    assert_failure(
+        rx.try_recv().expect("remote panic update"),
+        RefreshFailure::RemotePanicked,
+    );
+}
+
+#[test]
+fn in_flight_remote_task_is_not_spawned_twice() {
+    let in_flight = Arc::new(AtomicBool::new(true));
+    let (tx, _rx) = mpsc::channel();
+    let spawn_called = Cell::new(false);
+
+    spawn_remote_task(
+        &in_flight,
+        &tx,
+        |_task| {
+            spawn_called.set(true);
+            Ok(())
+        },
+        || panic!("work must not run while another task is in flight"),
+    );
+
+    assert!(!spawn_called.get());
+    assert!(in_flight.load(Ordering::Acquire));
 }

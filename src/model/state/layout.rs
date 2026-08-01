@@ -84,8 +84,6 @@ impl AppState {
         collapsed: &HashSet<LaneId>,
         mut push_rows: impl FnMut(&mut SidebarLayout, &mut Vec<SectionMeta>, &LaneId),
     ) -> BuiltLayout {
-        use crate::system::tmux::TmuxSystem;
-
         let mut layout = SidebarLayout::new();
         let mut sections: Vec<SectionMeta> = Vec::new();
         layout.set_collapsible(opts.collapsible);
@@ -98,18 +96,24 @@ impl AppState {
         // host as it first appears in `entries` (config order). The *shell*
         // enumerates the lanes — not the system — so every session row keeps a
         // section even before the system would list that lane.
-        let mut lanes = vec![TmuxSystem::local_lane()];
-        lanes.extend(self.remote_hosts_in_order_ref().map(TmuxSystem::host_lane));
-
         let theme = self.active_theme();
         let ctx = crate::system::SectionCtx {
             remotes: &self.config_remotes,
         };
+        let mut lanes = crate::system::lanes(&ctx);
+        for entry in &self.entries {
+            if !lanes.contains(&entry.lane) {
+                lanes.push(entry.lane.clone());
+            }
+        }
 
         for lane_id in &lanes {
             // The lane's owning system styles the divider: title, accent,
             // buttons, badge.
-            let def = crate::system::for_lane(lane_id).section_for(lane_id, &ctx);
+            let Some(system) = crate::system::for_lane(lane_id) else {
+                continue;
+            };
+            let def = system.section_for(lane_id, &ctx);
             if opts.show_headers {
                 // Section dividers stay muted on purpose — least distraction,
                 // no per-host tint.
@@ -199,7 +203,9 @@ impl AppState {
     /// a Projects host always carrying a `NoSessions` row — so it always holds a
     /// focus slot. `agent_entries` and the layout both walk this.
     fn agent_entries_for(&self, host: Option<&str>) -> Vec<AgentEntry> {
+        let lane = crate::system::tmux::lane(host);
         let mk = |kind| AgentEntry {
+            lane: lane.clone(),
             host: host.map(str::to_string),
             kind,
         };
@@ -247,8 +253,7 @@ impl AppState {
     /// never match a real target.
     pub fn agent_entry_index_for(&self, target: &AgentTarget) -> Option<usize> {
         self.agent_entries.iter().position(|entry| {
-            entry.host.as_deref() == target.host.as_deref()
-                && entry.agent().is_some_and(|a| a.pane_id == target.pane_id)
+            entry.lane == target.lane && entry.agent().is_some_and(|a| a.pane_id == target.pane_id)
         })
     }
 

@@ -6,26 +6,37 @@ use crate::update::{
 
 use super::{App, UPDATE_CHECK_INTERVAL};
 
+fn apply_config_save_result(
+    state: &mut crate::state::AppState,
+    config_mtime_seen: &mut Option<std::time::SystemTime>,
+    result: Result<Option<std::time::SystemTime>, String>,
+) {
+    match result {
+        Ok(mtime) => *config_mtime_seen = mtime,
+        Err(e) => state.show_warning(format!("config save failed: {e}")),
+    }
+}
+
 impl App {
     pub(super) fn save_config(&mut self) {
         // The single prefs→Config mapping (`Prefs::to_config`), fed the
         // runtime fields outside `Prefs`: `raw_keybindings` (lives on `App`);
         // `config_remotes` (UI-managed `forwards` here; CLI changes flow in via
         // hot-reload); `collapsed_sections` (runtime state, not a pref).
-        self.state
-            .prefs
-            .to_config(
-                self.raw_keybindings.clone(),
-                self.state.config_remotes.clone(),
-                crate::system::tmux::hosts_from_lanes(&self.state.collapsed_sections),
-                crate::system::tmux::hosts_from_lanes(&self.state.collapsed_agent_sections),
-            )
-            .save();
+        let config = self.state.prefs.to_config(
+            self.raw_keybindings.clone(),
+            self.state.config_remotes.clone(),
+            crate::system::tmux::hosts_from_lanes(&self.state.collapsed_sections),
+            crate::system::tmux::hosts_from_lanes(&self.state.collapsed_agent_sections),
+        );
+        let result = config.save().map(|()| crate::config::config_mtime());
         // Adopt the new mtime so the config watcher in `run` doesn't see our
         // own save as an external edit and self-reload (which would close the
         // exclude editor mid-edit and flash the reload toast on every
-        // drag/toggle/save).
-        self.config_mtime_seen = crate::config::config_mtime();
+        // drag/toggle/save). On failure, keep the previous mtime so the watcher
+        // still notices a later external repair, and surface the write error in
+        // the existing reload/warning strip.
+        apply_config_save_result(&mut self.state, &mut self.config_mtime_seen, result);
     }
 
     pub(super) fn tick_update_check(&mut self) -> bool {
@@ -145,4 +156,38 @@ fn spawn_and_request_check() -> (Option<UpdateChecker>, Option<Instant>) {
     let checker = spawn_checker();
     checker.request(UpdateRequest::Check);
     (Some(checker), Some(Instant::now()))
+}
+
+#[cfg(test)]
+mod config_save_tests {
+    use super::apply_config_save_result;
+    use crate::state::{AppState, ReloadStatus};
+
+    #[test]
+    fn failed_save_keeps_mtime_and_surfaces_warning() {
+        let mut state = AppState::new(80, 24);
+        let old_mtime = std::time::UNIX_EPOCH + std::time::Duration::from_secs(42);
+        let mut seen = Some(old_mtime);
+
+        apply_config_save_result(&mut state, &mut seen, Err("permission denied".to_string()));
+
+        assert_eq!(seen, Some(old_mtime));
+        assert!(matches!(
+            state.reload_status,
+            Some(ReloadStatus::Err(ref msg)) if msg.contains("config save failed")
+                && msg.contains("permission denied")
+        ));
+    }
+
+    #[test]
+    fn successful_save_adopts_new_mtime() {
+        let mut state = AppState::new(80, 24);
+        let mut seen = Some(std::time::UNIX_EPOCH);
+        let new_mtime = std::time::UNIX_EPOCH + std::time::Duration::from_secs(84);
+
+        apply_config_save_result(&mut state, &mut seen, Ok(Some(new_mtime)));
+
+        assert_eq!(seen, Some(new_mtime));
+        assert!(state.reload_status.is_none());
+    }
 }

@@ -197,6 +197,23 @@ fn prompt_yes_no(question: &str) -> bool {
     matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
+fn finish_remote_change(
+    config: &Config,
+    success_message: &str,
+    save: impl FnOnce(&Config) -> Result<(), String>,
+) -> i32 {
+    match save(config) {
+        Ok(()) => {
+            println!("{success_message}");
+            0
+        }
+        Err(e) => {
+            eprintln!("deck: cannot save config: {e}");
+            1
+        }
+    }
+}
+
 pub(crate) fn run_remote_add(host: &str) -> i32 {
     let mut config = match Config::try_load() {
         Ok(c) => c,
@@ -258,9 +275,11 @@ pub(crate) fn run_remote_add(host: &str) -> i32 {
         host: host.to_string(),
         forwards: vec![],
     });
-    config.save();
-    println!("deck: added remote '{host}'.");
-    0
+    finish_remote_change(
+        &config,
+        &format!("deck: added remote '{host}'."),
+        Config::save,
+    )
 }
 
 pub(crate) fn run_remote_list() {
@@ -296,14 +315,17 @@ pub(crate) fn run_remote_remove(host: &str) -> i32 {
         eprintln!("deck: no remote named '{host}'");
         return 1;
     }
-    config.save();
-    println!("deck: removed remote '{host}'.");
-    0
+    finish_remote_change(
+        &config,
+        &format!("deck: removed remote '{host}'."),
+        Config::save,
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_args, ParsedArgs, ParsedCommand};
+    use super::{finish_remote_change, parse_args, ParsedArgs, ParsedCommand};
+    use crate::config::Config;
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| s.to_string()).collect()
@@ -328,5 +350,14 @@ mod tests {
         assert!(run(&[]).force);
         assert!(!run(&["--no-force"]).force);
         assert!(run(&["--no-force", "--force"]).force);
+    }
+
+    #[test]
+    fn remote_change_returns_failure_when_config_cannot_be_saved() {
+        let code = finish_remote_change(&Config::default(), "must not succeed", |_| {
+            Err("permission denied".to_string())
+        });
+
+        assert_eq!(code, 1);
     }
 }

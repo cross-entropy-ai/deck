@@ -160,17 +160,19 @@
 
 ### P2: races, leaks, papercuts
 
-13. [ ] **Rename: no validation + order race.** Rename has no
+13. [x] **Rename: no validation + order race.** Rename had no
     format/uniqueness checks (create has them, `dispatch.rs:17-38`);
-    `tmux rename` errors are swallowed; dispatch patches
+    `tmux rename` errors were swallowed; dispatch patched
     `session_order` old→new immediately (`dispatch.rs:795-804`), so a
     failed rename (or a stale refresh snapshot racing it) makes
     `sync_order` drop the new name and re-append the old at the END —
     manual position lost. Fix: validate like create; drop or
     reconcile the eager order patch (docs/session-abstraction.md already
-    recommended dropping it). *(`validate_unique_session_name` exists but
-    only the create path calls it; rename still unvalidated and the eager
-    order patch still runs at `dispatch.rs:780`)*
+    recommended dropping it). *(fixed: rename and create share
+    `validate_unique_session_name`; mutation failures return typed executor
+    outcomes; the UI commits the manual-order rename only after backend
+    success, including a stale-refresh fallback. Covered by reducer validation
+    tests and executor failure/success-outcome tests.)*
 14. [x] **Hot-reload never applies `collapsed_sections`**
     (`dispatch.rs:962-980` copies everything else), and `save_config`
     then clobbers the hand-edited value. Dissolves in Phase 3.
@@ -228,32 +230,46 @@
     dead sender is cached and all future ops for that key vanish.
     *(fixed in Phase 5: `SessionExecutor::remove(host)` is called on
     offboard, and a sender is cached only after its worker thread spawns)*
-23. [ ] **Remote refresh robustness:** a degraded host can hold the
+23. [x] **Remote refresh robustness:** a degraded host could hold the
     single-flight gate ~20s (4 sequential 5s ssh calls; comment claims
     5s, `infra/refresh.rs:236`); if the detached thread fails to spawn,
     `remote_in_flight` is never cleared (remote refresh permanently
     stuck); `mark_dead` freezes the sidebar silently in release builds.
+    *(fixed: hosts are probed in parallel and an unreachable host skips the
+    agent probe; `RemoteFlightGuard` resets the gate after completion or
+    panic, spawn failure resets it directly, and worker/remote failures are
+    delivered as `RefreshUpdate::Failure` for the UI warning path. Injected
+    spawn, panic, disconnect, and single-flight tests cover these paths.)*
 24. [~] **`ps_snapshot` bypasses the timeout runner** (`agent.rs:291-297`,
     raw `Command::output` on the single refresh worker — a stuck `ps`
     freezes all refresh; `command.rs` exists to prevent exactly this).
     Same for `listeners.rs:78-105`. *(`ps_snapshot` now routes through
     `default_runner()` — agent.rs:300; `listeners.rs` still uses raw
     `Command::output` at lines 81/92)*
-25. [ ] **Instance lock:** `/tmp/deck.lock` is machine-global (user B can't
+25. [~] **Instance lock:** `/tmp/deck.lock` was machine-global (user B couldn't
     run deck while user A does); the stale-lock loop spins forever if
     `remove_file` keeps failing (sticky `/tmp`, other user's file);
     create-then-write TOCTOU lets two decks both start
-    (`instance_guard.rs:51-64,112-124`). *(TOCTOU narrowed via
-    `create_new(true)`, but path is still machine-global with no per-user
-    scoping)*
-26. [ ] **Keybinding shadowing outside the keybinding system:** digits 1-9
-    are consumed before the binding lookup (and swallowed even when the
-    jump is out of range); `f` (port-forward) is hardcoded *after* the
-    lookup so a user binding on `f` silently breaks it, and `f` never
-    appears in the keybindings viewer (`keyboard.rs:144-177`).
-    *(digit handling and hardcoded `'f'` still present — keyboard.rs:151,167)*
-27. [ ] **Bracketed paste bypasses the warning gate** (`app/mod.rs:714-719`)
-    — typing is blocked while a warning popup is up, pasting isn't.
+    (`instance_guard.rs:51-64,112-124`). *(partially fixed: a suitable secure
+    `XDG_RUNTIME_DIR` is preferred, with `/tmp/deck-<uid>.lock` as the Unix
+    fallback; stale-lock removal failures return `StaleLockCleanup` instead of
+    retrying forever, with injected path/removal tests. The create-then-write
+    window remains: another process can observe the newly created lock before
+    its PID is written and misclassify it as stale.)*
+26. [x] **Keybinding shadowing outside the keybinding system:** digits 1-9
+    were consumed before the binding lookup (and swallowed even when the
+    jump was out of range); `f` (port-forward) was hardcoded *after* the
+    lookup, so a user binding on `f` silently broke it and `f` never appeared
+    in the keybindings viewer. *(fixed: `open_port_forwards` and
+    `select_session_1..9` are discoverable, rebindable commands. Number
+    commands count only visible rows, and config backfill preserves existing
+    user bindings. Cmd/Super-1..9 remains an explicit global compatibility
+    shortcut because making the command itself global would consume plain
+    digits in the terminal.)*
+27. [x] **Bracketed paste bypasses the warning gate.** Typing was blocked while
+    a warning popup was up, but pasting wrote directly to the PTY. *(fixed:
+    paste maps to bracketed `ForwardKey` and goes through the same warning,
+    modal/view, dispatch, and redraw path as typed input.)*
 28. [x] **`eprintln!` while the alt screen is active** — keybinding
     warnings, reload warnings, upgrade-spawn errors are invisible
     (`app/mod.rs:217`, `dispatch.rs:946`, etc.). Needs an in-UI channel
@@ -276,14 +292,16 @@
     (latent); stale help text "Left/right cycles … language" for what is
     now a free-text editor (`ui/settings.rs:95`). *(reload bar was
     rewritten in the cleanup batch; the rest are unverified/likely open)*
-32. [ ] Minor behavior: `NumberKeyJump` can land on a row hidden in a
-    collapsed group (j/k skip them); add-remote can't add host `web`
+32. [~] Minor behavior: `NumberKeyJump` could land on a row hidden in a
+    collapsed group (j/k skipped them); add-remote can't add host `web`
     when `web-prod` exists (substring match always wins,
     `add_remote.rs:55-65`); OSC52 is forwarded from the local pane even
     when a Plugin/Settings view hides it (contradicts the comment);
     theme apply + local agent focus run synchronous tmux calls on the
     render thread (bounded 1s each); `Pty::write` is a blocking
-    `write_all` on the UI thread.
+    `write_all` on the UI thread. *(numeric commands now resolve the Nth
+    visible row, and the reducer rejects a collapsed `FocusIndex`; the other
+    behaviors in this item remain open.)*
 
 ---
 
@@ -626,7 +644,7 @@ Plan, in order:
   *(done: `draw_port_forward(frame: &mut Frame)`, matching the other
   overlays; rendering identical.)*
 
-### Phase 7 — Tests that hold the line — [ ] NOT STARTED
+### Phase 7 — Tests that hold the line — [~] IN PROGRESS
 
 Woven through the phases, but tracked: geometry-equivalence TestBackend
 test (Phase 1); key/mouse modality parity (Phase 2); prefs round-trip
@@ -652,3 +670,8 @@ zero direct tests); `truncate`/`wrap_markdown` CJK edges (Phase 6).
   "mirroring" comment (bug #5).
 - [x] Delete `docs/high-roi-cleanup.md` (superseded by this file).
   *(removed in commit 7669e54)*
+- [x] `README.md`: document the actual cold-start `default` bootstrap,
+  `session-N` New Session suggestion, YAML config path, and legacy JSON
+  migration.
+- [x] Add `docs/agent-integration.md`, the signature/status contract referenced
+  by the `agent-detect` crate.

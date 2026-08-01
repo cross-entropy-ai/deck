@@ -118,6 +118,14 @@ fn default_bindings_present() {
         kb.lookup(&ev(KeyCode::Up, KeyModifiers::ALT)),
         Some(Command::ReorderUp)
     );
+    assert_eq!(
+        kb.lookup(&ev(KeyCode::Char('f'), KeyModifiers::NONE)),
+        Some(Command::OpenPortForwards)
+    );
+    assert_eq!(
+        kb.lookup(&ev(KeyCode::Char('1'), KeyModifiers::NONE)),
+        Some(Command::SelectSession1)
+    );
 }
 
 // --- Keybindings::from_config ---
@@ -299,6 +307,32 @@ fn ensure_complete_is_idempotent() {
     ensure_complete(&mut map);
     let changed_again = ensure_complete(&mut map);
     assert!(!changed_again);
+}
+
+#[test]
+fn new_policy_shortcuts_do_not_steal_existing_user_bindings() {
+    let mut map = cfg(&[
+        ("quit", KeyBindingValue::Single("f".into())),
+        ("toggle_help", KeyBindingValue::Single("1".into())),
+    ]);
+
+    ensure_complete(&mut map);
+
+    assert_eq!(
+        map.get("open_port_forwards"),
+        Some(&KeyBindingValue::Unbind)
+    );
+    assert_eq!(map.get("select_session_1"), Some(&KeyBindingValue::Unbind));
+    let (bindings, warnings) = Keybindings::from_config(&map);
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    assert_eq!(
+        bindings.lookup(&ev(KeyCode::Char('f'), KeyModifiers::NONE)),
+        Some(Command::Quit)
+    );
+    assert_eq!(
+        bindings.lookup(&ev(KeyCode::Char('1'), KeyModifiers::NONE)),
+        Some(Command::ToggleHelp)
+    );
 }
 
 #[test]

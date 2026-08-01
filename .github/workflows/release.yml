@@ -51,8 +51,31 @@ jobs:
             echo "bin_name=deck" >> "$GITHUB_OUTPUT"
           fi
 
-  build:
+  verify:
     needs: check
+    if: needs.check.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --all-features
+
+  build:
+    needs: [check, verify]
     if: needs.check.outputs.exists != 'true'
     strategy:
       matrix:
@@ -118,7 +141,7 @@ jobs:
           path: "*.tar.gz"
 
   release:
-    needs: [check, meta, build]
+    needs: [check, meta, verify, build]
     if: needs.check.outputs.exists != 'true'
     runs-on: ubuntu-latest
     steps:

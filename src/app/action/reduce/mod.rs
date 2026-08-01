@@ -1,4 +1,7 @@
-use crate::effects::{Effect, KillRequest, RemoteSwitchRequest, RenameRequest, SideEffect};
+use crate::effects::{
+    Effect, KillRequest, RemoteSwitchRequest, RemoveRemoteRequest, RenameRequest,
+    SessionSwitchRequest, SideEffect,
+};
 use crate::new_session::textarea_line;
 use crate::overlay::RenameState;
 use crate::state::{AppState, FocusMode, LayoutMode, MainView, SidebarTab, ViewMode};
@@ -36,7 +39,10 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) -> bool {
     };
     match state.entry_at(target) {
         Some(entry) if entry.is_local() => {
-            fx.push(Effect::SwitchSession(entry.name.clone()));
+            fx.push(Effect::SwitchSession(SessionSwitchRequest {
+                lane: entry.lane.clone(),
+                name: entry.name.clone(),
+            }));
             true
         }
         // Reached only for non-local entries (the `is_local` arm caught
@@ -45,6 +51,7 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) -> bool {
         // silently so a click doesn't fire a doomed remote switch.
         Some(entry) if entry.is_attachable() => {
             fx.push(Effect::SwitchRemote(RemoteSwitchRequest {
+                lane: entry.lane.clone(),
                 host: entry.host.clone().expect("non-local entry has a host"),
                 name: entry.name.clone(),
             }));
@@ -226,9 +233,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::FocusIndex(idx) => {
             // Mouse clicks pass a unified flat index (local rows then remotes);
-            // number-key shortcuts use the same action but stay inside the
-            // local range. Either way `focusable_count` is the right bound.
-            if idx < state.focusable_count() {
+            // number-key shortcuts resolve their visible slot to the same flat
+            // index. Reject a collapsed target here too, so a stale mapper or
+            // synthetic action cannot move the cursor onto a hidden row.
+            if idx < state.focusable_count() && !state.is_focus_collapsed(idx) {
                 state.set_cursor(idx);
             }
         }
@@ -268,6 +276,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             let Some(entry) = state.entry_at(target) else {
                 return fx;
             };
+            let lane = entry.lane.clone();
             match entry.host.clone() {
                 None => {
                     let name = entry.name.clone();
@@ -306,16 +315,16 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
 
                     fx.push(Effect::KillSession(KillRequest {
                         name,
-                        host: None,
+                        lane,
                         switch_to,
                     }));
                     fx.refresh_sessions();
                 }
-                Some(host) => {
+                Some(_host) => {
                     let name = entry.name.clone();
                     fx.push(Effect::KillSession(KillRequest {
                         name,
-                        host: Some(host),
+                        lane,
                         // No local switch_to: dispatch returns the
                         // user to local view after a remote kill.
                         switch_to: None,
@@ -333,6 +342,11 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // its session rows so the sidebar updates before the next refresh.
             // The host's forward *rules* ride inside its `RemoteConfig`, so
             // they're dropped here too.
+            let lane = state
+                .entries
+                .iter()
+                .find(|entry| entry.host.as_deref() == Some(host.as_str()))
+                .map(|entry| entry.lane.clone());
             state.config_remotes.retain(|r| r.host != host);
             state
                 .entries
@@ -341,7 +355,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.clamp_agent_focus();
             fx.save_config();
             fx.refresh_sessions();
-            fx.push(Effect::RemoveRemoteHost(host));
+            if let Some(lane) = lane {
+                fx.push(Effect::RemoveRemoteHost(RemoveRemoteRequest { lane, host }));
+            }
         }
         Action::ReorderSession(direction) => {
             if state.agents_tab_active() {
@@ -369,8 +385,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 return fx;
             }
             let name = entry.name.clone();
+            let lane = entry.lane.clone();
             let host = entry.host.clone();
-            state.overlay.renaming = Some(RenameState::new(name.clone(), name, host));
+            state.overlay.renaming =
+                Some(RenameState::new_with_lane(name.clone(), name, lane, host));
         }
         Action::RenameInputKey(key) => {
             if let Some(ref mut r) = state.overlay.renaming {
@@ -381,14 +399,32 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             if let Some(r) = state.overlay.renaming.take() {
                 let new_name = textarea_line(&r.input).trim().to_string();
                 // Skip no-op renames.
-                if !new_name.is_empty() && new_name != r.original_name {
-                    fx.push(Effect::RenameSession(RenameRequest {
-                        old_name: r.original_name,
-                        new_name,
-                        host: r.host,
-                    }));
-                    fx.refresh_sessions();
+                if new_name == r.original_name {
+                    return fx;
                 }
+
+                let existing = state
+                    .entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.is_attachable()
+                            && entry.host == r.host
+                            && entry.name != r.original_name
+                    })
+                    .map(|entry| entry.name.as_str());
+                if let Some(error) =
+                    crate::new_session::validate_unique_session_name(&new_name, existing)
+                {
+                    state.show_warning(error);
+                    state.overlay.renaming = Some(r);
+                    return fx;
+                }
+
+                fx.push(Effect::RenameSession(RenameRequest {
+                    old_name: r.original_name,
+                    new_name,
+                    lane: r.lane,
+                }));
             }
         }
         Action::RenameCancel => {

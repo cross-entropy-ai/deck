@@ -277,7 +277,7 @@ pub(crate) struct RemoteConnManager {
     /// the marker; if it advanced (the connection respawned while the switch
     /// sat in the FIFO) the switch no-op'd against a dead marker, so we
     /// re-fire. Removed when verified.
-    switch_verify: HashMap<String, (String, u64)>,
+    switch_verify: HashMap<String, (crate::lane::LaneId, String, u64)>,
 }
 
 impl RemoteConnManager {
@@ -510,8 +510,9 @@ impl RemoteConnManager {
 
     // --- pending switch ---
 
-    pub(crate) fn set_pending_switch(&mut self, host: &str, name: &str) {
+    pub(crate) fn set_pending_switch(&mut self, lane: crate::lane::LaneId, host: &str, name: &str) {
         self.pending_switch = Some(crate::effects::RemoteSwitchRequest {
+            lane,
             host: host.to_string(),
             name: name.to_string(),
         });
@@ -528,9 +529,15 @@ impl RemoteConnManager {
 
     // --- switch verify ---
 
-    pub(crate) fn record_switch_submit(&mut self, host: &str, name: &str, marker_id: u64) {
+    pub(crate) fn record_switch_submit(
+        &mut self,
+        lane: crate::lane::LaneId,
+        host: &str,
+        name: &str,
+        marker_id: u64,
+    ) {
         self.switch_verify
-            .insert(host.to_string(), (name.to_string(), marker_id));
+            .insert(host.to_string(), (lane, name.to_string(), marker_id));
     }
 
     /// On a `Switched` outcome, decide whether the switch needs re-firing:
@@ -541,12 +548,13 @@ impl RemoteConnManager {
         &mut self,
         host: &str,
     ) -> Option<crate::effects::RemoteSwitchRequest> {
-        let (name, submitted_marker) = self.switch_verify.remove(host)?;
+        let (lane, name, submitted_marker) = self.switch_verify.remove(host)?;
         if !self.active_is(host) {
             return None;
         }
         let current_marker = self.marker_id(host);
         (current_marker != submitted_marker).then_some(crate::effects::RemoteSwitchRequest {
+            lane,
             host: host.to_string(),
             name,
         })

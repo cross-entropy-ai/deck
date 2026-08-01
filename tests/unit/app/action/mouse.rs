@@ -26,7 +26,7 @@ fn state_with_agent_over_card() -> AppState {
             height: 1,
         },
         target: AgentTarget {
-            host: None,
+            lane: crate::system::tmux::TmuxSystem::local_lane(),
             session: "a".into(),
             pane_id: "%1".into(),
         },
@@ -42,6 +42,7 @@ fn state_with_projects() -> AppState {
     state.entries = ["a", "b", "c"]
         .into_iter()
         .map(|name| SessionEntry {
+            lane: crate::system::tmux::TmuxSystem::local_lane(),
             host: None,
             name: name.into(),
             dir: "/tmp".into(),

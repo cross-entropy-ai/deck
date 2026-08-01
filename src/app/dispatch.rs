@@ -187,8 +187,13 @@ impl App {
                 // Decision A: the System owns what its divider buttons do. Ask
                 // it for the effects and run them through the normal pipeline.
                 let mut fx = crate::effects::SideEffect::default();
-                for e in crate::system::for_lane(&lane).on_button(&lane, &command, x, y) {
-                    fx.push(e);
+                if let Some(system) = crate::system::for_lane(&lane) {
+                    for e in system.on_button(&lane, &command, x, y) {
+                        fx.push(e);
+                    }
+                } else {
+                    self.state
+                        .show_warning(format!("unknown session system: {}", lane.system()));
                 }
                 self.execute_side_effects(&fx);
                 false
@@ -226,19 +231,18 @@ impl App {
     /// orchestration (`active_remote`, pending-switch marker dance, kill
     /// pre-switch, rename order-patch) stays in App. The backend is `Send` and
     /// captures the tty/marker at build time.
-    fn control(&self, host: Option<&str>) -> Box<dyn SessionControl + Send> {
-        let lane = crate::system::tmux::lane(host);
-        // The System looks up the host's marker by name; pass just the one
-        // relevant entry (control is not a hot path).
-        let mut marker_ids = std::collections::HashMap::new();
-        if let Some(h) = host {
-            marker_ids.insert(h.to_string(), self.remote.marker_id(h));
-        }
+    fn control(&self, lane: &crate::lane::LaneId) -> Option<Box<dyn SessionControl + Send>> {
+        let marker_ids = self
+            .state
+            .config_remotes
+            .iter()
+            .map(|remote| (remote.host.clone(), self.remote.marker_id(&remote.host)))
+            .collect();
         let ctx = crate::system::ControlCtx {
             local_tty: &self.local_terminal.pty.slave_tty,
             marker_ids: &marker_ids,
         };
-        crate::system::for_lane(&lane).control(&lane, &ctx)
+        crate::system::for_lane(lane).map(|system| system.control(lane, &ctx))
     }
 
     /// Build the backend for `host` and hand `op` to the executor's per-host
@@ -246,11 +250,15 @@ impl App {
     /// and any completion effect drains back through `apply_session_outcome`.
     pub(super) fn submit_session(
         &mut self,
-        host: Option<String>,
+        lane: crate::lane::LaneId,
         op: crate::session::executor::SessionOp,
     ) {
-        let backend = self.control(host.as_deref());
-        self.session_exec.submit(host, backend, op);
+        let Some(backend) = self.control(&lane) else {
+            self.state
+                .show_warning(format!("unknown session system: {}", lane.system()));
+            return;
+        };
+        self.session_exec.submit(lane, backend, op);
     }
 
     /// Handle a completed executor op on the UI thread: run any
@@ -261,19 +269,48 @@ impl App {
         outcome: crate::session::executor::SessionOutcome,
     ) {
         use crate::session::executor::OpOutcome;
-        let host = outcome.host;
+        let lane = outcome.lane;
+        let host = crate::system::tmux::TmuxSystem::host_of(&lane).map(str::to_string);
         match outcome.result {
             OpOutcome::Created { name, created } => {
                 if created {
-                    self.post_create_switch(host, &name);
+                    self.post_create_switch(&lane, host, &name);
                 }
                 // The submit-time `refresh_sessions` likely ran before the
                 // async create finished, so refresh again to surface the new
                 // row promptly under its group.
                 self.request_refresh();
             }
-            OpOutcome::Renamed | OpOutcome::Killed => {
-                // Refresh so the renamed/removed row reconciles right after
+            OpOutcome::Renamed {
+                old,
+                new,
+                order_index,
+            } => {
+                // Commit the local manual order only after tmux confirms the
+                // rename. A failed backend call must leave App state aligned
+                // with the still-live old session name.
+                if host.is_none() {
+                    if let Some(pos) = self
+                        .state
+                        .session_order
+                        .iter()
+                        .position(|name| name == &old)
+                    {
+                        self.state.session_order[pos] = new;
+                    } else if let Some(pos) = order_index {
+                        // A periodic refresh can observe tmux's new name just
+                        // before this executor outcome. It appends that unknown
+                        // name; recover the old manual slot without disturbing
+                        // any other ordering changes made in the meantime.
+                        self.state.session_order.retain(|name| name != &new);
+                        let pos = pos.min(self.state.session_order.len());
+                        self.state.session_order.insert(pos, new);
+                    }
+                }
+                self.request_refresh();
+            }
+            OpOutcome::Killed => {
+                // Refresh so the removed row reconciles right after
                 // the op lands rather than waiting for the next poll tick.
                 self.request_refresh();
             }
@@ -311,16 +348,23 @@ impl App {
             // `@deck_order` persistence needs no follow-up: the in-memory
             // order already updated immediately at reorder time.
             OpOutcome::OrderPersisted => {}
+            OpOutcome::Failed { operation, error } => {
+                self.state
+                    .show_warning(format!("failed to {operation}: {error}"));
+                // Reconcile any optimistic selection/order state against the
+                // backend that rejected the operation.
+                self.request_refresh();
+            }
         }
     }
 
-    pub(super) fn switch_client(&mut self, session: &str) {
+    pub(super) fn switch_client(&mut self, lane: crate::lane::LaneId, session: &str) {
         // Re-point the existing embedded tmux client at the target session.
         // Runs on the executor (uniform with remote) so a slow `switch-client`
         // can't stall the UI thread; the local backend reproduces the
         // tty-vs-bare `switch-client` choice exactly.
         self.submit_session(
-            None,
+            lane.clone(),
             crate::session::executor::SessionOp::Switch {
                 name: session.to_string(),
             },
@@ -352,7 +396,7 @@ impl App {
     /// and flip `active_remote`; the PTY stays put, its tmux client re-points
     /// at the target. If it isn't ready (Connecting/Failed) we don't switch —
     /// `respawn_remote_host` recovers it, and switching works once it reconnects.
-    pub(super) fn switch_to_remote(&mut self, host: &str, name: &str) {
+    pub(super) fn switch_to_remote(&mut self, lane: crate::lane::LaneId, host: &str, name: &str) {
         if !self.remote.is_live(host) {
             return;
         }
@@ -363,7 +407,7 @@ impl App {
         // marker-retry) fires it once the marker exists.
         let marker_id = self.remote.live_marker_id(host);
         let Some(marker_id) = marker_id else {
-            self.remote.set_pending_switch(host, name);
+            self.remote.set_pending_switch(lane, host, name);
             return;
         };
         // Run `switch-client` on the executor's per-host FIFO worker: it costs
@@ -372,7 +416,7 @@ impl App {
         // host. `control()` reads this connection's marker id, which the
         // readiness gate above guarantees is written.
         self.submit_session(
-            Some(host.to_string()),
+            lane.clone(),
             crate::session::executor::SessionOp::Switch {
                 name: name.to_string(),
             },
@@ -380,7 +424,8 @@ impl App {
         // Record what we submitted so the `Switched` outcome can confirm it
         // ran against the live marker and re-fire if the connection
         // respawned (new marker) while the op waited in the FIFO.
-        self.remote.record_switch_submit(host, name, marker_id);
+        self.remote
+            .record_switch_submit(lane, host, name, marker_id);
 
         // `active_remote` is host-level and correct to commit now (we *are*
         // viewing this host); the within-host session lands when the switch
@@ -399,7 +444,7 @@ impl App {
     /// re-fire (re-reading the current marker, or holding via pending switch).
     fn verify_remote_switch(&mut self, host: &str) {
         if let Some(fire) = self.remote.verify_switch(host) {
-            self.switch_to_remote(&fire.host, &fire.name);
+            self.switch_to_remote(fire.lane, &fire.host, &fire.name);
         }
     }
 
@@ -497,7 +542,8 @@ impl App {
         // and how we learn Deck's own client tty. Resolve that here, then run
         // the *same* focus rule off-thread (local routes through the worker too
         // to keep one code path; remote ssh can stall so it must be off-thread).
-        let Some((transport, marker_id)) = self.focus_transport(target.host.as_deref()) else {
+        let host = crate::system::tmux::TmuxSystem::host_of(&target.lane);
+        let Some((transport, marker_id)) = self.focus_transport(host) else {
             return;
         };
         let tx = self.focus_tx.clone();
@@ -571,8 +617,16 @@ impl App {
         let Some(pane_id) = outcome.pane_id else {
             return;
         };
-        self.state
-            .steer_marker_to_pane(outcome.host.as_deref(), &pane_id);
+        let Some(lane) = self
+            .state
+            .entries
+            .iter()
+            .find(|entry| entry.host.as_deref() == outcome.host.as_deref())
+            .map(|entry| entry.lane.clone())
+        else {
+            return;
+        };
+        self.state.steer_marker_to_pane(&lane, &pane_id);
     }
 
     /// Apply a focus completion (drained in the event loop), only when still
@@ -586,10 +640,10 @@ impl App {
         if outcome.seq != self.focus_seq {
             return;
         }
-        if !self
-            .remote
-            .marker_matches(outcome.target.host.as_deref(), outcome.marker_id)
-        {
+        if !self.remote.marker_matches(
+            crate::system::tmux::TmuxSystem::host_of(&outcome.target.lane),
+            outcome.marker_id,
+        ) {
             return;
         }
         if !self.agent_focus_target_live(&outcome.target) {
@@ -605,14 +659,14 @@ impl App {
     /// connected and the agent still detected on its host (`None` = local).
     /// Guards stale completions whose host was removed or agent has exited.
     fn agent_focus_target_live(&self, target: &crate::geometry::AgentTarget) -> bool {
-        if let Some(host) = target.host.as_deref() {
+        if let Some(host) = crate::system::tmux::TmuxSystem::host_of(&target.lane) {
             if !self.remote.is_live(host) {
                 return false;
             }
         }
         self.state
             .agents
-            .get(crate::system::tmux::lane(target.host.as_deref()).as_str())
+            .get(target.lane.as_str())
             .is_some_and(|list| list.iter().any(|a| a.pane_id == target.pane_id))
     }
 
@@ -633,7 +687,7 @@ impl App {
         // highlight tracks the viewed pane like j/k does; an agent-footer click
         // otherwise switches the view without touching the highlight.
         self.state.focus_cursors_on(&target);
-        match target.host.as_deref() {
+        match crate::system::tmux::TmuxSystem::host_of(&target.lane) {
             Some(h) => self.remote.set_active(h),
             None => self.remote.clear_active(),
         }
@@ -643,7 +697,7 @@ impl App {
         // repaints from the new pane's vt100 screen (see `switch_client`).
     }
 
-    fn switch_to_session_if_safe(&mut self, session: &str) -> bool {
+    fn switch_to_session_if_safe(&mut self, lane: crate::lane::LaneId, session: &str) -> bool {
         // Opening the session deck itself runs in would nest tmux inside
         // deck inside tmux. Pop a warning over the main pane instead of
         // switching; navigating to any other session clears it.
@@ -659,18 +713,18 @@ impl App {
             return false;
         }
         self.warning_state = None;
-        self.switch_client(session);
+        self.switch_client(lane, session);
         true
     }
 
     fn execute_side_effects(&mut self, fx: &crate::effects::SideEffect) {
         for effect in fx.effects() {
             match effect {
-                Effect::SwitchSession(name) => {
-                    self.switch_to_session_if_safe(name);
+                Effect::SwitchSession(req) => {
+                    self.switch_to_session_if_safe(req.lane.clone(), &req.name);
                 }
                 Effect::SwitchRemote(req) => {
-                    self.switch_to_remote(&req.host, &req.name);
+                    self.switch_to_remote(req.lane.clone(), &req.host, &req.name);
                 }
                 Effect::SwitchAgentPane(target) => {
                     self.switch_to_agent_pane(target.clone());
@@ -689,25 +743,23 @@ impl App {
                     self.suppress_next_periodic_refresh = true;
                 }
                 Effect::RenameSession(rename) => {
-                    // The rename runs on the executor. The local `session_order`
-                    // in-place patch stays in App and runs now (it touches App
-                    // state, not tmux, and doesn't depend on the rename result),
-                    // so the manual order doesn't flicker during the async rename.
-                    if rename.host.is_none() {
-                        if let Some(pos) = self
-                            .state
-                            .session_order
-                            .iter()
-                            .position(|n| n == &rename.old_name)
-                        {
-                            self.state.session_order[pos] = rename.new_name.clone();
-                        }
-                    }
+                    // The rename runs on the executor. App commits the local
+                    // manual-order name only when its successful outcome lands.
+                    let order_index =
+                        if crate::system::tmux::TmuxSystem::host_of(&rename.lane).is_none() {
+                            self.state
+                                .session_order
+                                .iter()
+                                .position(|name| name == &rename.old_name)
+                        } else {
+                            None
+                        };
                     self.submit_session(
-                        rename.host.clone(),
+                        rename.lane.clone(),
                         crate::session::executor::SessionOp::Rename {
                             old: rename.old_name.clone(),
                             new: rename.new_name.clone(),
+                            order_index,
                         },
                     );
                 }
@@ -716,10 +768,10 @@ impl App {
                     // call routes through the backend (local pre-switches via
                     // `switch_to_session_if_safe`, remote via the `active_remote`
                     // reset below).
-                    match &kill.host {
+                    match crate::system::tmux::TmuxSystem::host_of(&kill.lane) {
                         None => {
                             if let Some(ref alt_name) = kill.switch_to {
-                                self.switch_to_session_if_safe(alt_name);
+                                self.switch_to_session_if_safe(kill.lane.clone(), alt_name);
                             }
                         }
                         Some(host) => {
@@ -735,7 +787,7 @@ impl App {
                         }
                     }
                     self.submit_session(
-                        kill.host.clone(),
+                        kill.lane.clone(),
                         crate::session::executor::SessionOp::Kill {
                             name: kill.name.clone(),
                         },
@@ -749,7 +801,7 @@ impl App {
                     // lane — absolute locally, `~`-keeping for the remote
                     // shell (see `confirm_remote_new_session`).
                     self.submit_session(
-                        req.host.clone(),
+                        req.lane.clone(),
                         crate::session::executor::SessionOp::NewSession {
                             name: req.name.clone(),
                             dir: req.dir.clone(),
@@ -769,12 +821,15 @@ impl App {
                     self.save_config();
                 }
                 Effect::SaveSessionOrder => {
-                    self.submit_session(
-                        None,
-                        crate::session::executor::SessionOp::PersistOrder {
-                            order: self.state.session_order.clone(),
-                        },
-                    );
+                    let lane = self.state.local_entries().next().map(|e| e.lane.clone());
+                    if let Some(lane) = lane {
+                        self.submit_session(
+                            lane,
+                            crate::session::executor::SessionOp::PersistOrder {
+                                order: self.state.session_order.clone(),
+                            },
+                        );
+                    }
                 }
                 Effect::SaveRemoteSessionOrder(host) => {
                     // Persist this host's group order to its remote tmux server, on
@@ -784,21 +839,31 @@ impl App {
                         crate::state::attachable_on_host(&self.state.entries, Some(host))
                             .map(|e| e.name.clone())
                             .collect();
-                    self.submit_session(
-                        Some(host.clone()),
-                        crate::session::executor::SessionOp::PersistOrder { order: names },
-                    );
+                    if let Some(lane) = self
+                        .state
+                        .entries
+                        .iter()
+                        .find(|entry| entry.host.as_deref() == Some(host.as_str()))
+                        .map(|entry| entry.lane.clone())
+                    {
+                        self.submit_session(
+                            lane,
+                            crate::session::executor::SessionOp::PersistOrder { order: names },
+                        );
+                    }
                 }
-                Effect::RemoveRemoteHost(host) => {
+                Effect::RemoveRemoteHost(req) => {
                     // Tear down the ControlMaster (and any forwards riding on
                     // it) so the host stops occupying SSH state once detached.
                     let _ = self.port_forward_tx.send(
-                        crate::app::ssh::port_forward_task::Op::StopHost { host: host.clone() },
+                        crate::app::ssh::port_forward_task::Op::StopHost {
+                            host: req.host.clone(),
+                        },
                     );
                     // Drop the per-host runtime state (PTY, conn status, active
                     // pointer) so a later re-add of the same host gets a fresh
                     // connection instead of inheriting stale `Failed` status.
-                    self.offboard_remote_host(host);
+                    self.offboard_remote_host(&req.host, Some(&req.lane));
                 }
                 // The divider-button effects a System emits (decision A). Each
                 // reuses the existing action path, so behavior can't drift from

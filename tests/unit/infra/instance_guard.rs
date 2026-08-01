@@ -1,6 +1,7 @@
 use super::{real_kill, AcquireError, InstanceGuard, KillError, GRACEFUL_KILL_TIMEOUT};
 use std::fs;
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
@@ -42,6 +43,48 @@ fn permission_denied_kill(_pid: u32) -> Result<(), KillError> {
     Err(KillError::PermissionDenied)
 }
 
+fn permission_denied_remove(_path: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "injected removal failure",
+    ))
+}
+
+#[test]
+fn lock_path_prefers_a_suitable_xdg_runtime_directory() {
+    let runtime_dir = Path::new("/run/user/501");
+    let path = InstanceGuard::lock_path_for(
+        Some(runtime_dir),
+        Path::new("/isolated-temp"),
+        501,
+        |path, uid| path == runtime_dir && uid == 501,
+    );
+
+    assert_eq!(path, runtime_dir.join("deck.lock"));
+}
+
+#[test]
+fn fallback_lock_path_is_scoped_by_user_id() {
+    let temp_dir = Path::new("/isolated-temp");
+    let first = InstanceGuard::lock_path_for(None, temp_dir, 501, |_, _| false);
+    let second = InstanceGuard::lock_path_for(None, temp_dir, 502, |_, _| false);
+
+    assert_eq!(first, temp_dir.join("deck-501.lock"));
+    assert_eq!(second, temp_dir.join("deck-502.lock"));
+    assert_ne!(first, second);
+}
+
+#[test]
+fn unsuitable_xdg_runtime_directory_uses_per_user_fallback() {
+    let temp_dir = Path::new("/isolated-temp");
+    let path =
+        InstanceGuard::lock_path_for(Some(Path::new("/shared-runtime")), temp_dir, 501, |_, _| {
+            false
+        });
+
+    assert_eq!(path, temp_dir.join("deck-501.lock"));
+}
+
 #[test]
 fn acquires_and_releases_lock() {
     let path = test_lock_path("acquire-release");
@@ -67,6 +110,22 @@ fn clears_stale_lock_with_invalid_pid() {
 }
 
 #[test]
+fn stale_lock_removal_failure_is_returned_without_retrying() {
+    let path = test_lock_path("stale-remove-denied");
+    fs::write(&path, "not-a-pid\n").unwrap();
+
+    let result =
+        InstanceGuard::acquire_at_with(path.clone(), std::process::id(), permission_denied_remove);
+
+    assert!(matches!(
+        result,
+        Err(AcquireError::StaleLockCleanup { path: error_path, source })
+            if error_path == path && source.kind() == io::ErrorKind::PermissionDenied
+    ));
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn rejects_existing_lock_for_same_pid() {
     let path = test_lock_path("same-pid");
     fs::write(&path, format!("{}\n", std::process::id())).unwrap();
@@ -88,6 +147,26 @@ fn force_acquires_over_corrupt_lock_without_killing() {
     let _guard =
         InstanceGuard::acquire_forcing_at(path.clone(), std::process::id(), never_kill).unwrap();
     assert!(path.exists());
+}
+
+#[test]
+fn force_surfaces_stale_lock_removal_failure() {
+    let path = test_lock_path("force-remove-denied");
+    fs::write(&path, "garbage\n").unwrap();
+
+    let result = InstanceGuard::acquire_forcing_at_with(
+        path.clone(),
+        std::process::id(),
+        never_kill,
+        permission_denied_remove,
+    );
+
+    assert!(matches!(
+        result,
+        Err(AcquireError::StaleLockCleanup { path: error_path, source })
+            if error_path == path && source.kind() == io::ErrorKind::PermissionDenied
+    ));
+    fs::remove_file(path).unwrap();
 }
 
 #[test]

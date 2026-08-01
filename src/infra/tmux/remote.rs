@@ -351,18 +351,23 @@ fn wait_for_client_marker_with(runner: &dyn CommandRunner, host: &str, marker_id
 }
 
 /// Tell the remote tmux server to switch *Deck's own* attached client to
-/// `session`. Fire-and-forget: errors are swallowed because the user
-/// will see the failure to switch reflected in the UI anyway.
+/// `session`. Transport failures are returned to the session executor so the
+/// UI can report them.
 ///
 /// The client is targeted explicitly (`-c`) via the tty our attach
 /// wrapper recorded for this host — see [`client_marker_token`] — so we
 /// don't re-point whatever client tmux happens to consider "current"
 /// when more than one client is attached to the same server.
-pub fn switch_client(host: &str, marker_id: u64, session: &str) {
-    switch_client_with(default_runner(), host, marker_id, session);
+pub fn switch_client(host: &str, marker_id: u64, session: &str) -> Result<(), CommandError> {
+    switch_client_with(default_runner(), host, marker_id, session)
 }
 
-fn switch_client_with(runner: &dyn CommandRunner, host: &str, marker_id: u64, session: &str) {
+fn switch_client_with(
+    runner: &dyn CommandRunner,
+    host: &str,
+    marker_id: u64,
+    session: &str,
+) -> Result<(), CommandError> {
     let target = shell_single_quote(&exact_target(session));
     // Switch only when the recorded tty is known, so we target Deck's OWN
     // client. An untargeted `switch-client` could re-point another client,
@@ -371,7 +376,7 @@ fn switch_client_with(runner: &dyn CommandRunner, host: &str, marker_id: u64, se
         "{read_c} ; [ -n \"$C\" ] && tmux switch-client -c \"$C\" -t {target}",
         read_c = read_client_tty(host, marker_id),
     );
-    let _ = run_ssh(runner, host, &[cmd.as_str()]);
+    run_ssh(runner, host, &[cmd.as_str()]).map(|_| ())
 }
 
 /// Test seam: run the unified focus rule over the remote (ssh) transport.
@@ -412,26 +417,26 @@ fn active_pane_with(runner: &dyn CommandRunner, host: &str, marker_id: u64) -> O
 
 /// Kill a session on the remote tmux server. `(host, name)` uniquely
 /// identifies it: `name` is unique within a server (tmux's constraint),
-/// `host` picks the server. Errors are swallowed; the next refresh
-/// surfaces the session's continued existence (or absence).
-pub fn kill_session(host: &str, name: &str) {
+/// `host` picks the server.
+pub fn kill_session(host: &str, name: &str) -> Result<(), CommandError> {
     let runner = default_runner();
     let target = shell_single_quote(&exact_target(name));
-    let _ = run_ssh(
+    run_ssh(
         runner,
         host,
         &["tmux", "kill-session", "-t", target.as_str()],
-    );
+    )
+    .map(|_| ())
 }
 
 /// Rename a session on the remote tmux server. As with `kill_session`,
 /// `(host, old_name)` uniquely identifies the target.
-pub fn rename_session(host: &str, old_name: &str, new_name: &str) {
+pub fn rename_session(host: &str, old_name: &str, new_name: &str) -> Result<(), CommandError> {
     let runner = default_runner();
     // `-t` is the lookup target (exact match); `new_name` is the new label.
     let target = shell_single_quote(&exact_target(old_name));
     let new_name = shell_single_quote(new_name);
-    let _ = run_ssh(
+    run_ssh(
         runner,
         host,
         &[
@@ -441,21 +446,27 @@ pub fn rename_session(host: &str, old_name: &str, new_name: &str) {
             target.as_str(),
             new_name.as_str(),
         ],
-    );
+    )
+    .map(|_| ())
 }
 
 /// Persist the display order of `host`'s sessions onto the remote tmux
 /// server via the `@deck_order` user option (0-based rank), mirroring local
 /// `tmux::persist_session_order`. Survives a deck restart/reconnect as long
 /// as the server lives, no config write. `order` lists the session names in
-/// new display order. Best-effort, blocking ssh on an explicit reorder.
-pub fn persist_session_order(host: &str, order: &[String]) {
+/// new display order. Blocking ssh on an explicit reorder; failures are
+/// returned to the session executor for an in-UI warning.
+pub fn persist_session_order(host: &str, order: &[String]) -> Result<(), CommandError> {
     persist_session_order_with(default_runner(), host, order)
 }
 
-fn persist_session_order_with(runner: &dyn CommandRunner, host: &str, order: &[String]) {
+fn persist_session_order_with(
+    runner: &dyn CommandRunner,
+    host: &str,
+    order: &[String],
+) -> Result<(), CommandError> {
     if order.is_empty() {
-        return;
+        return Ok(());
     }
     // One ssh hop, one tmux invocation with `;`-separated set-option
     // commands. The remote shell re-parses the joined argv, so the
@@ -465,7 +476,7 @@ fn persist_session_order_with(runner: &dyn CommandRunner, host: &str, order: &[S
     // Bare names, not `exact_target` — see `order_set_option_args`.
     argv.extend(order_set_option_args(order, "';'", shell_single_quote));
     let argv_ref: Vec<&str> = argv.iter().map(String::as_str).collect();
-    let _ = run_ssh(runner, host, &argv_ref);
+    run_ssh(runner, host, &argv_ref).map(|_| ())
 }
 
 /// Create a detached session `name` on the remote tmux server in `dir`
