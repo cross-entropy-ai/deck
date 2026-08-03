@@ -1,4 +1,4 @@
-use crate::refresh::{RefreshRequest, RefreshUpdate, RemoteSnapshotRow, SnapshotRow};
+use crate::refresh::{LaneRefresh, RefreshRequest, RefreshUpdate};
 use crate::state::{SessionEntry, SessionEntryKind};
 
 use super::App;
@@ -11,12 +11,6 @@ impl App {
             // ack/current logic, so their slave_ttys aren't plumbed.
             slave_tty: self.local_terminal.pty.slave_tty.clone(),
             exclude_patterns: self.state.prefs.exclude_patterns.clone(),
-            remotes: self
-                .state
-                .config_remotes
-                .iter()
-                .map(|r| r.host.clone())
-                .collect(),
             show_agents: self.state.agents_tab_active(),
         }
     }
@@ -26,218 +20,183 @@ impl App {
     }
 
     pub(super) fn apply_update(&mut self, update: RefreshUpdate) {
-        // Capture the focused agent's identity before this round rebuilds
-        // `entries`/`agents`, so the cursor can re-anchor to the same pane
-        // afterwards (see reanchor_agent_focus).
+        // Capture stable identities before a lane batch replaces rows. The
+        // foreground and background batches arrive independently, so every
+        // application must preserve focus across a partial refresh.
+        let session_key = self.state.focused_session_key();
         let agent_key = self.state.focused_agent_key();
         match update {
-            RefreshUpdate::Local {
-                current_session,
-                rows,
-                agents,
-            } => {
-                self.apply_local(current_session, rows, agents);
-            }
-            RefreshUpdate::Remote { rows, agents } => {
-                self.apply_remote(rows, agents);
-            }
+            RefreshUpdate::Lanes(lanes) => self.apply_lanes(lanes),
             RefreshUpdate::Failure(err) => {
                 self.state
                     .show_warning(format!("session refresh failed: {err}"));
                 return;
             }
         }
-        // `entries` + `agents` are settled: rebuild the stored Agents-tab list
-        // (model A — stored, like `entries`), then re-anchor the cursor.
+        self.state.reanchor_projects_focus(session_key);
         self.state.rebuild_agent_entries();
         self.state.reanchor_agent_focus(agent_key);
     }
 
-    fn apply_remote(
-        &mut self,
-        rows: Vec<RemoteSnapshotRow>,
-        agents: std::collections::HashMap<String, Vec<crate::agent::DetectedAgent>>,
-    ) {
-        // Capture the focused session's identity before `entries` is rebuilt
-        // so the cursor can re-anchor to the same row afterwards.
-        let session_key = self.state.focused_session_key();
-
-        // `config_remotes` is the single source of truth for configured hosts:
-        // drop rows for hosts the user just removed (query in flight when
-        // "Remove from list" landed) so they can't blink back.
-        let configured: std::collections::HashSet<&str> = self
+    /// Apply backend-neutral snapshots one lane at a time. The shell owns
+    /// ordering/focus/connection presentation; systems own how snapshots are
+    /// produced and how their lanes are controlled.
+    fn apply_lanes(&mut self, lanes: Vec<LaneRefresh>) {
+        let known_lanes: std::collections::HashSet<_> = self
             .state
-            .config_remotes
+            .system_sections
             .iter()
-            .map(|r| r.host.as_str())
+            .map(|section| section.lane.clone())
             .collect();
+        let user_on_primary = self.state.focus_target().is_none_or(|target| {
+            self.state
+                .entry_at(target)
+                .is_none_or(|entry| self.state.is_primary_entry(entry))
+        });
+        let old_current = self.state.current_session.clone();
+        let mut primary_refreshed = false;
 
-        // Hosts this round queried — `collect_remotes` emits ≥1 row per host
-        // (incl. an "(unreachable)" placeholder). Captured before `rows` is
-        // consumed, to drop stale agents on covered-but-failed hosts (here but
-        // absent from `agents`).
-        let covered_hosts: std::collections::HashSet<String> =
-            rows.iter().map(|r| r.host.clone()).collect();
-
-        // Fresh rows from this snapshot, grouped by host. Since `collect_remotes`
-        // emits ≥1 row per queried host, a configured host absent from this map
-        // just wasn't in this round's query list.
-        let mut fresh_by_host: std::collections::HashMap<String, Vec<SessionEntry>> =
-            std::collections::HashMap::new();
-        for r in rows {
-            if !configured.contains(r.host.as_str()) {
+        for LaneRefresh {
+            lane,
+            snapshot,
+            agents_requested,
+        } in lanes
+        {
+            // A background result can race a config reload that removed its
+            // lane. Ignore it instead of resurrecting stale rows.
+            if !known_lanes.contains(&lane) {
                 continue;
             }
-            fresh_by_host
-                .entry(r.host.clone())
-                .or_default()
-                .push(SessionEntry {
-                    lane: crate::system::tmux::TmuxSystem::host_lane(&r.host),
-                    host: Some(r.host),
-                    name: r.name,
-                    dir: r.dir,
-                    kind: r.kind,
-                });
+
+            let runtime_key = self.state.host_for_lane(&lane).map(str::to_string);
+            let is_primary = self
+                .state
+                .system_sections
+                .iter()
+                .any(|section| section.lane == lane && section.primary);
+            let mut fresh = Vec::new();
+
+            match snapshot {
+                Some(mut snapshot) => {
+                    if agents_requested {
+                        match snapshot.agents.take() {
+                            Some(agents) => {
+                                self.state.agents.insert(lane.clone(), agents);
+                            }
+                            None => {
+                                self.state.agents.remove(&lane);
+                            }
+                        }
+                    }
+
+                    snapshot.sessions.sort_by_key(|session| {
+                        (session.order.is_none(), session.order.unwrap_or(0))
+                    });
+
+                    if is_primary {
+                        primary_refreshed = true;
+                        if self.state.session_order.is_empty() {
+                            self.state.session_order = snapshot
+                                .sessions
+                                .iter()
+                                .map(|session| session.name.clone())
+                                .collect();
+                        }
+                        self.state.current_session = snapshot
+                            .sessions
+                            .iter()
+                            .find(|session| session.is_current)
+                            .map(|session| session.name.clone())
+                            .unwrap_or_default();
+                    }
+
+                    fresh.extend(snapshot.sessions.into_iter().map(|session| SessionEntry {
+                        lane: lane.clone(),
+                        host: runtime_key.clone(),
+                        name: session.name,
+                        dir: session.dir,
+                        kind: SessionEntryKind::Live {
+                            is_current: session.is_current,
+                        },
+                    }));
+
+                    if fresh.is_empty() {
+                        if let Some(key) = runtime_key.as_deref() {
+                            fresh.push(lane_placeholder(
+                                lane.clone(),
+                                key,
+                                SessionEntryKind::NoSessions,
+                            ));
+                        }
+                    }
+                }
+                None => {
+                    if agents_requested {
+                        self.state.agents.remove(&lane);
+                    }
+                    if let Some(key) = runtime_key.as_deref() {
+                        fresh.push(lane_placeholder(
+                            lane.clone(),
+                            key,
+                            SessionEntryKind::Unreachable,
+                        ));
+                    }
+                }
+            }
+
+            self.state.entries.retain(|entry| entry.lane != lane);
+            self.state.entries.extend(fresh);
         }
 
-        // Prior remote rows, kept so an un-queried configured host retains its
-        // current row (e.g. a just-added host's "(connecting…)" placeholder)
-        // until a snapshot covering it lands. The local block (host == None)
-        // is preserved untouched.
-        let mut prev_by_host: std::collections::HashMap<String, Vec<SessionEntry>> =
-            std::collections::HashMap::new();
-        let mut local: Vec<SessionEntry> = Vec::new();
-        for entry in std::mem::take(&mut self.state.entries) {
-            match entry.host.clone() {
-                None => local.push(entry),
-                Some(host) => prev_by_host.entry(host).or_default().push(entry),
+        // Keep all lane blocks in registry order even though foreground and
+        // background batches settle at different times.
+        self.state.entries.sort_by_key(|entry| {
+            self.state
+                .system_sections
+                .iter()
+                .position(|section| section.lane == entry.lane)
+                .unwrap_or(usize::MAX)
+        });
+
+        if primary_refreshed {
+            self.state.sync_order();
+            self.state.apply_order();
+            if old_current != self.state.current_session && user_on_primary {
+                if let Some(pos) = self.state.entries.iter().position(SessionEntry::is_current) {
+                    self.state.focused = pos;
+                }
+            }
+            if !self.local_terminal.alive && self.state.local_count() > 0 {
+                let _ = self.respawn_pty();
             }
         }
 
-        // Rebuild in config order: this round's rows when it queried the host,
-        // else the host's previous rows. Local rows stay first.
-        let remote_block = self
-            .state
-            .config_remotes
-            .iter()
-            .filter_map(|r| {
-                fresh_by_host
-                    .remove(&r.host)
-                    .or_else(|| prev_by_host.remove(&r.host))
-            })
-            .flatten();
-        self.state.entries = local.into_iter().chain(remote_block).collect();
-        // Keep the cursor on the same session across the rebuild (the list may
-        // have reordered or a placeholder row it sat on disappeared); falls
-        // back to clamping when that session is gone.
-        self.state.reanchor_projects_focus(session_key);
+        self.state
+            .agents
+            .retain(|lane, _| known_lanes.contains(lane));
 
-        // Auto-recover the persistent PTY: a host whose attach PTY dropped
-        // (Failed, pane removed) but is now reachable in the probe needs its
-        // PTY rebuilt, else switching to its sessions silently no-ops until
-        // restart (the PTY is otherwise only spawned at startup). `Connecting`
-        // hosts are skipped so an in-flight spawn isn't duplicated.
+        // Connection recovery remains shell runtime policy: a reachable lane
+        // with a dead persistent client is respawned, and transitional rows
+        // stay visibly yellow until that client is actually usable.
         let to_respawn = hosts_needing_respawn(&self.state.entries, |host| {
             self.remote.is_connected_or_connecting(host)
         });
         for host in to_respawn {
             self.respawn_remote_host(&host);
         }
-
-        // Keep the divider honest across the reconnect window: a host whose
-        // attach PTY is still connecting shows yellow (connecting), not green,
-        // re-applied every refresh. A host stuck mid-connect (bug #11: PTY live
-        // but client-tty marker never confirmed, bounded retry gave up) also
-        // shows connecting — switches to it no-op, so it must not read as a
-        // usable "Connected" host; the divider's reconnect button is recovery.
         mark_connecting_rows(&mut self.state.entries, |host| {
             self.remote.is_connecting(host) || self.remote.is_marker_stuck(host)
         });
-
-        // Apply this round's agent detection: store probed hosts, drop stale
-        // agents on covered-but-failed hosts, prune to configured. (Logic lives
-        // on AppState for testability.)
-        self.state.apply_remote_agents(covered_hosts, agents);
     }
+}
 
-    fn apply_local(
-        &mut self,
-        current: String,
-        rows: Vec<SnapshotRow>,
-        agents: Vec<crate::agent::DetectedAgent>,
-    ) {
-        // Capture the focused session's identity before `entries` is rebuilt
-        // so the cursor can re-anchor to the same row afterwards.
-        let session_key = self.state.focused_session_key();
-
-        // Local section is the `None`-host key. The stored entry list is
-        // rebuilt and the cursor re-anchored by the caller (`apply_update`),
-        // once both entries and agents are settled.
-        self.state
-            .agents
-            .insert(crate::system::tmux::lane(None), agents);
-
-        // On first load, restore the manual order from each session's
-        // `@deck_order` rank (written by ReorderSession): ranked sessions
-        // first in rank order, never-reordered ones after in tmux listing
-        // order. Afterwards in-memory `session_order` is authoritative, so
-        // this seeds exactly once per deck run.
-        if self.state.session_order.is_empty() {
-            let mut ranked: Vec<&SnapshotRow> = rows.iter().collect();
-            ranked.sort_by_key(|r| (r.order.is_none(), r.order.unwrap_or(0)));
-            self.state.session_order = ranked.into_iter().map(|r| r.name.clone()).collect();
-        }
-
-        // Rebuild only the local block (host == None); the remote block
-        // (host == Some) is owned by `apply_remote` and preserved here.
-        let remote_block: Vec<SessionEntry> = std::mem::take(&mut self.state.entries)
-            .into_iter()
-            .filter(|e| !e.is_local())
-            .collect();
-        let local_block = rows.into_iter().map(|r| SessionEntry {
-            lane: crate::system::tmux::TmuxSystem::local_lane(),
-            host: None,
-            kind: SessionEntryKind::Live {
-                is_current: r.name == current,
-            },
-            name: r.name,
-            dir: r.dir,
-        });
-        self.state.entries = local_block.chain(remote_block).collect();
-
-        self.state.sync_order();
-        self.state.apply_order();
-        // Keep the cursor on the same session across the rebuild; the
-        // current-session snap below may still override it deliberately.
-        self.state.reanchor_projects_focus(session_key);
-
-        if self.state.current_session != current {
-            // Snap focus to the new local current-session only when the user
-            // is already on a local row. If they navigated into a remote
-            // group, a local current-session change (e.g. last switch_client
-            // respawn) must NOT pull focus back to the local section.
-            let user_on_local = self
-                .state
-                .focus_target()
-                .is_none_or(|t| self.state.entry_at(t).is_none_or(|e| e.is_local()));
-            if user_on_local {
-                if let Some(pos) = self.state.entries.iter().position(|e| e.is_current()) {
-                    self.state.focused = pos;
-                }
-            }
-        }
-
-        self.state.current_session = current;
-
-        // Re-attach the local PTY if it died (last session killed or detached)
-        // and the refresh now shows a local session. With no local sessions we
-        // stay dead and render an empty state, gated on this snapshot showing a
-        // session so re-attach doesn't create one via `ensure_attach_target`.
-        // A few-ms race remains: a last session killed between this snapshot
-        // and `respawn_pty`'s re-check recreates one — harmless, self-corrects.
-        if !self.local_terminal.alive && self.state.local_count() > 0 {
-            let _ = self.respawn_pty();
-        }
+fn lane_placeholder(lane: crate::lane::LaneId, key: &str, kind: SessionEntryKind) -> SessionEntry {
+    SessionEntry {
+        lane,
+        host: Some(key.to_string()),
+        name: String::new(),
+        dir: String::new(),
+        kind,
     }
 }
 

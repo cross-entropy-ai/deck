@@ -187,7 +187,7 @@ impl App {
                 // Decision A: the System owns what its divider buttons do. Ask
                 // it for the effects and run them through the normal pipeline.
                 let mut fx = crate::effects::SideEffect::default();
-                if let Some(system) = crate::system::for_lane(&lane) {
+                if let Some(system) = self.systems.for_lane(&lane) {
                     for e in system.on_button(&lane, &command, x, y) {
                         fx.push(e);
                     }
@@ -232,17 +232,24 @@ impl App {
     /// pre-switch, rename order-patch) stays in App. The backend is `Send` and
     /// captures the tty/marker at build time.
     fn control(&self, lane: &crate::lane::LaneId) -> Option<Box<dyn SessionControl + Send>> {
-        let marker_ids = self
+        let connection_generations = self
             .state
-            .config_remotes
+            .system_sections
             .iter()
-            .map(|remote| (remote.host.clone(), self.remote.marker_id(&remote.host)))
+            .filter_map(|section| {
+                section
+                    .runtime_key
+                    .as_deref()
+                    .map(|key| (section.lane.clone(), self.remote.marker_id(key)))
+            })
             .collect();
         let ctx = crate::system::ControlCtx {
-            local_tty: &self.local_terminal.pty.slave_tty,
-            marker_ids: &marker_ids,
+            local_client: &self.local_terminal.pty.slave_tty,
+            connection_generations: &connection_generations,
         };
-        crate::system::for_lane(lane).map(|system| system.control(lane, &ctx))
+        self.systems
+            .for_lane(lane)
+            .map(|system| system.control(lane, &ctx))
     }
 
     /// Build the backend for `host` and hand `op` to the executor's per-host
@@ -258,7 +265,11 @@ impl App {
                 .show_warning(format!("unknown session system: {}", lane.system()));
             return;
         };
-        self.session_exec.submit(lane, backend, op);
+        if let Err(error) = self.session_exec.submit(lane, backend, op) {
+            self.state
+                .show_warning(format!("session operation was not submitted: {error}"));
+            self.request_refresh();
+        }
     }
 
     /// Handle a completed executor op on the UI thread: run any
@@ -270,12 +281,11 @@ impl App {
     ) {
         use crate::session::executor::OpOutcome;
         let lane = outcome.lane;
-        let host = crate::system::tmux::TmuxSystem::host_of(&lane).map(str::to_string);
+        let is_primary = self.state.is_primary_lane(&lane);
+        let host = self.state.host_for_lane(&lane).map(str::to_string);
         match outcome.result {
-            OpOutcome::Created { name, created } => {
-                if created {
-                    self.post_create_switch(&lane, host, &name);
-                }
+            OpOutcome::Created { name } => {
+                self.post_create_switch(&lane, host, &name);
                 // The submit-time `refresh_sessions` likely ran before the
                 // async create finished, so refresh again to surface the new
                 // row promptly under its group.
@@ -289,7 +299,7 @@ impl App {
                 // Commit the local manual order only after tmux confirms the
                 // rename. A failed backend call must leave App state aligned
                 // with the still-live old session name.
-                if host.is_none() {
+                if is_primary {
                     if let Some(pos) = self
                         .state
                         .session_order
@@ -314,11 +324,7 @@ impl App {
                 // the op lands rather than waiting for the next poll tick.
                 self.request_refresh();
             }
-            OpOutcome::DirListed {
-                path,
-                entries,
-                error,
-            } => {
+            OpOutcome::DirListed { path, result } => {
                 // Apply only if the picker is still open on the same
                 // (host, parent); drop a listing for a parent the user has
                 // since edited. Re-derive the expected key like the submit did.
@@ -331,8 +337,16 @@ impl App {
                     .is_some_and(|(h, p)| h == host && p == path);
                 if still_current {
                     if let Some(ns) = self.state.overlay.new_session.as_mut() {
-                        ns.picker.items = entries;
-                        ns.picker.error = error;
+                        match result {
+                            Ok(listing) => {
+                                ns.picker.items = listing.entries;
+                                ns.picker.error = None;
+                            }
+                            Err(error) => {
+                                ns.picker.items.clear();
+                                ns.picker.error = Some(error.to_string());
+                            }
+                        }
                         ns.refilter();
                     }
                 }
@@ -533,7 +547,7 @@ impl App {
         }
     }
 
-    fn switch_to_agent_pane(&mut self, target: crate::geometry::AgentTarget) {
+    pub(super) fn switch_to_agent_pane(&mut self, target: crate::geometry::AgentTarget) {
         // Stamp this click as the newest focus intent; any in-flight focus
         // from a prior click is now stale and won't commit.
         self.focus_seq += 1;
@@ -542,24 +556,15 @@ impl App {
         // and how we learn Deck's own client tty. Resolve that here, then run
         // the *same* focus rule off-thread (local routes through the worker too
         // to keep one code path; remote ssh can stall so it must be off-thread).
-        let host = crate::system::tmux::TmuxSystem::host_of(&target.lane);
+        let host = self.state.host_for_lane(&target.lane);
         let Some((transport, marker_id)) = self.focus_transport(host) else {
             return;
         };
-        let tx = self.focus_tx.clone();
         let seq = self.focus_seq;
-        std::thread::Builder::new()
-            .name("deck-focus".into())
-            .spawn(move || {
-                let result = crate::focus::run_focus(&transport, &target.session, &target.pane_id);
-                let _ = tx.send(super::FocusOutcome {
-                    target,
-                    result,
-                    seq,
-                    marker_id,
-                });
-            })
-            .ok();
+        if let Err(error) = self.focus_executor.focus(transport, target, seq, marker_id) {
+            self.state
+                .show_warning(format!("could not start pane focus: {error}"));
+        }
     }
 
     /// Probe the pane Deck's main view shows and steer the Agents-tab row
@@ -576,20 +581,18 @@ impl App {
         let Some((transport, marker_id)) = self.focus_transport(host.as_deref()) else {
             return;
         };
-        let tx = self.active_pane_tx.clone();
         let seq = self.focus_seq;
-        let spawned = std::thread::Builder::new()
-            .name("deck-active-pane".into())
-            .spawn(move || {
-                let pane_id = crate::focus::active_pane(&transport);
-                let _ = tx.send(super::ActivePaneOutcome {
-                    host,
-                    pane_id,
-                    seq,
-                    marker_id,
-                });
-            })
-            .is_ok();
+        let spawned = match self
+            .focus_executor
+            .probe_active_pane(transport, host, seq, marker_id)
+        {
+            Ok(()) => true,
+            Err(error) => {
+                self.state
+                    .show_warning(format!("could not start active-pane probe: {error}"));
+                false
+            }
+        };
         // Only arm the single-flight gate if the thread actually launched;
         // otherwise a failed spawn would wedge the gate shut forever.
         self.active_pane_in_flight = spawned;
@@ -641,7 +644,7 @@ impl App {
             return;
         }
         if !self.remote.marker_matches(
-            crate::system::tmux::TmuxSystem::host_of(&outcome.target.lane),
+            self.state.host_for_lane(&outcome.target.lane),
             outcome.marker_id,
         ) {
             return;
@@ -659,7 +662,7 @@ impl App {
     /// connected and the agent still detected on its host (`None` = local).
     /// Guards stale completions whose host was removed or agent has exited.
     fn agent_focus_target_live(&self, target: &crate::geometry::AgentTarget) -> bool {
-        if let Some(host) = crate::system::tmux::TmuxSystem::host_of(&target.lane) {
+        if let Some(host) = self.state.host_for_lane(&target.lane) {
             if !self.remote.is_live(host) {
                 return false;
             }
@@ -677,7 +680,7 @@ impl App {
     /// A plain session switch isn't an agent-pane focus: drop the highlight and
     /// bump `focus_seq` so an in-flight remote focus's late completion is stale
     /// and can't re-highlight. Shared by `switch_client` / `switch_to_remote`.
-    fn supersede_agent_focus(&mut self) {
+    pub(super) fn supersede_agent_focus(&mut self) {
         self.state.active_agent = None;
         self.focus_seq += 1;
     }
@@ -687,7 +690,7 @@ impl App {
         // highlight tracks the viewed pane like j/k does; an agent-footer click
         // otherwise switches the view without touching the highlight.
         self.state.focus_cursors_on(&target);
-        match crate::system::tmux::TmuxSystem::host_of(&target.lane) {
+        match self.state.host_for_lane(&target.lane) {
             Some(h) => self.remote.set_active(h),
             None => self.remote.clear_active(),
         }
@@ -697,7 +700,11 @@ impl App {
         // repaints from the new pane's vt100 screen (see `switch_client`).
     }
 
-    fn switch_to_session_if_safe(&mut self, lane: crate::lane::LaneId, session: &str) -> bool {
+    pub(super) fn switch_to_session_if_safe(
+        &mut self,
+        lane: crate::lane::LaneId,
+        session: &str,
+    ) -> bool {
         // Opening the session deck itself runs in would nest tmux inside
         // deck inside tmux. Pop a warning over the main pane instead of
         // switching; navigating to any other session clears it.
@@ -715,206 +722,6 @@ impl App {
         self.warning_state = None;
         self.switch_client(lane, session);
         true
-    }
-
-    fn execute_side_effects(&mut self, fx: &crate::effects::SideEffect) {
-        for effect in fx.effects() {
-            match effect {
-                Effect::SwitchSession(req) => {
-                    self.switch_to_session_if_safe(req.lane.clone(), &req.name);
-                }
-                Effect::SwitchRemote(req) => {
-                    self.switch_to_remote(req.lane.clone(), &req.host, &req.name);
-                }
-                Effect::SwitchAgentPane(target) => {
-                    self.switch_to_agent_pane(target.clone());
-                }
-                Effect::ShowRemotePlaceholder(host) => {
-                    if self
-                        .state
-                        .focused_remote_placeholder()
-                        .is_none_or(|e| e.host.as_deref() != Some(host.as_str()))
-                    {
-                        continue;
-                    }
-                    self.remote.clear_active();
-                    self.state.main_view = MainView::Terminal;
-                    self.supersede_agent_focus();
-                    self.suppress_next_periodic_refresh = true;
-                }
-                Effect::RenameSession(rename) => {
-                    // The rename runs on the executor. App commits the local
-                    // manual-order name only when its successful outcome lands.
-                    let order_index =
-                        if crate::system::tmux::TmuxSystem::host_of(&rename.lane).is_none() {
-                            self.state
-                                .session_order
-                                .iter()
-                                .position(|name| name == &rename.old_name)
-                        } else {
-                            None
-                        };
-                    self.submit_session(
-                        rename.lane.clone(),
-                        crate::session::executor::SessionOp::Rename {
-                            old: rename.old_name.clone(),
-                            new: rename.new_name.clone(),
-                            order_index,
-                        },
-                    );
-                }
-                Effect::KillSession(kill) => {
-                    // App-level orchestration stays in App; only the leaf kill
-                    // call routes through the backend (local pre-switches via
-                    // `switch_to_session_if_safe`, remote via the `active_remote`
-                    // reset below).
-                    match crate::system::tmux::TmuxSystem::host_of(&kill.lane) {
-                        None => {
-                            if let Some(ref alt_name) = kill.switch_to {
-                                self.switch_to_session_if_safe(kill.lane.clone(), alt_name);
-                            }
-                        }
-                        Some(host) => {
-                            // If attached to this remote session, snap back to
-                            // local first so the dying PTY doesn't leave a frozen
-                            // screen. The host's ssh PTY stays open; the remote
-                            // tmux server picks another session on next attach if
-                            // any remain.
-                            if self.remote.active_is(host) {
-                                self.remote.clear_active();
-                                self.needs_full_redraw = true;
-                            }
-                        }
-                    }
-                    self.submit_session(
-                        kill.lane.clone(),
-                        crate::session::executor::SessionOp::Kill {
-                            name: kill.name.clone(),
-                        },
-                    );
-                }
-                Effect::CreateSession(req) => {
-                    // Create on the executor (per-lane FIFO); the post-create
-                    // switch happens when the `Created` outcome lands (see
-                    // `post_create_switch`), since whether to switch depends
-                    // on the create succeeding. `dir` arrives ready for its
-                    // lane — absolute locally, `~`-keeping for the remote
-                    // shell (see `confirm_remote_new_session`).
-                    self.submit_session(
-                        req.lane.clone(),
-                        crate::session::executor::SessionOp::NewSession {
-                            name: req.name.clone(),
-                            dir: req.dir.clone(),
-                        },
-                    );
-                }
-                Effect::ResizePty { full_redraw } => {
-                    self.resize_pty();
-                    if *full_redraw {
-                        // Full terminal resizes and layout/border mode changes can
-                        // invalidate the whole screen. Sidebar drags repaint through
-                        // ratatui's normal diffing path to avoid flashing.
-                        self.needs_full_redraw = true;
-                    }
-                }
-                Effect::SaveConfig => {
-                    self.save_config();
-                }
-                Effect::SaveSessionOrder => {
-                    let lane = self.state.local_entries().next().map(|e| e.lane.clone());
-                    if let Some(lane) = lane {
-                        self.submit_session(
-                            lane,
-                            crate::session::executor::SessionOp::PersistOrder {
-                                order: self.state.session_order.clone(),
-                            },
-                        );
-                    }
-                }
-                Effect::SaveRemoteSessionOrder(host) => {
-                    // Persist this host's group order to its remote tmux server, on
-                    // the executor's per-host FIFO (ordered behind any rename/kill
-                    // for the host, and off the UI thread).
-                    let names: Vec<String> =
-                        crate::state::attachable_on_host(&self.state.entries, Some(host))
-                            .map(|e| e.name.clone())
-                            .collect();
-                    if let Some(lane) = self
-                        .state
-                        .entries
-                        .iter()
-                        .find(|entry| entry.host.as_deref() == Some(host.as_str()))
-                        .map(|entry| entry.lane.clone())
-                    {
-                        self.submit_session(
-                            lane,
-                            crate::session::executor::SessionOp::PersistOrder { order: names },
-                        );
-                    }
-                }
-                Effect::RemoveRemoteHost(req) => {
-                    // Tear down the ControlMaster (and any forwards riding on
-                    // it) so the host stops occupying SSH state once detached.
-                    let _ = self.port_forward_tx.send(
-                        crate::app::ssh::port_forward_task::Op::StopHost {
-                            host: req.host.clone(),
-                        },
-                    );
-                    // Drop the per-host runtime state (PTY, conn status, active
-                    // pointer) so a later re-add of the same host gets a fresh
-                    // connection instead of inheriting stale `Failed` status.
-                    self.offboard_remote_host(&req.host, Some(&req.lane));
-                }
-                // The divider-button effects a System emits (decision A). Each
-                // reuses the existing action path, so behavior can't drift from
-                // the keyboard/menu routes to the same destinations.
-                Effect::ReconnectHost(host) => {
-                    self.dispatch(Action::ReconnectHost { host: host.clone() });
-                }
-                Effect::OpenForwardOverlay(host) => {
-                    self.dispatch(Action::Pf(PfAction::Open(host.clone())));
-                }
-                Effect::OpenDividerMenu { host, x, y } => {
-                    let action = match host {
-                        Some(h) => Action::Menu(MenuAction::OpenHostDivider {
-                            host: h.clone(),
-                            x: *x,
-                            y: *y,
-                        }),
-                        None => Action::Menu(MenuAction::OpenLocalDivider { x: *x, y: *y }),
-                    };
-                    self.dispatch(action);
-                }
-                Effect::ApplyTmuxTheme => {
-                    tmux::apply_theme(self.state.active_theme());
-                }
-                Effect::ProbeTerminalBg => {
-                    self.probe_terminal_bg();
-                }
-                Effect::RefreshSessions => {
-                    self.request_refresh();
-                }
-                Effect::RereadNewSessionEntries => {
-                    // Re-list the picker's current parent dir on the executor; the
-                    // `DirListed` outcome populates the overlay (and drops itself if
-                    // the user has since typed a different parent).
-                    self.request_new_session_listing();
-                }
-                Effect::OpenNewSessionPicker => {
-                    self.open_new_session_picker();
-                }
-                Effect::OpenRemoteNewSessionPicker(host) => {
-                    self.open_remote_new_session_picker(host);
-                }
-                Effect::OpenAddRemotePicker => {
-                    self.open_add_remote_picker();
-                }
-                Effect::AddRemoteHost(host) => {
-                    self.onboard_remote_host(host);
-                }
-                Effect::Quit => {}
-            }
-        }
     }
 
     /// Validate the add form. On failure: set status, form stays open, no

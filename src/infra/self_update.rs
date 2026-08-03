@@ -14,7 +14,9 @@
 //!   where it can't.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::time::Duration;
+
+use crate::infra::command::{default_runner, CommandRunner};
 
 #[derive(Debug, Clone)]
 pub enum InstallMethod {
@@ -65,18 +67,14 @@ pub fn detect_install_method() -> InstallMethod {
 }
 
 fn is_brew_managed(exe: &Path) -> bool {
-    let Ok(out) = Command::new("brew")
-        .arg("--prefix")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-    else {
+    is_brew_managed_with(default_runner(), exe)
+}
+
+fn is_brew_managed_with(runner: &dyn CommandRunner, exe: &Path) -> bool {
+    let Ok(out) = runner.run("brew", &["--prefix"], Duration::from_secs(2)) else {
         return false;
     };
-    if !out.status.success() {
-        return false;
-    }
-    let prefix = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let prefix = out.stdout_trimmed();
     if prefix.is_empty() {
         return false;
     }
@@ -147,6 +145,24 @@ pub fn manual_upgrade_hint(version: &str) -> String {
 mod tests {
     use super::*;
 
+    struct BrewPrefixRunner(&'static str);
+
+    impl CommandRunner for BrewPrefixRunner {
+        fn run(
+            &self,
+            program: &str,
+            args: &[&str],
+            timeout: Duration,
+        ) -> Result<crate::infra::command::Output, crate::infra::command::CommandError> {
+            assert_eq!(program, "brew");
+            assert_eq!(args, ["--prefix"]);
+            assert_eq!(timeout, Duration::from_secs(2));
+            Ok(crate::infra::command::Output {
+                stdout: self.0.as_bytes().to_vec(),
+            })
+        }
+    }
+
     #[test]
     fn target_triple_known_for_supported_platforms() {
         // The test runner runs on one of the supported targets, so
@@ -157,5 +173,17 @@ mod tests {
     #[test]
     fn manual_hint_mentions_version() {
         assert!(manual_upgrade_hint("1.2.3").contains("1.2.3"));
+    }
+
+    #[test]
+    fn brew_detection_uses_bounded_runner() {
+        assert!(is_brew_managed_with(
+            &BrewPrefixRunner("/opt/homebrew\n"),
+            Path::new("/opt/homebrew/Cellar/deck/0.11.0/bin/deck"),
+        ));
+        assert!(!is_brew_managed_with(
+            &BrewPrefixRunner("/usr/local\n"),
+            Path::new("/opt/deck/bin/deck"),
+        ));
     }
 }

@@ -1,6 +1,6 @@
 use super::App;
 use crate::action::Action;
-use crate::tmux::SessionInfo;
+use crate::model::session::SessionSnapshot;
 
 #[test]
 fn warning_only_blocks_main_pane_actions() {
@@ -11,12 +11,13 @@ fn warning_only_blocks_main_pane_actions() {
     assert!(!App::warning_blocks_action(&Action::SwitchProject));
 }
 
-fn session(name: &str, activity: u64) -> SessionInfo {
-    SessionInfo {
+fn session(name: &str, activity: u64) -> SessionSnapshot {
+    SessionSnapshot {
         name: name.to_string(),
         dir: format!("/tmp/{name}"),
         activity,
         order: None,
+        is_current: false,
     }
 }
 

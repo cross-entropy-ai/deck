@@ -5,6 +5,7 @@
 //! `⇄N` badge are registered by `crate::ssh::divider`, not hardcoded here.
 
 use crate::agent;
+use crate::config::{Config, RemoteConfig};
 use crate::effects::Effect;
 use crate::geometry::SectionButton;
 use crate::lane::LaneId;
@@ -13,7 +14,7 @@ use crate::session::remote::RemoteControl;
 use crate::session::SessionControl;
 use crate::{remote_tmux, tmux};
 
-use super::{ControlCtx, LaneSnapshot, SectionCtx, SectionDef, System};
+use super::{ControlCtx, LaneSnapshot, SectionDef, SnapshotCtx, SnapshotMode, System};
 
 /// This system's id — the `system` half of every [`LaneId`] it produces.
 pub const TMUX: &str = "tmux";
@@ -27,9 +28,12 @@ mod cmd {
     pub const MENU: &str = "menu";
 }
 
-/// The tmux backend. Stateless: all per-call runtime state arrives via
-/// [`SystemCtx`].
-pub struct TmuxSystem;
+/// The tmux backend. Configured remote definitions are backend-owned behind a
+/// lock so the injected registry can be shared by the UI and refresh worker.
+#[derive(Default)]
+pub struct TmuxSystem {
+    remotes: std::sync::RwLock<Vec<RemoteConfig>>,
+}
 
 impl TmuxSystem {
     /// The local tmux server's lane.
@@ -89,25 +93,29 @@ fn menu_button() -> SectionButton {
 /// button; a remote lane takes the ssh-registered buttons (the `⇄N` forward
 /// count + reconnect, from `crate::ssh::divider`), then the menu button. This
 /// fn doesn't know which remote buttons exist — ssh decides.
-fn section_def(ctx: &SectionCtx, lane: &LaneId) -> SectionDef {
+fn section_def(remotes: &[RemoteConfig], lane: &LaneId) -> SectionDef {
     match TmuxSystem::host_of(lane) {
         None => SectionDef {
             lane: lane.clone(),
             title: "local".to_string(),
             buttons: vec![menu_button()],
             top_margin: false,
+            primary: true,
+            runtime_key: None,
         },
         Some(host) => {
             // ssh registers the remote-only buttons (the ⇄N forward count,
             // reconnect); the menu button is appended last (rightmost), the
             // order the divider hit-tester zips against.
-            let mut buttons = crate::ssh::divider::divider(ctx.remotes, host);
+            let mut buttons = crate::ssh::divider::divider(remotes, host);
             buttons.push(menu_button());
             SectionDef {
                 lane: lane.clone(),
                 title: host.to_string(),
                 buttons,
                 top_margin: true,
+                primary: false,
+                runtime_key: Some(host.to_string()),
             }
         }
     }
@@ -118,34 +126,65 @@ impl System for TmuxSystem {
         TMUX
     }
 
-    fn lanes(&self, ctx: &SectionCtx<'_>) -> Vec<LaneId> {
+    fn configure(&self, config: &Config) {
+        let mut remotes = self
+            .remotes
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        remotes.clone_from(&config.remotes);
+    }
+
+    fn lanes(&self) -> Vec<LaneId> {
+        let remotes = self
+            .remotes
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         std::iter::once(Self::local_lane())
-            .chain(
-                ctx.remotes
-                    .iter()
-                    .map(|remote| Self::host_lane(&remote.host)),
-            )
+            .chain(remotes.iter().map(|remote| Self::host_lane(&remote.host)))
             .collect()
     }
 
-    fn section_for(&self, lane: &LaneId, ctx: &SectionCtx) -> SectionDef {
-        section_def(ctx, lane)
+    fn section_for(&self, lane: &LaneId) -> Option<SectionDef> {
+        if lane.system() != TMUX {
+            return None;
+        }
+        let remotes = self
+            .remotes
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Some(section_def(&remotes, lane))
     }
 
-    fn snapshot(&self, lane: &LaneId, probe_agents: bool) -> Option<LaneSnapshot> {
+    fn snapshot(&self, lane: &LaneId, ctx: &SnapshotCtx<'_>) -> Option<LaneSnapshot> {
         match TmuxSystem::host_of(lane) {
-            None => Some(LaneSnapshot {
-                sessions: tmux::list_sessions(),
-                // Raw detection only; the shell classifies status + applies
-                // exclude filters. `None` when the Agents tab is inactive.
-                agents: probe_agents
-                    .then(|| agent::detect_agents(&tmux::agent_panes(), &agent::ps_snapshot())),
-            }),
+            None => {
+                let current = if ctx.client_locator.is_empty() {
+                    tmux::current_session()
+                } else {
+                    tmux::current_session_for_tty(ctx.client_locator)
+                };
+                let mut sessions = tmux::list_sessions();
+                for session in &mut sessions {
+                    session.is_current = current.as_deref() == Some(session.name.as_str());
+                }
+                let agents = ctx.probe_agents.then(|| {
+                    let mut agents =
+                        agent::detect_agents(&tmux::agent_panes(), &agent::ps_snapshot());
+                    for detected in &mut agents {
+                        if let Some(buffer) = tmux::capture_pane(&detected.pane_id) {
+                            detected.status = agent::classify_status(detected.kind, &buffer);
+                        }
+                    }
+                    agents
+                });
+                Some(LaneSnapshot { sessions, agents })
+            }
             Some(host) => {
                 // Unreachable (the ssh+tmux list failed) → `None`, no probe:
                 // probing too would double the 5s ssh stall on a dead host.
                 let sessions = remote_tmux::list_sessions(host)?;
-                let agents = probe_agents
+                let agents = ctx
+                    .probe_agents
                     .then(|| remote_tmux::agent_probe(host))
                     .flatten();
                 Some(LaneSnapshot { sessions, agents })
@@ -153,11 +192,19 @@ impl System for TmuxSystem {
         }
     }
 
+    fn snapshot_mode(&self, lane: &LaneId) -> SnapshotMode {
+        if Self::host_of(lane).is_none() {
+            SnapshotMode::Foreground
+        } else {
+            SnapshotMode::Background
+        }
+    }
+
     fn control(&self, lane: &LaneId, ctx: &ControlCtx) -> Box<dyn SessionControl + Send> {
         match TmuxSystem::host_of(lane) {
-            None => Box::new(LocalControl::new(ctx.local_tty.to_string())),
+            None => Box::new(LocalControl::new(ctx.local_client.to_string())),
             Some(host) => {
-                let marker_id = ctx.marker_ids.get(host).copied().unwrap_or(0);
+                let marker_id = ctx.connection_generations.get(lane).copied().unwrap_or(0);
                 Box::new(RemoteControl::new(host.to_string(), marker_id))
             }
         }

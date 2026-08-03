@@ -421,13 +421,13 @@ fn shell_quote_remote_path_keeps_home_expandable() {
 #[test]
 fn new_session_reports_success_and_failure() {
     let okrunner = OneShot::new(ok(""));
-    assert!(new_session_with(&okrunner, "box", "work", "~/proj"));
+    assert!(new_session_with(&okrunner, "box", "work", "~/proj").is_ok());
 
     let failrunner = OneShot::new(Err(CommandError::Timeout {
         program: "ssh".to_string(),
         elapsed: Duration::from_secs(5),
     }));
-    assert!(!new_session_with(&failrunner, "box", "work", "~/proj"));
+    assert!(new_session_with(&failrunner, "box", "work", "~/proj").is_err());
 }
 
 #[test]

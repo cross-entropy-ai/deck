@@ -16,10 +16,19 @@ fn make_state(
     term_width: u16,
     term_height: u16,
 ) -> AppState {
+    use crate::system::System;
+
     let mut state = AppState::new(term_width, term_height);
     state.prefs.layout_mode = layout_mode;
     state.prefs.show_borders = show_borders;
     state.entries = vec![make_session("alpha"), make_session("beta")];
+    let system = crate::system::tmux::TmuxSystem::default();
+    system.configure(&crate::config::Config::default());
+    state.system_sections = system
+        .lanes()
+        .into_iter()
+        .filter_map(|lane| system.section_for(&lane))
+        .collect();
     state.session_order = state.entries.iter().map(|s| s.name.clone()).collect();
     state.clamp_projects_focus();
     state
@@ -609,11 +618,12 @@ fn remote_divider_shows_forward_count() {
     // System supplies; N counts the host's configured forwards. deck no longer
     // probes per-forward liveness, so the count is the only forward feedback.
     let forward_glyph = |state: &AppState, host: &str| -> Option<String> {
-        let ctx = crate::system::SectionCtx {
-            remotes: &state.config_remotes,
-        };
-        TmuxSystem
-            .section_for(&TmuxSystem::host_lane(host), &ctx)
+        let system = TmuxSystem::default();
+        let mut config = crate::config::Config::default();
+        config.remotes.clone_from(&state.config_remotes);
+        system.configure(&config);
+        system
+            .section_for(&TmuxSystem::host_lane(host))?
             .buttons
             .into_iter()
             .find(|b| b.command == cmd::FORWARDS)

@@ -29,6 +29,11 @@ impl App {
             crate::system::tmux::hosts_from_lanes(&self.state.collapsed_sections),
             crate::system::tmux::hosts_from_lanes(&self.state.collapsed_agent_sections),
         );
+        // Keep the injected backends and the model's materialized section
+        // definitions aligned with an in-app remote/forward edit before the
+        // next refresh or render.
+        self.systems.configure(&config);
+        self.state.system_sections = self.systems.sections();
         let result = config.save().map(|()| crate::config::config_mtime());
         // Adopt the new mtime so the config watcher in `run` doesn't see our
         // own save as an external edit and self-reload (which would close the

@@ -1,68 +1,80 @@
-# System trait: deck as a general framework
+# System architecture: deck as a mounted shell
 
-Status: in progress. Turns deck from a tmux-specific TUI into a **shell** that
-mounts **Systems**. tmux (local + remote) becomes one built-in `System`; adding
-a non-tmux backend = `impl System` + register, with no shell changes.
+Status: implemented.
+
+deck's application shell mounts one or more `System` implementations. The
+built-in `TmuxSystem` supplies the local tmux server plus configured remote
+servers; a second backend participates by implementing the trait and being
+added to the composition-root registry.
 
 ## Responsibility boundary
 
-- **Shell (kernel)** owns: terminal panes, event loop, render, layout skeleton,
-  theme, the sectioned-list widget, hit-testing. It does **not** know tmux/ssh
-  or "local vs remote".
-- **System** owns: which lanes exist, each lane's divider title/buttons/badge,
-  how to snapshot sessions+agents, the control plane (switch/kill/rename/…),
-  and what a divider button does.
+- The shell owns terminal panes, event-loop policy, rendering, generic section
+  layout, focus reconciliation, connection presentation, and effect execution.
+- A `System` owns its lanes, section definitions, snapshot collection, session
+  control implementation, and divider-button semantics.
+- `AppState` stores backend-neutral values (`LaneId`, `SectionDef`,
+  `SessionSnapshot`, `LaneSnapshot`). It does not look up global backend
+  objects.
+- `SystemRegistry` is injected into `App` and `RefreshWorker`. It is the only
+  lane-to-system router.
 
-## LaneId (replaces HostKey)
+## Identity and data flow
 
-The old key was `HostKey` = `Option<String>` (None=local, Some=host), tmux-only.
-With multiple systems that's ambiguous, so the key carries **system identity**:
+`LaneId` is the stable key for one section. It encodes a system id and the
+system's own lane id, so two systems can use the same lane name without a
+collision.
 
-`LaneId(Arc<str>)` encoded as `"{system}\x1f{lane}"` (unit separator, never in a
-system id or host name). `system()` / `lane()` split it back; `Borrow<str>` keeps
-map lookups allocation-free when you hold a `LaneId`. The shell's old local-lane
-`None` becomes `LaneId::new("tmux", "local")`; a remote host becomes
-`LaneId::new("tmux", host)`. The shell no longer has a local/remote concept;
-`@local` / `@host` titles come from `SectionDef`.
+```text
+Config -> SystemRegistry::configure
+       -> System::lanes / section_for -> AppState.system_sections -> layout
+       -> System::snapshot            -> LaneRefresh              -> AppState
+Action -> registry.for_lane           -> System::control/on_button
+```
 
-## The trait
+The refresh worker asks the registry for snapshot routes. Foreground lanes are
+applied immediately; background lanes are guarded by a single-flight gate and
+sampled in parallel. Both paths return the same `LaneRefresh` type. Exclude
+filters and result application are shell policies and therefore happen once,
+outside concrete systems.
+
+## Current trait contract
 
 ```rust
-pub trait System {
+pub trait System: Send + Sync {
     fn id(&self) -> &str;
-    fn sections(&self, ctx: &SystemCtx) -> Vec<SectionDef>;   // structure
-    fn snapshot(&self, lane: &LaneId) -> Option<LaneSnapshot>; // discovery (refresh)
-    fn control(&self, lane: &LaneId) -> Box<dyn SessionControl + Send>;
-    fn on_button(&self, lane: &LaneId, command: &str) -> Vec<Effect>; // interaction
+    fn configure(&self, config: &Config);
+    fn lanes(&self) -> Vec<LaneId>;
+    fn section_for(&self, lane: &LaneId) -> Option<SectionDef>;
+    fn snapshot(&self, lane: &LaneId, ctx: &SnapshotCtx<'_>)
+        -> Option<LaneSnapshot>;
+    fn snapshot_mode(&self, lane: &LaneId) -> SnapshotMode;
+    fn control(&self, lane: &LaneId, ctx: &ControlCtx)
+        -> Box<dyn SessionControl + Send>;
+    fn on_button(&self, lane: &LaneId, command: &str, x: u16, y: u16)
+        -> Vec<Effect>;
 }
 ```
 
-Types: `SectionDef { lane, title, accent, buttons: Vec<SectionButton>, badge,
-top_margin }`, `SectionButton { glyph, command }`, `Badge { label, status }`,
-`LaneSnapshot { sessions: Vec<SessionInfo>, agents: Vec<DetectedAgent> }`,
-`SystemCtx<'a>` (read-only shell state a system needs to build sections, e.g.
-config + forward health). `SessionControl` is unchanged.
+`SectionDef.primary` identifies the one lane backed by Deck's embedded local
+terminal; absence of a runtime key alone does not imply that role.
+`SectionDef.runtime_key` is an optional opaque connection key. Generic routing
+still uses `LaneId`; the key exists only for shell-owned attachment workflows
+that need to correlate a section with a persistent client. tmux uses the SSH
+host name.
 
-## Button routing (decision A)
+## Extension test
 
-One generic action variant `Action::SystemButton { lane, command }`; the reducer
-arm delegates straight to `system.on_button(...)` and runs the returned effects.
-This replaces the closed `DividerButton` enum + its per-button arms, so the
-reducer stops growing per feature.
+`system::tests::second_system_mounts_sections_snapshots_and_control_without_shell_changes`
+mounts an independent fixture system and verifies section discovery, snapshot
+routing, and control dispatch. This is the executable contract for the open/
+closed boundary.
 
-## Plan (each step compiles + tests)
+## Intentional compatibility seam
 
-1. ✅ `LaneId` type (model/lane.rs).
-2. ✅ `System` trait + types (src/system/).
-3. ✅ `TmuxSystem` wrapping local+remote.
-4. ✅ Re-key in-memory stores (agents, collapsed_sections, executor lanes) to `LaneId`; `HostKey` deleted.
-5. ◑ Divider DTOs (`SectionMeta`/`DividerHit`) → `LaneId`. **Deferred:** routing DTOs (`Kill`/`Rename`/`Create`), `SessionEntry.host`, `AgentTarget` still carry `Option<String>` (bridged via `system::tmux::lane`).
-6. ✅ Sidebar built from `system.section_for(lane)`; `DividerButton`/`local_divider`/`remote_divider` removed; `ForwardBadge` → `system::Badge`.
-7. ✅ Refresh gathers per-lane via `System::snapshot` (orchestration — current_session, exclude, status, order, reachability — stays in the worker; `RefreshUpdate`/apply unchanged).
-8. ✅ Decision A: mouse → `Action::SystemButton` → `System::on_button` → effects.
-9. ◑ Control plane via `System::control`; `for_lane` registry (multi-system routing). **Deferred:** drop `SessionOrigin`; finish the routing/entry DTO migration.
-
-The `System` trait is fully wired (`section_for`, `snapshot`, `control`,
-`on_button`, resolved via `for_lane`). Mounting a second backend = `impl
-System` + add it to `SYSTEMS`; the remaining `Option<String>` DTOs would need
-finishing for a non-tmux backend to round-trip cleanly.
+PTY attachment and remote connection lifecycle predate `System` and remain
+shell services. Consequently `SessionEntry.host` is retained as a presentation/
+attachment compatibility value for now. Backend ownership, refresh routing,
+control routing, model keys, and layout no longer depend on it. Removing that
+last seam requires generalizing terminal attachment itself, not another session
+DTO migration.

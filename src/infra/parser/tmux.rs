@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use crate::tmux::SessionInfo;
+use crate::model::session::SessionSnapshot;
 
 /// tmux user-option holding deck's persisted 0-based display rank.
 /// Shared by the read format below and each backend's set-option write
@@ -80,7 +80,7 @@ pub(crate) const WINDOW_ACTIVITY_FORMAT: &str = "#{session_name}\t#{window_activ
 pub(crate) fn parse_sessions(
     raw: &str,
     window_activity: &HashMap<String, u64>,
-) -> Vec<SessionInfo> {
+) -> Vec<SessionSnapshot> {
     raw.lines()
         .filter_map(|line| {
             let (name, after_name) = line.split_once('\t')?;
@@ -92,11 +92,12 @@ pub(crate) fn parse_sessions(
                 None => (after_name, None),
             };
             let activity = window_activity.get(name).copied().unwrap_or(0);
-            Some(SessionInfo {
+            Some(SessionSnapshot {
                 name: name.to_string(),
                 dir: dir.to_string(),
                 activity,
                 order,
+                is_current: false,
             })
         })
         .collect()

@@ -2,6 +2,8 @@ pub mod action;
 pub mod ssh;
 
 mod dispatch;
+mod effect_runner;
+mod focus_executor;
 mod lifecycle;
 mod new_session_flow;
 mod pty;
@@ -27,6 +29,8 @@ use crate::tmux;
 use crate::update::UpdateCheckMode;
 
 use self::update::bootstrap_update_check;
+use focus_executor::FocusExecutor;
+pub(super) use focus_executor::{ActivePaneOutcome, FocusOutcome};
 
 const POLL_MS: u64 = 16;
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
@@ -61,6 +65,10 @@ pub(super) use ssh::remote_conn::RemoteConnManager;
 
 pub struct App {
     state: AppState,
+    /// Mounted backend registry injected at the composition root. The same
+    /// instance is shared with refresh; model code receives only materialized
+    /// section definitions.
+    systems: &'static crate::system::SystemRegistry<'static>,
     /// The always-present local tmux PTY.
     local_terminal: TerminalPane,
     /// The remote-connection state machine: one connection per configured host
@@ -91,12 +99,8 @@ pub struct App {
     port_forward_tx: std::sync::mpsc::Sender<crate::app::ssh::port_forward_task::Op>,
     /// Results coming back from the port-forward worker.
     port_forward_rx: std::sync::mpsc::Receiver<crate::app::ssh::port_forward_task::OpResult>,
-    /// Completion signals from remote agent-pane focus threads. Remote focus
-    /// runs off-thread (ssh can stall), so `active_agent` commits only when a
-    /// `true` outcome lands here — see `switch_to_agent_pane` /
-    /// `apply_focus_outcome`.
-    focus_tx: std::sync::mpsc::Sender<FocusOutcome>,
-    focus_rx: std::sync::mpsc::Receiver<FocusOutcome>,
+    /// Owns blocking pane-focus/probe jobs and their result channels.
+    focus_executor: FocusExecutor,
     /// The in-flight Agents-tab summary generation, if any. A one-shot
     /// [`Worker`](crate::worker::Worker) carrying `Ok(text)` or `Err(reason)`
     /// (no agents, `claude` missing, non-zero exit, timeout, cancel). Dropping
@@ -108,11 +112,6 @@ pub struct App {
     /// commits only if no newer action bumped this since, so a slow ssh focus
     /// can't clobber a later user action.
     focus_seq: u64,
-    /// Active-pane probe results (the pane Deck's main view shows). Drained
-    /// each tick to steer the Agents-tab row highlight onto the active pane —
-    /// see `apply_active_pane_outcome`.
-    active_pane_tx: std::sync::mpsc::Sender<ActivePaneOutcome>,
-    active_pane_rx: std::sync::mpsc::Receiver<ActivePaneOutcome>,
     /// True while an active-pane probe thread is outstanding. Single-flights
     /// the periodic probe so a slow ssh roundtrip can't pile up threads.
     active_pane_in_flight: bool,
@@ -130,39 +129,6 @@ pub struct App {
     /// next one either, so stop re-probing it on focus (each attempt costs the
     /// full probe timeout with terminal input blocked).
     pub(super) terminal_bg_unanswered: bool,
-}
-
-/// Result of a remote agent-pane focus attempt, sent back from the
-/// worker thread to the event loop.
-pub(super) struct FocusOutcome {
-    pub target: crate::geometry::AgentTarget,
-    /// Which branch the remote focus took — `ExactPane` is the only one
-    /// that earns the agent highlight (see `apply_focus_outcome`).
-    pub result: crate::tmux::PaneFocus,
-    /// `focus_seq` at spawn time — stale if it no longer matches.
-    pub seq: u64,
-    /// The target connection's `client_marker_id` at spawn time. If the host
-    /// reconnected (new id) or dropped, the outcome is from an older PTY
-    /// generation and must not commit — see `apply_focus_outcome`.
-    pub marker_id: u64,
-}
-
-/// Result of an active-pane probe, sent from the probe thread to the event
-/// loop. Carries the pane Deck's main view shows so the Agents-tab row
-/// highlight follows the *real* active pane (see `probe_active_pane` /
-/// `apply_active_pane_outcome`).
-pub(super) struct ActivePaneOutcome {
-    /// The displayed host at spawn (`None` = local). Dropped if the user
-    /// switched to viewing a different host before this landed.
-    pub host: Option<String>,
-    /// The client's active pane id, or `None` if the query failed / bailed.
-    pub pane_id: Option<String>,
-    /// `focus_seq` at spawn time — stale (and dropped) if it no longer
-    /// matches, so a focus/session switch in flight wins over the probe.
-    pub seq: u64,
-    /// The host's `client_marker_id` at spawn — guards against a reconnect
-    /// (same as `FocusOutcome`).
-    pub marker_id: u64,
 }
 
 impl App {
@@ -184,6 +150,9 @@ impl App {
 
         let theme_index = THEMES.iter().position(|t| t.name == cfg.theme).unwrap_or(0);
         let (keybindings, kb_warnings) = Keybindings::from_config(&cfg.keybindings);
+
+        let systems = crate::system::builtin_registry();
+        systems.configure(&cfg);
 
         let mut state = AppState::new(term_width, term_height);
         // Same field list reload uses, so startup and hot-reload can't
@@ -219,6 +188,7 @@ impl App {
         // Seed the in-memory mirror of remote configs so port-forward
         // state is available from the very first frame.
         state.config_remotes = cfg.remotes.clone();
+        state.system_sections = systems.sections();
 
         let remotes: Vec<String> = cfg.remotes.iter().map(|r| r.host.clone()).collect();
         let pty_size = pty::pane_size(pty_rows, pty_cols);
@@ -240,15 +210,14 @@ impl App {
 
         let (pf_result_tx, pf_result_rx) = std::sync::mpsc::channel();
         let port_forward_tx = crate::app::ssh::port_forward_task::spawn(pf_result_tx);
-        let (focus_tx, focus_rx) = std::sync::mpsc::channel();
-        let (active_pane_tx, active_pane_rx) = std::sync::mpsc::channel();
 
         let mut app = App {
             state,
+            systems,
             local_terminal,
             remote,
             warning_state: None,
-            refresh_worker: RefreshWorker::spawn(),
+            refresh_worker: RefreshWorker::spawn(systems),
             session_exec: crate::session::executor::SessionExecutor::new(),
             raw_keybindings: cfg.keybindings.clone(),
             update_checker,
@@ -258,10 +227,7 @@ impl App {
             needs_full_redraw: false,
             port_forward_tx,
             port_forward_rx: pf_result_rx,
-            focus_tx,
-            focus_rx,
-            active_pane_tx,
-            active_pane_rx,
+            focus_executor: FocusExecutor::new(),
             active_pane_in_flight: false,
             summary_worker: None,
             focus_seq: 0,
@@ -405,7 +371,7 @@ impl App {
             .state
             .active_agent
             .as_ref()
-            .and_then(|t| crate::system::tmux::TmuxSystem::host_of(&t.lane))
+            .and_then(|t| self.state.host_for_lane(&t.lane))
             == Some(host)
         {
             self.state.active_agent = None;

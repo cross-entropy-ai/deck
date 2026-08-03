@@ -92,28 +92,46 @@ impl AppState {
         // can be flipped once the list is built.
         let mut group_headers: Vec<(usize, LaneId)> = Vec::new();
 
-        // Lanes to lay out, in display order: the local lane, then each remote
-        // host as it first appears in `entries` (config order). The *shell*
-        // enumerates the lanes — not the system — so every session row keeps a
-        // section even before the system would list that lane.
+        // Lanes to lay out, in display order. Production definitions are
+        // materialized by the injected SystemRegistry; fixture/discovery rows
+        // not present there are appended so no data becomes invisible.
         let theme = self.active_theme();
-        let ctx = crate::system::SectionCtx {
-            remotes: &self.config_remotes,
-        };
-        let mut lanes = crate::system::lanes(&ctx);
+        let mut lanes: Vec<LaneId> = self
+            .system_sections
+            .iter()
+            .map(|section| section.lane.clone())
+            .collect();
         for entry in &self.entries {
             if !lanes.contains(&entry.lane) {
                 lanes.push(entry.lane.clone());
             }
         }
+        for lane in self.agents.keys() {
+            if !lanes.contains(lane) {
+                lanes.push(lane.clone());
+            }
+        }
 
         for lane_id in &lanes {
-            // The lane's owning system styles the divider: title, accent,
-            // buttons, badge.
-            let Some(system) = crate::system::for_lane(lane_id) else {
-                continue;
-            };
-            let def = system.section_for(lane_id, &ctx);
+            // The lane's owning system already styled the divider. A plain
+            // fallback keeps isolated model tests and late discovery rows
+            // renderable without reintroducing a service locator.
+            let def = self
+                .system_sections
+                .iter()
+                .find(|section| section.lane == *lane_id)
+                .cloned()
+                .unwrap_or_else(|| crate::system::SectionDef {
+                    lane: lane_id.clone(),
+                    title: self
+                        .host_for_lane(lane_id)
+                        .unwrap_or(lane_id.lane())
+                        .to_string(),
+                    buttons: Vec::new(),
+                    top_margin: self.host_for_lane(lane_id).is_some(),
+                    primary: false,
+                    runtime_key: self.host_for_lane(lane_id).map(str::to_string),
+                });
             if opts.show_headers {
                 // Section dividers stay muted on purpose — least distraction,
                 // no per-host tint.
@@ -171,29 +189,11 @@ impl AppState {
             },
             &self.collapsed_sections,
             |layout, _sections, lane_id| {
-                // `entries` is grouped by host and contiguous, so filtering by
-                // the lane's host yields each section's rows in flat-index order.
-                // Rows still key on `Option<String>` host, so the lane is mapped
-                // back through tmux here; goes away when `SessionEntry.host`
-                // becomes a `LaneId` (see CLAUDE.md).
-                let host = crate::system::tmux::TmuxSystem::host_of(lane_id);
-                for e in self.entries.iter().filter(|e| e.host.as_deref() == host) {
+                for e in self.entries.iter().filter(|e| e.lane == *lane_id) {
                     layout.push_row_auto(self.session_item(e, view_mode));
                 }
             },
         )
-    }
-
-    /// Distinct remote hosts as `&str` in first-appearance order in `entries`
-    /// (the refresh worker emits hosts in config order, one contiguous block
-    /// each). Shared by `build_sections` and `build_agent_entries` so the
-    /// sidebar sections and the flattened agent list walk hosts identically.
-    fn remote_hosts_in_order_ref(&self) -> impl Iterator<Item = &str> {
-        let mut seen: HashSet<&str> = HashSet::new();
-        self.entries
-            .iter()
-            .filter_map(|e| e.host.as_deref())
-            .filter(move |host| seen.insert(host))
     }
 
     /// Agents-tab entries for one section (`None` = local): one
@@ -202,14 +202,14 @@ impl AppState {
     /// yet probed (`detecting…`). Every section yields at least one entry — like
     /// a Projects host always carrying a `NoSessions` row — so it always holds a
     /// focus slot. `agent_entries` and the layout both walk this.
-    fn agent_entries_for(&self, host: Option<&str>) -> Vec<AgentEntry> {
-        let lane = crate::system::tmux::lane(host);
+    fn agent_entries_for(&self, lane: &LaneId) -> Vec<AgentEntry> {
+        let host = self.host_for_lane(lane);
         let mk = |kind| AgentEntry {
             lane: lane.clone(),
             host: host.map(str::to_string),
             kind,
         };
-        match self.section_agents(host) {
+        match self.section_agents(lane) {
             Some(list) if !list.is_empty() => list
                 .iter()
                 .cloned()
@@ -234,11 +234,25 @@ impl AppState {
     /// remote host in section order. Each section is a run of detected agents,
     /// or a single placeholder entry when empty.
     fn build_agent_entries(&self) -> Vec<AgentEntry> {
-        let mut entries = self.agent_entries_for(None);
-        for host in self.remote_hosts_in_order_ref() {
-            entries.extend(self.agent_entries_for(Some(host)));
+        let mut lanes: Vec<LaneId> = self
+            .system_sections
+            .iter()
+            .map(|section| section.lane.clone())
+            .collect();
+        for entry in &self.entries {
+            if !lanes.contains(&entry.lane) {
+                lanes.push(entry.lane.clone());
+            }
         }
-        entries
+        for lane in self.agents.keys() {
+            if !lanes.contains(lane) {
+                lanes.push(lane.clone());
+            }
+        }
+        lanes
+            .iter()
+            .flat_map(|lane| self.agent_entries_for(lane))
+            .collect()
     }
 
     /// Number of focusable Agents-tab entries — just the stored list's length,
@@ -371,13 +385,10 @@ impl AppState {
             },
             &self.collapsed_agent_sections,
             |layout, _sections, lane_id| {
-                // Same lane -> host mapping as `sidebar_layout`, for the same
-                // reason: `agent_entries` still key on `Option<String>` host.
-                let host = crate::system::tmux::TmuxSystem::host_of(lane_id);
                 for entry in self
                     .agent_entries
                     .iter()
-                    .filter(|e| e.host.as_deref() == host)
+                    .filter(|entry| entry.lane == *lane_id)
                 {
                     layout.push_row_auto(self.agent_item(entry));
                 }

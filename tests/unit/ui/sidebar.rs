@@ -1,5 +1,19 @@
 use super::*;
 
+fn mount_tmux_sections(state: &mut crate::state::AppState) {
+    use crate::system::System;
+
+    let system = crate::system::tmux::TmuxSystem::default();
+    let mut config = crate::config::Config::default();
+    config.remotes.clone_from(&state.config_remotes);
+    system.configure(&config);
+    state.system_sections = system
+        .lanes()
+        .into_iter()
+        .filter_map(|lane| system.section_for(&lane))
+        .collect();
+}
+
 #[test]
 fn confirm_kill_renders_clickable_in_tabs_mode() {
     // In tabs mode the confirm-kill prompt must render and publish hit
@@ -452,6 +466,11 @@ fn agents_tab_publishes_clickable_agent_entries() {
 
     let mut state = AppState::new(100, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
+    state.config_remotes = vec![crate::config::RemoteConfig {
+        host: "h1".into(),
+        forwards: vec![],
+    }];
+    mount_tmux_sections(&mut state);
     // Two local agents and one remote, so the click→pane mapping has to
     // survive dividers/margins between sections (the "specific pane" path).
     state.entries.push(crate::state::SessionEntry {
@@ -550,6 +569,11 @@ fn remote_divider_buttons_register_below_their_top_margin() {
 
     let mut state = AppState::new(80, 24);
     state.prefs.sidebar_tab = SidebarTab::Projects;
+    state.config_remotes = vec![crate::config::RemoteConfig {
+        host: "h1".into(),
+        forwards: vec![],
+    }];
+    mount_tmux_sections(&mut state);
     // One remote host so the layout has a margined `@h1` divider.
     state.entries.push(crate::state::SessionEntry {
         lane: crate::system::tmux::TmuxSystem::host_lane("h1"),
@@ -662,6 +686,7 @@ fn remote_divider_shows_forward_count() {
         host: "h1".into(),
         forwards: vec![f1.clone(), f2.clone()],
     }];
+    mount_tmux_sections(&mut state);
     state.entries.push(crate::state::SessionEntry {
         lane: crate::system::tmux::TmuxSystem::host_lane("h1"),
         host: Some("h1".to_string()),

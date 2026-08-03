@@ -5,23 +5,11 @@ use crate::infra::parser::tmux::{
     exact_target, order_set_option_args, parse_sessions, parse_window_activity,
     SESSION_LIST_FORMAT, WINDOW_ACTIVITY_FORMAT,
 };
+use crate::model::session::SessionSnapshot;
 
 /// Per-tmux-call timeout. tmux is local IPC and healthy calls finish in
 /// a few ms, so 1s rescues us from a wedged server with ample headroom.
 pub const TMUX_TIMEOUT: Duration = Duration::from_secs(1);
-
-/// Info about a tmux session.
-#[derive(Debug, Clone)]
-pub struct SessionInfo {
-    pub name: String,
-    pub dir: String,
-    /// Unix timestamp of last buffer activity in this session.
-    pub activity: u64,
-    /// Deck's persisted display rank from the `@deck_order` session
-    /// option. `None` when never reordered (option unset → empty field).
-    /// Both local and remote listings request it.
-    pub order: Option<u32>,
-}
 
 /// Run a tmux command and return trimmed stdout. `None` on any failure
 /// (spawn, non-zero exit, timeout); the error reason is dropped here but
@@ -37,11 +25,11 @@ fn tmux_with(runner: &dyn CommandRunner, args: &[&str]) -> Result<String, Comman
 }
 
 /// List all tmux sessions.
-pub fn list_sessions() -> Vec<SessionInfo> {
+pub fn list_sessions() -> Vec<SessionSnapshot> {
     list_sessions_with(default_runner())
 }
 
-fn list_sessions_with(runner: &dyn CommandRunner) -> Vec<SessionInfo> {
+fn list_sessions_with(runner: &dyn CommandRunner) -> Vec<SessionSnapshot> {
     // One tmux invocation (`;`-chained like `apply_theme`) for both the
     // session list and per-window activity, vs two spawns per tick. A
     // one-char prefix on each `-F` format tags each output line so the
@@ -192,10 +180,14 @@ pub fn rename_session(old_name: &str, new_name: &str) -> Result<(), CommandError
 }
 
 /// Create a new detached session with the given name and starting directory.
-/// Returns the session name on success.
-pub fn new_session(name: &str, dir: &str) -> Option<String> {
-    tmux(&["new-session", "-d", "-s", name, "-c", dir])?;
-    Some(name.to_string())
+/// Returns the session name on success and preserves the command failure for
+/// callers that need to surface it.
+pub fn new_session(name: &str, dir: &str) -> Result<String, CommandError> {
+    tmux_with(
+        default_runner(),
+        &["new-session", "-d", "-s", name, "-c", dir],
+    )
+    .map(|_| name.to_string())
 }
 
 /// Switch a specific tmux client (by TTY) to a different session.

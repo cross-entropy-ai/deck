@@ -13,7 +13,7 @@ use crate::infra::command::{default_runner, CommandError, CommandRunner};
 use crate::infra::parser::tmux::{
     exact_target, order_set_option_args, parse_sessions, SESSION_LIST_FORMAT_SSH,
 };
-use crate::tmux::SessionInfo;
+use crate::model::session::SessionSnapshot;
 
 /// Marker separating the pane-pid list from the `ps` snapshot in the
 /// combined `agent_probe` ssh call. Must not start with `=` (zsh
@@ -62,11 +62,11 @@ pub(crate) fn run_ssh(
 /// - `Some(empty)` — reachable but no tmux server (`list-sessions` exited
 ///   non-zero with "no server running").
 /// - `Some(non-empty)` — the live session list.
-pub fn list_sessions(host: &str) -> Option<Vec<SessionInfo>> {
+pub fn list_sessions(host: &str) -> Option<Vec<SessionSnapshot>> {
     list_sessions_with(default_runner(), host)
 }
 
-fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<SessionInfo>> {
+fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<SessionSnapshot>> {
     // `$'...'` (bash/zsh ANSI-C quoting) makes the remote shell treat `#`
     // literally (no comment) and `\t` as a splittable tab byte; a
     // POSIX-only shell would need a different escape. Trailing
@@ -303,17 +303,16 @@ pub(crate) fn client_marker_token(host: &str, marker_id: u64) -> String {
     shell_quote_remote_path(&client_marker_path(host, marker_id))
 }
 
-/// Unquoted glob token matching *all* of this Deck process's marker files
-/// for `host` (any `marker_id`). The attach wrapper `rm`s these before
-/// writing the fresh one so stale markers don't accumulate. `$HOME` is
-/// shell-expanded; the rest is shell-safe (digits + sanitized host); the
-/// trailing `*` must stay unquoted to glob.
-pub(crate) fn client_marker_glob_token(host: &str) -> String {
+/// `find -name` pattern matching all of this Deck process's marker files for
+/// `host` (any `marker_id`). The attach wrapper passes this as a quoted `find`
+/// argument instead of exposing a bare shell glob: zsh treats an unmatched
+/// glob as a fatal expansion error before `rm -f` or its redirection can run.
+/// The returned pattern is safe to single-quote (digits + sanitized host +
+/// `*`; no quotes or shell metacharacters other than the wildcard interpreted
+/// by `find`, not the login shell).
+pub(crate) fn client_marker_name_pattern(host: &str) -> String {
     let pid = std::process::id();
-    format!(
-        "\"$HOME\"/.cache/deck/client-{pid}-{}-*",
-        marker_host_part(host)
-    )
+    format!("client-{pid}-{}-*", marker_host_part(host))
 }
 
 /// The `~/.cache/deck` directory token the attach wrapper `mkdir -p`s
@@ -480,14 +479,19 @@ fn persist_session_order_with(
 }
 
 /// Create a detached session `name` on the remote tmux server in `dir`
-/// (`dir` may contain `~`, expanded by the remote shell). Returns whether
-/// the create succeeded so the caller can decide whether to switch to it.
+/// (`dir` may contain `~`, expanded by the remote shell). Preserves command
+/// failures so the session-control boundary can surface them to the UI.
 /// Blocking — runs on an explicit user action.
-pub fn new_session(host: &str, name: &str, dir: &str) -> bool {
+pub fn new_session(host: &str, name: &str, dir: &str) -> Result<(), CommandError> {
     new_session_with(default_runner(), host, name, dir)
 }
 
-fn new_session_with(runner: &dyn CommandRunner, host: &str, name: &str, dir: &str) -> bool {
+fn new_session_with(
+    runner: &dyn CommandRunner,
+    host: &str,
+    name: &str,
+    dir: &str,
+) -> Result<(), CommandError> {
     let name = shell_single_quote(name);
     let dir = shell_quote_remote_path(dir);
     run_ssh(
@@ -503,7 +507,7 @@ fn new_session_with(runner: &dyn CommandRunner, host: &str, name: &str, dir: &st
             dir.as_str(),
         ],
     )
-    .is_ok()
+    .map(|_| ())
 }
 
 /// List subdirectories under `path` on `host` for the new-session

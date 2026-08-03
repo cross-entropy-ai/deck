@@ -246,7 +246,7 @@ impl App {
     /// for focuses that actually landed.
     fn pump_focus(&mut self) -> Redraw {
         let mut redraw = Redraw::No;
-        while let Ok(outcome) = self.focus_rx.try_recv() {
+        while let Some(outcome) = self.focus_executor.try_recv_focus() {
             self.apply_focus_outcome(outcome);
             redraw = Redraw::Force;
         }
@@ -258,7 +258,7 @@ impl App {
     /// the periodic probe doesn't repaint every tick for no change.
     fn pump_active_pane(&mut self) -> Redraw {
         let mut redraw = Redraw::No;
-        while let Ok(outcome) = self.active_pane_rx.try_recv() {
+        while let Some(outcome) = self.focus_executor.try_recv_active_pane() {
             // The marker and both section cursors can move together (see
             // `steer_marker_to_pane`), so watch all three.
             let before = (

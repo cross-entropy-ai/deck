@@ -563,6 +563,12 @@ pub struct AppState {
     /// and `reload_config`.
     pub config_remotes: Vec<crate::config::RemoteConfig>,
 
+    /// Backend-provided sidebar section definitions, materialized by the
+    /// injected `SystemRegistry`. Layout consumes these values without global
+    /// backend lookup; tests may leave the list empty and derive plain fallback
+    /// sections from their fixture entries.
+    pub system_sections: Vec<crate::system::SectionDef>,
+
     /// Interactive coding agents (Claude Code / Codex) detected per sidebar
     /// section, keyed by host (`None` = local, `Some(host)` = remote). An
     /// absent key hasn't been probed yet (rendered "claude …, codex …").
@@ -647,6 +653,7 @@ impl AppState {
             reload_status: None,
             reload_status_at: None,
             config_remotes: Vec::new(),
+            system_sections: Vec::new(),
             agents: HashMap::new(),
             agent_entries: Vec::new(),
             active_agent: None,
@@ -681,6 +688,45 @@ impl AppState {
     /// This host's entry in the mirrored `Config.remotes`, if configured.
     pub fn remote_config(&self, host: &str) -> Option<&crate::config::RemoteConfig> {
         self.config_remotes.iter().find(|r| r.host == host)
+    }
+
+    /// Presentation/connection host associated with `lane`, when this is a
+    /// configured remote lane. Generic routing uses the lane itself; this
+    /// compatibility value is consulted only by tmux/SSH-specific workflows.
+    pub fn host_for_lane(&self, lane: &LaneId) -> Option<&str> {
+        self.system_sections
+            .iter()
+            .find(|section| section.lane == *lane)
+            .and_then(|section| section.runtime_key.as_deref())
+            .or_else(|| {
+                self.entries
+                    .iter()
+                    .find(|entry| entry.lane == *lane)
+                    .and_then(|entry| entry.host.as_deref())
+            })
+            .or_else(|| {
+                self.config_remotes
+                    .iter()
+                    .find(|remote| remote.host == lane.lane())
+                    .map(|remote| remote.host.as_str())
+            })
+    }
+
+    /// The lane attached to Deck's embedded local terminal, if mounted.
+    pub fn primary_lane(&self) -> Option<&LaneId> {
+        self.system_sections
+            .iter()
+            .find(|section| section.primary)
+            .map(|section| &section.lane)
+    }
+
+    pub fn is_primary_lane(&self, lane: &LaneId) -> bool {
+        self.primary_lane().is_some_and(|primary| primary == lane)
+    }
+
+    pub fn is_primary_entry(&self, entry: &SessionEntry) -> bool {
+        self.primary_lane()
+            .map_or_else(|| entry.is_local(), |lane| entry.lane == *lane)
     }
 
     /// Set the reload strip's status and (re)start its TTL.
@@ -977,7 +1023,7 @@ impl AppState {
         if meta.divider {
             // Returns the `Option<String>` host the mouse layer's collapse keys
             // still speak; becomes a plain `LaneId` once those move over.
-            Some(crate::system::tmux::TmuxSystem::host_of(&meta.lane).map(str::to_string))
+            Some(self.host_for_lane(&meta.lane).map(str::to_string))
         } else {
             None
         }
@@ -1020,7 +1066,9 @@ impl AppState {
     /// (`session_order`, `current_session`, the last-local-session kill
     /// guard) operate over these.
     pub fn local_entries(&self) -> impl Iterator<Item = &SessionEntry> {
-        self.entries.iter().filter(|e| e.is_local())
+        self.entries
+            .iter()
+            .filter(|entry| self.is_primary_entry(entry))
     }
 
     /// Number of local entries (`host == None`). Local rows occupy the
@@ -1064,11 +1112,10 @@ impl AppState {
         }
     }
 
-    /// Agents detected in a sidebar section, addressed uniformly by host
-    /// (`None` = local). `None` result = not probed yet. The layout uses
-    /// this without caring whether the section is local or remote.
-    pub fn section_agents(&self, host: Option<&str>) -> Option<&[crate::agent::DetectedAgent]> {
-        self.agents.get(lane(host).as_str()).map(Vec::as_slice)
+    /// Agents detected in a sidebar section. `None` means the lane has not
+    /// been probed yet.
+    pub fn section_agents(&self, lane: &LaneId) -> Option<&[crate::agent::DetectedAgent]> {
+        self.agents.get(lane.as_str()).map(Vec::as_slice)
     }
 
     /// Fold a remote refresh round's agent detection into `agents`.
@@ -1077,6 +1124,7 @@ impl AppState {
     /// failed probe, so its stale list is dropped (else dead pane ids keep
     /// rendering as clickable footer lines). The local `None` key is untouched;
     /// hosts no longer configured are pruned.
+    #[cfg(test)]
     pub fn apply_remote_agents(
         &mut self,
         covered_hosts: std::collections::HashSet<String>,

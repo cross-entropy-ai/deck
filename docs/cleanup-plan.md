@@ -277,13 +277,15 @@
 29. [x] **`~/claude` is hardcoded** as the bootstrap session dir
     (`lifecycle.rs:24`) — author-specific; should be `$HOME` (tmux
     tolerates a missing `-c` dir, so this fails quietly). *(commit 8c58420)*
-30. [ ] **First-connect zsh noise:** the attach prelude's `rm -f <glob>`
+30. [x] **First-connect zsh noise:** the attach prelude's `rm -f <glob>`
     prints `no matches found` into the PTY on zsh hosts (redirection
     can't suppress it; use `rm -f -- <glob> 2>/dev/null || true` with
     the glob expanded by `sh -c`, or guard with `setopt null_glob`-safe
     form / `find -delete`). *(prelude now appends `2>/dev/null` but the
     glob is still bare, so zsh's own nomatch error isn't suppressed —
-    remote_spawn.rs:143)*
+    remote_spawn.rs:143). *(fixed: cleanup now uses `find -name` with a
+    single-quoted name pattern, so no interactive-shell glob expansion occurs;
+    a unit test locks the generated attach command.)*
 31. [~] Minor UI: reload bar can render a double ellipsis (`……`,
     `ui/reload.rs:88-93`); the summary-language editor's "Enter save /
     Esc cancel" hint is clipped at every size (`ui/settings.rs:359,393`);

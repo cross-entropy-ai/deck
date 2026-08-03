@@ -8,6 +8,7 @@ pub mod menu;
 pub mod new_session;
 pub mod overlay;
 pub mod picker;
+pub mod session;
 pub mod state;
 pub mod summary;
 pub mod theme;

@@ -13,10 +13,11 @@
 //! requests a refresh when an outcome lands (see `apply_session_outcome`).
 
 use std::collections::HashMap;
+use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
-use super::{SessionControl, SessionControlError};
+use super::{DirListing, SessionControl, SessionControlError};
 use crate::lane::LaneId;
 
 /// What to run on a worker. Built on the UI thread; the backend that runs
@@ -65,7 +66,6 @@ pub enum OpOutcome {
     Killed,
     Created {
         name: String,
-        created: bool,
     },
     OrderPersisted,
     Failed {
@@ -74,8 +74,7 @@ pub enum OpOutcome {
     },
     DirListed {
         path: String,
-        entries: Vec<String>,
-        error: Option<String>,
+        result: Result<DirListing, SessionControlError>,
     },
 }
 
@@ -84,6 +83,7 @@ pub enum SessionOperation {
     Switch,
     Rename,
     Kill,
+    Create,
     PersistOrder,
 }
 
@@ -93,10 +93,30 @@ impl std::fmt::Display for SessionOperation {
             Self::Switch => "switch session",
             Self::Rename => "rename session",
             Self::Kill => "kill session",
+            Self::Create => "create session",
             Self::PersistOrder => "save session order",
         })
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionSubmitError {
+    WorkerSpawn(String),
+    WorkerStopped,
+}
+
+impl std::fmt::Display for SessionSubmitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WorkerSpawn(error) => write!(f, "could not start session worker: {error}"),
+            Self::WorkerStopped => {
+                f.write_str("session worker stopped before accepting the operation")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SessionSubmitError {}
 
 struct Job {
     backend: Box<dyn SessionControl + Send>,
@@ -125,29 +145,69 @@ impl SessionExecutor {
 
     /// Enqueue `op` on `lane`'s FIFO worker, run via `backend` (captured now so
     /// it sees the current tty/marker). Spawns the worker lazily on first use.
-    /// Fire-and-forget: a dead worker is silently dropped; next refresh reconciles.
-    pub fn submit(&mut self, lane: LaneId, backend: Box<dyn SessionControl + Send>, op: SessionOp) {
-        // Cache the sender only after the thread starts, so a failed spawn
-        // can't park a dead sender that swallows later ops (the op is dropped;
-        // next refresh reconciles). Common path (worker exists) looks up via
-        // borrowed `&str` key to avoid allocating; first-use builds a `LaneId`.
-        let tx = match self.senders.get(lane.as_str()) {
-            Some(tx) => tx,
-            None => {
-                let outcome_tx = self.outcome_tx.clone();
-                let (tx, rx) = mpsc::channel::<Job>();
-                let name = format!("deck-session-{}-{}", lane.system(), lane.lane());
-                if thread::Builder::new()
-                    .name(name)
-                    .spawn(move || worker_loop(rx, outcome_tx))
-                    .is_err()
-                {
-                    return;
-                }
-                self.senders.entry(lane.clone()).or_insert(tx)
-            }
+    pub fn submit(
+        &mut self,
+        lane: LaneId,
+        backend: Box<dyn SessionControl + Send>,
+        op: SessionOp,
+    ) -> Result<(), SessionSubmitError> {
+        self.submit_with(lane, backend, op, |name, task| {
+            thread::Builder::new().name(name).spawn(task).map(drop)
+        })
+    }
+
+    fn submit_with<S>(
+        &mut self,
+        lane: LaneId,
+        backend: Box<dyn SessionControl + Send>,
+        op: SessionOp,
+        spawn: S,
+    ) -> Result<(), SessionSubmitError>
+    where
+        S: FnOnce(String, Box<dyn FnOnce() + Send + 'static>) -> io::Result<()>,
+    {
+        let job = Job {
+            backend,
+            op,
+            lane: lane.clone(),
         };
-        let _ = tx.send(Job { backend, op, lane });
+
+        if let Some(tx) = self.senders.get(lane.as_str()) {
+            match tx.send(job) {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    // The worker exited between lookup and send. Remove the
+                    // sticky sender and retry this same owned job on a fresh
+                    // worker, preserving the user's operation.
+                    self.senders.remove(lane.as_str());
+                    return self.spawn_and_send(lane, error.0, spawn);
+                }
+            }
+        }
+
+        self.spawn_and_send(lane, job, spawn)
+    }
+
+    fn spawn_and_send<S>(
+        &mut self,
+        lane: LaneId,
+        job: Job,
+        spawn: S,
+    ) -> Result<(), SessionSubmitError>
+    where
+        S: FnOnce(String, Box<dyn FnOnce() + Send + 'static>) -> io::Result<()>,
+    {
+        // Cache the sender only after the thread starts, so a failed spawn
+        // can't park a dead sender that swallows later ops.
+        let outcome_tx = self.outcome_tx.clone();
+        let (tx, rx) = mpsc::channel::<Job>();
+        let name = format!("deck-session-{}-{}", lane.system(), lane.lane());
+        spawn(name, Box::new(move || worker_loop(rx, outcome_tx)))
+            .map_err(|error| SessionSubmitError::WorkerSpawn(error.to_string()))?;
+        tx.send(job)
+            .map_err(|_| SessionSubmitError::WorkerStopped)?;
+        self.senders.insert(lane, tx);
+        Ok(())
     }
 
     /// Drop `host`'s FIFO worker lane: removing its sender ends the worker's
@@ -175,20 +235,47 @@ fn worker_loop(rx: Receiver<Job>, outcome_tx: Sender<SessionOutcome>) {
     // sender) is dropped at shutdown.
     while let Ok(job) = rx.recv() {
         let lane = job.lane.clone();
+        let panic_outcome = PanicOutcome::from_op(&job.op);
         // Isolate a panicking backend call so it can't kill the worker and
-        // leave a sticky sender that swallows every later op. On panic we skip
-        // the outcome but keep draining.
+        // leave a sticky sender that swallows every later op. Panics become an
+        // explicit typed failure and the worker keeps draining its FIFO.
         let outcome =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(job.backend, job.op)));
-        match outcome {
-            Ok(result) => {
-                if outcome_tx.send(SessionOutcome { lane, result }).is_err() {
-                    break;
-                }
-            }
-            Err(_) => {
-                debug_assert!(false, "session executor op panicked for {lane:?}");
-            }
+        let result = match outcome {
+            Ok(result) => result,
+            Err(_) => panic_outcome.into_outcome(),
+        };
+        if outcome_tx.send(SessionOutcome { lane, result }).is_err() {
+            break;
+        }
+    }
+}
+
+enum PanicOutcome {
+    Operation(SessionOperation),
+    DirectoryListing(String),
+}
+
+impl PanicOutcome {
+    fn from_op(op: &SessionOp) -> Self {
+        match op {
+            SessionOp::Switch { .. } => Self::Operation(SessionOperation::Switch),
+            SessionOp::Rename { .. } => Self::Operation(SessionOperation::Rename),
+            SessionOp::Kill { .. } => Self::Operation(SessionOperation::Kill),
+            SessionOp::NewSession { .. } => Self::Operation(SessionOperation::Create),
+            SessionOp::PersistOrder { .. } => Self::Operation(SessionOperation::PersistOrder),
+            SessionOp::ListDir { path } => Self::DirectoryListing(path.clone()),
+        }
+    }
+
+    fn into_outcome(self) -> OpOutcome {
+        let error = SessionControlError::new("session backend panicked");
+        match self {
+            Self::Operation(operation) => OpOutcome::Failed { operation, error },
+            Self::DirectoryListing(path) => OpOutcome::DirListed {
+                path,
+                result: Err(error),
+            },
         }
     }
 }
@@ -224,10 +311,13 @@ fn run(backend: Box<dyn SessionControl + Send>, op: SessionOp) -> OpOutcome {
             },
             |()| OpOutcome::Killed,
         ),
-        SessionOp::NewSession { name, dir } => {
-            let created = backend.create(&name, &dir);
-            OpOutcome::Created { name, created }
-        }
+        SessionOp::NewSession { name, dir } => backend.create(&name, &dir).map_or_else(
+            |error| OpOutcome::Failed {
+                operation: SessionOperation::Create,
+                error,
+            },
+            |()| OpOutcome::Created { name },
+        ),
         SessionOp::PersistOrder { order } => backend.persist_order(&order).map_or_else(
             |error| OpOutcome::Failed {
                 operation: SessionOperation::PersistOrder,
@@ -235,14 +325,10 @@ fn run(backend: Box<dyn SessionControl + Send>, op: SessionOp) -> OpOutcome {
             },
             |()| OpOutcome::OrderPersisted,
         ),
-        SessionOp::ListDir { path } => {
-            let (entries, error) = backend.list_dir(&path);
-            OpOutcome::DirListed {
-                path,
-                entries,
-                error,
-            }
-        }
+        SessionOp::ListDir { path } => OpOutcome::DirListed {
+            result: backend.list_dir(&path),
+            path,
+        },
     }
 }
 
@@ -263,14 +349,19 @@ mod tests {
         fn kill(&self, _name: &str) -> super::super::SessionControlResult {
             Ok(())
         }
-        fn create(&self, _name: &str, _dir: &str) -> bool {
-            true
+        fn create(&self, _name: &str, _dir: &str) -> super::super::SessionControlResult {
+            Ok(())
         }
         fn persist_order(&self, _order: &[String]) -> super::super::SessionControlResult {
             Ok(())
         }
-        fn list_dir(&self, _path: &str) -> (Vec<String>, Option<String>) {
-            (Vec::new(), None)
+        fn list_dir(
+            &self,
+            _path: &str,
+        ) -> super::super::SessionControlResult<super::super::DirListing> {
+            Ok(super::super::DirListing {
+                entries: Vec::new(),
+            })
         }
     }
 
@@ -285,14 +376,42 @@ mod tests {
         fn kill(&self, _name: &str) -> super::super::SessionControlResult {
             Err(SessionControlError::new("backend unavailable"))
         }
-        fn create(&self, _name: &str, _dir: &str) -> bool {
-            false
+        fn create(&self, _name: &str, _dir: &str) -> super::super::SessionControlResult {
+            Err(SessionControlError::new("backend unavailable"))
         }
         fn persist_order(&self, _order: &[String]) -> super::super::SessionControlResult {
             Err(SessionControlError::new("backend unavailable"))
         }
-        fn list_dir(&self, _path: &str) -> (Vec<String>, Option<String>) {
-            (Vec::new(), None)
+        fn list_dir(
+            &self,
+            _path: &str,
+        ) -> super::super::SessionControlResult<super::super::DirListing> {
+            Err(SessionControlError::new("backend unavailable"))
+        }
+    }
+
+    struct PanickingBackend;
+    impl SessionControl for PanickingBackend {
+        fn switch_to(&self, _name: &str) -> super::super::SessionControlResult {
+            panic!("injected backend panic")
+        }
+        fn rename(&self, _old: &str, _new: &str) -> super::super::SessionControlResult {
+            Ok(())
+        }
+        fn kill(&self, _name: &str) -> super::super::SessionControlResult {
+            Ok(())
+        }
+        fn create(&self, _name: &str, _dir: &str) -> super::super::SessionControlResult {
+            Ok(())
+        }
+        fn persist_order(&self, _order: &[String]) -> super::super::SessionControlResult {
+            Ok(())
+        }
+        fn list_dir(
+            &self,
+            _path: &str,
+        ) -> super::super::SessionControlResult<super::super::DirListing> {
+            Ok(super::super::DirListing { entries: vec![] })
         }
     }
 
@@ -313,6 +432,13 @@ mod tests {
             ),
             (SessionOp::Kill { name: "a".into() }, SessionOperation::Kill),
             (
+                SessionOp::NewSession {
+                    name: "a".into(),
+                    dir: "/tmp".into(),
+                },
+                SessionOperation::Create,
+            ),
+            (
                 SessionOp::PersistOrder {
                     order: vec!["a".into()],
                 },
@@ -329,6 +455,22 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn directory_listing_preserves_typed_failure() {
+        assert_eq!(
+            run(
+                Box::new(FailingBackend),
+                SessionOp::ListDir {
+                    path: "~/missing".into(),
+                }
+            ),
+            OpOutcome::DirListed {
+                path: "~/missing".into(),
+                result: Err(SessionControlError::new("backend unavailable")),
+            }
+        );
     }
 
     #[test]
@@ -351,6 +493,70 @@ mod tests {
     }
 
     #[test]
+    fn worker_spawn_failure_is_returned_and_does_not_cache_sender() {
+        let mut exec = SessionExecutor::new();
+        let lane = crate::system::tmux::TmuxSystem::local_lane();
+        let result = exec.submit_with(
+            lane.clone(),
+            Box::new(NoopBackend),
+            SessionOp::Switch {
+                name: "main".into(),
+            },
+            |_name, _task| Err(io::Error::other("injected spawn failure")),
+        );
+
+        assert_eq!(
+            result,
+            Err(SessionSubmitError::WorkerSpawn(
+                "injected spawn failure".into()
+            ))
+        );
+        assert!(!exec.senders.contains_key(&lane));
+    }
+
+    #[test]
+    fn backend_panic_is_reported_and_worker_continues() {
+        let mut exec = SessionExecutor::new();
+        let lane = crate::system::tmux::TmuxSystem::local_lane();
+        exec.submit(
+            lane.clone(),
+            Box::new(PanickingBackend),
+            SessionOp::Switch {
+                name: "panics".into(),
+            },
+        )
+        .unwrap();
+        exec.submit(
+            lane.clone(),
+            Box::new(NoopBackend),
+            SessionOp::Switch {
+                name: "still-runs".into(),
+            },
+        )
+        .unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut outcomes = Vec::new();
+        while outcomes.len() < 2 && std::time::Instant::now() < deadline {
+            if let Some(outcome) = exec.try_recv() {
+                outcomes.push(outcome.result);
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
+        assert_eq!(
+            outcomes,
+            vec![
+                OpOutcome::Failed {
+                    operation: SessionOperation::Switch,
+                    error: SessionControlError::new("session backend panicked"),
+                },
+                OpOutcome::Switched,
+            ]
+        );
+    }
+
+    #[test]
     fn offboard_prunes_executor_sender() {
         let mut exec = SessionExecutor::new();
         let lane = crate::system::tmux::TmuxSystem::host_lane("web");
@@ -361,7 +567,8 @@ mod tests {
             SessionOp::Switch {
                 name: "main".to_string(),
             },
-        );
+        )
+        .unwrap();
         assert!(
             exec.senders.contains_key(lane.as_str()),
             "submit should cache the host's FIFO sender"
@@ -382,7 +589,8 @@ mod tests {
             SessionOp::Switch {
                 name: "local".to_string(),
             },
-        );
+        )
+        .unwrap();
         exec.remove(&lane);
         assert!(
             exec.senders.contains_key(local_lane.as_str()),

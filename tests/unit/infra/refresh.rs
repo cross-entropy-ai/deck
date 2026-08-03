@@ -9,7 +9,7 @@ fn assert_failure(update: RefreshUpdate, expected: RefreshFailure) {
 
 #[test]
 fn worker_coalesces_pending_requests() {
-    let worker = RefreshWorker::spawn();
+    let worker = RefreshWorker::spawn(crate::system::builtin_registry());
 
     // Fire a burst of requests. The worker should coalesce them and
     // return at most one snapshot per distinct "latest" request.
@@ -17,7 +17,6 @@ fn worker_coalesces_pending_requests() {
         worker.request(RefreshRequest {
             slave_tty: String::new(),
             exclude_patterns: vec![],
-            remotes: vec![],
             show_agents: true,
         });
     }
@@ -55,8 +54,9 @@ fn worker_coalesces_pending_requests() {
 
 #[test]
 fn worker_spawn_failure_is_reported_once() {
-    let worker =
-        RefreshWorker::spawn_with(|_task| Err(io::Error::other("injected worker spawn failure")));
+    let worker = RefreshWorker::spawn_with(crate::system::builtin_registry(), |_task| {
+        Err(io::Error::other("injected worker spawn failure"))
+    });
 
     assert_failure(
         worker.try_recv().expect("spawn failure update"),
@@ -82,7 +82,6 @@ fn worker_disconnect_is_reported_even_if_request_noticed_it_first() {
     worker.request(RefreshRequest {
         slave_tty: String::new(),
         exclude_patterns: vec![],
-        remotes: vec![],
         show_agents: false,
     });
 
@@ -108,7 +107,7 @@ fn remote_spawn_failure_releases_single_flight_gate() {
     assert!(!in_flight.load(Ordering::Acquire));
     assert_failure(
         rx.try_recv().expect("remote spawn failure update"),
-        RefreshFailure::RemoteSpawn("injected remote spawn failure".into()),
+        RefreshFailure::BackgroundSpawn("injected remote spawn failure".into()),
     );
 }
 
@@ -130,7 +129,7 @@ fn remote_panic_releases_single_flight_gate_and_is_reported() {
     assert!(!in_flight.load(Ordering::Acquire));
     assert_failure(
         rx.try_recv().expect("remote panic update"),
-        RefreshFailure::RemotePanicked,
+        RefreshFailure::BackgroundPanicked,
     );
 }
 

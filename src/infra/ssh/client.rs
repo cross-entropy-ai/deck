@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::process::Command;
+use std::time::Duration;
+
+use crate::infra::command::{default_runner, CommandRunner};
 
 /// SSH options applied on *every* deck-initiated ssh invocation so all code
 /// paths (one-shot tmux calls, attach PTY, port-forward control commands)
@@ -36,18 +38,21 @@ pub const CONTROL_OPTS: &[&str] = &[
 /// Result of querying `ssh -G <host>`. Keys are lowercased option names.
 pub type SshEffectiveConfig = HashMap<String, String>;
 
+const EFFECTIVE_CONFIG_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// Run `ssh -G <host>` and parse the output. Returns an error string if
 /// ssh isn't on PATH or exits non-zero.
 pub fn effective_config(host: &str) -> Result<SshEffectiveConfig, String> {
-    let output = Command::new("ssh")
-        .arg("-G")
-        .arg(host)
-        .output()
-        .map_err(|e| format!("failed to invoke ssh: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("ssh -G failed: {}", stderr.trim()));
-    }
+    effective_config_with(default_runner(), host)
+}
+
+fn effective_config_with(
+    runner: &dyn CommandRunner,
+    host: &str,
+) -> Result<SshEffectiveConfig, String> {
+    let output = runner
+        .run("ssh", &["-G", host], EFFECTIVE_CONFIG_TIMEOUT)
+        .map_err(|error| format!("ssh -G failed: {error}"))?;
     let mut map = HashMap::new();
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         if let Some((k, v)) = line.split_once(' ') {
@@ -158,6 +163,24 @@ pub fn append_to_ssh_config(snippet: &str) -> io::Result<PathBuf> {
 mod tests {
     use super::*;
 
+    struct EffectiveConfigRunner;
+
+    impl CommandRunner for EffectiveConfigRunner {
+        fn run(
+            &self,
+            program: &str,
+            args: &[&str],
+            timeout: Duration,
+        ) -> Result<crate::infra::command::Output, crate::infra::command::CommandError> {
+            assert_eq!(program, "ssh");
+            assert_eq!(args, ["-G", "fixture"]);
+            assert_eq!(timeout, EFFECTIVE_CONFIG_TIMEOUT);
+            Ok(crate::infra::command::Output {
+                stdout: b"hostname example.test\ncontrolmaster auto\n".to_vec(),
+            })
+        }
+    }
+
     fn cfg(pairs: &[(&str, &str)]) -> SshEffectiveConfig {
         pairs
             .iter()
@@ -173,6 +196,19 @@ mod tests {
             ("controlpersist", "600"),
         ]);
         assert!(MultiplexStatus::from_config(&c).is_enabled());
+    }
+
+    #[test]
+    fn effective_config_uses_bounded_runner_and_parses_output() {
+        let config = effective_config_with(&EffectiveConfigRunner, "fixture").unwrap();
+        assert_eq!(
+            config.get("hostname").map(String::as_str),
+            Some("example.test")
+        );
+        assert_eq!(
+            config.get("controlmaster").map(String::as_str),
+            Some("auto")
+        );
     }
 
     #[test]

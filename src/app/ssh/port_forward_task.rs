@@ -78,37 +78,34 @@ pub struct SshRunner;
 impl Runner for SshRunner {
     fn run_master(&self, host: &str) -> Result<(), String> {
         let mut cmd = crate::infra::ssh::port_forward::build_master_cmd(host);
-        run_blocking(&mut cmd)
+        run_bounded(&mut cmd)
     }
     fn run_forward(&self, host: &str, spec: &ForwardSpec) -> Result<(), String> {
         let mut cmd = crate::infra::ssh::port_forward::build_forward_cmd(host, spec);
-        run_blocking(&mut cmd)
+        run_bounded(&mut cmd)
     }
     fn run_cancel(&self, host: &str, spec: &ForwardSpec) -> Result<(), String> {
         let mut cmd = crate::infra::ssh::port_forward::build_cancel_cmd(host, spec);
-        run_blocking(&mut cmd)
+        run_bounded(&mut cmd)
     }
     fn run_exit(&self, host: &str) -> Result<(), String> {
         let mut cmd = crate::infra::ssh::port_forward::build_exit_cmd(host);
-        run_blocking(&mut cmd)
+        run_bounded(&mut cmd)
     }
 }
 
-fn run_blocking(cmd: &mut std::process::Command) -> Result<(), String> {
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    let out = cmd.output().map_err(|e| e.to_string())?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        Err(if msg.is_empty() {
-            format!("exit {}", out.status)
-        } else {
-            msg
-        })
-    }
+fn run_bounded(cmd: &mut std::process::Command) -> Result<(), String> {
+    const PORT_FORWARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    let program = cmd.get_program().to_string_lossy().into_owned();
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    crate::infra::command::default_runner()
+        .run(&program, &args, PORT_FORWARD_TIMEOUT)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 /// Pure command-handling core. Carries the per-host master-up set

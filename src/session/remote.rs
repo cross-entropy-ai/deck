@@ -4,7 +4,7 @@
 
 use crate::remote_tmux;
 
-use super::{SessionControl, SessionControlError, SessionControlResult};
+use super::{DirListing, SessionControl, SessionControlError, SessionControlResult};
 
 /// Remote control-plane backend for a single host.
 pub struct RemoteControl {
@@ -39,8 +39,9 @@ impl SessionControl for RemoteControl {
             .map_err(|error| SessionControlError::new(error.to_string()))
     }
 
-    fn create(&self, name: &str, dir: &str) -> bool {
+    fn create(&self, name: &str, dir: &str) -> SessionControlResult {
         remote_tmux::new_session(&self.host, name, dir)
+            .map_err(|error| SessionControlError::new(error.to_string()))
     }
 
     fn persist_order(&self, order: &[String]) -> SessionControlResult {
@@ -48,7 +49,11 @@ impl SessionControl for RemoteControl {
             .map_err(|error| SessionControlError::new(error.to_string()))
     }
 
-    fn list_dir(&self, path: &str) -> (Vec<String>, Option<String>) {
-        remote_tmux::list_dir(&self.host, path)
+    fn list_dir(&self, path: &str) -> SessionControlResult<DirListing> {
+        let (entries, error) = remote_tmux::list_dir(&self.host, path);
+        match error {
+            Some(error) => Err(SessionControlError::new(error)),
+            None => Ok(DirListing { entries }),
+        }
     }
 }

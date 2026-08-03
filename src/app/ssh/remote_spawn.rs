@@ -148,6 +148,20 @@ impl RemoteSpawner {
     }
 }
 
+/// Remote-shell prelude for a tmux attach connection. Kept as one pure builder
+/// so quoting-sensitive behavior is unit-tested without opening SSH.
+fn attach_command(host: &str, marker_id: u64) -> String {
+    let dir = crate::remote_tmux::client_cache_dir_token();
+    let marker_pattern = crate::remote_tmux::client_marker_name_pattern(host);
+    let marker = crate::remote_tmux::client_marker_token(host, marker_id);
+    format!(
+        "mkdir -p {dir} 2>/dev/null ; \
+         find {dir} -type f -name '{marker_pattern}' -exec rm -f -- {{}} + 2>/dev/null ; \
+         tty > {marker} 2>/dev/null ; {path} tmux attach",
+        path = crate::remote_tmux::REMOTE_PATH_PREFIX,
+    )
+}
+
 fn spawn_one(host: String, generation: u64, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
     let _ = thread::Builder::new()
         .name(format!("deck-pty-spawn-{host}"))
@@ -172,13 +186,7 @@ fn spawn_one(host: String, generation: u64, tx: Sender<RemoteSpawnEvent>, size: 
             // output goes to the file, so nothing dirties the terminal before
             // tmux paints. Best-effort; readiness confirmed out of band below.
             let marker_id = next_marker_id();
-            let remote_cmd = format!(
-                "mkdir -p {dir} 2>/dev/null ; rm -f {glob} 2>/dev/null ; tty > {marker} 2>/dev/null ; {path} tmux attach",
-                dir = crate::remote_tmux::client_cache_dir_token(),
-                glob = crate::remote_tmux::client_marker_glob_token(&host_for_args),
-                marker = crate::remote_tmux::client_marker_token(&host_for_args, marker_id),
-                path = crate::remote_tmux::REMOTE_PATH_PREFIX,
-            );
+            let remote_cmd = attach_command(&host_for_args, marker_id);
             let mut argv: Vec<&str> = vec!["-tt"];
             argv.extend_from_slice(crate::ssh::CONTROL_OPTS);
             argv.push(host_for_args.as_str());
@@ -210,4 +218,21 @@ fn spawn_one(host: String, generation: u64, tx: Sender<RemoteSpawnEvent>, size: 
                 });
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attach_cleanup_uses_find_pattern_not_a_shell_glob() {
+        let command = attach_command("web.prod", 17);
+        let expected_pattern = format!("client-{}-web_prod-*", std::process::id());
+
+        assert!(command.contains(&format!("-name '{expected_pattern}'")));
+        assert!(command.contains("-exec rm -f -- {} +"));
+        assert!(!command.contains("rm -f \"$HOME\"/.cache/deck/client-"));
+        assert!(command.contains("tty > \"$HOME\"/'.cache/deck/client-"));
+        assert!(command.ends_with("tmux attach"));
+    }
 }

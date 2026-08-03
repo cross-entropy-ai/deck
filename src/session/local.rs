@@ -4,7 +4,7 @@
 
 use crate::tmux;
 
-use super::{SessionControl, SessionControlError, SessionControlResult};
+use super::{DirListing, SessionControl, SessionControlError, SessionControlResult};
 
 /// Local control-plane backend.
 pub struct LocalControl {
@@ -41,8 +41,10 @@ impl SessionControl for LocalControl {
         tmux::kill_session(name).map_err(|error| SessionControlError::new(error.to_string()))
     }
 
-    fn create(&self, name: &str, dir: &str) -> bool {
-        tmux::new_session(name, dir).is_some()
+    fn create(&self, name: &str, dir: &str) -> SessionControlResult {
+        tmux::new_session(name, dir)
+            .map(|_| ())
+            .map_err(|error| SessionControlError::new(error.to_string()))
     }
 
     fn persist_order(&self, order: &[String]) -> SessionControlResult {
@@ -50,7 +52,7 @@ impl SessionControl for LocalControl {
             .map_err(|error| SessionControlError::new(error.to_string()))
     }
 
-    fn list_dir(&self, path: &str) -> (Vec<String>, Option<String>) {
+    fn list_dir(&self, path: &str) -> SessionControlResult<DirListing> {
         // Immediate subdirectories, sorted, with a short one-line error on
         // failure. Remote counterpart: `remote_tmux::list_dir`.
         match std::fs::read_dir(path) {
@@ -61,7 +63,7 @@ impl SessionControl for LocalControl {
                     .filter_map(|e| e.file_name().into_string().ok())
                     .collect();
                 names.sort();
-                (names, None)
+                Ok(DirListing { entries: names })
             }
             Err(e) => {
                 // `truncate` counts display columns rather than chars; these
@@ -70,7 +72,7 @@ impl SessionControl for LocalControl {
                     || crate::geometry::truncate(&e.to_string(), 40),
                     str::to_string,
                 );
-                (Vec::new(), Some(msg))
+                Err(SessionControlError::new(msg))
             }
         }
     }

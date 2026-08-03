@@ -3,6 +3,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Spawn a long-running child that genuinely IS a binary named `deck`, so
@@ -21,6 +22,30 @@ fn spawn_deck_named(tag: &str) -> (std::process::Child, PathBuf) {
         .arg("30")
         .spawn()
         .expect("spawn deck-named binary");
+    // `spawn` returns after fork, before the child is guaranteed to have
+    // completed exec. The force-acquire path immediately reads `ps comm=`;
+    // under parallel test load that could still report the test harness and
+    // misclassify this live fixture as stale. Wait for the observable process
+    // identity the production guard itself relies on.
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let comm = std::process::Command::new("ps")
+            .args(["-p", &child.id().to_string(), "-o", "comm="])
+            .output()
+            .ok()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .unwrap_or_default();
+        if Path::new(&comm).file_name().and_then(|name| name.to_str())
+            == Some(env!("CARGO_PKG_NAME"))
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "deck-named child did not become observable: {comm:?}"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
     (child, dir)
 }
 
@@ -33,6 +58,7 @@ fn never_kill(_pid: u32) -> Result<(), KillError> {
 }
 
 static KILL_CALLS: AtomicU32 = AtomicU32::new(0);
+static PROCESS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn counting_kill(_pid: u32) -> Result<(), KillError> {
     KILL_CALLS.fetch_add(1, Ordering::SeqCst);
@@ -197,6 +223,9 @@ fn force_rejects_when_lock_holds_own_pid() {
 
 #[test]
 fn force_kills_and_acquires_when_lock_holds_deck_pid() {
+    let _serial = PROCESS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let path = test_lock_path("force-kill-deck");
     let (mut child, bindir) = spawn_deck_named("victim");
     let victim_pid = child.id();
@@ -219,6 +248,9 @@ fn force_kills_and_acquires_when_lock_holds_deck_pid() {
 
 #[test]
 fn real_kill_terminates_cooperative_child() {
+    let _serial = PROCESS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     // `sleep` has no SIGTERM handler, so the default action (terminate)
     // fires immediately. real_kill should resolve well under the
     // graceful timeout without needing the SIGKILL fallback.
@@ -253,6 +285,9 @@ fn real_kill_terminates_cooperative_child() {
 
 #[test]
 fn real_kill_falls_back_to_sigkill_for_stubborn_child() {
+    let _serial = PROCESS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     // `trap '' TERM` tells the shell to ignore SIGTERM. The shell
     // stays parked in `sleep 30`, so real_kill has to time out and
     // escalate to SIGKILL. This is the safety-net path.
@@ -277,6 +312,9 @@ fn real_kill_falls_back_to_sigkill_for_stubborn_child() {
 
 #[test]
 fn force_surfaces_permission_denied() {
+    let _serial = PROCESS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let path = test_lock_path("force-eperm");
     let (mut child, bindir) = spawn_deck_named("eperm");
     let victim_pid = child.id();

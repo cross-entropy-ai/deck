@@ -36,7 +36,14 @@ impl std::fmt::Display for SessionControlError {
 
 impl std::error::Error for SessionControlError {}
 
-pub type SessionControlResult = Result<(), SessionControlError>;
+pub type SessionControlResult<T = ()> = Result<T, SessionControlError>;
+
+/// Successful directory-browser response. A named type keeps the control
+/// contract extensible without falling back to tuple conventions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirListing {
+    pub entries: Vec<String>,
+}
 
 /// The session control plane, shared by local and remote backends.
 ///
@@ -55,15 +62,14 @@ pub trait SessionControl {
     /// orchestration done before the op is submitted.
     fn kill(&self, name: &str) -> SessionControlResult;
 
-    /// Create a detached session `name` starting in `dir`. Returns whether
-    /// the create succeeded.
-    fn create(&self, name: &str, dir: &str) -> bool;
+    /// Create a detached session `name` starting in `dir`.
+    fn create(&self, name: &str, dir: &str) -> SessionControlResult;
 
     /// Persist `order` (session names in display order) via the `@deck_order`
     /// user option.
     fn persist_order(&self, order: &[String]) -> SessionControlResult;
 
     /// List subdirectories under `path` for the new-session dir browser.
-    /// Returns the names and an optional one-line error (`None` on success).
-    fn list_dir(&self, path: &str) -> (Vec<String>, Option<String>);
+    /// Returns the directory names or a short user-facing error.
+    fn list_dir(&self, path: &str) -> SessionControlResult<DirListing>;
 }

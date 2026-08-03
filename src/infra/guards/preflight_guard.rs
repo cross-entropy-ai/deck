@@ -65,7 +65,7 @@ fn ensure_requested_session(name: Option<&str>, create_new: bool) -> Result<(), 
         env::current_dir().map_err(|err| format!("cannot determine current directory: {err}"))?;
     tmux::new_session(name, &cwd.to_string_lossy())
         .map(|_| ())
-        .ok_or_else(|| format!("failed to create session '{name}'"))
+        .map_err(|error| format!("failed to create session '{name}': {error}"))
 }
 
 fn ensure_at_least_one_session(runner: &dyn CommandRunner) -> Result<(), String> {

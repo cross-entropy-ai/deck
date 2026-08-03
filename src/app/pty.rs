@@ -71,7 +71,7 @@ impl App {
         attach_override: Option<&str>,
     ) -> io::Result<Pty> {
         let target = Self::ensure_attach_target(attach_override)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no tmux session to attach"))?;
+            .map_err(|error| io::Error::other(format!("no tmux session to attach: {error}")))?;
         // Exact-match target so attach can't land on a different session
         // that `target` happens to be a prefix of.
         let target = crate::infra::parser::tmux::exact_target(&target);

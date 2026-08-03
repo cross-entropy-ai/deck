@@ -11,7 +11,6 @@
 //! rather than queuing forever.
 
 use std::cell::Cell;
-use std::collections::HashMap;
 use std::fmt;
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
@@ -21,73 +20,30 @@ use std::sync::Arc;
 use std::thread;
 
 use crate::exclude;
-use crate::system::tmux::TmuxSystem;
-use crate::tmux;
+use crate::lane::LaneId;
+use crate::system::{LaneSnapshot, SnapshotCtx, SnapshotMode, System, SystemRegistry};
 
 pub struct RefreshRequest {
     pub slave_tty: String,
     pub exclude_patterns: Vec<String>,
-    /// Hosts to query for remote tmux sessions. Empty (the common
-    /// case) skips the remote path entirely.
-    pub remotes: Vec<String>,
     /// Whether to detect interactive agents this round. When false the
     /// local/remote agent probes are skipped entirely (the Agents tab
     /// isn't active), so no `ps`/subtree walk and no extra ssh work runs.
     pub show_agents: bool,
 }
 
-pub struct SnapshotRow {
-    pub name: String,
-    pub dir: String,
-    /// Persisted display rank from the session's `@deck_order` option,
-    /// or `None` if it was never reordered. Used to restore the manual
-    /// arrangement on first load after a deck restart.
-    pub order: Option<u32>,
+/// One lane's refresh result. `None` means the backend was unreachable; an
+/// empty successful snapshot is a reachable lane with no sessions.
+pub struct LaneRefresh {
+    pub lane: LaneId,
+    pub snapshot: Option<LaneSnapshot>,
+    pub agents_requested: bool,
 }
 
-/// One row from a remote host: the subset of `SnapshotRow` fields cheaply
-/// producible over ssh (no Claude status). `kind` is `Live`, or an
-/// `Unreachable`/`NoSessions` placeholder; `apply_remote` maps it onto a
-/// `SessionEntry`.
-pub struct RemoteSnapshotRow {
-    pub host: String,
-    pub name: String,
-    pub dir: String,
-    pub kind: crate::state::SessionEntryKind,
-}
-
-impl RemoteSnapshotRow {
-    /// A synthetic per-host status row (`Unreachable`/`NoSessions`): no session
-    /// name or dir, the label is derived from `kind` downstream.
-    fn placeholder(host: String, kind: crate::state::SessionEntryKind) -> Self {
-        Self {
-            host,
-            name: String::new(),
-            dir: String::new(),
-            kind,
-        }
-    }
-}
-
-/// An update from the refresh worker, split Local + Remote because remote
-/// queries can take seconds (ssh + tmux roundtrip) and must not stall the ~1s
-/// local tick. Each request produces exactly one synchronous `Local` update
-/// and at most one `Remote` update (sent async from a detached thread when its
-/// queries finish).
+/// An update from the refresh worker. Foreground lanes arrive immediately;
+/// slower lanes arrive as one guarded, parallel background batch.
 pub enum RefreshUpdate {
-    Local {
-        current_session: String,
-        rows: Vec<SnapshotRow>,
-        /// Interactive agents located on the local tmux server this round.
-        agents: Vec<crate::agent::DetectedAgent>,
-    },
-    Remote {
-        rows: Vec<RemoteSnapshotRow>,
-        /// Agents per reachable host, keyed by host string; `apply_remote`
-        /// stores them under the unified `Some(host)` key. Unreachable
-        /// hosts are absent (stay "not probed").
-        agents: HashMap<String, Vec<crate::agent::DetectedAgent>>,
-    },
+    Lanes(Vec<LaneRefresh>),
     /// A background failure that the UI must surface instead of silently
     /// leaving the sidebar on its last successful snapshot.
     Failure(RefreshFailure),
@@ -98,8 +54,8 @@ pub enum RefreshFailure {
     WorkerSpawn(String),
     WorkerPanicked,
     WorkerStopped,
-    RemoteSpawn(String),
-    RemotePanicked,
+    BackgroundSpawn(String),
+    BackgroundPanicked,
 }
 
 impl RefreshFailure {
@@ -117,8 +73,8 @@ impl fmt::Display for RefreshFailure {
             Self::WorkerSpawn(err) => write!(f, "could not start worker: {err}"),
             Self::WorkerPanicked => f.write_str("worker panicked and stopped"),
             Self::WorkerStopped => f.write_str("worker stopped unexpectedly"),
-            Self::RemoteSpawn(err) => write!(f, "could not start remote refresh: {err}"),
-            Self::RemotePanicked => f.write_str("remote refresh panicked"),
+            Self::BackgroundSpawn(err) => write!(f, "could not start background refresh: {err}"),
+            Self::BackgroundPanicked => f.write_str("background refresh panicked"),
         }
     }
 }
@@ -131,8 +87,8 @@ pub struct RefreshWorker {
 }
 
 impl RefreshWorker {
-    pub fn spawn() -> Self {
-        Self::spawn_with(|task| {
+    pub fn spawn(systems: &'static SystemRegistry<'static>) -> Self {
+        Self::spawn_with(systems, |task| {
             thread::Builder::new()
                 .name("deck-refresh".into())
                 .spawn(task)
@@ -140,7 +96,7 @@ impl RefreshWorker {
         })
     }
 
-    fn spawn_with<S>(spawn: S) -> Self
+    fn spawn_with<S>(systems: &'static SystemRegistry<'static>, spawn: S) -> Self
     where
         S: FnOnce(Box<dyn FnOnce() + Send + 'static>) -> io::Result<()>,
     {
@@ -149,7 +105,9 @@ impl RefreshWorker {
         let spawn_failure_tx = update_tx.clone();
         let panic_tx = update_tx.clone();
         let task = Box::new(move || {
-            if panic::catch_unwind(AssertUnwindSafe(|| worker_loop(req_rx, update_tx))).is_err() {
+            if panic::catch_unwind(AssertUnwindSafe(|| worker_loop(req_rx, update_tx, systems)))
+                .is_err()
+            {
                 let _ = panic_tx.send(RefreshUpdate::Failure(RefreshFailure::WorkerPanicked));
             }
         });
@@ -230,24 +188,27 @@ fn spawn_remote_task<S, W>(
     let task = Box::new(move || {
         let _guard = RemoteFlightGuard(task_flag);
         let update = panic::catch_unwind(AssertUnwindSafe(work))
-            .unwrap_or(RefreshUpdate::Failure(RefreshFailure::RemotePanicked));
+            .unwrap_or(RefreshUpdate::Failure(RefreshFailure::BackgroundPanicked));
         let _ = task_tx.send(update);
     });
 
     if let Err(err) = spawn(task) {
         // The task never started, so its RAII guard cannot run.
         in_flight.store(false, Ordering::Release);
-        let _ = update_tx.send(RefreshUpdate::Failure(RefreshFailure::RemoteSpawn(
+        let _ = update_tx.send(RefreshUpdate::Failure(RefreshFailure::BackgroundSpawn(
             err.to_string(),
         )));
     }
 }
 
-fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate>) {
-    // Single-flight gate for remote queries (each round can take N hosts ×
-    // 5s): ticks arriving while a round runs skip dispatching another, so
-    // threads don't pile up racing to update the same state.
-    let remote_in_flight = Arc::new(AtomicBool::new(false));
+fn worker_loop(
+    req_rx: Receiver<RefreshRequest>,
+    update_tx: Sender<RefreshUpdate>,
+    systems: &'static SystemRegistry<'static>,
+) {
+    // Single-flight gate for slower lanes: ticks arriving while a round runs
+    // skip dispatching another, so background probes never pile up.
+    let background_in_flight = Arc::new(AtomicBool::new(false));
 
     // Compiled exclude patterns, memoized across ticks: raw strings change
     // only on a config edit, so recompiling every regex on each 1 Hz tick
@@ -268,169 +229,129 @@ fn worker_loop(req_rx: Receiver<RefreshRequest>, update_tx: Sender<RefreshUpdate
             cached_raw = req.exclude_patterns.clone();
         }
 
-        // Local update synchronously — fast (~ms), users see the
-        // sidebar populate immediately on startup.
-        let (current, local_rows, agents) = collect_local(&req, &compiled);
-        if update_tx
-            .send(RefreshUpdate::Local {
-                current_session: current,
-                rows: local_rows,
-                agents,
-            })
-            .is_err()
-        {
-            break;
+        let (foreground, background): (Vec<_>, Vec<_>) = systems
+            .snapshot_routes()
+            .into_iter()
+            .partition(|(system, lane)| system.snapshot_mode(lane) == SnapshotMode::Foreground);
+
+        // Fast lanes update synchronously so the sidebar populates immediately.
+        if !foreground.is_empty() {
+            let lanes = collect_sequential(foreground, req.show_agents, &req.slave_tty, &compiled);
+            if update_tx.send(RefreshUpdate::Lanes(lanes)).is_err() {
+                break;
+            }
         }
 
-        // Remote update async in a detached thread, gated by
-        // `remote_in_flight` so back-to-back ticks don't dispatch overlapping
-        // ssh storms. The next tick after this finishes starts its own round.
-        if !req.remotes.is_empty() {
-            let remotes = req.remotes.clone();
+        // Slow lanes update in a detached, single-flighted batch. Individual
+        // lanes run in parallel inside the batch.
+        if !background.is_empty() {
             let probe_agents = req.show_agents;
+            let client_locator = req.slave_tty.clone();
+            let compiled = Arc::new(compiled.clone());
             spawn_remote_task(
-                &remote_in_flight,
+                &background_in_flight,
                 &update_tx,
                 |task| {
                     thread::Builder::new()
-                        .name("deck-refresh-remote".into())
+                        .name("deck-refresh-background".into())
                         .spawn(task)
                         .map(drop)
                 },
                 move || {
-                    let (rows, agents) = collect_remotes(&remotes, probe_agents);
-                    RefreshUpdate::Remote { rows, agents }
+                    RefreshUpdate::Lanes(collect_parallel(
+                        background,
+                        probe_agents,
+                        client_locator,
+                        compiled,
+                    ))
                 },
             );
         }
     }
 }
 
-fn collect_local(
-    req: &RefreshRequest,
+type SnapshotRoute = (&'static dyn System, LaneId);
+
+fn collect_one(
+    system: &'static dyn System,
+    lane: LaneId,
+    probe_agents: bool,
+    client_locator: &str,
     compiled: &[regex::Regex],
-) -> (String, Vec<SnapshotRow>, Vec<crate::agent::DetectedAgent>) {
-    let current = if req.slave_tty.is_empty() {
-        tmux::current_session()
-    } else {
-        tmux::current_session_for_tty(&req.slave_tty)
-    }
-    .unwrap_or_default();
-
-    // Gather the local lane's sessions + agents through the lane's owning System.
-    let lane = TmuxSystem::local_lane();
-    let snap =
-        crate::system::for_lane(&lane).and_then(|system| system.snapshot(&lane, req.show_agents));
-    let (sessions, raw_agents) =
-        snap.map_or_else(|| (Vec::new(), None), |s| (s.sessions, s.agents));
-
-    let rows = sessions
-        .into_iter()
-        .filter(|s| !exclude::session_excluded(&s.name, compiled))
-        .map(|s| SnapshotRow {
-            name: s.name,
-            dir: s.dir,
-            order: s.order,
-        })
-        .collect();
-
-    // The System detects agents (when `show_agents`); the shell applies the
-    // SAME exclude filter as the rows above (so an agent in a hidden session
-    // doesn't surface) and classifies each one's traffic-light status from its
-    // pane buffer (local capture is cheap; remote agents stay `Unknown` until
-    // their probe captures buffers too).
-    let agents = if let Some(mut agents) = raw_agents {
-        agents.retain(|a| !exclude::session_excluded(&a.session, compiled));
-        for a in &mut agents {
-            if let Some(buf) = tmux::capture_pane(&a.pane_id) {
-                a.status = crate::agent::classify_status(a.kind, &buf);
-            }
-        }
-        agents
-    } else {
-        Vec::new()
+) -> LaneRefresh {
+    let ctx = SnapshotCtx {
+        probe_agents,
+        client_locator,
     };
-
-    (current, rows, agents)
+    let mut snapshot = system.snapshot(&lane, &ctx);
+    if let Some(snapshot) = snapshot.as_mut() {
+        snapshot
+            .sessions
+            .retain(|session| !exclude::session_excluded(&session.name, compiled));
+        if let Some(agents) = snapshot.agents.as_mut() {
+            agents.retain(|agent| !exclude::session_excluded(&agent.session, compiled));
+        }
+    }
+    LaneRefresh {
+        lane,
+        snapshot,
+        agents_requested: probe_agents,
+    }
 }
 
-/// Query each remote host's tmux sessions in parallel: one thread per host,
-/// spawned up front then joined in order, since N concurrent roundtrips beat
-/// serializing the few-hundred-ms SSH calls. Each join is bounded by
-/// `remote_tmux`'s 5s ssh timeout, so one dead host stalls this by at most that.
-fn collect_remotes(
-    remotes: &[String],
+fn collect_sequential(
+    routes: Vec<SnapshotRoute>,
     probe_agents: bool,
-) -> (
-    Vec<RemoteSnapshotRow>,
-    HashMap<String, Vec<crate::agent::DetectedAgent>>,
-) {
-    if remotes.is_empty() {
-        return (Vec::new(), HashMap::new());
-    }
-    let handles: Vec<_> = remotes
-        .iter()
-        .cloned()
-        .map(|host| {
+    client_locator: &str,
+    compiled: &[regex::Regex],
+) -> Vec<LaneRefresh> {
+    routes
+        .into_iter()
+        .map(|(system, lane)| collect_one(system, lane, probe_agents, client_locator, compiled))
+        .collect()
+}
+
+fn collect_parallel(
+    routes: Vec<SnapshotRoute>,
+    probe_agents: bool,
+    client_locator: String,
+    compiled: Arc<Vec<regex::Regex>>,
+) -> Vec<LaneRefresh> {
+    let handles: Vec<_> = routes
+        .into_iter()
+        .map(|(system, lane)| {
+            let lane_for_fallback = lane.clone();
+            let client_locator = client_locator.clone();
+            let compiled = Arc::clone(&compiled);
             thread::Builder::new()
-                .name(format!("deck-remote-{host}"))
+                .name(format!("deck-lane-{}", lane.lane()))
                 .spawn(move || {
-                    // The System gathers this host's lane: `None` = unreachable,
-                    // and it skips the agent probe when not enabled or the host
-                    // is unreachable (so a dead host doesn't spend two 5s ssh
-                    // timeouts and hold the single-flight gate ~10s).
-                    let lane = TmuxSystem::host_lane(&host);
-                    let snap = crate::system::for_lane(&lane)
-                        .and_then(|system| system.snapshot(&lane, probe_agents));
-                    (host, snap)
+                    collect_one(
+                        system,
+                        lane,
+                        probe_agents,
+                        &client_locator,
+                        compiled.as_slice(),
+                    )
                 })
-                .ok()
+                .map_or_else(
+                    |_| (lane_for_fallback.clone(), None),
+                    |handle| (lane_for_fallback.clone(), Some(handle)),
+                )
         })
         .collect();
-
-    let mut out = Vec::new();
-    let mut agents_by_host = HashMap::new();
-    for (host, handle) in remotes.iter().zip(handles) {
-        // A failed spawn/join (rare) falls back to the original host string;
-        // either that or a `None` snapshot means the lane is unreachable.
-        let (host_name, snap) = handle
-            .and_then(|h| h.join().ok())
-            .unwrap_or_else(|| (host.clone(), None));
-        let Some(snap) = snap else {
-            out.push(RemoteSnapshotRow::placeholder(
-                host_name,
-                crate::state::SessionEntryKind::Unreachable,
-            ));
-            continue;
-        };
-        // Only insert when the probe actually ran (`Some`); a failed/skipped
-        // probe leaves the host's agents "not probed" (stale kept upstream).
-        if let Some(list) = snap.agents {
-            agents_by_host.insert(host_name.clone(), list);
-        }
-        let mut sessions = snap.sessions;
-        if sessions.is_empty() {
-            out.push(RemoteSnapshotRow::placeholder(
-                host_name,
-                crate::state::SessionEntryKind::NoSessions,
-            ));
-        } else {
-            // Honor per-session @deck_order from a remote reorder: ranked
-            // sessions first (by rank), never-reordered ones after in tmux's
-            // order. remote_sessions is rebuilt every refresh, so sorting here
-            // is what makes the order stick.
-            sessions.sort_by_key(|s| (s.order.is_none(), s.order.unwrap_or(0)));
-            for s in sessions {
-                out.push(RemoteSnapshotRow {
-                    host: host_name.clone(),
-                    name: s.name,
-                    dir: s.dir,
-                    kind: crate::state::SessionEntryKind::Live { is_current: false },
-                });
-            }
-        }
-    }
-    (out, agents_by_host)
+    handles
+        .into_iter()
+        .map(|(lane, handle)| {
+            handle
+                .and_then(|handle| handle.join().ok())
+                .unwrap_or(LaneRefresh {
+                    lane,
+                    snapshot: None,
+                    agents_requested: probe_agents,
+                })
+        })
+        .collect()
 }
 
 #[cfg(test)]

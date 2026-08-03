@@ -87,7 +87,7 @@ impl App {
         // Reset sub-UIs whose indices may no longer be valid.
         self.state.overlay.exclude_editor = None;
 
-        self.raw_keybindings = cfg.keybindings;
+        self.raw_keybindings = cfg.keybindings.clone();
         // Surface any keybinding warnings in the strip rather than masking
         // them with "Ok" (an eprintln! here would be invisible on the alt
         // screen); otherwise report success.
@@ -160,6 +160,8 @@ impl App {
         // hosts straight from `state.config_remotes`, so the refresh
         // triggered below automatically picks up the diff.
         self.state.config_remotes = new_remotes;
+        self.systems.configure(&cfg);
+        self.state.system_sections = self.systems.sections();
 
         // Evict sidebar rows for hosts that just disappeared so they
         // don't linger until the next refresh result lands.

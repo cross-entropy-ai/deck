@@ -14,7 +14,7 @@ impl AppState {
             return None;
         }
         let entry = self.entry_at(self.focus_target()?)?;
-        (!entry.is_local() && !entry.is_attachable()).then_some(entry)
+        (!self.is_primary_entry(entry) && !entry.is_attachable()).then_some(entry)
     }
 
     /// Section key of the group flat focus index `idx` lives in: `None` local,
@@ -336,8 +336,12 @@ impl AppState {
         // monotonically-increasing rank above any local one; their relative
         // order (config order) is preserved by the stable sort.
         let local_count = self.local_count();
+        let primary_lane = self.primary_lane().cloned();
         self.entries.sort_by_key(|e| {
-            if e.is_local() {
+            let is_primary = primary_lane
+                .as_ref()
+                .map_or_else(|| e.is_local(), |lane| e.lane == *lane);
+            if is_primary {
                 (0usize, rank(e))
             } else {
                 (1usize, local_count)
