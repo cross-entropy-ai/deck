@@ -5,6 +5,10 @@
 use crate::config::RemoteConfig;
 use crate::lane::LaneId;
 
+pub(crate) fn owner() -> crate::system::SystemId {
+    crate::system::SystemId::new(crate::system::tmux::TMUX)
+}
+
 pub(crate) fn remote_for_lane<'a>(
     remotes: &'a [RemoteConfig],
     lane: &LaneId,

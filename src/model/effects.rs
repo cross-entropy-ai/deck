@@ -15,13 +15,11 @@ pub enum Effect {
     /// Focus a detected agent's pane (Agents tab Enter / number jump).
     /// App's dispatch layer routes this exactly like an agent-row click.
     SwitchAgentPane(AgentTarget),
-    /// Show a remote host placeholder in the main pane. Used for
-    /// synthetic rows like "(no sessions)" that are focusable but don't
-    /// have a tmux session to attach to.
+    /// Show a synthetic lane row that has no attachable session.
     ShowLanePlaceholder(LaneId),
     KillSession(KillRequest),
     RenameSession(RenameRequest),
-    /// Create a new tmux session with `req.name` at `req.dir`.
+    /// Create a session with `req.name` at `req.dir`.
     CreateSession(CreateSessionRequest),
     /// Remove a configured non-primary lane from the shell and its backend.
     RemoveLane(LaneId),
@@ -37,7 +35,10 @@ pub enum Effect {
     OpenConfiguredPortForwards,
     OpenNewSessionPicker(LaneId),
     OpenAddRemotePicker,
-    AddRemoteHost(String),
+    AddConfiguredLane {
+        owner: crate::system::SystemId,
+        candidate: String,
+    },
     RereadNewSessionEntries,
     ResizePty {
         /// Clear the host terminal before the next draw after resize.

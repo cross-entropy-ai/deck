@@ -161,7 +161,32 @@ impl App {
                 Effect::RereadNewSessionEntries => self.request_new_session_listing(),
                 Effect::OpenNewSessionPicker(lane) => self.open_new_session_picker(lane.clone()),
                 Effect::OpenAddRemotePicker => self.open_add_remote_picker(),
-                Effect::AddRemoteHost(host) => self.onboard_remote_host(host),
+                Effect::AddConfiguredLane { owner, candidate } => {
+                    let mut config = self.config_snapshot();
+                    let outcome = self
+                        .systems
+                        .config_provider(owner)
+                        .map(|provider| provider.add_lane(candidate, &mut config));
+                    match outcome {
+                        Some(crate::system::LaneConfigAddOutcome::Added(lane)) => {
+                            self.state.config_remotes = config.remotes;
+                            self.state.overlay.add_remote = None;
+                            self.save_config();
+                            self.onboard_lane(&lane);
+                            self.request_refresh();
+                        }
+                        Some(crate::system::LaneConfigAddOutcome::AlreadyExists) => {
+                            if let Some(picker) = self.state.overlay.add_remote.as_mut() {
+                                picker.picker.error = Some("already added".into());
+                            }
+                        }
+                        Some(crate::system::LaneConfigAddOutcome::Invalid) | None => {
+                            if let Some(picker) = self.state.overlay.add_remote.as_mut() {
+                                picker.picker.error = Some("invalid lane identifier".into());
+                            }
+                        }
+                    }
+                }
                 Effect::Quit => {}
             }
         }

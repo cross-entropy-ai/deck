@@ -133,7 +133,7 @@ This prevents artificial "session" methods that have no session target.
 - [ ] Exercise the fixture through App-facing effect routing, attachment
       selection, activation, snapshot, and one lane action—not registry lookup
       alone.
-- [ ] Add source-architecture guards that reject new local/remote effect pairs
+- [x] Add source-architecture guards that reject new local/remote effect pairs
       and host fields in generic session DTOs once their migrations land.
 - [ ] Record the current live tmux/SSH smoke-test procedure without claiming it
       ran in CI.
@@ -250,12 +250,18 @@ remain separate from the parent-terminal auto-theme probe in `termbg`.
       adapter, returning generic shell intents only where UI is required.
 - [x] Remove `SessionEntry.host` and host/local sentinels from generic session,
       overlay, menu, geometry, action, and effect DTOs.
-- [ ] Remove `SectionDef.runtime_key` and remaining host-keyed runtime maps.
-- [ ] Update config adapters, documentation, module comments, and naming.
-- [ ] Delete dead compatibility code only after `rg` proves it has no callers.
+- [x] Remove `SectionDef.runtime_key` and remaining host-keyed runtime maps.
+- [x] Update config adapters, documentation, module comments, and naming.
+- [x] Delete dead compatibility code only after `rg` proves it has no callers.
 
 Exit: the only local/remote and SSH/tmux distinctions live under the built-in
 tmux/attachment adapters and configuration translation.
+
+WP6 exit achieved. Configuration add/remove, port-forward routing, attachment
+lifecycle, focus transport, and summary capture are optional runtime
+capabilities addressed by `LaneId`. `SectionDef` contains presentation and
+capability metadata only. Host strings remain solely in the compatible config
+schema and built-in SSH/tmux adapters.
 
 ## Delivery sequence
 
@@ -320,10 +326,10 @@ such in the PR.
 - [ ] All architectural invariants hold in production code.
 - [ ] The non-tmux fixture crosses the full App-to-terminal contract without
       editing App, reducer variants, or renderer.
-- [ ] No generic module branches on local/remote or carries a host sentinel.
+- [x] No generic module branches on local/remote or carries a host sentinel.
 - [ ] Same-lane display mutations are FIFO and failure-complete.
 - [ ] OSC behavior is surface-scoped and covered for local/remote-independent
       paths.
-- [ ] Workspace gates pass.
-- [ ] Architecture docs describe the implemented state, not the intended one.
+- [x] Workspace gates pass.
+- [x] Architecture docs describe the implemented state, not the intended one.
 - [ ] PR lists manual smoke-test evidence and explicitly identifies unrun rows.

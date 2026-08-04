@@ -24,9 +24,7 @@ pub enum Action {
     CancelKill,
     ReorderSession(i32),
     ReorderSessionTo(usize),
-    /// Detach a remote host from deck's config — equivalent to
-    /// `deck remote remove <host>`. Triggered from the remote-session
-    /// right-click menu's "Remove from list".
+    /// Ask the owning runtime to remove a configured lane.
     RemoveLane(crate::lane::LaneId),
     StartRename,
     RenameInputKey(crossterm::event::KeyEvent),
@@ -89,11 +87,11 @@ pub enum Action {
     Settings(SettingsAction),
     /// Agents-tab summary card, popup, and language editor.
     Summary(SummaryAction),
-    /// New-session picker (local and remote).
+    /// Lane-keyed new-session picker.
     NewSession(NewSessionAction),
     /// Sidebar context menus (session / global / divider) and their navigation.
     Menu(MenuAction),
-    /// Per-host port-forward overlay and its add form.
+    /// Lane-keyed port-forward overlay and its add form.
     Pf(PfAction),
     /// Add-remote-host picker.
     AddRemote(AddRemoteAction),
@@ -134,8 +132,7 @@ pub enum SettingsAction {
     ToggleSummary,
     /// Open the add-remote-host picker (settings "Remotes" row).
     OpenAddRemotePicker,
-    /// Open a configured host's port-forward overlay (settings "Port
-    /// forwards" row).
+    /// Open a configured lane's port-forward overlay.
     OpenPortForwards,
 
     ExcludeOpen,

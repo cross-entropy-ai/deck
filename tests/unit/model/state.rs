@@ -4,16 +4,46 @@ use super::*;
 fn generic_session_and_effect_dtos_do_not_regain_host_sentinels() {
     let state_source = include_str!("../../../src/model/state/mod.rs");
     let effects_source = include_str!("../../../src/model/effects.rs");
+    let system_source = include_str!("../../../src/system/mod.rs");
+    let actions_source = include_str!("../../../src/app/action/mod.rs");
+    let forwards_source = include_str!("../../../src/infra/ssh/model/forwards.rs");
     assert!(!state_source.contains("pub host: Option<String>"));
+    assert!(!system_source.contains("runtime_key"));
+    assert!(!forwards_source.contains("pub host: String"));
+    assert!(!actions_source.contains("TaskResult {\n        host:"));
     for removed in [
         "ShowRemotePlaceholder",
         "RemoveRemoteHost",
         "OpenRemoteNewSessionPicker",
         "SaveRemoteSessionOrder",
+        "AddRemoteHost",
     ] {
         assert!(
             !effects_source.contains(removed),
             "legacy effect: {removed}"
+        );
+    }
+
+    for (name, source) in [
+        ("state", state_source),
+        ("layout", include_str!("../../../src/model/state/layout.rs")),
+        (
+            "keyboard",
+            include_str!("../../../src/app/action/keyboard.rs"),
+        ),
+        (
+            "menu reducer",
+            include_str!("../../../src/app/action/reduce/menu.rs"),
+        ),
+        (
+            "port-forward reducer",
+            include_str!("../../../src/app/action/reduce/port_forward.rs"),
+        ),
+        ("tabs UI", include_str!("../../../src/ui/sidebar/tabs.rs")),
+    ] {
+        assert!(
+            !source.contains(".lane()"),
+            "lane payload decoded in {name}"
         );
     }
 }

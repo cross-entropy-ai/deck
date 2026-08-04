@@ -14,16 +14,15 @@ impl App {
     /// The placeholder row gives the sidebar an immediate `(connecting...)`
     /// section without waiting a full refresh tick; the spawner kicks off the
     /// persistent ssh+tmux PTY.
-    pub(super) fn onboard_remote_host(&mut self, host: &str) {
-        let lane = crate::system::tmux::TmuxSystem::host_lane(host);
-        self.respawn_attachment(&lane);
+    pub(super) fn onboard_lane(&mut self, lane: &crate::lane::LaneId) {
+        self.respawn_attachment(lane);
         // Avoid duplicating a placeholder if one is already there
         // (e.g. add → remove → add in quick succession).
-        if !self.state.entries.iter().any(|entry| entry.lane == lane) {
+        if !self.state.entries.iter().any(|entry| entry.lane == *lane) {
             self.state
                 .entries
                 .push(crate::state::SessionEntry::placeholder(
-                    lane,
+                    lane.clone(),
                     crate::state::SessionEntryKind::Connecting,
                 ));
         }
@@ -115,7 +114,7 @@ impl App {
         // restart.
         for n in &new_remotes {
             if !old_remotes.iter().any(|o| o.host == n.host) {
-                self.onboard_remote_host(&n.host);
+                self.onboard_lane(&crate::system::tmux::TmuxSystem::host_lane(&n.host));
             }
         }
 

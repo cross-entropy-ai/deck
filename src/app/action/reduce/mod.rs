@@ -725,34 +725,21 @@ fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffec
             state.overlay.add_remote = None;
         }
         AddRemoteAction::Confirm => {
-            // Resolve first (immutable borrow released before we mutate state).
-            let chosen = state
-                .overlay
-                .add_remote
-                .as_ref()
-                .and_then(|ar| ar.chosen_host());
-            let host = match chosen {
-                Some(h) if !state.config_remotes.iter().any(|r| r.host == h) => h,
-                other => {
-                    let msg = if other.is_none() {
-                        "enter a hostname"
-                    } else {
-                        "already added"
-                    };
-                    if let Some(ar) = state.overlay.add_remote.as_mut() {
-                        ar.picker.error = Some(msg.into());
-                    }
-                    return fx;
-                }
-            };
-            state.config_remotes.push(crate::config::RemoteConfig {
-                host: host.clone(),
-                forwards: vec![],
+            let request = state.overlay.add_remote.as_ref().and_then(|picker| {
+                picker
+                    .chosen_host()
+                    .map(|candidate| (picker.owner.clone(), candidate))
             });
-            state.overlay.add_remote = None;
-            fx.save_config();
-            fx.refresh_sessions();
-            fx.push(Effect::AddRemoteHost(host));
+            match request {
+                Some((owner, candidate)) => {
+                    fx.push(Effect::AddConfiguredLane { owner, candidate });
+                }
+                None => {
+                    if let Some(ar) = state.overlay.add_remote.as_mut() {
+                        ar.picker.error = Some("enter a lane identifier".into());
+                    }
+                }
+            }
         }
     }
     fx

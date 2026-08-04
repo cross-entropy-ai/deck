@@ -29,6 +29,19 @@ pub struct SystemRegistry<'a> {
     systems: Vec<&'a dyn System>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SystemId(String);
+
+impl SystemId {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 impl<'a> SystemRegistry<'a> {
     pub fn new(systems: Vec<&'a dyn System>) -> Self {
         Self { systems }
@@ -40,6 +53,18 @@ impl<'a> SystemRegistry<'a> {
         for system in &self.systems {
             system.configure(config);
         }
+    }
+
+    pub fn config_provider(&self, owner: &SystemId) -> Option<&dyn LaneConfigProvider> {
+        let system = self
+            .systems
+            .iter()
+            .copied()
+            .find(|system| system.id() == owner.as_str())?;
+        system
+            .lanes()
+            .into_iter()
+            .find_map(|lane| system.runtime(&lane)?.lane_config())
     }
 
     /// Resolve the owner of a lane. Unknown ids stay explicit rather than
@@ -165,7 +190,15 @@ pub trait LaneActionProvider: Send + Sync {
 /// The shell supplies the persisted configuration as a whole and applies the
 /// typed outcome; only the owning backend interprets its lane representation.
 pub trait LaneConfigProvider: Send + Sync {
+    fn add_lane(&self, candidate: &str, config: &mut Config) -> LaneConfigAddOutcome;
     fn remove_lane(&self, lane: &LaneId, config: &mut Config) -> LaneConfigOutcome;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaneConfigAddOutcome {
+    Added(LaneId),
+    AlreadyExists,
+    Invalid,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -591,9 +624,13 @@ mod tests {
             .expect("snapshot");
         assert_eq!(snapshot.sessions[0].name, "fixture");
         assert!(runtime.session_control().is_none());
+        assert!(runtime.lane_config().is_none());
         assert!(runtime.focus_transport().is_none());
         assert!(runtime.summary_transport().is_none());
         assert!(runtime.attachment().is_none());
+        assert!(registry
+            .config_provider(&SystemId::new(test.id()))
+            .is_none());
         assert!(matches!(
             runtime
                 .lane_actions()
@@ -640,6 +677,15 @@ mod tests {
         assert_eq!(
             LaneConfigProvider::remove_lane(&system, &tmux::TmuxSystem::local_lane(), &mut config,),
             LaneConfigOutcome::Unsupported
+        );
+
+        assert_eq!(
+            LaneConfigProvider::add_lane(&system, "next", &mut config),
+            LaneConfigAddOutcome::Added(tmux::TmuxSystem::host_lane("next"))
+        );
+        assert_eq!(
+            LaneConfigProvider::add_lane(&system, "next", &mut config),
+            LaneConfigAddOutcome::AlreadyExists
         );
     }
 

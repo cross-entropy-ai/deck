@@ -19,7 +19,7 @@ fn filter_is_case_insensitive_substring() {
 
 #[test]
 fn new_shows_all_and_refilter_clamps_selected() {
-    let mut s = AddRemoteState::new(hosts());
+    let mut s = AddRemoteState::new(crate::system::SystemId::new("fixture"), hosts());
     assert_eq!(s.picker.filtered, vec![0, 1, 2]);
     s.picker.selected = 2;
     s.picker.input = crate::new_session::make_textarea("stag");
@@ -30,7 +30,7 @@ fn new_shows_all_and_refilter_clamps_selected() {
 
 #[test]
 fn chosen_host_prefers_highlighted_then_typed() {
-    let mut s = AddRemoteState::new(hosts());
+    let mut s = AddRemoteState::new(crate::system::SystemId::new("fixture"), hosts());
     s.picker.selected = 1;
     assert_eq!(s.chosen_host().as_deref(), Some("prod-web-2"));
 
@@ -39,7 +39,7 @@ fn chosen_host_prefers_highlighted_then_typed() {
     assert!(s.picker.filtered.is_empty());
     assert_eq!(s.chosen_host().as_deref(), Some("brand-new-host"));
 
-    let mut empty = AddRemoteState::new(vec![]);
+    let mut empty = AddRemoteState::new(crate::system::SystemId::new("fixture"), vec![]);
     assert_eq!(empty.chosen_host(), None);
     empty.picker.input = crate::new_session::make_textarea("   ");
     empty.refilter();

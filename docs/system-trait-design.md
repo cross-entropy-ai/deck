@@ -60,6 +60,12 @@ pub trait LaneActionProvider: Send + Sync {
 }
 ```
 
+`LaneRuntime` composes optional catalog, session-control, lane-action,
+configuration, attachment-lifecycle, focus-transport, and summary-transport
+providers. A partial backend may expose only catalog and lane actions; the
+registry fixture verifies that all other ports remain absent rather than being
+filled with dummy implementations.
+
 Divider buttons carry a typed `LaneActionId`. The shell echoes it to the
 owning provider and executes only the returned generic `LaneShellIntent`; App
 does not match system ids or backend action ids.
@@ -71,16 +77,12 @@ key.
 
 ## Extension test
 
-`system::tests::second_system_mounts_sections_snapshots_and_control_without_shell_changes`
-mounts an independent fixture system and verifies section discovery, snapshot
-routing, and control dispatch. This is the executable contract for the open/
-closed boundary.
+`system::tests::partial_system_mounts_snapshot_and_actions_without_dummy_control`
+mounts an independent fixture and verifies section discovery, snapshots, lane
+actions, and the absence of unsupported configuration, attachment, focus, and
+summary providers. This is the executable contract for the open/closed
+boundary.
 
-## Intentional compatibility seam
-
-PTY attachment and remote connection lifecycle predate `System` and remain
-shell services. Consequently `SessionEntry.host` is retained as a presentation/
-attachment compatibility value for now. Backend ownership, refresh routing,
-control routing, model keys, and layout no longer depend on it. Removing that
-last seam requires generalizing terminal attachment itself, not another session
-DTO migration.
+The persisted tmux/SSH config remains host-based for backward compatibility.
+Only `TmuxSystem`, the SSH config adapter, attachment adapter, and remote
+connection services translate that schema to or from `LaneId`.
