@@ -141,11 +141,13 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
                 // The shell doesn't interpret the command — it hands the
                 // button's lane + command to the owning System (decision A).
                 // `y + 1` opens any positioned UI just below the button.
-                return Action::SystemButton {
+                return Action::InvokeLane {
                     lane: dh.lane.clone(),
-                    command: dh.command.clone(),
-                    x: dh.rect.x,
-                    y: dh.rect.y + 1,
+                    action: dh.action.clone(),
+                    anchor: crate::geometry::LaneActionAnchor {
+                        x: dh.rect.x,
+                        y: dh.rect.y + 1,
+                    },
                 };
             }
             Some(HitKind::Agent(i)) => {

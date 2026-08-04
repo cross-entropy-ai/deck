@@ -17,8 +17,7 @@ use std::sync::LazyLock;
 
 use crate::agent::DetectedAgent;
 use crate::config::Config;
-use crate::effects::Effect;
-use crate::geometry::SectionButton;
+use crate::geometry::{LaneActionAnchor, SectionButton};
 use crate::lane::LaneId;
 use crate::model::session::SessionSnapshot;
 use crate::session::SessionControl;
@@ -151,13 +150,46 @@ pub trait SessionControlProvider: Send + Sync {
 }
 
 pub trait LaneActionProvider: Send + Sync {
-    /// Handle a click on a button this system declared on `lane`'s divider,
-    /// identified by the button's [`command`](SectionButton::command). `(x, y)`
-    /// is the button's screen position, for commands that open positioned UI
-    /// (e.g. a context menu). Returns shell effects to enqueue. This is the
-    /// single seam that lets a system own button semantics without the reducer
-    /// growing a per-system arm.
-    fn on_button(&self, lane: &LaneId, command: &str, x: u16, y: u16) -> Vec<Effect>;
+    /// Handle a typed action this system declared on `lane`'s divider. The
+    /// anchor is the button's screen position for positioned UI. Returns only
+    /// generic shell intents, so neither reducer nor App decodes backend ids.
+    fn invoke(
+        &self,
+        lane: &LaneId,
+        action: &LaneActionId,
+        anchor: LaneActionAnchor,
+    ) -> Vec<LaneShellIntent>;
+}
+
+/// Backend-owned identifier for a lane action. The shell stores and returns
+/// this value without decoding string commands or matching system ids.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LaneActionId(String);
+
+impl LaneActionId {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for LaneActionId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+/// Small shell vocabulary produced after a backend interprets its own action
+/// id. App may execute these intents without knowing which system supplied
+/// them or what identifier selected them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaneShellIntent {
+    ReconnectAttachment,
+    OpenPortForwards,
+    OpenContextMenu { anchor: LaneActionAnchor },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -341,7 +373,7 @@ mod tests {
                 title: lane.lane().into(),
                 buttons: vec![SectionButton {
                     glyph: "!".into(),
-                    command: "refresh".into(),
+                    action: LaneActionId::from("refresh"),
                 }],
                 top_margin: true,
                 primary: false,
@@ -400,8 +432,15 @@ mod tests {
     }
 
     impl LaneActionProvider for TestSystem {
-        fn on_button(&self, _lane: &LaneId, _command: &str, _x: u16, _y: u16) -> Vec<Effect> {
-            vec![Effect::RefreshSessions]
+        fn invoke(
+            &self,
+            _lane: &LaneId,
+            _action: &LaneActionId,
+            _anchor: LaneActionAnchor,
+        ) -> Vec<LaneShellIntent> {
+            vec![LaneShellIntent::OpenContextMenu {
+                anchor: LaneActionAnchor { x: 1, y: 2 },
+            }]
         }
     }
 
@@ -460,9 +499,15 @@ mod tests {
             runtime
                 .lane_actions()
                 .expect("lane action port")
-                .on_button(&lane, "refresh", 1, 2)
+                .invoke(
+                    &lane,
+                    &LaneActionId::from("refresh"),
+                    LaneActionAnchor { x: 1, y: 2 },
+                )
                 .as_slice(),
-            [Effect::RefreshSessions]
+            [LaneShellIntent::OpenContextMenu {
+                anchor: LaneActionAnchor { x: 1, y: 2 }
+            }]
         ));
     }
 

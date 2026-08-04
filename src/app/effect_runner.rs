@@ -115,22 +115,57 @@ impl App {
                     );
                     self.offboard_remote_host(&req.lane);
                 }
-                Effect::ReconnectHost(host) => {
-                    self.dispatch(Action::ReconnectHost { host: host.clone() });
-                }
-                Effect::OpenForwardOverlay(host) => {
-                    self.dispatch(Action::Pf(PfAction::Open(host.clone())));
-                }
-                Effect::OpenDividerMenu { host, x, y } => {
-                    let action = match host {
-                        Some(host) => Action::Menu(MenuAction::OpenHostDivider {
-                            host: host.clone(),
-                            x: *x,
-                            y: *y,
-                        }),
-                        None => Action::Menu(MenuAction::OpenLocalDivider { x: *x, y: *y }),
+                Effect::InvokeLaneAction {
+                    lane,
+                    action,
+                    anchor,
+                } => {
+                    let Some(provider) = self
+                        .systems
+                        .runtime(lane)
+                        .and_then(|runtime| runtime.lane_actions())
+                    else {
+                        self.state
+                            .show_warning(format!("unknown session system: {}", lane.system()));
+                        continue;
                     };
-                    self.dispatch(action);
+                    let intents = provider.invoke(lane, action, *anchor);
+                    for intent in intents {
+                        match intent {
+                            crate::system::LaneShellIntent::ReconnectAttachment => {
+                                self.respawn_attachment(lane);
+                                self.state.mark_lane_reconnecting(lane);
+                                self.request_refresh();
+                            }
+                            crate::system::LaneShellIntent::OpenPortForwards => {
+                                if let Some(host) = self.state.host_for_lane(lane) {
+                                    self.dispatch(Action::Pf(PfAction::Open(host.to_string())));
+                                }
+                            }
+                            crate::system::LaneShellIntent::OpenContextMenu { anchor } => {
+                                let action = if self.state.is_primary_lane(lane) {
+                                    Action::Menu(MenuAction::OpenLocalDivider {
+                                        x: anchor.x,
+                                        y: anchor.y,
+                                    })
+                                } else if let Some(host) = self.state.host_for_lane(lane) {
+                                    Action::Menu(MenuAction::OpenHostDivider {
+                                        host: host.to_string(),
+                                        x: anchor.x,
+                                        y: anchor.y,
+                                    })
+                                } else {
+                                    continue;
+                                };
+                                self.dispatch(action);
+                            }
+                        }
+                    }
+                }
+                Effect::OpenPortForwardOverlay(lane) => {
+                    if let Some(host) = self.state.host_for_lane(lane) {
+                        self.dispatch(Action::Pf(PfAction::Open(host.to_string())));
+                    }
                 }
                 Effect::ApplyTmuxTheme => crate::tmux::apply_theme(self.state.active_theme()),
                 Effect::ProbeTerminalBg => self.probe_terminal_bg(),

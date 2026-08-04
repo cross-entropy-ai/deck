@@ -626,7 +626,7 @@ fn remote_divider_buttons_register_below_their_top_margin() {
         .iter()
         .filter(|h| TmuxSystem::host_of(&h.lane) == Some("h1"))
         .collect();
-    let cmds: Vec<&str> = h1.iter().map(|h| h.command.as_str()).collect();
+    let cmds: Vec<&str> = h1.iter().map(|h| h.action.as_str()).collect();
     assert_eq!(
         cmds,
         vec!["reconnect", "menu"],
@@ -643,14 +643,14 @@ fn remote_divider_buttons_register_below_their_top_margin() {
         assert!(
             matches!(captured.hit(h.rect.x, h.rect.y), Some(HitKind::Divider(_))),
             "{:?} button rect {:?} must resolve to a divider hit",
-            h.command,
+            h.action,
             h.rect
         );
         assert_eq!(
             buf[pos].symbol(),
             "[",
             "{:?} button rect {:?} must sit on the painted `[icon]`",
-            h.command,
+            h.action,
             h.rect
         );
     }
@@ -739,7 +739,7 @@ fn remote_divider_shows_forward_count() {
         .iter()
         .filter(|h| TmuxSystem::host_of(&h.lane) == Some("h1"))
         .collect();
-    let cmds: Vec<&str> = h1.iter().map(|h| h.command.as_str()).collect();
+    let cmds: Vec<&str> = h1.iter().map(|h| h.action.as_str()).collect();
     assert_eq!(
         cmds,
         vec!["forwards", "reconnect", "menu"],
@@ -766,15 +766,15 @@ fn remote_divider_shows_forward_count() {
         row: badge_rect.y,
         modifiers: crossterm::event::KeyModifiers::NONE,
     };
-    // Decision A: the click yields a generic SystemButton carrying the lane +
-    // the system's button command; the tmux System turns "forwards" into the
+    // The click yields a typed lane action carrying the lane + backend id;
+    // the tmux System turns "forwards" into the
     // port-forward overlay (verified in the system's own tests).
     match crate::action::mouse_to_action(&click, &state) {
-        crate::action::Action::SystemButton { lane, command, .. } => {
-            assert_eq!(command, "forwards");
+        crate::action::Action::InvokeLane { lane, action, .. } => {
+            assert_eq!(action.as_str(), "forwards");
             assert_eq!(TmuxSystem::host_of(&lane), Some("h1"));
         }
-        other => panic!("expected SystemButton, got {other:?}"),
+        other => panic!("expected InvokeLane, got {other:?}"),
     }
 }
 

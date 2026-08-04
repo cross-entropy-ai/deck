@@ -75,18 +75,13 @@ pub enum Action {
     ForwardKey(Vec<u8>),
     ForwardMouse(Vec<u8>),
 
-    ReconnectHost {
-        host: String,
-    },
-
     /// A divider button declared by a System was clicked. Routed to that
-    /// System's `on_button` (decision A) — the shell doesn't interpret the
-    /// command itself. `(x, y)` is the button's screen position.
-    SystemButton {
+    /// System through `Effect::InvokeLaneAction`; the shell doesn't interpret
+    /// the backend-owned id.
+    InvokeLane {
         lane: crate::lane::LaneId,
-        command: String,
-        x: u16,
-        y: u16,
+        action: crate::system::LaneActionId,
+        anchor: crate::geometry::LaneActionAnchor,
     },
 
     Quit,

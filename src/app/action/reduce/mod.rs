@@ -549,12 +549,15 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         // keybindings, PTY, etc.).
         Action::ReloadConfig => {}
 
-        // Handled in dispatch (marks the host reconnecting + kicks a
-        // refresh round through the worker).
-        Action::ReconnectHost { .. } => {}
-        // Routed to the owning System at the app layer (`dispatch`), which has
-        // the runtime state its effects need; the pure reducer no-ops it.
-        Action::SystemButton { .. } => {}
+        Action::InvokeLane {
+            lane,
+            action,
+            anchor,
+        } => fx.push(Effect::InvokeLaneAction {
+            lane,
+            action,
+            anchor,
+        }),
 
         Action::Pf(a) => return port_forward::reduce_pf(state, a),
         Action::AddRemote(a) => return reduce_add_remote(state, a),

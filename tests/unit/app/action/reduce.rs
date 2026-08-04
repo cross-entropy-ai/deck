@@ -920,6 +920,7 @@ fn port_forwards_row_aggregates_across_hosts_and_targets_a_host() {
             forwards: vec![spec(8080), spec(9090)],
         },
     ];
+    state.entries.push(remote_row("b", "session"));
     let row = &crate::app::settings::SETTING_ROWS[settings_row_index("Port forwards")];
     assert_eq!((row.value)(&state), "2 forwards");
 
@@ -928,7 +929,8 @@ fn port_forwards_row_aggregates_across_hosts_and_targets_a_host() {
     // Opens the first host that actually has forwards ("b"), not "a".
     assert!(matches!(
         fx.effects(),
-        [crate::effects::Effect::OpenForwardOverlay(h)] if h == "b"
+        [crate::effects::Effect::OpenPortForwardOverlay(lane)]
+            if crate::system::tmux::TmuxSystem::host_of(lane) == Some("b")
     ));
 }
 

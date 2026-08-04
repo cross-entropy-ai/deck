@@ -169,41 +169,6 @@ impl App {
                 self.reload_config();
                 false
             }
-            Action::ReconnectHost { host } => {
-                // Rebuild the persistent ssh+tmux PTY — refreshing the
-                // sidebar alone leaves a dropped host unswitchable. Then mark
-                // the rows connecting for instant feedback and re-probe.
-                if let Some(lane) = self.state.lane_for_host(&host).cloned() {
-                    self.respawn_attachment(&lane);
-                }
-                self.state.mark_host_reconnecting(&host);
-                self.request_refresh();
-                false
-            }
-            Action::SystemButton {
-                lane,
-                command,
-                x,
-                y,
-            } => {
-                // Decision A: the System owns what its divider buttons do. Ask
-                // it for the effects and run them through the normal pipeline.
-                let mut fx = crate::effects::SideEffect::default();
-                if let Some(actions) = self
-                    .systems
-                    .runtime(&lane)
-                    .and_then(|runtime| runtime.lane_actions())
-                {
-                    for e in actions.on_button(&lane, &command, x, y) {
-                        fx.push(e);
-                    }
-                } else {
-                    self.state
-                        .show_warning(format!("unknown session system: {}", lane.system()));
-                }
-                self.execute_side_effects(&fx);
-                false
-            }
             Action::Pf(PfAction::AddSubmit) => {
                 self.pf_add_submit();
                 false

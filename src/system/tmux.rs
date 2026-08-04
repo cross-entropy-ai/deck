@@ -6,8 +6,7 @@
 
 use crate::agent;
 use crate::config::{Config, RemoteConfig};
-use crate::effects::Effect;
-use crate::geometry::SectionButton;
+use crate::geometry::{LaneActionAnchor, SectionButton};
 use crate::lane::LaneId;
 use crate::session::local::LocalControl;
 use crate::session::remote::RemoteControl;
@@ -15,9 +14,9 @@ use crate::session::SessionControl;
 use crate::{remote_tmux, tmux};
 
 use super::{
-    CatalogError, ControlCtx, LaneActionProvider, LaneCapabilities, LaneRuntime, LaneSnapshot,
-    SectionDef, SessionCapabilities, SessionCatalog, SessionControlProvider, SnapshotCtx,
-    SnapshotMode, System,
+    CatalogError, ControlCtx, LaneActionId, LaneActionProvider, LaneCapabilities, LaneRuntime,
+    LaneShellIntent, LaneSnapshot, SectionDef, SessionCapabilities, SessionCatalog,
+    SessionControlProvider, SnapshotCtx, SnapshotMode, System,
 };
 
 /// This system's id — the `system` half of every [`LaneId`] it produces.
@@ -89,7 +88,7 @@ pub fn hosts_from_lanes(lanes: &std::collections::HashSet<LaneId>) -> Vec<Option
 fn menu_button() -> SectionButton {
     SectionButton {
         glyph: "…".to_string(),
-        command: cmd::MENU.to_string(),
+        action: LaneActionId::from(cmd::MENU),
     }
 }
 
@@ -264,19 +263,20 @@ impl SessionControlProvider for TmuxSystem {
 }
 
 impl LaneActionProvider for TmuxSystem {
-    fn on_button(&self, lane: &LaneId, command: &str, x: u16, y: u16) -> Vec<Effect> {
+    fn invoke(
+        &self,
+        lane: &LaneId,
+        action: &LaneActionId,
+        anchor: LaneActionAnchor,
+    ) -> Vec<LaneShellIntent> {
         let host = TmuxSystem::host_of(lane);
-        match command {
+        match action.as_str() {
             // The generic menu button this system owns.
-            cmd::MENU => vec![Effect::OpenDividerMenu {
-                host: host.map(str::to_string),
-                x,
-                y,
-            }],
+            cmd::MENU => vec![LaneShellIntent::OpenContextMenu { anchor }],
             // Everything else on a remote divider is ssh-registered; route it
             // back to ssh, which owns those commands' semantics.
             _ => match host {
-                Some(h) => crate::ssh::divider::on_button(command, h),
+                Some(_) => crate::ssh::divider::invoke(action),
                 None => vec![],
             },
         }

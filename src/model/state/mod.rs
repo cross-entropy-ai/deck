@@ -1159,10 +1159,19 @@ impl AppState {
     /// Optimistically mark a host's rows as reconnecting so the sidebar
     /// shows "(connecting...)" the instant the user hits the divider's
     /// reconnect button, before the refresh round returns.
+    #[cfg(test)]
     pub fn mark_host_reconnecting(&mut self, host: &str) {
         for e in &mut self.entries {
             if e.host.as_deref() == Some(host) {
                 e.kind = SessionEntryKind::Connecting;
+            }
+        }
+    }
+
+    pub fn mark_lane_reconnecting(&mut self, lane: &LaneId) {
+        for entry in &mut self.entries {
+            if entry.lane == *lane {
+                entry.kind = SessionEntryKind::Connecting;
             }
         }
     }

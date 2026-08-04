@@ -3,6 +3,7 @@
 //! `Effect`s; `app::dispatch` iterates them in order and does the tmux/ssh/PTY work.
 
 use crate::geometry::AgentTarget;
+use crate::geometry::LaneActionAnchor;
 use crate::lane::LaneId;
 use crate::model::session::SessionId;
 
@@ -24,18 +25,15 @@ pub enum Effect {
     CreateSession(CreateSessionRequest),
     /// Detach a remote host from deck (equivalent to `deck remote remove <host>`).
     RemoveRemoteHost(RemoveRemoteRequest),
-    /// Reconnect/respawn a remote host's ssh+tmux PTY. Emitted by a System's
-    /// `on_button` (the `[⟳]` divider button); App rebuilds the connection.
-    ReconnectHost(String),
-    /// Open a host's port-forward overlay (the `[⇄N]` badge button).
-    OpenForwardOverlay(String),
-    /// Open a divider's context menu at `(x, y)`. `host` is `None` for the
-    /// `@local` divider, `Some(host)` for a remote one (the `[…]` button).
-    OpenDividerMenu {
-        host: Option<String>,
-        x: u16,
-        y: u16,
+    /// Return a backend-owned lane action to its provider. The provider maps
+    /// the typed id to a small generic shell intent; App never interprets the
+    /// system id or action id.
+    InvokeLaneAction {
+        lane: LaneId,
+        action: crate::system::LaneActionId,
+        anchor: LaneActionAnchor,
     },
+    OpenPortForwardOverlay(LaneId),
     OpenNewSessionPicker,
     OpenRemoteNewSessionPicker(String),
     OpenAddRemotePicker,

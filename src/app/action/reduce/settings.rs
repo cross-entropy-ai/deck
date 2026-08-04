@@ -65,7 +65,9 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
                 .find(|r| !r.forwards.is_empty())
                 .or_else(|| state.config_remotes.first())
             {
-                fx.push(Effect::OpenForwardOverlay(r.host.clone()));
+                if let Some(lane) = state.lane_for_host(&r.host) {
+                    fx.push(Effect::OpenPortForwardOverlay(lane.clone()));
+                }
             }
         }
         SettingsAction::OpenThemePicker(slot) => {

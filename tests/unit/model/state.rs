@@ -626,7 +626,7 @@ fn remote_divider_shows_forward_count() {
             .section_for(&TmuxSystem::host_lane(host))?
             .buttons
             .into_iter()
-            .find(|b| b.command == cmd::FORWARDS)
+            .find(|b| b.action.as_str() == cmd::FORWARDS)
             .map(|b| b.glyph)
     };
 
