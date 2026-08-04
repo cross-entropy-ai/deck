@@ -290,9 +290,9 @@ fn projects_cursor_reanchors_to_same_session_across_rebuild() {
     let key = state.focused_session_key();
     assert_eq!(
         key,
-        Some((
+        Some(crate::model::session::SessionId::new(
             crate::system::tmux::TmuxSystem::local_lane(),
-            "beta".to_string()
+            "beta",
         ))
     );
 

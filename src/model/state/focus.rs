@@ -247,13 +247,11 @@ impl AppState {
         clamp_cursor(&mut self.focused, self.entries.len());
     }
 
-    /// Identity (host, session name) of the focused Projects row, captured
+    /// Identity of the focused Projects row, captured
     /// before a refresh rebuilds `entries` so the cursor can re-anchor to the
     /// same session afterwards. The Projects twin of `focused_agent_key`.
-    pub fn focused_session_key(&self) -> Option<(crate::lane::LaneId, String)> {
-        self.entries
-            .get(self.focused)
-            .map(|e| (e.lane.clone(), e.name.clone()))
+    pub fn focused_session_key(&self) -> Option<crate::model::session::SessionId> {
+        self.entries.get(self.focused).map(SessionEntry::id)
     }
 
     /// Re-point the Projects cursor at the session `key` (its position before
@@ -262,12 +260,8 @@ impl AppState {
     /// a neighbor. Falls back to clamping when the session is gone. Projects twin
     /// of `reanchor_agent_focus`; use instead of `clamp_projects_focus` after a
     /// refresh rebuilds the rows.
-    pub fn reanchor_projects_focus(&mut self, key: Option<(crate::lane::LaneId, String)>) {
-        match key.and_then(|(lane, name)| {
-            self.entries
-                .iter()
-                .position(|entry| entry.lane == lane && entry.name == name)
-        }) {
+    pub fn reanchor_projects_focus(&mut self, key: Option<crate::model::session::SessionId>) {
+        match key.and_then(|id| self.entries.iter().position(|entry| entry.id() == id)) {
             Some(idx) => self.focused = idx,
             None => self.clamp_projects_focus(),
         }

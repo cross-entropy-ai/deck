@@ -189,8 +189,8 @@ pub fn frame_rate_limit_label(fps: u16) -> &'static str {
 /// `kind` carries the liveness/placeholder distinction — see [`SessionEntryKind`].
 #[derive(Debug, Clone)]
 pub struct SessionEntry {
-    /// Stable routing identity. `host` remains temporarily for tmux-specific
-    /// labels and configuration lookups, but control paths use this lane.
+    /// Stable lane component of [`SessionEntry::id`]. `host` remains
+    /// temporarily for tmux-specific labels and configuration lookups.
     pub lane: crate::lane::LaneId,
     /// `None` = local tmux server; `Some(host)` = a remote host over ssh.
     pub host: Option<String>,
@@ -226,6 +226,10 @@ pub const NO_SESSIONS_LABEL: &str = "(no sessions)";
 pub const UNREACHABLE_LABEL: &str = "(unreachable)";
 
 impl SessionEntry {
+    pub fn id(&self) -> crate::model::session::SessionId {
+        crate::model::session::SessionId::new(self.lane.clone(), self.name.clone())
+    }
+
     /// A synthetic status row for a remote host (`Connecting`/`Unreachable`/
     /// `NoSessions`): no session name or dir, the label comes from `kind`.
     pub fn placeholder(host: &str, kind: SessionEntryKind) -> Self {
