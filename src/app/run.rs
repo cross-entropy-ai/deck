@@ -2,7 +2,7 @@
 //!
 //! `App::run` drains ~eight async sources (local PTY, remote-spawn events,
 //! remote PTYs, upgrade PTY, refresh worker, session executor,
-//! port-forward worker, remote-focus completions, summary worker) and ticks
+//! port-forward worker, active-pane probes, summary worker) and ticks
 //! ~five periodic timers (render gate, refresh, config watcher, marker-retry,
 //! summary spinner). Each drain is a `pump_*` method returning a
 //! [`Redraw`] so `needs_render`/`force_render` bookkeeping lives in one place;
@@ -242,23 +242,12 @@ impl App {
         redraw
     }
 
-    /// Drain remote agent-focus completions: commit the highlight / view only
-    /// for focuses that actually landed.
-    fn pump_focus(&mut self) -> Redraw {
-        let mut redraw = Redraw::No;
-        while let Some(outcome) = self.focus_executor.try_recv_focus() {
-            self.apply_focus_outcome(outcome);
-            redraw = Redraw::Force;
-        }
-        redraw
-    }
-
     /// Drain active-pane probes: move the row highlight to follow the real
     /// active pane. Only forces a redraw when something actually moved, so
     /// the periodic probe doesn't repaint every tick for no change.
     fn pump_active_pane(&mut self) -> Redraw {
         let mut redraw = Redraw::No;
-        while let Some(outcome) = self.focus_executor.try_recv_active_pane() {
+        while let Some(outcome) = self.active_pane_probe.try_recv_active_pane() {
             // The marker and both section cursors can move together (see
             // `steer_marker_to_pane`), so watch all three.
             let before = (
@@ -488,8 +477,6 @@ impl App {
             }
 
             self.pump_port_forward()
-                .apply(&mut needs_render, &mut force_render);
-            self.pump_focus()
                 .apply(&mut needs_render, &mut force_render);
             self.pump_active_pane()
                 .apply(&mut needs_render, &mut force_render);

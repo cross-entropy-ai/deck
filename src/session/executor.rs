@@ -46,6 +46,49 @@ pub enum SessionOp {
     ListDir {
         path: String,
     },
+    /// Display mutation: focus one pane after switching its lane's client.
+    /// It shares this executor with `Switch`, so activation and pane focus for
+    /// one lane cannot overtake each other.
+    Focus(FocusTask),
+}
+
+pub struct FocusTask {
+    pub target: crate::geometry::AgentTarget,
+    pub seq: u64,
+    pub marker_id: u64,
+    run: Box<dyn FnOnce() -> crate::tmux::PaneFocus + Send>,
+}
+
+impl FocusTask {
+    pub fn new(
+        transport: crate::focus::FocusTransport,
+        target: crate::geometry::AgentTarget,
+        seq: u64,
+        marker_id: u64,
+    ) -> Self {
+        let run_target = target.clone();
+        Self {
+            target,
+            seq,
+            marker_id,
+            run: Box::new(move || {
+                crate::focus::run_focus(&transport, &run_target.session, &run_target.pane_id)
+            }),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_run(
+        target: crate::geometry::AgentTarget,
+        run: impl FnOnce() -> crate::tmux::PaneFocus + Send + 'static,
+    ) -> Self {
+        Self {
+            target,
+            seq: 0,
+            marker_id: 0,
+            run: Box::new(run),
+        }
+    }
 }
 
 /// Delivered back to the UI thread once an op finishes. `lane` identifies the
@@ -76,6 +119,12 @@ pub enum OpOutcome {
         path: String,
         result: Result<DirListing, SessionControlError>,
     },
+    Focused {
+        target: crate::geometry::AgentTarget,
+        result: crate::tmux::PaneFocus,
+        seq: u64,
+        marker_id: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +134,7 @@ pub enum SessionOperation {
     Kill,
     Create,
     PersistOrder,
+    Focus,
 }
 
 impl std::fmt::Display for SessionOperation {
@@ -95,6 +145,7 @@ impl std::fmt::Display for SessionOperation {
             Self::Kill => "kill session",
             Self::Create => "create session",
             Self::PersistOrder => "save session order",
+            Self::Focus => "focus pane",
         })
     }
 }
@@ -265,6 +316,7 @@ impl PanicOutcome {
             SessionOp::NewSession { .. } => Self::Operation(SessionOperation::Create),
             SessionOp::PersistOrder { .. } => Self::Operation(SessionOperation::PersistOrder),
             SessionOp::ListDir { path } => Self::DirectoryListing(path.clone()),
+            SessionOp::Focus(_) => Self::Operation(SessionOperation::Focus),
         }
     }
 
@@ -329,12 +381,39 @@ fn run(backend: Box<dyn SessionControl + Send>, op: SessionOp) -> OpOutcome {
             result: backend.list_dir(&path),
             path,
         },
+        SessionOp::Focus(task) => OpOutcome::Focused {
+            target: task.target,
+            result: (task.run)(),
+            seq: task.seq,
+            marker_id: task.marker_id,
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn focus_target(lane: &LaneId, pane_id: &str) -> crate::geometry::AgentTarget {
+        crate::geometry::AgentTarget {
+            lane: lane.clone(),
+            session: "main".into(),
+            pane_id: pane_id.into(),
+        }
+    }
+
+    fn recv_outcomes(exec: &SessionExecutor, count: usize) -> Vec<OpOutcome> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut outcomes = Vec::new();
+        while outcomes.len() < count && std::time::Instant::now() < deadline {
+            if let Some(outcome) = exec.try_recv() {
+                outcomes.push(outcome.result);
+            } else {
+                std::thread::yield_now();
+            }
+        }
+        outcomes
+    }
 
     /// A no-op backend so a submit can populate the sender map without
     /// touching tmux/ssh.
@@ -549,6 +628,141 @@ mod tests {
             vec![
                 OpOutcome::Failed {
                     operation: SessionOperation::Switch,
+                    error: SessionControlError::new("session backend panicked"),
+                },
+                OpOutcome::Switched,
+            ]
+        );
+    }
+
+    #[test]
+    fn same_lane_focus_side_effects_are_fifo_and_finish_on_latest_target() {
+        let mut exec = SessionExecutor::new();
+        let lane = LaneId::new("fixture", "same");
+        let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (old_started_tx, old_started_rx) = mpsc::channel();
+        let (release_old_tx, release_old_rx) = mpsc::channel();
+        let (new_started_tx, new_started_rx) = mpsc::channel();
+
+        let old_order = order.clone();
+        let old = focus_target(&lane, "%old");
+        exec.submit(
+            lane.clone(),
+            Box::new(NoopBackend),
+            SessionOp::Focus(FocusTask::with_run(old.clone(), move || {
+                old_started_tx.send(()).unwrap();
+                release_old_rx.recv().unwrap();
+                old_order.lock().unwrap().push("old");
+                crate::tmux::PaneFocus::ExactPane
+            })),
+        )
+        .unwrap();
+        old_started_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+
+        let new_order = order.clone();
+        let new = focus_target(&lane, "%new");
+        exec.submit(
+            lane,
+            Box::new(NoopBackend),
+            SessionOp::Focus(FocusTask::with_run(new.clone(), move || {
+                new_started_tx.send(()).unwrap();
+                new_order.lock().unwrap().push("new");
+                crate::tmux::PaneFocus::ExactPane
+            })),
+        )
+        .unwrap();
+
+        assert!(new_started_rx.try_recv().is_err());
+        release_old_tx.send(()).unwrap();
+        new_started_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+
+        let outcomes = recv_outcomes(&exec, 2);
+        assert_eq!(*order.lock().unwrap(), vec!["old", "new"]);
+        assert!(matches!(
+            outcomes.as_slice(),
+            [
+                OpOutcome::Focused { target: first, .. },
+                OpOutcome::Focused { target: last, .. }
+            ] if first == &old && last == &new
+        ));
+    }
+
+    #[test]
+    fn blocked_focus_on_one_lane_does_not_block_another_lane() {
+        let mut exec = SessionExecutor::new();
+        let blocked_lane = LaneId::new("fixture", "blocked");
+        let free_lane = LaneId::new("fixture", "free");
+        let (blocked_tx, blocked_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (free_tx, free_rx) = mpsc::channel();
+
+        exec.submit(
+            blocked_lane.clone(),
+            Box::new(NoopBackend),
+            SessionOp::Focus(FocusTask::with_run(
+                focus_target(&blocked_lane, "%blocked"),
+                move || {
+                    blocked_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    crate::tmux::PaneFocus::ExactPane
+                },
+            )),
+        )
+        .unwrap();
+        blocked_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+
+        exec.submit(
+            free_lane.clone(),
+            Box::new(NoopBackend),
+            SessionOp::Focus(FocusTask::with_run(
+                focus_target(&free_lane, "%free"),
+                move || {
+                    free_tx.send(()).unwrap();
+                    crate::tmux::PaneFocus::ExactPane
+                },
+            )),
+        )
+        .unwrap();
+
+        free_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("a different lane must progress while the first is blocked");
+        release_tx.send(()).unwrap();
+        assert_eq!(recv_outcomes(&exec, 2).len(), 2);
+    }
+
+    #[test]
+    fn focus_panic_is_a_typed_failure_and_worker_continues() {
+        let mut exec = SessionExecutor::new();
+        let lane = LaneId::new("fixture", "panic");
+        exec.submit(
+            lane.clone(),
+            Box::new(NoopBackend),
+            SessionOp::Focus(FocusTask::with_run(focus_target(&lane, "%1"), || {
+                panic!("injected focus panic")
+            })),
+        )
+        .unwrap();
+        exec.submit(
+            lane.clone(),
+            Box::new(NoopBackend),
+            SessionOp::Switch {
+                name: "still-runs".into(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            recv_outcomes(&exec, 2),
+            vec![
+                OpOutcome::Failed {
+                    operation: SessionOperation::Focus,
                     error: SessionControlError::new("session backend panicked"),
                 },
                 OpOutcome::Switched,

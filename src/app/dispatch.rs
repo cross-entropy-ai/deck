@@ -351,6 +351,12 @@ impl App {
                     }
                 }
             }
+            OpOutcome::Focused {
+                target,
+                result,
+                seq,
+                marker_id,
+            } => self.apply_focus_outcome(target, result, seq, marker_id),
             OpOutcome::Switched => {
                 // A remote switch needs confirming against the live marker
                 // (see `verify_remote_switch`); a local switch needs nothing
@@ -561,10 +567,12 @@ impl App {
             return;
         };
         let seq = self.focus_seq;
-        if let Err(error) = self.focus_executor.focus(transport, target, seq, marker_id) {
-            self.state
-                .show_warning(format!("could not start pane focus: {error}"));
-        }
+        self.submit_session(
+            target.lane.clone(),
+            crate::session::executor::SessionOp::Focus(crate::session::executor::FocusTask::new(
+                transport, target, seq, marker_id,
+            )),
+        );
     }
 
     /// Probe the pane Deck's main view shows and steer the Agents-tab row
@@ -583,7 +591,7 @@ impl App {
         };
         let seq = self.focus_seq;
         let spawned = match self
-            .focus_executor
+            .active_pane_probe
             .probe_active_pane(transport, host, seq, marker_id)
         {
             Ok(()) => true,
@@ -617,7 +625,15 @@ impl App {
         {
             return;
         }
-        let Some(pane_id) = outcome.pane_id else {
+        let pane_id = match outcome.pane_id {
+            Ok(pane_id) => pane_id,
+            Err(error) => {
+                self.state
+                    .show_warning(format!("active-pane probe failed: {error}"));
+                return;
+            }
+        };
+        let Some(pane_id) = pane_id else {
             return;
         };
         let Some(lane) = self
@@ -639,22 +655,28 @@ impl App {
     /// present. A focus that finishes after the user moved on (or after a
     /// reconnect) is dropped rather than clobbering the view. `ExactPane`
     /// commits the switch and earns the highlight; `Failed` commits nothing.
-    pub(super) fn apply_focus_outcome(&mut self, outcome: super::FocusOutcome) {
-        if outcome.seq != self.focus_seq {
+    pub(super) fn apply_focus_outcome(
+        &mut self,
+        target: crate::geometry::AgentTarget,
+        result: crate::tmux::PaneFocus,
+        seq: u64,
+        marker_id: u64,
+    ) {
+        if seq != self.focus_seq {
             return;
         }
-        if !self.remote.marker_matches(
-            self.state.host_for_lane(&outcome.target.lane),
-            outcome.marker_id,
-        ) {
+        if !self
+            .remote
+            .marker_matches(self.state.host_for_lane(&target.lane), marker_id)
+        {
             return;
         }
-        if !self.agent_focus_target_live(&outcome.target) {
+        if !self.agent_focus_target_live(&target) {
             return;
         }
-        match outcome.result {
-            tmux::PaneFocus::ExactPane => self.commit_focus(outcome.target),
-            tmux::PaneFocus::Failed => {}
+        match result {
+            tmux::PaneFocus::ExactPane => self.commit_focus(target),
+            tmux::PaneFocus::Failed => self.state.show_warning("failed to focus pane"),
         }
     }
 

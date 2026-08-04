@@ -29,8 +29,8 @@ use crate::tmux;
 use crate::update::UpdateCheckMode;
 
 use self::update::bootstrap_update_check;
-use focus_executor::FocusExecutor;
-pub(super) use focus_executor::{ActivePaneOutcome, FocusOutcome};
+pub(super) use focus_executor::ActivePaneOutcome;
+use focus_executor::ActivePaneProbeExecutor;
 
 const POLL_MS: u64 = 16;
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
@@ -99,8 +99,8 @@ pub struct App {
     port_forward_tx: std::sync::mpsc::Sender<crate::app::ssh::port_forward_task::Op>,
     /// Results coming back from the port-forward worker.
     port_forward_rx: std::sync::mpsc::Receiver<crate::app::ssh::port_forward_task::OpResult>,
-    /// Owns blocking pane-focus/probe jobs and their result channels.
-    focus_executor: FocusExecutor,
+    /// Owns the read-only active-pane probe and its result channel.
+    active_pane_probe: ActivePaneProbeExecutor,
     /// The in-flight Agents-tab summary generation, if any. A one-shot
     /// [`Worker`](crate::worker::Worker) carrying `Ok(text)` or `Err(reason)`
     /// (no agents, `claude` missing, non-zero exit, timeout, cancel). Dropping
@@ -227,7 +227,7 @@ impl App {
             needs_full_redraw: false,
             port_forward_tx,
             port_forward_rx: pf_result_rx,
-            focus_executor: FocusExecutor::new(),
+            active_pane_probe: ActivePaneProbeExecutor::new(),
             active_pane_in_flight: false,
             summary_worker: None,
             focus_seq: 0,
