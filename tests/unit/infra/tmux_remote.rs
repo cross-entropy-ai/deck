@@ -294,8 +294,7 @@ fn reachable_host_without_server_reports_no_sessions() {
         stderr: b"no server running on /tmp/tmux-1000/default".to_vec(),
     }));
     let result = list_sessions_with(&runner, "box");
-    assert!(result.is_some(), "reachable host should not be None");
-    assert!(result.unwrap().is_empty());
+    assert!(result.expect("reachable host should succeed").is_empty());
 }
 
 #[test]
@@ -306,11 +305,14 @@ fn ssh_connection_failure_is_unreachable() {
         status: exit_status(255),
         stderr: b"ssh: connect to host box port 22: Connection refused".to_vec(),
     }));
-    assert!(list_sessions_with(&runner, "box").is_none());
+    assert!(matches!(
+        list_sessions_with(&runner, "box"),
+        Err(ListSessionsError::Unreachable(_))
+    ));
 }
 
 #[test]
-fn tmux_missing_is_unreachable_not_empty() {
+fn tmux_missing_is_backend_failure_not_empty_or_unreachable() {
     // Reachable host, but tmux isn't installed (127): this is a real
     // error, not "no sessions", so it must not be reported as empty.
     let runner = FakeRunner::new(Err(CommandError::NonZero {
@@ -318,7 +320,22 @@ fn tmux_missing_is_unreachable_not_empty() {
         status: exit_status(127),
         stderr: b"bash: tmux: command not found".to_vec(),
     }));
-    assert!(list_sessions_with(&runner, "box").is_none());
+    assert!(matches!(
+        list_sessions_with(&runner, "box"),
+        Err(ListSessionsError::Backend(_))
+    ));
+}
+
+#[test]
+fn local_ssh_spawn_failure_is_backend_failure() {
+    let runner = FakeRunner::new(Err(CommandError::Spawn {
+        program: "ssh".to_string(),
+        source: std::io::Error::new(std::io::ErrorKind::NotFound, "ssh missing"),
+    }));
+    assert!(matches!(
+        list_sessions_with(&runner, "box"),
+        Err(ListSessionsError::Backend(_))
+    ));
 }
 
 #[test]
@@ -327,7 +344,10 @@ fn timeout_is_unreachable() {
         program: "ssh".to_string(),
         elapsed: Duration::from_secs(5),
     }));
-    assert!(list_sessions_with(&runner, "box").is_none());
+    assert!(matches!(
+        list_sessions_with(&runner, "box"),
+        Err(ListSessionsError::Unreachable(_))
+    ));
 }
 
 /// Returns one canned result for the single ssh call list_dir /

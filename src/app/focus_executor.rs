@@ -1,75 +1,51 @@
-//! Execution boundary for potentially blocking pane focus/probe work.
+//! Execution boundary for the read-only active-pane probe.
 //!
-//! Dispatch decides *what* focus operation is needed; this service owns thread
-//! creation, channels, and result transport so UI policy never spawns ad-hoc
-//! threads or silently drops spawn failures.
+//! Mutating pane focus runs in `SessionExecutor`'s per-lane FIFO. This service
+//! only queries the currently active pane; App single-flights those probes.
 
 use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use crate::focus::FocusTransport;
-use crate::geometry::AgentTarget;
-
-pub(crate) struct FocusOutcome {
-    pub target: AgentTarget,
-    pub result: crate::tmux::PaneFocus,
-    pub seq: u64,
-    pub marker_id: u64,
-}
-
 pub(crate) struct ActivePaneOutcome {
-    pub host: Option<String>,
-    pub pane_id: Option<String>,
+    pub lane: crate::lane::LaneId,
+    pub pane_id: Result<Option<String>, ActivePaneProbeError>,
     pub seq: u64,
     pub marker_id: u64,
 }
 
-pub(super) struct FocusExecutor {
-    focus_tx: Sender<FocusOutcome>,
-    focus_rx: Receiver<FocusOutcome>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActivePaneProbeError {
+    Panicked,
+}
+
+impl std::fmt::Display for ActivePaneProbeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Panicked => f.write_str("active-pane backend panicked"),
+        }
+    }
+}
+
+pub(super) struct ActivePaneProbeExecutor {
     active_pane_tx: Sender<ActivePaneOutcome>,
     active_pane_rx: Receiver<ActivePaneOutcome>,
 }
 
-impl FocusExecutor {
+impl ActivePaneProbeExecutor {
     pub fn new() -> Self {
-        let (focus_tx, focus_rx) = mpsc::channel();
         let (active_pane_tx, active_pane_rx) = mpsc::channel();
         Self {
-            focus_tx,
-            focus_rx,
             active_pane_tx,
             active_pane_rx,
         }
     }
 
-    pub fn focus(
-        &self,
-        transport: FocusTransport,
-        target: AgentTarget,
-        seq: u64,
-        marker_id: u64,
-    ) -> io::Result<()> {
-        let tx = self.focus_tx.clone();
-        thread::Builder::new()
-            .name("deck-focus".into())
-            .spawn(move || {
-                let result = crate::focus::run_focus(&transport, &target.session, &target.pane_id);
-                let _ = tx.send(FocusOutcome {
-                    target,
-                    result,
-                    seq,
-                    marker_id,
-                });
-            })
-            .map(drop)
-    }
-
     pub fn probe_active_pane(
         &self,
         transport: FocusTransport,
-        host: Option<String>,
+        lane: crate::lane::LaneId,
         seq: u64,
         marker_id: u64,
     ) -> io::Result<()> {
@@ -77,9 +53,9 @@ impl FocusExecutor {
         thread::Builder::new()
             .name("deck-active-pane".into())
             .spawn(move || {
-                let pane_id = crate::focus::active_pane(&transport);
+                let pane_id = run_probe(|| crate::focus::active_pane(&transport));
                 let _ = tx.send(ActivePaneOutcome {
-                    host,
+                    lane,
                     pane_id,
                     seq,
                     marker_id,
@@ -88,11 +64,27 @@ impl FocusExecutor {
             .map(drop)
     }
 
-    pub fn try_recv_focus(&self) -> Option<FocusOutcome> {
-        self.focus_rx.try_recv().ok()
-    }
-
     pub fn try_recv_active_pane(&self) -> Option<ActivePaneOutcome> {
         self.active_pane_rx.try_recv().ok()
+    }
+}
+
+fn run_probe(
+    probe: impl FnOnce() -> Option<String>,
+) -> Result<Option<String>, ActivePaneProbeError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(probe))
+        .map_err(|_| ActivePaneProbeError::Panicked)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn probe_panic_is_a_typed_failure() {
+        assert_eq!(
+            run_probe(|| panic!("injected probe panic")),
+            Err(ActivePaneProbeError::Panicked)
+        );
     }
 }

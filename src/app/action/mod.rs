@@ -27,7 +27,7 @@ pub enum Action {
     /// Detach a remote host from deck's config — equivalent to
     /// `deck remote remove <host>`. Triggered from the remote-session
     /// right-click menu's "Remove from list".
-    RemoveRemoteFromList(String),
+    RemoveLane(crate::lane::LaneId),
     StartRename,
     RenameInputKey(crossterm::event::KeyEvent),
     RenameConfirm,
@@ -41,10 +41,8 @@ pub enum Action {
     /// Toggle between the Projects and Agents sidebar tabs (keybinding).
     ToggleSidebarTab,
     ToggleViewMode,
-    /// Collapse/expand a sidebar group (Expanded view only). `None` is the
-    /// local group; `Some(host)` is a remote host group. Fired by a
-    /// divider click or the section-toggle keybinding.
-    ToggleSection(Option<String>),
+    /// Collapse/expand a lane group (Expanded view only).
+    ToggleSection(crate::lane::LaneId),
 
     TriggerUpgrade,
     AbortUpgrade,
@@ -75,18 +73,13 @@ pub enum Action {
     ForwardKey(Vec<u8>),
     ForwardMouse(Vec<u8>),
 
-    ReconnectHost {
-        host: String,
-    },
-
     /// A divider button declared by a System was clicked. Routed to that
-    /// System's `on_button` (decision A) — the shell doesn't interpret the
-    /// command itself. `(x, y)` is the button's screen position.
-    SystemButton {
+    /// System through `Effect::InvokeLaneAction`; the shell doesn't interpret
+    /// the backend-owned id.
+    InvokeLane {
         lane: crate::lane::LaneId,
-        command: String,
-        x: u16,
-        y: u16,
+        action: crate::system::LaneActionId,
+        anchor: crate::geometry::LaneActionAnchor,
     },
 
     Quit,
@@ -215,14 +208,8 @@ pub enum MenuAction {
         x: u16,
         y: u16,
     },
-    /// Open the local divider's `[…]` menu (local "New session";
-    /// Port Forward / Remove from list greyed out).
-    OpenLocalDivider {
-        x: u16,
-        y: u16,
-    },
-    OpenHostDivider {
-        host: String,
+    OpenLaneDivider {
+        lane: crate::lane::LaneId,
         x: u16,
         y: u16,
     },

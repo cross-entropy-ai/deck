@@ -6,15 +6,18 @@
 
 use crate::agent;
 use crate::config::{Config, RemoteConfig};
-use crate::effects::Effect;
-use crate::geometry::SectionButton;
+use crate::geometry::{LaneActionAnchor, SectionButton};
 use crate::lane::LaneId;
 use crate::session::local::LocalControl;
 use crate::session::remote::RemoteControl;
 use crate::session::SessionControl;
 use crate::{remote_tmux, tmux};
 
-use super::{ControlCtx, LaneSnapshot, SectionDef, SnapshotCtx, SnapshotMode, System};
+use super::{
+    CatalogError, ControlCtx, LaneActionId, LaneActionProvider, LaneCapabilities, LaneRuntime,
+    LaneShellIntent, LaneSnapshot, SectionDef, SessionCapabilities, SessionCatalog,
+    SessionControlProvider, SnapshotCtx, SnapshotMode, System,
+};
 
 /// This system's id — the `system` half of every [`LaneId`] it produces.
 pub const TMUX: &str = "tmux";
@@ -85,7 +88,7 @@ pub fn hosts_from_lanes(lanes: &std::collections::HashSet<LaneId>) -> Vec<Option
 fn menu_button() -> SectionButton {
     SectionButton {
         glyph: "…".to_string(),
-        command: cmd::MENU.to_string(),
+        action: LaneActionId::from(cmd::MENU),
     }
 }
 
@@ -102,6 +105,8 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId) -> SectionDef {
             top_margin: false,
             primary: true,
             runtime_key: None,
+            session_capabilities: tmux_session_capabilities(),
+            lane_capabilities: tmux_lane_capabilities(),
         },
         Some(host) => {
             // ssh registers the remote-only buttons (the ⇄N forward count,
@@ -116,8 +121,26 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId) -> SectionDef {
                 top_margin: true,
                 primary: false,
                 runtime_key: Some(host.to_string()),
+                session_capabilities: tmux_session_capabilities(),
+                lane_capabilities: tmux_lane_capabilities(),
             }
         }
+    }
+}
+
+fn tmux_session_capabilities() -> SessionCapabilities {
+    SessionCapabilities {
+        activate: true,
+        rename: true,
+        kill: true,
+    }
+}
+
+fn tmux_lane_capabilities() -> LaneCapabilities {
+    LaneCapabilities {
+        create_session: true,
+        reorder_sessions: true,
+        actions: true,
     }
 }
 
@@ -155,7 +178,25 @@ impl System for TmuxSystem {
         Some(section_def(&remotes, lane))
     }
 
-    fn snapshot(&self, lane: &LaneId, ctx: &SnapshotCtx<'_>) -> Option<LaneSnapshot> {
+    fn runtime(&self, lane: &LaneId) -> Option<LaneRuntime<'_>> {
+        (lane.system() == TMUX).then(|| {
+            LaneRuntime::new(lane)
+                .with_catalog(self)
+                .with_session_control(self)
+                .with_lane_actions(self)
+                .with_capabilities(tmux_session_capabilities(), tmux_lane_capabilities())
+        })
+    }
+}
+
+impl SessionCatalog for TmuxSystem {
+    fn snapshot(&self, lane: &LaneId, ctx: &SnapshotCtx<'_>) -> Result<LaneSnapshot, CatalogError> {
+        if lane.system() != TMUX || lane.lane().is_empty() {
+            return Err(CatalogError::Backend(format!(
+                "invalid tmux lane routed to catalog: {}",
+                lane.as_str()
+            )));
+        }
         match TmuxSystem::host_of(lane) {
             None => {
                 let current = if ctx.client_locator.is_empty() {
@@ -177,17 +218,25 @@ impl System for TmuxSystem {
                     }
                     agents
                 });
-                Some(LaneSnapshot { sessions, agents })
+                Ok(LaneSnapshot { sessions, agents })
             }
             Some(host) => {
-                // Unreachable (the ssh+tmux list failed) → `None`, no probe:
-                // probing too would double the 5s ssh stall on a dead host.
-                let sessions = remote_tmux::list_sessions(host)?;
+                // A failed ssh+tmux listing stays typed; don't probe agents
+                // after either failure because a dead host would pay the 5s
+                // timeout twice.
+                let sessions = remote_tmux::list_sessions(host).map_err(|error| match error {
+                    remote_tmux::ListSessionsError::Unreachable(detail) => {
+                        CatalogError::Unreachable(detail)
+                    }
+                    remote_tmux::ListSessionsError::Backend(detail) => {
+                        CatalogError::Backend(detail)
+                    }
+                })?;
                 let agents = ctx
                     .probe_agents
                     .then(|| remote_tmux::agent_probe(host))
                     .flatten();
-                Some(LaneSnapshot { sessions, agents })
+                Ok(LaneSnapshot { sessions, agents })
             }
         }
     }
@@ -199,7 +248,9 @@ impl System for TmuxSystem {
             SnapshotMode::Background
         }
     }
+}
 
+impl SessionControlProvider for TmuxSystem {
     fn control(&self, lane: &LaneId, ctx: &ControlCtx) -> Box<dyn SessionControl + Send> {
         match TmuxSystem::host_of(lane) {
             None => Box::new(LocalControl::new(ctx.local_client.to_string())),
@@ -209,20 +260,23 @@ impl System for TmuxSystem {
             }
         }
     }
+}
 
-    fn on_button(&self, lane: &LaneId, command: &str, x: u16, y: u16) -> Vec<Effect> {
+impl LaneActionProvider for TmuxSystem {
+    fn invoke(
+        &self,
+        lane: &LaneId,
+        action: &LaneActionId,
+        anchor: LaneActionAnchor,
+    ) -> Vec<LaneShellIntent> {
         let host = TmuxSystem::host_of(lane);
-        match command {
+        match action.as_str() {
             // The generic menu button this system owns.
-            cmd::MENU => vec![Effect::OpenDividerMenu {
-                host: host.map(str::to_string),
-                x,
-                y,
-            }],
+            cmd::MENU => vec![LaneShellIntent::OpenContextMenu { anchor }],
             // Everything else on a remote divider is ssh-registered; route it
             // back to ssh, which owns those commands' semantics.
             _ => match host {
-                Some(h) => crate::ssh::divider::on_button(command, h),
+                Some(_) => crate::ssh::divider::invoke(action),
                 None => vec![],
             },
         }

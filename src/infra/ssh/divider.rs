@@ -5,11 +5,11 @@
 //! (port forwards, connection reconnect).
 
 use crate::config::RemoteConfig;
-use crate::effects::Effect;
 use crate::geometry::SectionButton;
+use crate::system::{LaneActionId, LaneShellIntent};
 
 /// Button command ids ssh registers on a remote divider and handles in
-/// [`on_button`].
+/// [`invoke`].
 pub mod cmd {
     pub const RECONNECT: &str = "reconnect";
     pub const FORWARDS: &str = "forwards";
@@ -31,21 +31,21 @@ pub fn divider(remotes: &[RemoteConfig], host: &str) -> Vec<SectionButton> {
     if let Some(n) = forward_count(remotes, host) {
         buttons.push(SectionButton {
             glyph: format!("⇄{}", n),
-            command: cmd::FORWARDS.to_string(),
+            action: LaneActionId::from(cmd::FORWARDS),
         });
     }
     buttons.push(SectionButton {
         glyph: "⟳".to_string(),
-        command: cmd::RECONNECT.to_string(),
+        action: LaneActionId::from(cmd::RECONNECT),
     });
     buttons
 }
 
 /// Handle a click on an ssh-registered remote-divider button.
-pub fn on_button(command: &str, host: &str) -> Vec<Effect> {
-    match command {
-        cmd::FORWARDS => vec![Effect::OpenForwardOverlay(host.to_string())],
-        cmd::RECONNECT => vec![Effect::ReconnectHost(host.to_string())],
+pub fn invoke(action: &LaneActionId) -> Vec<LaneShellIntent> {
+    match action.as_str() {
+        cmd::FORWARDS => vec![LaneShellIntent::OpenPortForwards],
+        cmd::RECONNECT => vec![LaneShellIntent::ReconnectAttachment],
         _ => vec![],
     }
 }
@@ -74,7 +74,7 @@ mod tests {
     fn forwards_present_yields_count_button_then_reconnect() {
         let remotes = vec![remote("h", 2)];
         let buttons = divider(&remotes, "h");
-        let cmds: Vec<&str> = buttons.iter().map(|b| b.command.as_str()).collect();
+        let cmds: Vec<&str> = buttons.iter().map(|b| b.action.as_str()).collect();
         assert_eq!(cmds, [cmd::FORWARDS, cmd::RECONNECT]);
         // The forward button is the count of configured forwards.
         assert_eq!(buttons[0].glyph, "⇄2");
@@ -84,20 +84,20 @@ mod tests {
     fn no_forwards_yields_only_reconnect() {
         let remotes = vec![remote("h", 0)];
         let buttons = divider(&remotes, "h");
-        let cmds: Vec<&str> = buttons.iter().map(|b| b.command.as_str()).collect();
+        let cmds: Vec<&str> = buttons.iter().map(|b| b.action.as_str()).collect();
         assert_eq!(cmds, [cmd::RECONNECT]);
     }
 
     #[test]
-    fn on_button_routes_to_effects() {
+    fn invoke_routes_to_shell_intents() {
         assert!(matches!(
-            on_button(cmd::FORWARDS, "h").as_slice(),
-            [Effect::OpenForwardOverlay(h)] if h == "h"
+            invoke(&LaneActionId::from(cmd::FORWARDS)).as_slice(),
+            [LaneShellIntent::OpenPortForwards]
         ));
         assert!(matches!(
-            on_button(cmd::RECONNECT, "h").as_slice(),
-            [Effect::ReconnectHost(h)] if h == "h"
+            invoke(&LaneActionId::from(cmd::RECONNECT)).as_slice(),
+            [LaneShellIntent::ReconnectAttachment]
         ));
-        assert!(on_button("unknown", "h").is_empty());
+        assert!(invoke(&LaneActionId::from("unknown")).is_empty());
     }
 }

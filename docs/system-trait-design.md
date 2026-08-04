@@ -29,7 +29,8 @@ collision.
 Config -> SystemRegistry::configure
        -> System::lanes / section_for -> AppState.system_sections -> layout
        -> System::snapshot            -> LaneRefresh              -> AppState
-Action -> registry.for_lane           -> System::control/on_button
+Action -> Effect::InvokeLaneAction    -> LaneActionProvider::invoke
+                                      -> LaneShellIntent
 ```
 
 The refresh worker asks the registry for snapshot routes. Foreground lanes are
@@ -46,15 +47,22 @@ pub trait System: Send + Sync {
     fn configure(&self, config: &Config);
     fn lanes(&self) -> Vec<LaneId>;
     fn section_for(&self, lane: &LaneId) -> Option<SectionDef>;
-    fn snapshot(&self, lane: &LaneId, ctx: &SnapshotCtx<'_>)
-        -> Option<LaneSnapshot>;
-    fn snapshot_mode(&self, lane: &LaneId) -> SnapshotMode;
-    fn control(&self, lane: &LaneId, ctx: &ControlCtx)
-        -> Box<dyn SessionControl + Send>;
-    fn on_button(&self, lane: &LaneId, command: &str, x: u16, y: u16)
-        -> Vec<Effect>;
+    fn runtime(&self, lane: &LaneId) -> Option<LaneRuntime<'_>>;
+}
+
+pub trait LaneActionProvider: Send + Sync {
+    fn invoke(
+        &self,
+        lane: &LaneId,
+        action: &LaneActionId,
+        anchor: LaneActionAnchor,
+    ) -> Vec<LaneShellIntent>;
 }
 ```
+
+Divider buttons carry a typed `LaneActionId`. The shell echoes it to the
+owning provider and executes only the returned generic `LaneShellIntent`; App
+does not match system ids or backend action ids.
 
 `SectionDef.primary` identifies the one lane backed by Deck's embedded local
 terminal; absence of a runtime key alone does not imply that role.

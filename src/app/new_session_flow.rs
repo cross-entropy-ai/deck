@@ -6,7 +6,7 @@ use super::App;
 use crate::new_session::validate_unique_session_name;
 
 struct NewSessionTarget {
-    host: Option<String>,
+    lane: crate::lane::LaneId,
     start_dir: String,
     existing_count: usize,
     existing_names: Vec<String>,
@@ -18,15 +18,16 @@ struct NewSessionTarget {
 /// and, on `DirListed`, to re-derive the expected key and drop a stale listing.
 pub(super) fn new_session_list_query(
     ns: &crate::new_session::NewSessionState,
-) -> (Option<String>, String) {
+    primary_lane: Option<&crate::lane::LaneId>,
+) -> Option<(crate::lane::LaneId, String)> {
+    let lane = ns.target_lane.clone()?;
     let input = ns.input_str().to_string();
     let (parent, _leaf) = crate::new_session::split_input(&input);
-    match &ns.remote_host {
-        Some(host) => (Some(host.clone()), parent.to_string()),
-        None => {
-            let expanded = crate::new_session::expand_path(parent, &crate::config::home_dir());
-            (None, expanded.to_string_lossy().to_string())
-        }
+    if primary_lane == Some(&lane) {
+        let expanded = crate::new_session::expand_path(parent, &crate::config::home_dir());
+        Some((lane, expanded.to_string_lossy().to_string()))
+    } else {
+        Some((lane, parent.to_string()))
     }
 }
 
@@ -46,38 +47,35 @@ impl App {
         self.state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(hosts));
     }
 
-    fn new_session_target(&self, host: Option<&str>) -> NewSessionTarget {
-        match host {
-            None => {
-                // Starting dir: focused local row's dir if the cursor is on
-                // one, else $HOME. Remote focus falls through to $HOME.
-                let start_dir = self
-                    .state
-                    .entries
-                    .get(self.state.focused)
-                    .filter(|e| e.is_local())
-                    .map(|e| e.dir.clone())
-                    .unwrap_or_else(|| crate::config::home_dir().to_string_lossy().into_owned());
-                let existing_names: Vec<String> =
-                    self.state.local_entries().map(|e| e.name.clone()).collect();
-                NewSessionTarget {
-                    host: None,
-                    existing_count: existing_names.len(),
-                    start_dir,
-                    existing_names,
-                }
+    fn new_session_target(&self, lane: &crate::lane::LaneId) -> NewSessionTarget {
+        if self.state.is_primary_lane(lane) {
+            // Starting dir: focused local row's dir if the cursor is on
+            // one, else $HOME. Remote focus falls through to $HOME.
+            let start_dir = self
+                .state
+                .entries
+                .get(self.state.focused)
+                .filter(|entry| entry.lane == *lane)
+                .map(|e| e.dir.clone())
+                .unwrap_or_else(|| crate::config::home_dir().to_string_lossy().into_owned());
+            let existing_names: Vec<String> =
+                self.state.local_entries().map(|e| e.name.clone()).collect();
+            NewSessionTarget {
+                lane: lane.clone(),
+                existing_count: existing_names.len(),
+                start_dir,
+                existing_names,
             }
-            Some(host) => {
-                let existing_names: Vec<String> =
-                    crate::state::attachable_on_host(&self.state.entries, Some(host))
-                        .map(|e| e.name.clone())
-                        .collect();
-                NewSessionTarget {
-                    host: Some(host.to_string()),
-                    start_dir: "~/".to_string(),
-                    existing_count: existing_names.len(),
-                    existing_names,
-                }
+        } else {
+            let existing_names: Vec<String> =
+                crate::state::attachable_on_lane(&self.state.entries, lane)
+                    .map(|e| e.name.clone())
+                    .collect();
+            NewSessionTarget {
+                lane: lane.clone(),
+                start_dir: "~/".to_string(),
+                existing_count: existing_names.len(),
+                existing_names,
             }
         }
     }
@@ -104,32 +102,27 @@ impl App {
             name: make_textarea(&name_str),
             focus: PickerFocus::Name,
             picker,
-            remote_host: target.host,
+            target_lane: Some(target.lane),
         };
         ns.refilter();
         self.state.overlay.new_session = Some(ns);
         self.request_new_session_listing();
     }
 
-    pub(super) fn open_new_session_picker(&mut self) {
-        self.open_new_session_picker_for(self.new_session_target(None));
-    }
-
-    /// Open the new-session picker targeting a remote `host`: the dir
-    /// browser lists remote directories over ssh and confirming creates
-    /// the session on that host. Starts at the remote home (`~`).
-    pub(super) fn open_remote_new_session_picker(&mut self, host: &str) {
-        self.open_new_session_picker_for(self.new_session_target(Some(host)));
+    pub(super) fn open_new_session_picker(&mut self, lane: crate::lane::LaneId) {
+        let target = self.new_session_target(&lane);
+        self.open_new_session_picker_for(target);
     }
 
     pub(super) fn confirm_new_session(&mut self) -> Option<crate::effects::CreateSessionRequest> {
-        let (name, remote_host) = {
+        let (name, lane) = {
             let ns = self.state.overlay.new_session.as_ref()?;
-            (ns.name_str().trim().to_string(), ns.remote_host.clone())
+            (ns.name_str().trim().to_string(), ns.target_lane.clone()?)
         };
-        match remote_host {
-            Some(host) => self.confirm_remote_new_session(name, host),
-            None => self.confirm_local_new_session(name),
+        if self.state.is_primary_lane(&lane) {
+            self.confirm_local_new_session(name, lane)
+        } else {
+            self.confirm_remote_new_session(name, lane)
         }
     }
 
@@ -149,24 +142,15 @@ impl App {
     fn confirm_remote_new_session(
         &mut self,
         name: String,
-        host: String,
+        lane: crate::lane::LaneId,
     ) -> Option<crate::effects::CreateSessionRequest> {
-        let existing = crate::state::attachable_on_host(&self.state.entries, Some(&host))
-            .map(|e| e.name.as_str());
+        let existing =
+            crate::state::attachable_on_lane(&self.state.entries, &lane).map(|e| e.name.as_str());
         if let Some(err) = validate_unique_session_name(&name, existing) {
             return self.set_new_session_error(err);
         }
         let dir = self.state.overlay.new_session.as_ref()?.input_str().trim();
         let dir = if dir.is_empty() { "~" } else { dir }.to_string();
-        let lane = self
-            .state
-            .entries
-            .iter()
-            .find(|entry| entry.host.as_deref() == Some(host.as_str()))
-            .map(|entry| entry.lane.clone());
-        let Some(lane) = lane else {
-            return self.set_new_session_error("session lane is unavailable");
-        };
         self.state.overlay.new_session = None;
         Some(crate::effects::CreateSessionRequest { name, dir, lane })
     }
@@ -174,6 +158,7 @@ impl App {
     fn confirm_local_new_session(
         &mut self,
         name: String,
+        lane: crate::lane::LaneId,
     ) -> Option<crate::effects::CreateSessionRequest> {
         let existing_names: Vec<String> =
             self.state.local_entries().map(|e| e.name.clone()).collect();
@@ -193,14 +178,6 @@ impl App {
         match std::fs::metadata(&resolved) {
             Ok(m) if m.is_dir() => {
                 let dir = resolved.to_string_lossy().to_string();
-                let lane = self
-                    .state
-                    .local_entries()
-                    .next()
-                    .map(|entry| entry.lane.clone());
-                let Some(lane) = lane else {
-                    return self.set_new_session_error("local session lane is unavailable");
-                };
                 self.state.overlay.new_session = None;
                 Some(crate::effects::CreateSessionRequest { name, dir, lane })
             }
@@ -216,21 +193,13 @@ impl App {
     /// re-derives this same `(host, path)` to drop a listing that arrives
     /// after the user typed a different parent.
     pub(super) fn request_new_session_listing(&mut self) {
-        let Some((host, path)) = self
+        let primary_lane = self.state.primary_lane().cloned();
+        let Some((lane, path)) = self
             .state
             .overlay
             .new_session
             .as_ref()
-            .map(new_session_list_query)
-        else {
-            return;
-        };
-        let Some(lane) = self
-            .state
-            .entries
-            .iter()
-            .find(|entry| entry.host.as_deref() == host.as_deref())
-            .map(|entry| entry.lane.clone())
+            .and_then(|state| new_session_list_query(state, primary_lane.as_ref()))
         else {
             return;
         };
@@ -241,21 +210,16 @@ impl App {
     /// re-point the client. Remote: switch immediately if the attach PTY is
     /// live; otherwise the host had no tmux server, so reconnect now and defer
     /// the switch until the PTY comes up (the spawner's `Spawned` event fires it).
-    pub(super) fn post_create_switch(
-        &mut self,
-        lane: &crate::lane::LaneId,
-        host: Option<String>,
-        name: &str,
-    ) {
-        match host {
-            None => self.switch_client(lane.clone(), name),
-            Some(host) => {
-                if self.remote.is_live(&host) {
-                    self.switch_to_remote(lane.clone(), &host, name);
-                } else {
-                    self.remote.set_pending_switch(lane.clone(), &host, name);
-                    self.respawn_remote_host(&host);
-                }
+    pub(super) fn post_create_switch(&mut self, lane: &crate::lane::LaneId, name: &str) {
+        if self.state.is_primary_lane(lane) {
+            self.switch_client(lane.clone(), name);
+        } else {
+            let target = crate::model::session::SessionId::new(lane.clone(), name);
+            if self.attachments.is_live(lane) {
+                self.switch_to_attachment(target);
+            } else {
+                self.attachments.set_pending_switch(target);
+                self.respawn_attachment(lane);
             }
         }
     }

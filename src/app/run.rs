@@ -2,7 +2,7 @@
 //!
 //! `App::run` drains ~eight async sources (local PTY, remote-spawn events,
 //! remote PTYs, upgrade PTY, refresh worker, session executor,
-//! port-forward worker, remote-focus completions, summary worker) and ticks
+//! port-forward worker, active-pane probes, summary worker) and ticks
 //! ~five periodic timers (render gate, refresh, config watcher, marker-retry,
 //! summary spinner). Each drain is a `pump_*` method returning a
 //! [`Redraw`] so `needs_render`/`force_render` bookkeeping lives in one place;
@@ -110,80 +110,48 @@ impl Ticker {
 }
 
 impl App {
-    /// Drain the local terminal. OSC52 (clipboard) is forwarded only from the
-    /// actively-viewed pane, so a background remote can't silently overwrite
-    /// the user's clipboard.
-    fn pump_local_pty(&mut self) -> Redraw {
-        let local_is_active = self.remote.active().is_none();
-        let local_view_active = local_is_active && self.state.main_view == MainView::Terminal;
-        if Self::drain_pane(
-            &mut self.local_terminal.pty,
-            &mut self.local_terminal.parser,
-            &mut self.local_terminal.alive,
-            local_is_active,
-            local_view_active,
-            self.state.active_theme(),
-        ) {
-            Redraw::Soft
-        } else {
-            Redraw::No
-        }
-    }
-
-    /// Pull newly-spawned remote PTYs into the map. The manager gates each
+    /// Pull newly-spawned attachment PTYs into the map. The manager gates each
     /// event by spawn generation (bug #20): a stale in-flight
     /// `Spawned`/`Failed`/`MarkerReady` from before an offboard or a newer
     /// respawn is dropped, so it can't resurrect a removed host's pane or
     /// clobber a fresh connection. A `MarkerReady` may hand back a held switch
     /// to fire here.
-    fn pump_remote_events(&mut self) -> Redraw {
-        let mut redraw = Redraw::No;
-        while let Some(ev) = self.remote.try_recv() {
-            redraw = Redraw::Force;
-            if let Some(fire) = self.remote.apply_spawn_event(ev) {
-                self.switch_to_remote(fire.lane, &fire.host, &fire.name);
-            }
+    fn pump_attachment_events(&mut self) -> Redraw {
+        let events = self.attachments.drain_events();
+        for target in events.pending_switches {
+            self.switch_to_attachment(target);
         }
-        redraw
+        if events.received {
+            Redraw::Force
+        } else {
+            Redraw::No
+        }
     }
 
-    /// Drain every remote terminal, even inactive ones: remote tmux keeps
-    /// producing output (status ticks, idle redraws), and not reading would
-    /// fill the pipe buffer and block the child. An exited pane is collected
-    /// into `died_hosts`, then reaped after the loop via `detach_host_view`
-    /// (D7): the manager drops the dead pane and surfaces a Failed status;
-    /// refresh auto-recovery respawns it once reachable, and `detach_host_view`
-    /// snaps the view back to local if we were watching it and clears its
-    /// agent highlight.
-    fn pump_remote_ptys(&mut self) -> Redraw {
+    /// Drain every attached terminal, active or background, through the same
+    /// lane-keyed path. Background draining prevents child pipe backpressure;
+    /// only the active lane may forward OSC52 or request a terminal redraw.
+    fn pump_attachment_ptys(&mut self) -> Redraw {
         let mut redraw = Redraw::No;
-        let active_host = self.remote.active().cloned();
+        let active_lane = self.attachments.active_lane().clone();
         let main_view_terminal = self.state.main_view == MainView::Terminal;
         let theme = self.state.active_theme();
-        let mut died_hosts: Vec<String> = Vec::new();
-        for (host, conn) in self.remote.conns_mut().iter_mut() {
-            let Some(pane) = conn.pane.as_mut() else {
-                continue;
-            };
-            let host_is_active = active_host.as_deref() == Some(host.as_str());
-            if Self::drain_pane(
-                &mut pane.pty,
-                &mut pane.parser,
-                &mut pane.alive,
-                host_is_active,
-                host_is_active && main_view_terminal,
-                theme,
-            ) {
+        let mut died_lanes = Vec::new();
+        let mut osc52_sink = io::stdout();
+        for (lane, pane) in self.attachments.panes_mut() {
+            let lane_is_active = *lane == active_lane;
+            let outcome = pane.drain(lane_is_active, theme, &mut osc52_sink);
+            if outcome.had_output && lane_is_active && main_view_terminal {
                 redraw = redraw.merge(Redraw::Soft);
             }
-            if !pane.alive {
-                died_hosts.push(host.clone());
+            if !pane.alive() {
+                died_lanes.push(lane.clone());
             }
         }
-        for host in died_hosts {
+        for lane in died_lanes {
             redraw = Redraw::Force;
-            let detach = self.remote.mark_died(&host);
-            self.detach_host_view(&host, detach);
+            let detach = self.attachments.mark_died(&lane);
+            self.detach_lane_view(&lane, detach);
         }
         redraw
     }
@@ -192,15 +160,10 @@ impl App {
     fn pump_upgrade_pty(&mut self) -> Redraw {
         let upgrade_view_active = self.state.main_view == MainView::Upgrade;
         let theme = self.state.active_theme();
+        let mut osc52_sink = io::stdout();
         if let Some(ref mut inst) = self.upgrade_instance {
-            if Self::drain_pane(
-                &mut inst.pty,
-                &mut inst.parser,
-                &mut inst.alive,
-                false,
-                upgrade_view_active,
-                theme,
-            ) {
+            let outcome = inst.drain(upgrade_view_active, theme, &mut osc52_sink);
+            if outcome.had_output && upgrade_view_active {
                 return Redraw::Soft;
             }
         }
@@ -215,7 +178,7 @@ impl App {
             && self
                 .upgrade_instance
                 .as_ref()
-                .is_some_and(|inst| !inst.alive)
+                .is_some_and(|inst| !inst.alive())
         {
             self.upgrade_instance = None;
             self.state.main_view = MainView::Terminal;
@@ -242,23 +205,12 @@ impl App {
         redraw
     }
 
-    /// Drain remote agent-focus completions: commit the highlight / view only
-    /// for focuses that actually landed.
-    fn pump_focus(&mut self) -> Redraw {
-        let mut redraw = Redraw::No;
-        while let Some(outcome) = self.focus_executor.try_recv_focus() {
-            self.apply_focus_outcome(outcome);
-            redraw = Redraw::Force;
-        }
-        redraw
-    }
-
     /// Drain active-pane probes: move the row highlight to follow the real
     /// active pane. Only forces a redraw when something actually moved, so
     /// the periodic probe doesn't repaint every tick for no change.
     fn pump_active_pane(&mut self) -> Redraw {
         let mut redraw = Redraw::No;
-        while let Some(outcome) = self.focus_executor.try_recv_active_pane() {
+        while let Some(outcome) = self.active_pane_probe.try_recv_active_pane() {
             // The marker and both section cursors can move together (see
             // `steer_marker_to_pane`), so watch all three.
             let before = (
@@ -337,9 +289,8 @@ impl App {
 
         loop {
             let mut redraw = Redraw::No;
-            redraw = redraw.merge(self.pump_local_pty());
-            redraw = redraw.merge(self.pump_remote_events());
-            redraw = redraw.merge(self.pump_remote_ptys());
+            redraw = redraw.merge(self.pump_attachment_events());
+            redraw = redraw.merge(self.pump_attachment_ptys());
             redraw = redraw.merge(self.pump_upgrade_pty());
             redraw = redraw.merge(self.pump_foreground_exits());
 
@@ -348,7 +299,7 @@ impl App {
             // backed-off re-arms, then flips to a recoverable "stuck" state the
             // divider surfaces via its reconnect button. A newly-stuck host
             // forces a redraw so the affordance appears.
-            if self.remote.tick_marker_retry(Instant::now()) {
+            if self.attachments.tick_marker_retry(Instant::now()) {
                 redraw = Redraw::Force;
             }
 
@@ -488,8 +439,6 @@ impl App {
             }
 
             self.pump_port_forward()
-                .apply(&mut needs_render, &mut force_render);
-            self.pump_focus()
                 .apply(&mut needs_render, &mut force_render);
             self.pump_active_pane()
                 .apply(&mut needs_render, &mut force_render);

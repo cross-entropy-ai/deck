@@ -14,22 +14,17 @@ impl App {
     pub(super) fn execute_side_effects(&mut self, effects: &SideEffect) {
         for effect in effects.effects() {
             match effect {
-                Effect::SwitchSession(req) => {
-                    self.switch_to_session_if_safe(req.lane.clone(), &req.name);
-                }
-                Effect::SwitchRemote(req) => {
-                    self.switch_to_remote(req.lane.clone(), &req.host, &req.name);
-                }
+                Effect::ActivateSession(id) => self.activate_session(id.clone()),
                 Effect::SwitchAgentPane(target) => self.switch_to_agent_pane(target.clone()),
-                Effect::ShowRemotePlaceholder(host) => {
+                Effect::ShowLanePlaceholder(lane) => {
                     if self
                         .state
                         .focused_remote_placeholder()
-                        .is_none_or(|entry| entry.host.as_deref() != Some(host.as_str()))
+                        .is_none_or(|entry| entry.lane != *lane)
                     {
                         continue;
                     }
-                    self.remote.clear_active();
+                    self.attachments.activate_primary();
                     self.state.main_view = MainView::Terminal;
                     self.supersede_agent_focus();
                     self.suppress_next_periodic_refresh = true;
@@ -57,11 +52,9 @@ impl App {
                         if let Some(alternative) = &kill.switch_to {
                             self.switch_to_session_if_safe(kill.lane.clone(), alternative);
                         }
-                    } else if let Some(host) = self.state.host_for_lane(&kill.lane) {
-                        if self.remote.active_is(host) {
-                            self.remote.clear_active();
-                            self.needs_full_redraw = true;
-                        }
+                    } else if self.attachments.is_active(&kill.lane) {
+                        self.attachments.activate_primary();
+                        self.needs_full_redraw = true;
                     }
                     self.submit_session(
                         kill.lane.clone(),
@@ -82,71 +75,72 @@ impl App {
                     self.needs_full_redraw |= *full_redraw;
                 }
                 Effect::SaveConfig => self.save_config(),
-                Effect::SaveSessionOrder => {
-                    let lane = self
-                        .state
-                        .local_entries()
-                        .next()
-                        .map(|entry| entry.lane.clone());
-                    if let Some(lane) = lane {
-                        self.submit_session(
-                            lane,
-                            crate::session::executor::SessionOp::PersistOrder {
-                                order: self.state.session_order.clone(),
+                Effect::SaveSessionOrder(lane) => {
+                    let order = crate::state::attachable_on_lane(&self.state.entries, lane)
+                        .map(|entry| entry.name.clone())
+                        .collect();
+                    self.submit_session(
+                        lane.clone(),
+                        crate::session::executor::SessionOp::PersistOrder { order },
+                    );
+                }
+                Effect::RemoveLane(lane) => {
+                    if let Some(host) = self.state.host_for_lane(lane) {
+                        let _ = self.port_forward_tx.send(
+                            crate::app::ssh::port_forward_task::Op::StopHost {
+                                host: host.to_string(),
                             },
                         );
                     }
+                    self.offboard_remote_host(lane);
                 }
-                Effect::SaveRemoteSessionOrder(host) => {
-                    let order = crate::state::attachable_on_host(&self.state.entries, Some(host))
-                        .map(|entry| entry.name.clone())
-                        .collect();
-                    if let Some(lane) = self
-                        .state
-                        .entries
-                        .iter()
-                        .find(|entry| entry.host.as_deref() == Some(host.as_str()))
-                        .map(|entry| entry.lane.clone())
-                    {
-                        self.submit_session(
-                            lane,
-                            crate::session::executor::SessionOp::PersistOrder { order },
-                        );
+                Effect::InvokeLaneAction {
+                    lane,
+                    action,
+                    anchor,
+                } => {
+                    let Some(provider) = self
+                        .systems
+                        .runtime(lane)
+                        .and_then(|runtime| runtime.lane_actions())
+                    else {
+                        self.state
+                            .show_warning(format!("unknown session system: {}", lane.system()));
+                        continue;
+                    };
+                    let intents = provider.invoke(lane, action, *anchor);
+                    for intent in intents {
+                        match intent {
+                            crate::system::LaneShellIntent::ReconnectAttachment => {
+                                self.respawn_attachment(lane);
+                                self.state.mark_lane_reconnecting(lane);
+                                self.request_refresh();
+                            }
+                            crate::system::LaneShellIntent::OpenPortForwards => {
+                                if let Some(host) = self.state.host_for_lane(lane) {
+                                    self.dispatch(Action::Pf(PfAction::Open(host.to_string())));
+                                }
+                            }
+                            crate::system::LaneShellIntent::OpenContextMenu { anchor } => {
+                                self.dispatch(Action::Menu(MenuAction::OpenLaneDivider {
+                                    lane: lane.clone(),
+                                    x: anchor.x,
+                                    y: anchor.y,
+                                }));
+                            }
+                        }
                     }
                 }
-                Effect::RemoveRemoteHost(req) => {
-                    let _ = self.port_forward_tx.send(
-                        crate::app::ssh::port_forward_task::Op::StopHost {
-                            host: req.host.clone(),
-                        },
-                    );
-                    self.offboard_remote_host(&req.host, Some(&req.lane));
-                }
-                Effect::ReconnectHost(host) => {
-                    self.dispatch(Action::ReconnectHost { host: host.clone() });
-                }
-                Effect::OpenForwardOverlay(host) => {
-                    self.dispatch(Action::Pf(PfAction::Open(host.clone())));
-                }
-                Effect::OpenDividerMenu { host, x, y } => {
-                    let action = match host {
-                        Some(host) => Action::Menu(MenuAction::OpenHostDivider {
-                            host: host.clone(),
-                            x: *x,
-                            y: *y,
-                        }),
-                        None => Action::Menu(MenuAction::OpenLocalDivider { x: *x, y: *y }),
-                    };
-                    self.dispatch(action);
+                Effect::OpenPortForwardOverlay(lane) => {
+                    if let Some(host) = self.state.host_for_lane(lane) {
+                        self.dispatch(Action::Pf(PfAction::Open(host.to_string())));
+                    }
                 }
                 Effect::ApplyTmuxTheme => crate::tmux::apply_theme(self.state.active_theme()),
                 Effect::ProbeTerminalBg => self.probe_terminal_bg(),
                 Effect::RefreshSessions => self.request_refresh(),
                 Effect::RereadNewSessionEntries => self.request_new_session_listing(),
-                Effect::OpenNewSessionPicker => self.open_new_session_picker(),
-                Effect::OpenRemoteNewSessionPicker(host) => {
-                    self.open_remote_new_session_picker(host);
-                }
+                Effect::OpenNewSessionPicker(lane) => self.open_new_session_picker(lane.clone()),
                 Effect::OpenAddRemotePicker => self.open_add_remote_picker(),
                 Effect::AddRemoteHost(host) => self.onboard_remote_host(host),
                 Effect::Quit => {}

@@ -1,7 +1,4 @@
-use crate::effects::{
-    Effect, KillRequest, RemoteSwitchRequest, RemoveRemoteRequest, RenameRequest,
-    SessionSwitchRequest, SideEffect,
-};
+use crate::effects::{Effect, KillRequest, RenameRequest, SideEffect};
 use crate::new_session::textarea_line;
 use crate::overlay::RenameState;
 use crate::state::{AppState, FocusMode, LayoutMode, MainView, SidebarTab, ViewMode};
@@ -29,38 +26,24 @@ fn close_settings_page(state: &mut AppState) {
     state.overlay.summary_lang_input = None;
 }
 
-/// Fill the `SideEffect` field for the focused row — `SwitchSession` for a
-/// local row, `SwitchRemote` for a remote one. Local-vs-remote dispatch reads
-/// `entry.host` off the focused `SessionEntry` (via `AppState::entry_at`)
-/// rather than taking apart the flat focus index.
+/// Activate the focused live session through one lane-qualified identity.
+/// Synthetic placeholder rows have no session identity and retain their
+/// temporary presentation-only effect until attachments become lane-keyed.
 fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) -> bool {
     let Some(target) = state.focus_target() else {
         return false;
     };
     match state.entry_at(target) {
-        Some(entry) if entry.is_local() => {
-            fx.push(Effect::SwitchSession(SessionSwitchRequest {
-                lane: entry.lane.clone(),
-                name: entry.name.clone(),
-            }));
-            true
-        }
-        // Reached only for non-local entries (the `is_local` arm caught
-        // locals), which always have `host = Some`. Synthetic placeholder rows
-        // (connecting, unreachable, "no sessions") have no real session — skip
-        // silently so a click doesn't fire a doomed remote switch.
         Some(entry) if entry.is_attachable() => {
-            fx.push(Effect::SwitchRemote(RemoteSwitchRequest {
-                lane: entry.lane.clone(),
-                host: entry.host.clone().expect("non-local entry has a host"),
-                name: entry.name.clone(),
-            }));
-            true
+            if state.session_capabilities(&entry.lane).activate {
+                fx.push(Effect::ActivateSession(entry.id()));
+                true
+            } else {
+                false
+            }
         }
         Some(entry) => {
-            fx.push(Effect::ShowRemotePlaceholder(
-                entry.host.clone().expect("non-local entry has a host"),
-            ));
+            fx.push(Effect::ShowLanePlaceholder(entry.lane.clone()));
             false
         }
         None => false,
@@ -168,10 +151,14 @@ fn reorder_session_to(state: &mut AppState, target: usize, fx: &mut SideEffect) 
     let Some(entry) = state.entries.get(source) else {
         return;
     };
-    if let Some(host) = entry.host.clone() {
+    if !state.lane_capabilities(&entry.lane).reorder_sessions {
+        return;
+    }
+    let lane = entry.lane.clone();
+    if !state.is_primary_entry(entry) {
         if !entry.is_attachable()
             || !state.entries[target].is_attachable()
-            || state.entries[target].host.as_deref() != Some(host.as_str())
+            || state.entries[target].lane != lane
         {
             return;
         }
@@ -179,7 +166,7 @@ fn reorder_session_to(state: &mut AppState, target: usize, fx: &mut SideEffect) 
         let moved = state.entries.remove(source);
         state.entries.insert(target, moved);
         state.focused = target;
-        fx.push(Effect::SaveRemoteSessionOrder(host));
+        fx.push(Effect::SaveSessionOrder(lane));
         return;
     }
 
@@ -189,7 +176,7 @@ fn reorder_session_to(state: &mut AppState, target: usize, fx: &mut SideEffect) 
     let Some(target_entry) = state.entries.get(target) else {
         return;
     };
-    if !target_entry.is_local() {
+    if !state.is_primary_entry(target_entry) {
         return;
     }
     let name = entry.name.clone();
@@ -208,13 +195,13 @@ fn reorder_session_to(state: &mut AppState, target: usize, fx: &mut SideEffect) 
     if let Some(new_focused) = state
         .entries
         .iter()
-        .position(|e| e.is_local() && e.name == name)
+        .position(|e| state.is_primary_entry(e) && e.name == name)
     {
         state.focused = new_focused;
     }
     // Persist once, on drop (or once per keyboard move), so a pointer crossing
     // several rows never spams tmux or a remote SSH connection.
-    fx.push(Effect::SaveSessionOrder);
+    fx.push(Effect::SaveSessionOrder(lane));
 }
 
 pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
@@ -277,87 +264,78 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 return fx;
             };
             let lane = entry.lane.clone();
-            match entry.host.clone() {
-                None => {
-                    let name = entry.name.clone();
-                    let killing_current = entry.is_current();
-                    // Locals occupy the front of `entries`; the cursor is on
-                    // a local row here (host == None), so its neighbors are
-                    // also local. Clamp the neighbor search to the local block.
-                    let local_count = state.local_count();
+            if state.is_primary_entry(entry) {
+                let name = entry.name.clone();
+                let killing_current = entry.is_current();
+                // Locals occupy the front of `entries`; the cursor is on
+                // a local row here (host == None), so its neighbors are
+                // also local. Clamp the neighbor search to the local block.
+                let local_count = state.local_count();
 
-                    let next_focused = if state.focused + 1 < local_count {
-                        state.focused
-                    } else {
-                        state.focused.saturating_sub(1)
-                    };
+                let next_focused = if state.focused + 1 < local_count {
+                    state.focused
+                } else {
+                    state.focused.saturating_sub(1)
+                };
 
-                    // Pre-switch off the doomed session only when deck is
-                    // attached to it. Killing a non-current row leaves the main
-                    // view where it is — see KillRequest.switch_to.
-                    let switch_to = if killing_current {
-                        let alt_idx = if state.focused + 1 < local_count {
-                            Some(state.focused + 1)
-                        } else if state.focused > 0 {
-                            Some(state.focused - 1)
-                        } else {
-                            None
-                        };
-                        alt_idx
-                            .and_then(|i| state.entries.get(i))
-                            .map(|e| e.name.clone())
+                // Pre-switch off the doomed session only when deck is
+                // attached to it. Killing a non-current row leaves the main
+                // view where it is — see KillRequest.switch_to.
+                let switch_to = if killing_current {
+                    let alt_idx = if state.focused + 1 < local_count {
+                        Some(state.focused + 1)
+                    } else if state.focused > 0 {
+                        Some(state.focused - 1)
                     } else {
                         None
                     };
+                    alt_idx
+                        .and_then(|i| state.entries.get(i))
+                        .map(|e| e.name.clone())
+                } else {
+                    None
+                };
 
-                    state.session_order.retain(|n| n != &name);
-                    state.focused = next_focused.min(local_count.saturating_sub(1));
+                state.session_order.retain(|n| n != &name);
+                state.focused = next_focused.min(local_count.saturating_sub(1));
 
-                    fx.push(Effect::KillSession(KillRequest {
-                        name,
-                        lane,
-                        switch_to,
-                    }));
-                    fx.refresh_sessions();
-                }
-                Some(_host) => {
-                    let name = entry.name.clone();
-                    fx.push(Effect::KillSession(KillRequest {
-                        name,
-                        lane,
-                        // No local switch_to: dispatch returns the
-                        // user to local view after a remote kill.
-                        switch_to: None,
-                    }));
-                    fx.refresh_sessions();
-                }
+                fx.push(Effect::KillSession(KillRequest {
+                    name,
+                    lane,
+                    switch_to,
+                }));
+                fx.refresh_sessions();
+            } else {
+                let name = entry.name.clone();
+                fx.push(Effect::KillSession(KillRequest {
+                    name,
+                    lane,
+                    // No local switch_to: dispatch returns the
+                    // user to local view after a remote kill.
+                    switch_to: None,
+                }));
+                fx.refresh_sessions();
             }
         }
         Action::CancelKill => {
             state.overlay.confirm_kill = false;
         }
-        Action::RemoveRemoteFromList(host) => {
+        Action::RemoveLane(lane) => {
             // Mirror `deck remote remove <host>` on the in-memory copy: drop
             // the host from config_remotes (save_config persists it) and clear
             // its session rows so the sidebar updates before the next refresh.
             // The host's forward *rules* ride inside its `RemoteConfig`, so
             // they're dropped here too.
-            let lane = state
-                .entries
-                .iter()
-                .find(|entry| entry.host.as_deref() == Some(host.as_str()))
-                .map(|entry| entry.lane.clone());
+            let Some(host) = state.host_for_lane(&lane).map(str::to_string) else {
+                return fx;
+            };
             state.config_remotes.retain(|r| r.host != host);
-            state
-                .entries
-                .retain(|e| e.host.as_deref() != Some(host.as_str()));
+            state.entries.retain(|entry| entry.lane != lane);
             state.clamp_projects_focus();
             state.clamp_agent_focus();
             fx.save_config();
             fx.refresh_sessions();
-            if let Some(lane) = lane {
-                fx.push(Effect::RemoveRemoteHost(RemoveRemoteRequest { lane, host }));
-            }
+            fx.push(Effect::RemoveLane(lane));
         }
         Action::ReorderSession(direction) => {
             if state.agents_tab_active() {
@@ -381,14 +359,12 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 return fx;
             };
             // Don't rename a synthetic placeholder row (no real session).
-            if !entry.is_attachable() {
+            if !entry.is_attachable() || !state.session_capabilities(&entry.lane).rename {
                 return fx;
             }
             let name = entry.name.clone();
             let lane = entry.lane.clone();
-            let host = entry.host.clone();
-            state.overlay.renaming =
-                Some(RenameState::new_with_lane(name.clone(), name, lane, host));
+            state.overlay.renaming = Some(RenameState::new_with_lane(name.clone(), name, lane));
         }
         Action::RenameInputKey(key) => {
             if let Some(ref mut r) = state.overlay.renaming {
@@ -408,7 +384,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     .iter()
                     .filter(|entry| {
                         entry.is_attachable()
-                            && entry.host == r.host
+                            && entry.lane == r.lane
                             && entry.name != r.original_name
                     })
                     .map(|entry| entry.name.as_str());
@@ -470,13 +446,12 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // ignore it), so no view-mode gate is needed. Collapsing the
             // focused row's group doesn't move focus: the highlight is just
             // hidden until expand, and `j`/`k` step out to a visible row.
-            let lane_key = crate::system::tmux::lane(key.as_deref());
             if state.agents_tab_active() {
-                if !state.collapsed_agent_sections.remove(&lane_key) {
-                    state.collapsed_agent_sections.insert(lane_key);
+                if !state.collapsed_agent_sections.remove(&key) {
+                    state.collapsed_agent_sections.insert(key);
                 }
-            } else if !state.collapsed_sections.remove(&lane_key) {
-                state.collapsed_sections.insert(lane_key);
+            } else if !state.collapsed_sections.remove(&key) {
+                state.collapsed_sections.insert(key);
             }
             fx.save_config();
         }
@@ -561,12 +536,15 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         // keybindings, PTY, etc.).
         Action::ReloadConfig => {}
 
-        // Handled in dispatch (marks the host reconnecting + kicks a
-        // refresh round through the worker).
-        Action::ReconnectHost { .. } => {}
-        // Routed to the owning System at the app layer (`dispatch`), which has
-        // the runtime state its effects need; the pure reducer no-ops it.
-        Action::SystemButton { .. } => {}
+        Action::InvokeLane {
+            lane,
+            action,
+            anchor,
+        } => fx.push(Effect::InvokeLaneAction {
+            lane,
+            action,
+            anchor,
+        }),
 
         Action::Pf(a) => return port_forward::reduce_pf(state, a),
         Action::AddRemote(a) => return reduce_add_remote(state, a),
@@ -645,7 +623,9 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
     let mut fx = SideEffect::default();
     match action {
         NewSessionAction::OpenLocal => {
-            fx.push(Effect::OpenNewSessionPicker);
+            if let Some(lane) = state.primary_lane() {
+                fx.push(Effect::OpenNewSessionPicker(lane.clone()));
+            }
             return fx;
         }
         NewSessionAction::Close => {

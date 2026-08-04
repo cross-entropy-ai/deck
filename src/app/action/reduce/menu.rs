@@ -21,10 +21,17 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
             // subsequent keyboard actions (or menu confirmations)
             // operate on it.
             state.focused = target.0;
+            let capabilities = state
+                .entry_at(target)
+                .map(|entry| state.session_capabilities(&entry.lane));
             let kind = match state.entry_at(target) {
                 Some(entry) => MenuKind::Session {
                     focus: target,
-                    disabled: session_menu_disabled(entry, &state.entries),
+                    disabled: session_menu_disabled(
+                        entry,
+                        &state.entries,
+                        capabilities.expect("entry capability resolved"),
+                    ),
                 },
                 // Index points outside any row — treat as a global
                 // right-click. Shouldn't happen since mouse hit-test
@@ -34,10 +41,15 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
             open(state, kind, x, y);
         }
         MenuAction::OpenGlobal { x, y } => open(state, MenuKind::Global, x, y),
-        MenuAction::OpenHostDivider { host, x, y } => {
-            open(state, MenuKind::HostDivider { host }, x, y)
-        }
-        MenuAction::OpenLocalDivider { x, y } => open(state, MenuKind::LocalDivider, x, y),
+        MenuAction::OpenLaneDivider { lane, x, y } => open(
+            state,
+            MenuKind::LaneDivider {
+                primary: state.is_primary_lane(&lane),
+                lane,
+            },
+            x,
+            y,
+        ),
         // The highlight moves only while a menu is open; one guard for all three.
         MenuAction::Next | MenuAction::Prev | MenuAction::Hover(_) => {
             let Some(menu) = state.overlay.context_menu.as_mut() else {
@@ -74,7 +86,11 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                     }
                 }
                 MenuKind::Global => match selected_item {
-                    Some(MenuItem::NewLocalSession) => fx.push(Effect::OpenNewSessionPicker),
+                    Some(MenuItem::NewLocalSession) => {
+                        if let Some(lane) = state.primary_lane() {
+                            fx.push(Effect::OpenNewSessionPicker(lane.clone()));
+                        }
+                    }
                     Some(MenuItem::AddRemoteHost) => fx.push(Effect::OpenAddRemotePicker),
                     Some(MenuItem::ToggleLayout) => {
                         fx.merge(apply_action(state, Action::ToggleLayout))
@@ -88,23 +104,23 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                     Some(MenuItem::Quit) => fx.push(Effect::Quit),
                     _ => {}
                 },
-                MenuKind::HostDivider { host, .. } => match selected_item {
-                    Some(MenuItem::NewSession) => fx.push(Effect::OpenRemoteNewSessionPicker(host)),
-                    Some(MenuItem::PortForward) => {
-                        fx.merge(apply_action(state, Action::Pf(PfAction::Open(host))))
+                MenuKind::LaneDivider { lane, primary } => match selected_item {
+                    Some(MenuItem::NewSession) => {
+                        fx.push(Effect::OpenNewSessionPicker(lane.clone()))
                     }
-                    Some(MenuItem::RemoveFromList) => {
-                        fx.merge(apply_action(state, Action::RemoveRemoteFromList(host)))
+                    Some(MenuItem::PortForward) => {
+                        if let Some(host) = state.host_for_lane(&lane) {
+                            fx.merge(apply_action(
+                                state,
+                                Action::Pf(PfAction::Open(host.to_string())),
+                            ))
+                        }
+                    }
+                    Some(MenuItem::RemoveFromList) if !primary => {
+                        fx.merge(apply_action(state, Action::RemoveLane(lane)))
                     }
                     _ => {}
                 },
-                MenuKind::LocalDivider => {
-                    // PortForward / RemoveFromList are greyed out and
-                    // unreachable here; only NewSession (local) fires.
-                    if let Some(MenuItem::NewSession) = selected_item {
-                        fx.push(Effect::OpenNewSessionPicker);
-                    }
-                }
             }
         }
         MenuAction::Dismiss => {

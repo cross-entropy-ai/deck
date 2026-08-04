@@ -23,7 +23,7 @@ const SEP: char = '\u{1f}';
 
 /// Identifies one lane (one sidebar section) within the shell, qualified by
 /// the [`System`](crate::system::System) that owns it. Cheap to clone.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct LaneId(Arc<str>);
 
 impl LaneId {

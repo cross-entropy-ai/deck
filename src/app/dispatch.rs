@@ -169,35 +169,6 @@ impl App {
                 self.reload_config();
                 false
             }
-            Action::ReconnectHost { host } => {
-                // Rebuild the persistent ssh+tmux PTY — refreshing the
-                // sidebar alone leaves a dropped host unswitchable. Then mark
-                // the rows connecting for instant feedback and re-probe.
-                self.respawn_remote_host(&host);
-                self.state.mark_host_reconnecting(&host);
-                self.request_refresh();
-                false
-            }
-            Action::SystemButton {
-                lane,
-                command,
-                x,
-                y,
-            } => {
-                // Decision A: the System owns what its divider buttons do. Ask
-                // it for the effects and run them through the normal pipeline.
-                let mut fx = crate::effects::SideEffect::default();
-                if let Some(system) = self.systems.for_lane(&lane) {
-                    for e in system.on_button(&lane, &command, x, y) {
-                        fx.push(e);
-                    }
-                } else {
-                    self.state
-                        .show_warning(format!("unknown session system: {}", lane.system()));
-                }
-                self.execute_side_effects(&fx);
-                false
-            }
             Action::Pf(PfAction::AddSubmit) => {
                 self.pf_add_submit();
                 false
@@ -236,20 +207,26 @@ impl App {
             .state
             .system_sections
             .iter()
-            .filter_map(|section| {
-                section
-                    .runtime_key
-                    .as_deref()
-                    .map(|key| (section.lane.clone(), self.remote.marker_id(key)))
+            .map(|section| {
+                (
+                    section.lane.clone(),
+                    self.attachments.marker_id(&section.lane),
+                )
             })
             .collect();
+        let local_client = self
+            .attachments
+            .terminal(self.attachments.primary_lane())
+            .map(|surface| surface.slave_tty())
+            .unwrap_or_default();
         let ctx = crate::system::ControlCtx {
-            local_client: &self.local_terminal.pty.slave_tty,
+            local_client,
             connection_generations: &connection_generations,
         };
         self.systems
-            .for_lane(lane)
-            .map(|system| system.control(lane, &ctx))
+            .runtime(lane)
+            .and_then(|runtime| runtime.session_control())
+            .map(|control| control.control(lane, &ctx))
     }
 
     /// Build the backend for `host` and hand `op` to the executor's per-host
@@ -282,10 +259,9 @@ impl App {
         use crate::session::executor::OpOutcome;
         let lane = outcome.lane;
         let is_primary = self.state.is_primary_lane(&lane);
-        let host = self.state.host_for_lane(&lane).map(str::to_string);
         match outcome.result {
             OpOutcome::Created { name } => {
-                self.post_create_switch(&lane, host, &name);
+                self.post_create_switch(&lane, &name);
                 // The submit-time `refresh_sessions` likely ran before the
                 // async create finished, so refresh again to surface the new
                 // row promptly under its group.
@@ -328,13 +304,14 @@ impl App {
                 // Apply only if the picker is still open on the same
                 // (host, parent); drop a listing for a parent the user has
                 // since edited. Re-derive the expected key like the submit did.
+                let primary_lane = self.state.primary_lane().cloned();
                 let still_current = self
                     .state
                     .overlay
                     .new_session
                     .as_ref()
-                    .map(new_session_list_query)
-                    .is_some_and(|(h, p)| h == host && p == path);
+                    .and_then(|state| new_session_list_query(state, primary_lane.as_ref()))
+                    .is_some_and(|(target_lane, expected)| target_lane == lane && expected == path);
                 if still_current {
                     if let Some(ns) = self.state.overlay.new_session.as_mut() {
                         match result {
@@ -351,12 +328,18 @@ impl App {
                     }
                 }
             }
+            OpOutcome::Focused {
+                target,
+                result,
+                seq,
+                marker_id,
+            } => self.apply_focus_outcome(target, result, seq, marker_id),
             OpOutcome::Switched => {
                 // A remote switch needs confirming against the live marker
                 // (see `verify_remote_switch`); a local switch needs nothing
                 // — its highlight reconciles on the next refresh tick.
-                if let Some(host) = host {
-                    self.verify_remote_switch(&host);
+                if !is_primary {
+                    self.verify_attachment_switch(&lane);
                 }
             }
             // `@deck_order` persistence needs no follow-up: the in-memory
@@ -385,11 +368,26 @@ impl App {
         );
         // Selecting a local session implies returning to the local
         // view if we were watching a remote one.
-        self.remote.clear_active();
+        self.attachments.activate_primary();
         self.supersede_agent_focus();
         // No full redraw: switching only re-points the tmux client, so
         // ratatui's per-cell diff against the new vt100 screen repaints what
         // changed. Wide-char residue is handled in bridge.rs via `set_skip`.
+    }
+
+    /// Activate through one lane-qualified identity. Attachment selection is
+    /// lane-keyed; only the provider-specific switch transport sits below it.
+    pub(super) fn activate_session(&mut self, id: crate::model::session::SessionId) {
+        if self.state.is_primary_lane(&id.lane) {
+            self.switch_to_session_if_safe(id.lane, &id.key);
+        } else if self.attachments.state(&id.lane).is_some() {
+            self.switch_to_attachment(id);
+        } else {
+            self.state.show_warning(format!(
+                "session attachment is unavailable for lane {}",
+                id.lane.as_str()
+            ));
+        }
     }
 
     /// (Re)establish the persistent `ssh -tt host tmux attach` PTY for a host:
@@ -397,12 +395,12 @@ impl App {
     /// Without this a host that blips would stay unswitchable until restart
     /// (the PTY is otherwise spawned only at startup). Shared by initial
     /// onboard, the reconnect button, and refresh-driven auto-recovery.
-    pub(super) fn respawn_remote_host(&mut self, host: &str) {
+    pub(super) fn respawn_attachment(&mut self, lane: &crate::lane::LaneId) {
         // The manager refuses to stack on an in-flight spawn (`Connecting`) —
         // a second spawn could race and let a stale `Failed` clobber the newer
         // pane — and bumps the host's spawn generation so the new spawn's
         // events are distinguishable from any still in flight (bug #20).
-        self.remote.respawn(host);
+        self.attachments.respawn(lane);
     }
 
     /// Switch the main view to a session on a remote host. If the persistent
@@ -410,8 +408,8 @@ impl App {
     /// and flip `active_remote`; the PTY stays put, its tmux client re-points
     /// at the target. If it isn't ready (Connecting/Failed) we don't switch —
     /// `respawn_remote_host` recovers it, and switching works once it reconnects.
-    pub(super) fn switch_to_remote(&mut self, lane: crate::lane::LaneId, host: &str, name: &str) {
-        if !self.remote.is_live(host) {
+    pub(super) fn switch_to_attachment(&mut self, target: crate::model::session::SessionId) {
+        if !self.attachments.is_live(&target.lane) {
             return;
         }
         // The marker-gated `switch_client` no-ops until the attach prelude has
@@ -419,9 +417,9 @@ impl App {
         // lie (UI shows switched, tmux client stayed put, no retry), so hold
         // the switch as pending; readiness (first PTY output or bounded
         // marker-retry) fires it once the marker exists.
-        let marker_id = self.remote.live_marker_id(host);
+        let marker_id = self.attachments.live_marker_id(&target.lane);
         let Some(marker_id) = marker_id else {
-            self.remote.set_pending_switch(lane, host, name);
+            self.attachments.set_pending_switch(target);
             return;
         };
         // Run `switch-client` on the executor's per-host FIFO worker: it costs
@@ -430,21 +428,20 @@ impl App {
         // host. `control()` reads this connection's marker id, which the
         // readiness gate above guarantees is written.
         self.submit_session(
-            lane.clone(),
+            target.lane.clone(),
             crate::session::executor::SessionOp::Switch {
-                name: name.to_string(),
+                name: target.key.clone(),
             },
         );
         // Record what we submitted so the `Switched` outcome can confirm it
         // ran against the live marker and re-fire if the connection
         // respawned (new marker) while the op waited in the FIFO.
-        self.remote
-            .record_switch_submit(lane, host, name, marker_id);
+        self.attachments.record_switch_submit(&target, marker_id);
 
         // `active_remote` is host-level and correct to commit now (we *are*
         // viewing this host); the within-host session lands when the switch
         // runs, and `verify_remote_switch` heals it if the marker went stale.
-        self.remote.set_active(host);
+        self.attachments.set_active(&target.lane);
         self.supersede_agent_focus();
         // No full redraw on switch — see `switch_client`. We flip
         // `active_remote` and let the diff repaint from the target
@@ -456,9 +453,9 @@ impl App {
     /// (host still active and marker advanced since submit → connection
     /// respawned mid-FIFO and the op no-op'd against a dead marker); if so we
     /// re-fire (re-reading the current marker, or holding via pending switch).
-    fn verify_remote_switch(&mut self, host: &str) {
-        if let Some(fire) = self.remote.verify_switch(host) {
-            self.switch_to_remote(fire.lane, &fire.host, &fire.name);
+    fn verify_attachment_switch(&mut self, lane: &crate::lane::LaneId) {
+        if let Some(target) = self.attachments.verify_switch(lane) {
+            self.switch_to_attachment(target);
         }
     }
 
@@ -485,7 +482,7 @@ impl App {
             .filter_map(|entry| {
                 let agent = entry.agent()?;
                 Some(crate::summary::SummaryPane {
-                    host: entry.host.clone(),
+                    host: self.state.host_for_lane(&entry.lane).map(str::to_string),
                     id: agent.location(),
                     target: agent.pane_id.clone(),
                 })
@@ -526,24 +523,29 @@ impl App {
     /// connection; local has no generation, so 0 is a harmless placeholder.
     /// Returns `None` when a remote host has no live marker yet — the caller
     /// bails, since the remote focus script would just abort server-side.
-    fn focus_transport(&self, host: Option<&str>) -> Option<(crate::focus::FocusTransport, u64)> {
-        match host {
-            None => Some((
-                crate::focus::FocusTransport::Local {
-                    client_tty: self.local_terminal.pty.slave_tty.clone(),
-                },
-                0,
-            )),
-            Some(host) => {
-                let marker_id = self.remote.live_marker_id(host)?;
-                Some((
-                    crate::focus::FocusTransport::Remote {
-                        host: host.to_string(),
-                        marker_id,
+    fn focus_transport(
+        &self,
+        lane: &crate::lane::LaneId,
+    ) -> Option<(crate::focus::FocusTransport, u64)> {
+        if lane == self.attachments.primary_lane() {
+            self.attachments.terminal(lane).map(|pane| {
+                (
+                    crate::focus::FocusTransport::Local {
+                        client_tty: pane.slave_tty().to_string(),
                     },
+                    0,
+                )
+            })
+        } else {
+            let host = self.state.host_for_lane(lane)?;
+            let marker_id = self.attachments.live_marker_id(lane)?;
+            Some((
+                crate::focus::FocusTransport::Remote {
+                    host: host.to_string(),
                     marker_id,
-                ))
-            }
+                },
+                marker_id,
+            ))
         }
     }
 
@@ -556,15 +558,16 @@ impl App {
         // and how we learn Deck's own client tty. Resolve that here, then run
         // the *same* focus rule off-thread (local routes through the worker too
         // to keep one code path; remote ssh can stall so it must be off-thread).
-        let host = self.state.host_for_lane(&target.lane);
-        let Some((transport, marker_id)) = self.focus_transport(host) else {
+        let Some((transport, marker_id)) = self.focus_transport(&target.lane) else {
             return;
         };
         let seq = self.focus_seq;
-        if let Err(error) = self.focus_executor.focus(transport, target, seq, marker_id) {
-            self.state
-                .show_warning(format!("could not start pane focus: {error}"));
-        }
+        self.submit_session(
+            target.lane.clone(),
+            crate::session::executor::SessionOp::Focus(crate::session::executor::FocusTask::new(
+                transport, target, seq, marker_id,
+            )),
+        );
     }
 
     /// Probe the pane Deck's main view shows and steer the Agents-tab row
@@ -577,14 +580,14 @@ impl App {
         if !self.state.agents_tab_active() || self.active_pane_in_flight {
             return;
         }
-        let host = self.remote.active().cloned();
-        let Some((transport, marker_id)) = self.focus_transport(host.as_deref()) else {
+        let lane = self.attachments.active_lane().clone();
+        let Some((transport, marker_id)) = self.focus_transport(&lane) else {
             return;
         };
         let seq = self.focus_seq;
         let spawned = match self
-            .focus_executor
-            .probe_active_pane(transport, host, seq, marker_id)
+            .active_pane_probe
+            .probe_active_pane(transport, lane, seq, marker_id)
         {
             Ok(()) => true,
             Err(error) => {
@@ -608,28 +611,27 @@ impl App {
         if outcome.seq != self.focus_seq {
             return;
         }
-        if self.remote.active().map(String::as_str) != outcome.host.as_deref() {
+        if self.attachments.active_lane() != &outcome.lane {
             return;
         }
         if !self
-            .remote
-            .marker_matches(outcome.host.as_deref(), outcome.marker_id)
+            .attachments
+            .marker_matches(&outcome.lane, outcome.marker_id)
         {
             return;
         }
-        let Some(pane_id) = outcome.pane_id else {
+        let pane_id = match outcome.pane_id {
+            Ok(pane_id) => pane_id,
+            Err(error) => {
+                self.state
+                    .show_warning(format!("active-pane probe failed: {error}"));
+                return;
+            }
+        };
+        let Some(pane_id) = pane_id else {
             return;
         };
-        let Some(lane) = self
-            .state
-            .entries
-            .iter()
-            .find(|entry| entry.host.as_deref() == outcome.host.as_deref())
-            .map(|entry| entry.lane.clone())
-        else {
-            return;
-        };
-        self.state.steer_marker_to_pane(&lane, &pane_id);
+        self.state.steer_marker_to_pane(&outcome.lane, &pane_id);
     }
 
     /// Apply a focus completion (drained in the event loop), only when still
@@ -639,22 +641,25 @@ impl App {
     /// present. A focus that finishes after the user moved on (or after a
     /// reconnect) is dropped rather than clobbering the view. `ExactPane`
     /// commits the switch and earns the highlight; `Failed` commits nothing.
-    pub(super) fn apply_focus_outcome(&mut self, outcome: super::FocusOutcome) {
-        if outcome.seq != self.focus_seq {
+    pub(super) fn apply_focus_outcome(
+        &mut self,
+        target: crate::geometry::AgentTarget,
+        result: crate::tmux::PaneFocus,
+        seq: u64,
+        marker_id: u64,
+    ) {
+        if seq != self.focus_seq {
             return;
         }
-        if !self.remote.marker_matches(
-            self.state.host_for_lane(&outcome.target.lane),
-            outcome.marker_id,
-        ) {
+        if !self.attachments.marker_matches(&target.lane, marker_id) {
             return;
         }
-        if !self.agent_focus_target_live(&outcome.target) {
+        if !self.agent_focus_target_live(&target) {
             return;
         }
-        match outcome.result {
-            tmux::PaneFocus::ExactPane => self.commit_focus(outcome.target),
-            tmux::PaneFocus::Failed => {}
+        match result {
+            tmux::PaneFocus::ExactPane => self.commit_focus(target),
+            tmux::PaneFocus::Failed => self.state.show_warning("failed to focus pane"),
         }
     }
 
@@ -662,10 +667,8 @@ impl App {
     /// connected and the agent still detected on its host (`None` = local).
     /// Guards stale completions whose host was removed or agent has exited.
     fn agent_focus_target_live(&self, target: &crate::geometry::AgentTarget) -> bool {
-        if let Some(host) = self.state.host_for_lane(&target.lane) {
-            if !self.remote.is_live(host) {
-                return false;
-            }
+        if !self.attachments.is_live(&target.lane) {
+            return false;
         }
         self.state
             .agents
@@ -690,10 +693,7 @@ impl App {
         // highlight tracks the viewed pane like j/k does; an agent-footer click
         // otherwise switches the view without touching the highlight.
         self.state.focus_cursors_on(&target);
-        match self.state.host_for_lane(&target.lane) {
-            Some(h) => self.remote.set_active(h),
-            None => self.remote.clear_active(),
-        }
+        self.attachments.set_active(&target.lane);
         self.state.active_agent = Some(target);
         self.state.focus_mode = FocusMode::Main;
         // No full redraw — like the plain switch paths, the per-cell diff

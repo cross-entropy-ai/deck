@@ -3,41 +3,38 @@
 //! `Effect`s; `app::dispatch` iterates them in order and does the tmux/ssh/PTY work.
 
 use crate::geometry::AgentTarget;
+use crate::geometry::LaneActionAnchor;
 use crate::lane::LaneId;
+use crate::model::session::SessionId;
 
 #[derive(Debug)]
 pub enum Effect {
-    SwitchSession(SessionSwitchRequest),
-    /// Switch the main view to a remote session. Carries (host, name)
-    /// — App's dispatch layer routes the `tmux switch-client` over ssh.
-    SwitchRemote(RemoteSwitchRequest),
+    /// Activate a live session through its lane-qualified identity. Attachment
+    /// transport selection stays below the reducer/effect protocol.
+    ActivateSession(SessionId),
     /// Focus a detected agent's pane (Agents tab Enter / number jump).
     /// App's dispatch layer routes this exactly like an agent-row click.
     SwitchAgentPane(AgentTarget),
     /// Show a remote host placeholder in the main pane. Used for
     /// synthetic rows like "(no sessions)" that are focusable but don't
     /// have a tmux session to attach to.
-    ShowRemotePlaceholder(String),
+    ShowLanePlaceholder(LaneId),
     KillSession(KillRequest),
     RenameSession(RenameRequest),
     /// Create a new tmux session with `req.name` at `req.dir`.
     CreateSession(CreateSessionRequest),
-    /// Detach a remote host from deck (equivalent to `deck remote remove <host>`).
-    RemoveRemoteHost(RemoveRemoteRequest),
-    /// Reconnect/respawn a remote host's ssh+tmux PTY. Emitted by a System's
-    /// `on_button` (the `[⟳]` divider button); App rebuilds the connection.
-    ReconnectHost(String),
-    /// Open a host's port-forward overlay (the `[⇄N]` badge button).
-    OpenForwardOverlay(String),
-    /// Open a divider's context menu at `(x, y)`. `host` is `None` for the
-    /// `@local` divider, `Some(host)` for a remote one (the `[…]` button).
-    OpenDividerMenu {
-        host: Option<String>,
-        x: u16,
-        y: u16,
+    /// Remove a configured non-primary lane from the shell and its backend.
+    RemoveLane(LaneId),
+    /// Return a backend-owned lane action to its provider. The provider maps
+    /// the typed id to a small generic shell intent; App never interprets the
+    /// system id or action id.
+    InvokeLaneAction {
+        lane: LaneId,
+        action: crate::system::LaneActionId,
+        anchor: LaneActionAnchor,
     },
-    OpenNewSessionPicker,
-    OpenRemoteNewSessionPicker(String),
+    OpenPortForwardOverlay(LaneId),
+    OpenNewSessionPicker(LaneId),
     OpenAddRemotePicker,
     AddRemoteHost(String),
     RereadNewSessionEntries,
@@ -46,8 +43,7 @@ pub enum Effect {
         full_redraw: bool,
     },
     SaveConfig,
-    SaveSessionOrder,
-    SaveRemoteSessionOrder(String),
+    SaveSessionOrder(LaneId),
     ApplyTmuxTheme,
     /// Re-run the OSC 11 probe of the host terminal's background, so
     /// "follow terminal" theme mode picks the matching dark/light theme.
@@ -139,51 +135,47 @@ macro_rules! effect_predicates {
 #[cfg(test)]
 impl SideEffect {
     effect_finders! {
-        first_remote_placeholder: ShowRemotePlaceholder => &str;
-        first_save_remote_session_order: SaveRemoteSessionOrder => &str;
-        first_open_remote_new_session_picker: OpenRemoteNewSessionPicker => &str;
-    }
-
-    effect_finders! {
         first_kill_session: KillSession => &KillRequest;
         first_rename_session: RenameSession => &RenameRequest;
     }
 
-    pub fn first_switch_session(&self) -> Option<&str> {
+    pub fn first_activated_session(&self) -> Option<&SessionId> {
         self.effects.iter().find_map(|effect| match effect {
-            Effect::SwitchSession(req) => Some(req.name.as_str()),
+            Effect::ActivateSession(id) => Some(id),
             _ => None,
         })
     }
 
-    pub fn first_remove_remote_host(&self) -> Option<&str> {
+    pub fn first_lane_placeholder(&self) -> Option<&LaneId> {
         self.effects.iter().find_map(|effect| match effect {
-            Effect::RemoveRemoteHost(req) => Some(req.host.as_str()),
+            Effect::ShowLanePlaceholder(lane) => Some(lane),
+            _ => None,
+        })
+    }
+
+    pub fn first_saved_session_order(&self) -> Option<&LaneId> {
+        self.effects.iter().find_map(|effect| match effect {
+            Effect::SaveSessionOrder(lane) => Some(lane),
+            _ => None,
+        })
+    }
+
+    pub fn first_removed_lane(&self) -> Option<&LaneId> {
+        self.effects.iter().find_map(|effect| match effect {
+            Effect::RemoveLane(lane) => Some(lane),
             _ => None,
         })
     }
 
     effect_predicates! {
-        has_open_new_session_picker => Effect::OpenNewSessionPicker,
+        has_open_new_session_picker => Effect::OpenNewSessionPicker(_),
         has_resize_pty => Effect::ResizePty { .. },
         has_full_redraw_after_resize => Effect::ResizePty { full_redraw: true },
         has_save_config => Effect::SaveConfig,
-        has_save_session_order => Effect::SaveSessionOrder,
+        has_save_session_order => Effect::SaveSessionOrder(_),
         has_refresh_sessions => Effect::RefreshSessions,
         has_reread_new_session_entries => Effect::RereadNewSessionEntries,
     }
-}
-
-#[derive(Debug)]
-pub struct SessionSwitchRequest {
-    pub lane: LaneId,
-    pub name: String,
-}
-
-#[derive(Debug)]
-pub struct RemoveRemoteRequest {
-    pub lane: LaneId,
-    pub host: String,
 }
 
 /// Info needed to execute a kill: which session to kill, and optionally
@@ -215,12 +207,4 @@ pub struct CreateSessionRequest {
     pub dir: String,
     /// Exact mounted backend lane on which to create the session.
     pub lane: LaneId,
-}
-
-/// Info needed to switch the main view to a remote tmux session.
-#[derive(Debug)]
-pub struct RemoteSwitchRequest {
-    pub lane: LaneId,
-    pub host: String,
-    pub name: String,
 }

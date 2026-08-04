@@ -99,7 +99,7 @@ pub fn expand_path(s: &str, home: &std::path::Path) -> PathBuf {
 /// dir-browse field), so not a plain filter-picker. The dir-browse half
 /// (path input, listing, filtered/selected, error slot) is delegated to the
 /// shared `FilterPicker`; `name`, focus switching, `~`/segment path editing,
-/// and `remote_host` stay bespoke since they don't fit the generic shape.
+/// and the target lane stay bespoke since they don't fit the generic shape.
 #[derive(Debug, Clone)]
 pub struct NewSessionState {
     /// Session name input field. Pre-filled with the next free
@@ -112,10 +112,8 @@ pub struct NewSessionState {
     /// directory children (written by dispatch after `read_dir`);
     /// `picker.error` the single error slot, also set by name validation.
     pub picker: FilterPicker,
-    /// `Some(host)` when the picker is creating a session on a remote
-    /// host: directory entries come from `ssh <host> ls` and the session
-    /// is created over ssh. `None` is the local picker.
-    pub remote_host: Option<String>,
+    /// Stable lane that owns directory listing and creation operations.
+    pub target_lane: Option<crate::lane::LaneId>,
 }
 
 impl Default for NewSessionState {
@@ -124,7 +122,7 @@ impl Default for NewSessionState {
             name: make_textarea(""),
             focus: PickerFocus::default(),
             picker: FilterPicker::new(Vec::new()),
-            remote_host: None,
+            target_lane: None,
         }
     }
 }

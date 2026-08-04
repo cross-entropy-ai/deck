@@ -15,19 +15,15 @@ impl App {
     /// section without waiting a full refresh tick; the spawner kicks off the
     /// persistent ssh+tmux PTY.
     pub(super) fn onboard_remote_host(&mut self, host: &str) {
-        self.respawn_remote_host(host);
+        let lane = crate::system::tmux::TmuxSystem::host_lane(host);
+        self.respawn_attachment(&lane);
         // Avoid duplicating a placeholder if one is already there
         // (e.g. add → remove → add in quick succession).
-        if !self
-            .state
-            .entries
-            .iter()
-            .any(|e| e.host.as_deref() == Some(host))
-        {
+        if !self.state.entries.iter().any(|entry| entry.lane == lane) {
             self.state
                 .entries
                 .push(crate::state::SessionEntry::placeholder(
-                    host,
+                    lane,
                     crate::state::SessionEntryKind::Connecting,
                 ));
         }
@@ -40,14 +36,12 @@ impl App {
     /// resurrect it after a re-add. `detach_host_view` (D7) then runs the
     /// view-side choreography (snap to local if active, drop agent highlight,
     /// supersede focus).
-    pub(super) fn offboard_remote_host(&mut self, host: &str, lane: Option<&crate::lane::LaneId>) {
-        let detach = self.remote.offboard(host);
+    pub(super) fn offboard_remote_host(&mut self, lane: &crate::lane::LaneId) {
+        let detach = self.attachments.offboard(lane);
         // Reap the host's executor FIFO lane so a removed host doesn't leak
         // its parked worker + sender (bug #22).
-        if let Some(lane) = lane {
-            self.session_exec.remove(lane);
-        }
-        self.detach_host_view(host, detach);
+        self.session_exec.remove(lane);
+        self.detach_lane_view(lane, detach);
     }
 
     /// Reload `~/.config/deck/config.yaml` and apply it in place. On failure
@@ -111,13 +105,8 @@ impl App {
                         .send(crate::app::ssh::port_forward_task::Op::StopHost {
                             host: old.host.clone(),
                         });
-                let lane = self
-                    .state
-                    .entries
-                    .iter()
-                    .find(|entry| entry.host.as_deref() == Some(old.host.as_str()))
-                    .map(|entry| entry.lane.clone());
-                self.offboard_remote_host(&old.host, lane.as_ref());
+                let lane = crate::system::tmux::TmuxSystem::host_lane(&old.host);
+                self.offboard_remote_host(&lane);
             }
         }
 
@@ -165,15 +154,15 @@ impl App {
 
         // Evict sidebar rows for hosts that just disappeared so they
         // don't linger until the next refresh result lands.
-        let kept: std::collections::HashSet<&str> = self
+        let kept: std::collections::HashSet<_> = self
             .state
-            .config_remotes
+            .system_sections
             .iter()
-            .map(|r| r.host.as_str())
+            .map(|section| section.lane.clone())
             .collect();
         self.state
             .entries
-            .retain(|e| e.host.as_deref().is_none_or(|h| kept.contains(h)));
+            .retain(|entry| kept.contains(&entry.lane));
         // Host set just changed; rebuild the stored Agents list so a removed
         // host's section drops immediately rather than lingering until the
         // refresh queued below lands.

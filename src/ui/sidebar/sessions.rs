@@ -235,7 +235,7 @@ pub(super) fn draw_sessions(
                 for (range, button) in ranges.into_iter().zip(meta.buttons.iter()) {
                     dividers.push(DividerHit {
                         lane: meta.lane.clone(),
-                        command: button.command.clone(),
+                        action: button.action.clone(),
                         rect: Rect {
                             x: area.x + range.start,
                             y: area.y + bar_y,

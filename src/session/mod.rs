@@ -1,8 +1,8 @@
 //! Unified session control plane behind one trait.
 //!
-//! One [`SessionControl`] trait, local and remote backends, keyed as deck keys
-//! things: `Option<String>` host (`None` = local). See
-//! `docs/session-abstraction.md`. Scope is the control plane only — the
+//! One [`SessionControl`] trait for every mounted backend, keyed by the
+//! owning [`LaneId`](crate::lane::LaneId). See `docs/session-abstraction.md`.
+//! Scope is the control plane only — the
 //! stateless tmux/ssh wrappers the executor runs off the UI thread (switch /
 //! rename / kill / new / persist-order / list-dir). PTY lifecycle and the
 //! polling refresh stay with their existing workers.

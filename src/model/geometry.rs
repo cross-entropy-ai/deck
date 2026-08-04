@@ -17,11 +17,17 @@ use crate::state::SidebarTab;
 
 /// One divider button. Open-ended: `glyph` is drawn, `command` is an id only
 /// the registering backend understands and the shell echoes back to its
-/// button handler (`System::on_button`).
+/// lane-action provider.
 #[derive(Debug, Clone)]
 pub struct SectionButton {
     pub glyph: String,
-    pub command: String,
+    pub action: crate::system::LaneActionId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LaneActionAnchor {
+    pub x: u16,
+    pub y: u16,
 }
 
 /// Truncate `s` to at most `max_width` display columns, appending an
@@ -312,7 +318,7 @@ pub type SidebarLayout =
 #[derive(Debug, Clone)]
 pub struct SectionMeta {
     /// Lane this divider heads. The hit-tester resolves clicks against it and
-    /// the owning [`System`](crate::system::System) routes button commands by
+    /// the owning [`System`](crate::system::System) routes button actions by
     /// it. For a non-divider placeholder header it's still set; read `divider`
     /// to tell them apart.
     pub lane: LaneId,
@@ -376,7 +382,6 @@ impl Default for BuiltLayout {
 #[derive(Debug, Clone)]
 pub struct AgentEntry {
     pub lane: LaneId,
-    pub host: Option<String>,
     pub kind: AgentEntryKind,
 }
 
@@ -412,8 +417,8 @@ pub enum AgentEntryKind {
 pub struct DividerHit {
     pub lane: LaneId,
     pub rect: Rect,
-    /// The backend-defined button command (see [`SectionButton::command`]).
-    pub command: String,
+    /// The backend-defined action id (see [`SectionButton::action`]).
+    pub action: crate::system::LaneActionId,
 }
 
 /// A detected agent's switch target, keyed by its mounted backend lane.

@@ -1,7 +1,8 @@
 //! Sidebar context menus: the `MenuItem` enum, the per-context item lists,
 //! and the `ContextMenu` overlay state with its enabled/disabled logic.
 
-use crate::state::{attachable_on_host, FocusTarget, SessionEntry};
+use crate::state::{attachable_on_lane, FocusTarget, SessionEntry};
+use crate::system::SessionCapabilities;
 
 // One list for local and remote rows. No "Switch" item — focus already
 // switches. On a remote row Rename/Close map to `ssh <host> tmux <cmd>`.
@@ -15,6 +16,7 @@ const PLACEHOLDER_DISABLED_ITEMS: &[MenuItem] = SESSION_MENU_ITEMS;
 // host: killing it would tear down that host's tmux server. Rename is
 // still fine.
 const LAST_REMOTE_SESSION_DISABLED: &[MenuItem] = &[MenuItem::Close];
+const RENAME_DISABLED: &[MenuItem] = &[MenuItem::Rename];
 // Host divider [...] menu acts on the whole remote *group*. RemoveFromList
 // is equivalent to `deck remote remove <host>`.
 const HOST_DIVIDER_MENU_ITEMS: &[MenuItem] = &[
@@ -87,15 +89,10 @@ pub enum MenuKind {
         disabled: &'static [MenuItem],
     },
     Global,
-    /// Click on the `[…]` button on a remote host divider. The items are
-    /// the fixed `HOST_DIVIDER_MENU_ITEMS` list (see `items()`).
-    HostDivider {
-        host: String,
+    LaneDivider {
+        lane: crate::lane::LaneId,
+        primary: bool,
     },
-    /// Click on the `[…]` button on the `@local` divider. Shares the host
-    /// divider's items, but the remote-only ones (`LOCAL_DIVIDER_DISABLED`)
-    /// are greyed out.
-    LocalDivider,
 }
 
 impl MenuKind {
@@ -103,7 +100,7 @@ impl MenuKind {
         match self {
             MenuKind::Session { .. } => SESSION_MENU_ITEMS,
             MenuKind::Global => GLOBAL_MENU_ITEMS,
-            MenuKind::HostDivider { .. } | MenuKind::LocalDivider => HOST_DIVIDER_MENU_ITEMS,
+            MenuKind::LaneDivider { .. } => HOST_DIVIDER_MENU_ITEMS,
         }
     }
 
@@ -113,8 +110,8 @@ impl MenuKind {
     pub fn disabled(&self) -> &'static [MenuItem] {
         match self {
             MenuKind::Session { disabled, .. } => disabled,
-            MenuKind::LocalDivider => LOCAL_DIVIDER_DISABLED,
-            MenuKind::Global | MenuKind::HostDivider { .. } => &[],
+            MenuKind::LaneDivider { primary: true, .. } => LOCAL_DIVIDER_DISABLED,
+            MenuKind::Global | MenuKind::LaneDivider { .. } => &[],
         }
     }
 }
@@ -126,13 +123,17 @@ impl MenuKind {
 pub fn session_menu_disabled(
     entry: &SessionEntry,
     entries: &[SessionEntry],
+    capabilities: SessionCapabilities,
 ) -> &'static [MenuItem] {
-    match &entry.host {
-        Some(_) if !entry.is_attachable() => PLACEHOLDER_DISABLED_ITEMS,
-        Some(host) if attachable_on_host(entries, Some(host)).nth(1).is_none() => {
-            LAST_REMOTE_SESSION_DISABLED
-        }
-        _ => &[],
+    if !entry.is_attachable() || (!capabilities.rename && !capabilities.kill) {
+        return PLACEHOLDER_DISABLED_ITEMS;
+    }
+    let last_remote = attachable_on_lane(entries, &entry.lane).nth(1).is_none();
+    match (capabilities.rename, capabilities.kill && !last_remote) {
+        (false, false) => PLACEHOLDER_DISABLED_ITEMS,
+        (false, true) => RENAME_DISABLED,
+        (true, false) => LAST_REMOTE_SESSION_DISABLED,
+        (true, true) => &[],
     }
 }
 
