@@ -61,7 +61,7 @@ pub(crate) enum RemoteConnStatus {
     /// Spawn failed, or the child exited (auth denied, tmux missing,
     /// network gone). The specific reason isn't surfaced anywhere
     /// today; add a String payload back when a consumer reads it.
-    Failed,
+    Failed(String),
 }
 
 /// One remote host's connection: lifecycle `status` plus the live attach
@@ -113,11 +113,11 @@ impl RemoteConn {
         }
     }
 
-    /// Whether this connection can serve a switch/focus now: status Connected
-    /// AND the attach PTY present. The invariant is "pane present iff
-    /// Connected"; checking both keeps call sites honest if that wobbles.
+    /// Whether this connection can serve a switch/focus now. The PTY is moved
+    /// into `AttachmentManager` immediately after a Spawned event; this
+    /// remote-only metadata record therefore keys liveness on status.
     pub(crate) fn is_live(&self) -> bool {
-        matches!(self.status, RemoteConnStatus::Connected) && self.pane.is_some()
+        matches!(self.status, RemoteConnStatus::Connected)
     }
 
     /// Whether the divider should offer "stuck connecting — reconnect?": PTY
@@ -290,9 +290,8 @@ impl RemoteConnManager {
     /// (the startup path). Each host starts at generation 1.
     pub(crate) fn start(hosts: &[String], pty_size: portable_pty::PtySize) -> Self {
         let generations: HashMap<String, u64> = hosts.iter().map(|h| (h.clone(), 1)).collect();
-        let spawn_list: Vec<(String, u64)> = hosts.iter().map(|h| (h.clone(), 1)).collect();
-        let spawner = RemoteSpawner::start(&spawn_list, pty_size);
-        let conns: HashMap<String, RemoteConn> = hosts
+        let spawner = RemoteSpawner::new(pty_size);
+        let mut conns: HashMap<String, RemoteConn> = hosts
             .iter()
             .map(|h| {
                 (
@@ -301,6 +300,14 @@ impl RemoteConnManager {
                 )
             })
             .collect();
+        for host in hosts {
+            if let Err(error) = spawner.spawn(host, 1) {
+                conns.insert(
+                    host.clone(),
+                    RemoteConn::placeholder(RemoteConnStatus::Failed(error.to_string())),
+                );
+            }
+        }
         Self {
             conns,
             spawner,
@@ -313,6 +320,7 @@ impl RemoteConnManager {
 
     // --- accessors ---
 
+    #[cfg(test)]
     pub(crate) fn active(&self) -> Option<&String> {
         self.active.as_ref()
     }
@@ -329,13 +337,24 @@ impl RemoteConnManager {
         self.active = Some(host.to_string());
     }
 
+    #[cfg(test)]
     pub(crate) fn conn(&self, host: &str) -> Option<&RemoteConn> {
         self.conns.get(host)
+    }
+
+    pub(crate) fn status(&self, host: &str) -> Option<&RemoteConnStatus> {
+        self.conns.get(host).map(|conn| &conn.status)
+    }
+
+    /// Transfer a freshly-spawned pane to the lane-keyed attachment owner.
+    pub(crate) fn take_pane(&mut self, host: &str) -> Option<TerminalPane> {
+        self.conns.get_mut(host).and_then(|conn| conn.pane.take())
     }
 
     /// Mutable access to the conn map, for the run loop's PTY drain (it
     /// reads every pane regardless of local/remote, so this stays a plain
     /// iterator rather than leaking the distinction up).
+    #[cfg(test)]
     pub(crate) fn conns_mut(&mut self) -> &mut HashMap<String, RemoteConn> {
         &mut self.conns
     }
@@ -345,32 +364,10 @@ impl RemoteConnManager {
         self.conns.get(host).map_or(0, |c| c.client_marker_id)
     }
 
-    /// Whether an outcome stamped with `marker_id` still matches its host's
-    /// current connection generation. Local (`None`) has no reconnect
-    /// generation, so it's always current; a remote reconnect mints a new
-    /// marker id, rejecting outcomes from a dropped/older PTY.
-    pub(crate) fn marker_matches(&self, host: Option<&str>, marker_id: u64) -> bool {
-        host.is_none_or(|h| self.marker_id(h) == marker_id)
-    }
-
-    pub(crate) fn is_live(&self, host: &str) -> bool {
-        self.conns.get(host).is_some_and(RemoteConn::is_live)
-    }
-
     pub(crate) fn is_connecting(&self, host: &str) -> bool {
         matches!(
             self.conns.get(host).map(|c| &c.status),
             Some(RemoteConnStatus::Connecting)
-        )
-    }
-
-    /// Whether the host's PTY is in a state that doesn't need a respawn
-    /// (`Connected` or `Connecting`) — the predicate refresh auto-recovery
-    /// uses to skip live / in-flight hosts.
-    pub(crate) fn is_connected_or_connecting(&self, host: &str) -> bool {
-        matches!(
-            self.conns.get(host).map(|c| &c.status),
-            Some(RemoteConnStatus::Connected | RemoteConnStatus::Connecting)
         )
     }
 
@@ -407,16 +404,24 @@ impl RemoteConnManager {
     /// on an in-flight spawn (`Connecting`) so a stale `Failed` from the older
     /// attempt can't clobber the newer pane. Shared by onboard, the reconnect
     /// button, and refresh auto-recovery.
-    pub(crate) fn respawn(&mut self, host: &str) {
+    pub(crate) fn respawn(&mut self, host: &str) -> Result<(), String> {
         if self.is_connecting(host) {
-            return;
+            return Ok(());
         }
         let gen = self.bump_generation(host);
         self.conns.insert(
             host.to_string(),
             RemoteConn::placeholder(RemoteConnStatus::Connecting),
         );
-        self.spawner.spawn(host, gen);
+        if let Err(error) = self.spawner.spawn(host, gen) {
+            let detail = error.to_string();
+            self.conns.insert(
+                host.to_string(),
+                RemoteConn::placeholder(RemoteConnStatus::Failed(detail.clone())),
+            );
+            return Err(detail);
+        }
+        Ok(())
     }
 
     // --- offboard / detach (bug #20 + D7) ---
@@ -427,7 +432,7 @@ impl RemoteConnManager {
     /// remove→re-add) and bumps the generation so any in-flight spawn event
     /// is dropped on arrival. Returns whether the host was active (so the
     /// caller runs the shared view-detach choreography via [`detach_active`]).
-    pub(crate) fn offboard(&mut self, host: &str) -> DetachOutcome {
+    pub(crate) fn offboard(&mut self, host: &str) -> bool {
         self.conns.remove(host);
         // Bump the generation so a `Spawned`/`Failed`/`MarkerReady` from a
         // spawn started before this offboard is rejected by
@@ -444,19 +449,17 @@ impl RemoteConnManager {
     /// If `host` is the active pane, drop it (fall back to local) and
     /// report it. Shared by offboard and the dead-host reap (D7) so the
     /// "was this the viewed host?" choreography lives in one place.
-    pub(crate) fn detach_active(&mut self, host: &str) -> DetachOutcome {
-        DetachOutcome {
-            was_active: self.active.take_if(|a| a.as_str() == host).is_some(),
-        }
+    pub(crate) fn detach_active(&mut self, host: &str) -> bool {
+        self.active.take_if(|a| a.as_str() == host).is_some()
     }
 
     /// Mark a host's connection dead (PTY exited) and detach the view if it
     /// was active (D7). Does *not* clear the pending switch: a dropped PTY is
     /// auto-recovered by refresh and the pending switch should fire on
     /// reconnect (only a true offboard clears it).
-    pub(crate) fn mark_died(&mut self, host: &str) -> DetachOutcome {
+    pub(crate) fn mark_died(&mut self, host: &str) -> bool {
         if let Some(conn) = self.conns.get_mut(host) {
-            conn.status = RemoteConnStatus::Failed;
+            conn.status = RemoteConnStatus::Failed("terminal exited".into());
             conn.pane = None;
             conn.marker_ready = false;
             conn.marker_retry = None;
@@ -491,12 +494,14 @@ impl RemoteConnManager {
                 None
             }
             SpawnDecision::ApplyFailed => {
-                if let RemoteSpawnEvent::Failed { host, .. } = ev {
+                if let RemoteSpawnEvent::Failed { host, error, .. } = ev {
                     // The deferred switch can't happen on a failed spawn;
                     // drop it so a later unrelated reconnect doesn't fire it.
                     self.pending_switch.take_if(|req| req.host == host);
-                    self.conns
-                        .insert(host, RemoteConn::placeholder(RemoteConnStatus::Failed));
+                    self.conns.insert(
+                        host,
+                        RemoteConn::placeholder(RemoteConnStatus::Failed(error)),
+                    );
                 }
                 None
             }
@@ -564,8 +569,9 @@ impl RemoteConnManager {
     /// state (so the caller can redraw to show the reconnect affordance). Pure
     /// timing via [`marker_retry_decision`]; this only does re-arm IO and
     /// bookkeeping.
-    pub(crate) fn tick_marker_retry(&mut self, now: Instant) -> bool {
+    pub(crate) fn tick_marker_retry(&mut self, now: Instant) -> MarkerTick {
         let mut newly_stuck = false;
+        let mut failed = Vec::new();
         // Collect the re-arms to fire after the borrow ends (the spawner
         // call doesn't touch `conns`, but keeping the mutation localized is
         // cleaner).
@@ -596,9 +602,20 @@ impl RemoteConnManager {
         }
         for (host, marker_id) in to_rearm {
             let gen = self.generation(&host);
-            self.spawner.rearm_marker(&host, marker_id, gen);
+            if let Err(error) = self.spawner.rearm_marker(&host, marker_id, gen) {
+                let detail = error.to_string();
+                if let Some(conn) = self.conns.get_mut(&host) {
+                    conn.status = RemoteConnStatus::Failed(detail.clone());
+                    conn.marker_ready = false;
+                    conn.marker_retry = None;
+                }
+                failed.push((host, detail));
+            }
         }
-        newly_stuck
+        MarkerTick {
+            newly_stuck,
+            failed,
+        }
     }
 
     pub(in crate::app) fn try_recv(&self) -> Option<RemoteSpawnEvent> {
@@ -606,12 +623,9 @@ impl RemoteConnManager {
     }
 }
 
-/// Whether a detach/offboard removed the currently-viewed host. On
-/// `was_active` the caller runs the rest of the view-detach choreography
-/// (agent highlight, focus supersede, redraw) — kept App-side because it
-/// touches `AppState`, not connection state.
-pub(crate) struct DetachOutcome {
-    pub(crate) was_active: bool,
+pub(crate) struct MarkerTick {
+    pub(crate) newly_stuck: bool,
+    pub(crate) failed: Vec<(String, String)>,
 }
 
 #[cfg(test)]

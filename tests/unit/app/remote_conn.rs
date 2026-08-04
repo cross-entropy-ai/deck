@@ -50,6 +50,7 @@ fn reconcile_drops_event_from_an_older_generation() {
     let stale = RemoteSpawnEvent::Failed {
         host: "h".to_string(),
         generation: 1,
+        error: "stale".into(),
     };
     assert_eq!(
         reconcile_spawn_event(&conns, &generations, &stale),
@@ -66,6 +67,7 @@ fn reconcile_applies_event_from_the_current_generation() {
     let failed = RemoteSpawnEvent::Failed {
         host: "h".to_string(),
         generation: 2,
+        error: "failed".into(),
     };
     assert_eq!(
         reconcile_spawn_event(&conns, &generations, &failed),
@@ -83,6 +85,7 @@ fn reconcile_drops_event_for_a_never_seen_host() {
     let ev = RemoteSpawnEvent::Failed {
         host: "ghost".to_string(),
         generation: 1,
+        error: "ghost".into(),
     };
     assert_eq!(
         reconcile_spawn_event(&conns, &generations, &ev),
@@ -154,7 +157,7 @@ fn offboard_clears_pending_switch_and_switch_verify_and_bumps_generation() {
     mgr.record_switch_submit(lane, "h", "sess", 5);
 
     let detach = mgr.offboard("h");
-    assert!(!detach.was_active, "host was never the active pane");
+    assert!(!detach, "host was never the active pane");
 
     // Generation bumped → any in-flight event from before offboard is stale.
     let gen_after = mgr.generation("h");
@@ -165,13 +168,14 @@ fn offboard_clears_pending_switch_and_switch_verify_and_bumps_generation() {
     let stale = RemoteSpawnEvent::Failed {
         host: "h".to_string(),
         generation: gen_before,
+        error: "stale".into(),
     };
     assert!(mgr.apply_spawn_event(stale).is_none());
     assert!(mgr.conn("h").is_none(), "stale event must not re-add host");
 
     // The pending switch and verify entry are gone: a marker confirming on
     // a fresh connection yields no held switch to fire.
-    mgr.respawn("h");
+    mgr.respawn("h").expect("respawn should start");
     let new_gen = mgr.generation("h");
     // Pretend the fresh PTY came up and its marker confirmed.
     if let Some(c) = mgr.conns_mut().get_mut("h") {
@@ -190,7 +194,7 @@ fn detach_active_reports_when_the_offboarded_host_was_active() {
     let mut mgr = super::RemoteConnManager::start(&["h".to_string()], test_pty_size());
     mgr.set_active("h");
     let detach = mgr.offboard("h");
-    assert!(detach.was_active);
+    assert!(detach);
     assert!(mgr.active().is_none(), "offboard drops the active pointer");
 }
 
@@ -359,7 +363,7 @@ fn duplicate_marker_ready_fires_the_held_switch_only_once() {
     // harmless no-op (no second switch), or a stale repeat would re-yank the
     // view. Idempotence rests on `pending_switch` being taken on the first.
     let mut mgr = super::RemoteConnManager::start(&["h".to_string()], test_pty_size());
-    mgr.respawn("h");
+    mgr.respawn("h").expect("respawn should start");
     let gen = mgr.generation("h");
     if let Some(c) = mgr.conns_mut().get_mut("h") {
         c.status = RemoteConnStatus::Connected;

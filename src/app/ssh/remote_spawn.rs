@@ -17,6 +17,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
+use std::{io, mem};
 
 use portable_pty::PtySize;
 
@@ -56,6 +57,7 @@ pub(in crate::app) enum RemoteSpawnEvent {
     Failed {
         host: String,
         generation: u64,
+        error: String,
     },
     /// The connection's client-tty marker has been confirmed written on the
     /// host (out of band — see `remote_tmux::wait_for_client_marker`). Carries
@@ -103,11 +105,8 @@ pub(in crate::app) struct RemoteSpawner {
 }
 
 impl RemoteSpawner {
-    pub fn start(hosts: &[(String, u64)], size: PtySize) -> Self {
+    pub fn new(size: PtySize) -> Self {
         let (tx, rx) = mpsc::channel();
-        for (host, generation) in hosts {
-            spawn_one(host.clone(), *generation, tx.clone(), size);
-        }
         Self { rx, tx, size }
     }
 
@@ -115,8 +114,8 @@ impl RemoteSpawner {
     /// auto-recovery). `generation` is the host's current spawn generation,
     /// stamped onto every event so the manager can reject it once the host has
     /// moved on (offboard or a newer spawn).
-    pub fn spawn(&self, host: &str, generation: u64) {
-        spawn_one(host.to_string(), generation, self.tx.clone(), self.size);
+    pub fn spawn(&self, host: &str, generation: u64) -> io::Result<()> {
+        spawn_one(host.to_string(), generation, self.tx.clone(), self.size)
     }
 
     /// Re-attempt *only* the client-tty marker confirmation for an
@@ -127,10 +126,10 @@ impl RemoteSpawner {
     /// `MarkerReady` for the same `(host, marker_id, generation)`. The PTY
     /// stays put, so this is cheap and idempotent — losing the race again
     /// emits nothing and the caller retries on its own cadence.
-    pub fn rearm_marker(&self, host: &str, marker_id: u64, generation: u64) {
+    pub fn rearm_marker(&self, host: &str, marker_id: u64, generation: u64) -> io::Result<()> {
         let host = host.to_string();
         let tx = self.tx.clone();
-        let _ = thread::Builder::new()
+        thread::Builder::new()
             .name(format!("deck-marker-retry-{host}"))
             .spawn(move || {
                 if crate::remote_tmux::wait_for_client_marker(&host, marker_id) {
@@ -140,7 +139,8 @@ impl RemoteSpawner {
                         generation,
                     });
                 }
-            });
+            })
+            .map(mem::drop)
     }
 
     pub fn try_recv(&self) -> Option<RemoteSpawnEvent> {
@@ -162,8 +162,13 @@ fn attach_command(host: &str, marker_id: u64) -> String {
     )
 }
 
-fn spawn_one(host: String, generation: u64, tx: Sender<RemoteSpawnEvent>, size: PtySize) {
-    let _ = thread::Builder::new()
+fn spawn_one(
+    host: String,
+    generation: u64,
+    tx: Sender<RemoteSpawnEvent>,
+    size: PtySize,
+) -> io::Result<()> {
+    thread::Builder::new()
         .name(format!("deck-pty-spawn-{host}"))
         .spawn(move || {
             let host_for_args = host.clone();
@@ -191,13 +196,16 @@ fn spawn_one(host: String, generation: u64, tx: Sender<RemoteSpawnEvent>, size: 
             argv.extend_from_slice(crate::ssh::CONTROL_OPTS);
             argv.push(host_for_args.as_str());
             argv.push(remote_cmd.as_str());
-            let spawned = match Pty::spawn("ssh", &argv, size) {
-                Ok(pty) => Some(Box::new(TerminalPane::new(pty, size.rows, size.cols))),
-                Err(_) => None,
-            };
-            let Some(pane) = spawned else {
-                let _ = tx.send(RemoteSpawnEvent::Failed { host, generation });
-                return;
+            let pane = match Pty::spawn("ssh", &argv, size) {
+                Ok(pty) => Box::new(TerminalPane::new(pty, size.rows, size.cols)),
+                Err(error) => {
+                    let _ = tx.send(RemoteSpawnEvent::Failed {
+                        host,
+                        generation,
+                        error: error.to_string(),
+                    });
+                    return;
+                }
             };
             let _ = tx.send(RemoteSpawnEvent::Spawned {
                 host: host.clone(),
@@ -217,7 +225,8 @@ fn spawn_one(host: String, generation: u64, tx: Sender<RemoteSpawnEvent>, size: 
                     generation,
                 });
             }
-        });
+        })
+        .map(mem::drop)
 }
 
 #[cfg(test)]

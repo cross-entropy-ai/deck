@@ -15,7 +15,8 @@ impl App {
     /// section without waiting a full refresh tick; the spawner kicks off the
     /// persistent ssh+tmux PTY.
     pub(super) fn onboard_remote_host(&mut self, host: &str) {
-        self.respawn_remote_host(host);
+        let lane = crate::system::tmux::TmuxSystem::host_lane(host);
+        self.respawn_attachment(&lane);
         // Avoid duplicating a placeholder if one is already there
         // (e.g. add → remove → add in quick succession).
         if !self
@@ -40,14 +41,12 @@ impl App {
     /// resurrect it after a re-add. `detach_host_view` (D7) then runs the
     /// view-side choreography (snap to local if active, drop agent highlight,
     /// supersede focus).
-    pub(super) fn offboard_remote_host(&mut self, host: &str, lane: Option<&crate::lane::LaneId>) {
-        let detach = self.remote.offboard(host);
+    pub(super) fn offboard_remote_host(&mut self, lane: &crate::lane::LaneId) {
+        let detach = self.attachments.offboard(lane);
         // Reap the host's executor FIFO lane so a removed host doesn't leak
         // its parked worker + sender (bug #22).
-        if let Some(lane) = lane {
-            self.session_exec.remove(lane);
-        }
-        self.detach_host_view(host, detach);
+        self.session_exec.remove(lane);
+        self.detach_lane_view(lane, detach);
     }
 
     /// Reload `~/.config/deck/config.yaml` and apply it in place. On failure
@@ -117,7 +116,9 @@ impl App {
                     .iter()
                     .find(|entry| entry.host.as_deref() == Some(old.host.as_str()))
                     .map(|entry| entry.lane.clone());
-                self.offboard_remote_host(&old.host, lane.as_ref());
+                let lane =
+                    lane.unwrap_or_else(|| crate::system::tmux::TmuxSystem::host_lane(&old.host));
+                self.offboard_remote_host(&lane);
             }
         }
 

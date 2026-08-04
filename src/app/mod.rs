@@ -1,6 +1,7 @@
 pub mod action;
 pub mod ssh;
 
+mod attachment;
 mod dispatch;
 mod effect_runner;
 mod focus_executor;
@@ -28,6 +29,7 @@ use crate::theme::THEMES;
 use crate::tmux;
 use crate::update::UpdateCheckMode;
 
+use self::attachment::AttachmentManager;
 use self::update::bootstrap_update_check;
 pub(super) use focus_executor::ActivePaneOutcome;
 use focus_executor::ActivePaneProbeExecutor;
@@ -61,21 +63,15 @@ impl TerminalPane {
     }
 }
 
-pub(super) use ssh::remote_conn::RemoteConnManager;
-
 pub struct App {
     state: AppState,
     /// Mounted backend registry injected at the composition root. The same
     /// instance is shared with refresh; model code receives only materialized
     /// section definitions.
     systems: &'static crate::system::SystemRegistry<'static>,
-    /// The always-present local tmux PTY.
-    local_terminal: TerminalPane,
-    /// The remote-connection state machine: one connection per configured host
-    /// (status + attach PTY), the background PTY spawner, which host drives the
-    /// main pane, the deferred-switch/switch-verify ledgers, and the per-host
-    /// spawn-generation counter. See `app/ssh/remote_conn.rs`.
-    remote: RemoteConnManager,
+    /// The sole owner/router for local and remote terminal attachments.
+    /// Every operation crosses this boundary with a `LaneId`.
+    attachments: AttachmentManager,
     warning_state: Option<WarningState>,
     refresh_worker: RefreshWorker,
     /// Runs mutating control-plane ops (switch/rename/kill/new/order) and
@@ -190,8 +186,19 @@ impl App {
         state.system_sections = systems.sections();
 
         let remotes: Vec<String> = cfg.remotes.iter().map(|r| r.host.clone()).collect();
+        let primary_lane = state
+            .primary_lane()
+            .cloned()
+            .expect("built-in composition provides a primary attachment lane");
+        let remote_lanes: Vec<_> = state
+            .system_sections
+            .iter()
+            .filter(|section| section.runtime_key.is_some())
+            .map(|section| section.lane.clone())
+            .collect();
         let pty_size = pty::pane_size(pty_rows, pty_cols);
-        let remote = RemoteConnManager::start(&remotes, pty_size);
+        let attachments =
+            AttachmentManager::start(primary_lane, local_terminal, &remote_lanes, pty_size);
 
         // Seed one placeholder per remote host so the sidebar shows a `@host`
         // group with a "(connecting...)" row from the first frame, without
@@ -213,8 +220,7 @@ impl App {
         let mut app = App {
             state,
             systems,
-            local_terminal,
-            remote,
+            attachments,
             warning_state: None,
             refresh_worker: RefreshWorker::spawn(systems),
             session_exec: crate::session::executor::SessionExecutor::new(),
@@ -301,38 +307,12 @@ impl App {
     /// The terminal pane that owns the main view: local by default, or the
     /// remote pane for the active host. Falls back to local if the active host's
     /// pane has been dropped (e.g. connection died, not yet re-spawned).
-    pub(super) fn active_terminal(&self) -> &TerminalPane {
-        match self.remote.active() {
-            Some(host) => self
-                .remote
-                .conn(host)
-                .and_then(|c| c.pane.as_ref())
-                .unwrap_or(&self.local_terminal),
-            None => &self.local_terminal,
-        }
+    pub(super) fn active_terminal(&self) -> Option<&TerminalPane> {
+        self.attachments.active_terminal()
     }
 
-    pub(super) fn active_terminal_mut(&mut self) -> &mut TerminalPane {
-        // Decide which pane to return without holding a borrow on the conn
-        // map so we can fall back to local.
-        let key = self
-            .remote
-            .active()
-            .filter(|h| {
-                self.remote
-                    .conn(h.as_str())
-                    .is_some_and(|c| c.pane.is_some())
-            })
-            .cloned();
-        match key {
-            Some(host) => self
-                .remote
-                .conns_mut()
-                .get_mut(&host)
-                .and_then(|c| c.pane.as_mut())
-                .expect("checked above"),
-            None => &mut self.local_terminal,
-        }
+    pub(super) fn active_terminal_mut(&mut self) -> Option<&mut TerminalPane> {
+        self.attachments.active_terminal_mut()
     }
 
     /// Write `bytes` to the PTY backing the active main view: upgrade pane or
@@ -346,7 +326,9 @@ impl App {
                 }
             }
             MainView::Terminal => {
-                let _ = self.active_terminal_mut().pty.write(bytes);
+                if let Some(terminal) = self.active_terminal_mut() {
+                    let _ = terminal.pty.write(bytes);
+                }
             }
             MainView::Settings => {}
         }
@@ -361,7 +343,11 @@ impl App {
     /// - bump `focus_seq` so a slow in-flight `deck-focus-*` worker's late
     ///   completion is stale (a reconnect can't silently re-grab focus);
     /// - drop the agent highlight if it belonged to this host.
-    pub(super) fn detach_host_view(&mut self, host: &str, detach: ssh::remote_conn::DetachOutcome) {
+    pub(super) fn detach_lane_view(
+        &mut self,
+        lane: &crate::lane::LaneId,
+        detach: attachment::DetachOutcome,
+    ) {
         if detach.was_active {
             self.needs_full_redraw = true;
         }
@@ -370,8 +356,7 @@ impl App {
             .state
             .active_agent
             .as_ref()
-            .and_then(|t| self.state.host_for_lane(&t.lane))
-            == Some(host)
+            .is_some_and(|target| target.lane == *lane)
         {
             self.state.active_agent = None;
             self.needs_full_redraw = true;

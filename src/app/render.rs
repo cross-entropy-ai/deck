@@ -196,8 +196,10 @@ impl App {
             // The local attach PTY is dead and it's the active view (no
             // remote selected): there are no local sessions to show, so we
             // render an empty-state placeholder instead of a stale screen.
-            let local_active_dead = self.remote.active().is_none() && !self.local_terminal.alive;
-            let screen = self.active_terminal().parser.screen();
+            let active_lane = self.attachments.active_lane().clone();
+            let attachment_failure = self.attachments.failure(&active_lane).map(str::to_string);
+            let active_attachment_dead = self.active_terminal().is_none();
+            let screen = self.active_terminal().map(|pane| pane.parser.screen());
             let upgrade_screen = match main_view {
                 MainView::Upgrade => self
                     .upgrade_instance
@@ -210,8 +212,8 @@ impl App {
                 (None, MainView::Terminal) if remote_placeholder.is_some() => None,
                 // Dead local pane (no sessions to attach to) renders the
                 // empty-state placeholder below instead of a stale screen.
-                (None, MainView::Terminal) if local_active_dead => None,
-                (None, MainView::Terminal) => Some(screen),
+                (None, MainView::Terminal) if active_attachment_dead => None,
+                (None, MainView::Terminal) => screen,
                 (None, MainView::Upgrade) => upgrade_screen,
                 (None, MainView::Settings) => None,
             };
@@ -245,14 +247,20 @@ impl App {
             }
 
             // deck stays open on a dead local pane instead of quitting.
-            if warning_state.is_none() && main_view == MainView::Terminal && local_active_dead {
-                draw_center_message(
-                    frame,
-                    main_inner,
-                    "No local sessions",
-                    "Create one from the sidebar to attach here",
-                    theme,
-                );
+            if warning_state.is_none() && main_view == MainView::Terminal && active_attachment_dead
+            {
+                let is_primary = active_lane == *self.attachments.primary_lane();
+                let title = if is_primary {
+                    "No local sessions"
+                } else {
+                    "Attachment unavailable"
+                };
+                let detail = attachment_failure.as_deref().unwrap_or(if is_primary {
+                    "Create one from the sidebar to attach here"
+                } else {
+                    "Reconnect this lane from its sidebar divider"
+                });
+                draw_center_message(frame, main_inner, title, detail, theme);
             }
 
             if warning_state.is_none() && main_view == MainView::Terminal {

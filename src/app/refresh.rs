@@ -5,11 +5,16 @@ use super::App;
 
 impl App {
     fn build_refresh_request(&self) -> RefreshRequest {
+        let slave_tty = self
+            .attachments
+            .terminal(self.attachments.primary_lane())
+            .map(|pane| pane.pty.slave_tty.clone())
+            .unwrap_or_default();
         RefreshRequest {
             // Tracks only the LOCAL tmux server's current-session (drives
             // sidebar highlighting for local rows). Remote rows skip
             // ack/current logic, so their slave_ttys aren't plumbed.
-            slave_tty: self.local_terminal.pty.slave_tty.clone(),
+            slave_tty,
             exclude_patterns: self.state.prefs.exclude_patterns.clone(),
             show_agents: self.state.agents_tab_active(),
         }
@@ -173,7 +178,9 @@ impl App {
                     self.state.focused = pos;
                 }
             }
-            if !self.local_terminal.alive && self.state.local_count() > 0 {
+            if !self.attachments.is_live(self.attachments.primary_lane())
+                && self.state.local_count() > 0
+            {
                 let _ = self.respawn_pty();
             }
         }
@@ -185,14 +192,15 @@ impl App {
         // Connection recovery remains shell runtime policy: a reachable lane
         // with a dead persistent client is respawned, and transitional rows
         // stay visibly yellow until that client is actually usable.
-        let to_respawn = hosts_needing_respawn(&self.state.entries, |host| {
-            self.remote.is_connected_or_connecting(host)
+        let primary = self.attachments.primary_lane().clone();
+        let to_respawn = lanes_needing_respawn(&self.state.entries, &primary, |lane| {
+            self.attachments.is_connected_or_connecting(lane)
         });
-        for host in to_respawn {
-            self.respawn_remote_host(&host);
+        for lane in to_respawn {
+            self.respawn_attachment(&lane);
         }
-        mark_connecting_rows(&mut self.state.entries, |host| {
-            self.remote.is_connecting(host) || self.remote.is_marker_stuck(host)
+        mark_connecting_rows(&mut self.state.entries, |lane| {
+            self.attachments.is_connecting(lane) || self.attachments.is_marker_stuck(lane)
         });
     }
 }
@@ -210,20 +218,24 @@ fn lane_placeholder(lane: crate::lane::LaneId, key: &str, kind: SessionEntryKind
 /// Hosts reachable in the latest snapshot whose persistent PTY isn't live
 /// (`is_live` false) — the attach PTY dropped and needs rebuilding.
 /// Unreachable and still-loading rows are skipped; result is deduped by host.
-fn hosts_needing_respawn(entries: &[SessionEntry], is_live: impl Fn(&str) -> bool) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+fn lanes_needing_respawn(
+    entries: &[SessionEntry],
+    primary: &crate::lane::LaneId,
+    is_live: impl Fn(&crate::lane::LaneId) -> bool,
+) -> Vec<crate::lane::LaneId> {
+    let mut out = Vec::new();
     for entry in entries {
         // Only real remote sessions are attachable. A reachable host with no
         // tmux server ("(no sessions)") has nothing to attach to —
         // respawning its PTY just flaps it forever on "connecting…".
-        let Some(host) = entry.host.as_deref() else {
+        if entry.lane == *primary {
             continue;
-        };
+        }
         if !entry.is_attachable() {
             continue;
         }
-        if !is_live(host) && !out.iter().any(|h| h == host) {
-            out.push(host.to_string());
+        if !is_live(&entry.lane) && !out.contains(&entry.lane) {
+            out.push(entry.lane.clone());
         }
     }
     out
@@ -233,14 +245,15 @@ fn hosts_needing_respawn(entries: &[SessionEntry], is_live: impl Fn(&str) -> boo
 /// still connecting (`is_connecting` true), so the divider reflects real PTY
 /// liveness instead of flipping to "connected" the moment the probe succeeds.
 /// Unreachable / no-session placeholders are left as-is.
-fn mark_connecting_rows(entries: &mut [SessionEntry], is_connecting: impl Fn(&str) -> bool) {
+fn mark_connecting_rows(
+    entries: &mut [SessionEntry],
+    is_connecting: impl Fn(&crate::lane::LaneId) -> bool,
+) {
     for entry in entries {
         // Only real remote sessions track PTY liveness. Synthetic
         // placeholders (unreachable / "no sessions") have no PTY to connect.
-        if let Some(host) = entry.host.as_deref() {
-            if entry.is_attachable() && is_connecting(host) {
-                entry.kind = SessionEntryKind::Connecting;
-            }
+        if entry.is_attachable() && is_connecting(&entry.lane) {
+            entry.kind = SessionEntryKind::Connecting;
         }
     }
 }

@@ -9,7 +9,7 @@ use std::thread;
 
 use crate::focus::FocusTransport;
 pub(crate) struct ActivePaneOutcome {
-    pub host: Option<String>,
+    pub lane: crate::lane::LaneId,
     pub pane_id: Result<Option<String>, ActivePaneProbeError>,
     pub seq: u64,
     pub marker_id: u64,
@@ -45,7 +45,7 @@ impl ActivePaneProbeExecutor {
     pub fn probe_active_pane(
         &self,
         transport: FocusTransport,
-        host: Option<String>,
+        lane: crate::lane::LaneId,
         seq: u64,
         marker_id: u64,
     ) -> io::Result<()> {
@@ -55,7 +55,7 @@ impl ActivePaneProbeExecutor {
             .spawn(move || {
                 let pane_id = run_probe(|| crate::focus::active_pane(&transport));
                 let _ = tx.send(ActivePaneOutcome {
-                    host,
+                    lane,
                     pane_id,
                     seq,
                     marker_id,

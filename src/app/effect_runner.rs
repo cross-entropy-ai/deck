@@ -24,7 +24,7 @@ impl App {
                     {
                         continue;
                     }
-                    self.remote.clear_active();
+                    self.attachments.activate_primary();
                     self.state.main_view = MainView::Terminal;
                     self.supersede_agent_focus();
                     self.suppress_next_periodic_refresh = true;
@@ -52,11 +52,9 @@ impl App {
                         if let Some(alternative) = &kill.switch_to {
                             self.switch_to_session_if_safe(kill.lane.clone(), alternative);
                         }
-                    } else if let Some(host) = self.state.host_for_lane(&kill.lane) {
-                        if self.remote.active_is(host) {
-                            self.remote.clear_active();
-                            self.needs_full_redraw = true;
-                        }
+                    } else if self.attachments.is_active(&kill.lane) {
+                        self.attachments.activate_primary();
+                        self.needs_full_redraw = true;
                     }
                     self.submit_session(
                         kill.lane.clone(),
@@ -115,7 +113,7 @@ impl App {
                             host: req.host.clone(),
                         },
                     );
-                    self.offboard_remote_host(&req.host, Some(&req.lane));
+                    self.offboard_remote_host(&req.lane);
                 }
                 Effect::ReconnectHost(host) => {
                     self.dispatch(Action::ReconnectHost { host: host.clone() });

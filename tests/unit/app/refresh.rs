@@ -1,4 +1,4 @@
-use super::{hosts_needing_respawn, mark_connecting_rows};
+use super::{lanes_needing_respawn, mark_connecting_rows};
 use crate::state::{SessionEntry, SessionEntryKind};
 
 fn kind_for(unreachable: bool, loading: bool) -> SessionEntryKind {
@@ -41,8 +41,15 @@ fn respawns_reachable_host_whose_pty_is_not_live() {
         row("dead", false, false),
         row("down", true, false),
     ];
-    let got = hosts_needing_respawn(&rows, |h| h == "h1");
-    assert_eq!(got, vec!["dead".to_string()]);
+    let got = lanes_needing_respawn(
+        &rows,
+        &crate::system::tmux::TmuxSystem::local_lane(),
+        |lane| lane.lane() == "h1",
+    );
+    assert_eq!(
+        got,
+        vec![crate::system::tmux::TmuxSystem::host_lane("dead")]
+    );
 }
 
 #[test]
@@ -53,14 +60,22 @@ fn skips_loading_and_unreachable_and_dedups() {
         row("x", false, true),  // still loading -> skip
         row("y", true, false),  // unreachable -> skip
     ];
-    let got = hosts_needing_respawn(&rows, |_| false); // nothing live
-    assert_eq!(got, vec!["h".to_string()]);
+    let got = lanes_needing_respawn(
+        &rows,
+        &crate::system::tmux::TmuxSystem::local_lane(),
+        |_| false,
+    ); // nothing live
+    assert_eq!(got, vec![crate::system::tmux::TmuxSystem::host_lane("h")]);
 }
 
 #[test]
 fn nothing_to_respawn_when_all_live() {
     let rows = vec![row("a", false, false), row("b", false, false)];
-    let got = hosts_needing_respawn(&rows, |_| true);
+    let got = lanes_needing_respawn(
+        &rows,
+        &crate::system::tmux::TmuxSystem::local_lane(),
+        |_| true,
+    );
     assert!(got.is_empty());
 }
 
@@ -70,7 +85,11 @@ fn skips_reachable_host_with_no_sessions() {
     // it must never be respawned — otherwise the attach PTY flaps and
     // the row sticks on "connecting…" forever.
     let rows = vec![no_sessions_row("empty")];
-    let got = hosts_needing_respawn(&rows, |_| false);
+    let got = lanes_needing_respawn(
+        &rows,
+        &crate::system::tmux::TmuxSystem::local_lane(),
+        |_| false,
+    );
     assert!(got.is_empty());
 }
 
@@ -92,7 +111,7 @@ fn mark_connecting_rows_reflects_pty_liveness() {
         row("up", false, false),   // PTY connected -> stays Live (green)
         row("down", true, false),  // unreachable -> untouched (red)
     ];
-    mark_connecting_rows(&mut rows, |h| h == "conn");
+    mark_connecting_rows(&mut rows, |lane| lane.lane() == "conn");
     assert_eq!(
         rows[0].kind,
         SessionEntryKind::Connecting,

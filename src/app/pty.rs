@@ -20,7 +20,7 @@ pub(super) fn pane_size(rows: u16, cols: u16) -> PtySize {
 
 impl TerminalPane {
     /// Resize the PTY and its vt100 screen together so they can't drift.
-    fn resize(&mut self, rows: u16, cols: u16) {
+    pub(super) fn resize(&mut self, rows: u16, cols: u16) {
         self.parser.screen_mut().set_size(rows, cols);
         let _ = self.pty.resize(pane_size(rows, cols));
     }
@@ -84,12 +84,7 @@ impl App {
         // Resize every PTY-backed pane, active or not — when the user
         // switches to a remote pane later we don't want it to inherit
         // a stale size.
-        self.local_terminal.resize(pty_rows, pty_cols);
-        for conn in self.remote.conns_mut().values_mut() {
-            if let Some(pane) = conn.pane.as_mut() {
-                pane.resize(pty_rows, pty_cols);
-            }
-        }
+        self.attachments.resize_all(pty_rows, pty_cols);
         // The upgrade pane runs in the foreground during a self-update; keep
         // it reflowing on resize too, or it stays at its spawn size until the
         // upgrade exits.
@@ -167,7 +162,8 @@ impl App {
     pub(super) fn respawn_pty(&mut self) -> io::Result<()> {
         let (pty_rows, pty_cols) = self.state.pty_size();
         let pty = Self::spawn_tmux_pty((pty_rows, pty_cols), None)?;
-        self.local_terminal = TerminalPane::new(pty, pty_rows, pty_cols);
+        self.attachments
+            .replace_primary(TerminalPane::new(pty, pty_rows, pty_cols));
         Ok(())
     }
 

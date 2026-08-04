@@ -716,6 +716,22 @@ impl AppState {
             })
     }
 
+    /// Compatibility lookup from the built-in tmux/SSH runtime key to its
+    /// lane. Attachment ownership remains lane-keyed; host-bearing effects use
+    /// this only at the adapter boundary until WP6 removes those effects.
+    pub fn lane_for_host(&self, host: &str) -> Option<&LaneId> {
+        self.system_sections
+            .iter()
+            .find(|section| section.runtime_key.as_deref() == Some(host))
+            .map(|section| &section.lane)
+            .or_else(|| {
+                self.entries
+                    .iter()
+                    .find(|entry| entry.host.as_deref() == Some(host))
+                    .map(|entry| &entry.lane)
+            })
+    }
+
     /// The lane attached to Deck's embedded local terminal, if mounted.
     pub fn primary_lane(&self) -> Option<&LaneId> {
         self.system_sections

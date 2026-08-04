@@ -202,20 +202,25 @@ the WP4 attachment-provider work.
 
 ### WP4 — Lane-keyed attachment manager
 
-- [ ] Introduce `AttachmentManager` keyed by `LaneId`.
+- [x] Introduce `AttachmentManager` keyed by `LaneId`.
 - [ ] Model each lane as `Disconnected`, `Connecting`, `Connected(surface)`, or
       `Failed(error)` with a monotonically increasing generation.
-- [ ] Migrate `App.local_terminal` and `RemoteConnManager` terminal ownership
+- [x] Migrate `App.local_terminal` and `RemoteConnManager` terminal ownership
       into the manager while retaining tmux-specific providers in adapters.
-- [ ] Route activate, reconnect, resize, input, render, and recovery through
+- [x] Route activate, reconnect, resize, input, render, and recovery through
       the active lane instead of host/local branches.
-- [ ] Make spawner failure transition to `Failed`; never leave a lane stuck in
+- [x] Make spawner failure transition to `Failed`; never leave a lane stuck in
       `Connecting`.
 - [ ] Preserve lazy remote connection and the always-available local lane as
       policy configured at composition time, not hard-coded fields in App.
 
 Exit: App owns one attachment manager and has no `local_terminal` or `remote`
 terminal fields; switching display lanes is lane-keyed.
+
+WP4 remaining: generation is still maintained by the private tmux/SSH adapter
+rather than stored alongside every attachment state, and remote connections
+retain the existing eager startup policy. Those two unchecked items require a
+follow-up; this package does not claim the WP4 exit complete.
 
 ### WP5 — TerminalSurface and OSC boundary
 

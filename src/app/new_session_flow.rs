@@ -249,12 +249,13 @@ impl App {
     ) {
         match host {
             None => self.switch_client(lane.clone(), name),
-            Some(host) => {
-                if self.remote.is_live(&host) {
-                    self.switch_to_remote(lane.clone(), &host, name);
+            Some(_) => {
+                let target = crate::model::session::SessionId::new(lane.clone(), name);
+                if self.attachments.is_live(lane) {
+                    self.switch_to_attachment(target);
                 } else {
-                    self.remote.set_pending_switch(lane.clone(), &host, name);
-                    self.respawn_remote_host(&host);
+                    self.attachments.set_pending_switch(target);
+                    self.respawn_attachment(lane);
                 }
             }
         }
