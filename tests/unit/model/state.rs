@@ -122,29 +122,22 @@ fn set_remote(state: &mut AppState, rows: Vec<SessionEntry>) {
 }
 
 #[test]
-fn mark_lane_reconnecting_sets_loading_clears_unreachable() {
-    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    set_remote(&mut state, vec![remote_row("h1", true, false)]);
-    state.mark_lane_reconnecting(&crate::system::tmux::TmuxSystem::host_lane("h1"));
-    let row = state
-        .entries
-        .iter()
-        .find(|entry| entry.lane != crate::system::tmux::TmuxSystem::local_lane())
-        .unwrap();
-    assert_eq!(row.kind, SessionEntryKind::Connecting);
-}
-
-#[test]
-fn mark_lane_reconnecting_ignores_other_lanes() {
-    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    set_remote(&mut state, vec![remote_row("h2", true, false)]);
-    state.mark_lane_reconnecting(&crate::system::tmux::TmuxSystem::host_lane("h1"));
-    let row = state
-        .entries
-        .iter()
-        .find(|entry| entry.lane != crate::system::tmux::TmuxSystem::local_lane())
-        .unwrap();
-    assert_eq!(row.kind, SessionEntryKind::Unreachable);
+fn mark_lane_reconnecting_only_updates_the_target_lane() {
+    let cases = [
+        ("target", "h1", SessionEntryKind::Connecting),
+        ("other lane", "h2", SessionEntryKind::Unreachable),
+    ];
+    for (name, row_host, expected) in cases {
+        let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+        set_remote(&mut state, vec![remote_row(row_host, true, false)]);
+        state.mark_lane_reconnecting(&crate::system::tmux::TmuxSystem::host_lane("h1"));
+        let row = state
+            .entries
+            .iter()
+            .find(|entry| entry.lane != crate::system::tmux::TmuxSystem::local_lane())
+            .unwrap();
+        assert_eq!(row.kind, expected, "{name}");
+    }
 }
 
 #[test]
@@ -1054,28 +1047,22 @@ fn agents_probe_interval_cycles_and_labels() {
 }
 
 #[test]
-fn step_clamped_forward_stops_at_last() {
-    // Mid-range advances by one; at the last index it stays put.
-    assert_eq!(step_clamped(0, 3, 1), 1);
-    assert_eq!(step_clamped(1, 3, 1), 2);
-    assert_eq!(step_clamped(2, 3, 1), 2);
-}
-
-#[test]
-fn step_clamped_back_stops_at_zero() {
-    assert_eq!(step_clamped(2, 3, -1), 1);
-    assert_eq!(step_clamped(1, 3, -1), 0);
-    assert_eq!(step_clamped(0, 3, -1), 0);
-}
-
-#[test]
-fn step_clamped_handles_empty_and_single() {
-    // len == 0 always yields 0, either direction.
-    assert_eq!(step_clamped(0, 0, 1), 0);
-    assert_eq!(step_clamped(0, 0, -1), 0);
-    // len == 1 pins to the only index.
-    assert_eq!(step_clamped(0, 1, 1), 0);
-    assert_eq!(step_clamped(0, 1, -1), 0);
+fn step_clamped_covers_movement_boundaries_and_degenerate_lists() {
+    let cases = [
+        ("forward", 0, 3, 1, 1),
+        ("forward to last", 1, 3, 1, 2),
+        ("forward at last", 2, 3, 1, 2),
+        ("backward", 2, 3, -1, 1),
+        ("backward to first", 1, 3, -1, 0),
+        ("backward at first", 0, 3, -1, 0),
+        ("empty forward", 0, 0, 1, 0),
+        ("empty backward", 0, 0, -1, 0),
+        ("single forward", 0, 1, 1, 0),
+        ("single backward", 0, 1, -1, 0),
+    ];
+    for (name, current, len, direction, expected) in cases {
+        assert_eq!(step_clamped(current, len, direction), expected, "{name}");
+    }
 }
 
 #[test]

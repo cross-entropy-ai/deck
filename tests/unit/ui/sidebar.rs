@@ -1,4 +1,62 @@
 use super::*;
+use ratatui::backend::TestBackend;
+use ratatui::layout::Rect;
+use ratatui::Terminal;
+
+use crate::geometry::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
+use crate::geometry::{HitKind, HitRegions};
+use crate::state::SidebarTab;
+use crate::summary_card::SummaryState;
+use crate::update::UpdateStatus;
+
+static IDLE_SUMMARY: SummaryState = SummaryState::Idle;
+
+fn sidebar_props<'a>(
+    sessions: &'a [crate::state::SessionEntry],
+    built: &'a BuiltLayout,
+    theme: &'a crate::theme::Theme,
+    keybindings: &'a Keybindings,
+) -> SidebarProps<'a> {
+    SidebarProps {
+        sessions,
+        built,
+        focus_target: None,
+        project_drag: None,
+        sidebar_active: true,
+        theme,
+        show_help: false,
+        confirm_kill: None,
+        rename_input: None,
+        show_borders: true,
+        sidebar_tab: SidebarTab::Projects,
+        agent_entries: &[],
+        summary: &IDLE_SUMMARY,
+        summary_age: None,
+        spinner_idx: 0,
+        summary_scroll: 0,
+        summary_card_height: 0,
+        tabs_mode: false,
+        keybindings,
+        update_available: None,
+    }
+}
+
+fn render_sidebar(
+    width: u16,
+    height: u16,
+    area: Option<Rect>,
+    props: SidebarProps<'_>,
+) -> (Terminal<TestBackend>, HitRegions) {
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut captured = HitRegions::default();
+    terminal
+        .draw(|frame| {
+            captured = super::draw_sidebar(frame, area.unwrap_or_else(|| frame.area()), props);
+        })
+        .unwrap();
+    (terminal, captured)
+}
 
 fn mount_tmux_sections(state: &mut crate::state::AppState) {
     use crate::system::System;
@@ -19,50 +77,20 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
     // In tabs mode the confirm-kill prompt must render and publish hit
     // regions; otherwise the mouse guard swallows every click while
     // confirm_kill is set and the clickable buttons never work.
-    use ratatui::{backend::TestBackend, Terminal};
-
     let theme = &crate::theme::THEMES[0];
     let built = BuiltLayout::default();
     let keybindings = Keybindings::default();
     let sessions: Vec<crate::state::SessionEntry> = Vec::new();
+    let props = SidebarProps {
+        confirm_kill: Some("victim"),
+        tabs_mode: true,
+        ..sidebar_props(&sessions, &built, theme, &keybindings)
+    };
+    let (terminal, captured) = render_sidebar(30, 12, None, props);
 
-    let backend = TestBackend::new(30, 12);
-    let mut terminal = Terminal::new(backend).unwrap();
-    let mut kill_hits = None;
-    terminal
-        .draw(|frame| {
-            let area = frame.area();
-            let hits = super::draw_sidebar(
-                frame,
-                area,
-                SidebarProps {
-                    sessions: &sessions,
-                    built: &built,
-                    focus_target: None,
-                    project_drag: None,
-                    sidebar_active: true,
-                    theme,
-                    show_help: false,
-                    confirm_kill: Some("victim"),
-                    rename_input: None,
-                    show_borders: true,
-                    sidebar_tab: crate::state::SidebarTab::Projects,
-                    agent_entries: &[],
-                    summary: &crate::summary_card::SummaryState::Idle,
-                    summary_age: None,
-                    spinner_idx: 0,
-                    summary_scroll: 0,
-                    summary_card_height: 0,
-                    tabs_mode: true,
-                    keybindings: &keybindings,
-                    update_available: None,
-                },
-            );
-            kill_hits = hits.kill;
-        })
-        .unwrap();
-
-    let hits = kill_hits.expect("kill prompt must publish hit regions in tabs mode");
+    let hits = captured
+        .kill
+        .expect("kill prompt must publish hit regions in tabs mode");
     assert_eq!(hits.no.y, hits.yes.y, "buttons share the button row");
     assert!(
         hits.no.x + hits.no.width <= hits.yes.x,
@@ -85,9 +113,7 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
 
 #[test]
 fn idle_summary_without_agents_is_compact_and_disabled() {
-    use crate::state::{AppState, SidebarTab};
-    use crate::summary_card::SummaryState;
-    use ratatui::{backend::TestBackend, Terminal};
+    use crate::state::AppState;
 
     let theme = &crate::theme::THEMES[0];
     let keybindings = Keybindings::default();
@@ -101,39 +127,15 @@ fn idle_summary_without_agents_is_compact_and_disabled() {
     let built = state.agents_layout();
     let sessions: Vec<crate::state::SessionEntry> = Vec::new();
 
-    let backend = TestBackend::new(30, 20);
-    let mut terminal = Terminal::new(backend).unwrap();
-    let mut captured = HitRegions::default();
-    terminal
-        .draw(|frame| {
-            captured = super::draw_sidebar(
-                frame,
-                frame.area(),
-                SidebarProps {
-                    sessions: &sessions,
-                    built: &built,
-                    focus_target: state.focus_target(),
-                    project_drag: None,
-                    sidebar_active: true,
-                    theme,
-                    show_help: false,
-                    confirm_kill: None,
-                    rename_input: None,
-                    show_borders: false,
-                    sidebar_tab: SidebarTab::Agents,
-                    agent_entries: &state.agent_entries,
-                    summary: &SummaryState::Idle,
-                    summary_age: None,
-                    spinner_idx: 0,
-                    summary_scroll: 0,
-                    summary_card_height: state.summary_card_height(),
-                    tabs_mode: false,
-                    keybindings: &keybindings,
-                    update_available: None,
-                },
-            );
-        })
-        .unwrap();
+    let props = SidebarProps {
+        focus_target: state.focus_target(),
+        show_borders: false,
+        sidebar_tab: SidebarTab::Agents,
+        agent_entries: &state.agent_entries,
+        summary_card_height: state.summary_card_height(),
+        ..sidebar_props(&sessions, &built, theme, &keybindings)
+    };
+    let (terminal, captured) = render_sidebar(30, 20, None, props);
 
     assert_eq!(captured.summary.card.unwrap().height, 3);
     assert!(captured.summary.button.is_none());
@@ -150,8 +152,6 @@ fn idle_summary_without_agents_is_compact_and_disabled() {
 #[test]
 fn overflowing_vertical_tabs_keep_focus_and_menu_visible() {
     use crate::state::{AppState, SessionEntry, SessionEntryKind};
-    use crate::summary_card::SummaryState;
-    use ratatui::{backend::TestBackend, Terminal};
 
     let theme = &crate::theme::THEMES[0];
     let keybindings = Keybindings::default();
@@ -169,39 +169,12 @@ fn overflowing_vertical_tabs_keep_focus_and_menu_visible() {
     let built = state.sidebar_layout(state.prefs.view_mode);
     let sessions = state.entries.clone();
 
-    let backend = TestBackend::new(40, 12);
-    let mut terminal = Terminal::new(backend).unwrap();
-    let mut captured = HitRegions::default();
-    terminal
-        .draw(|frame| {
-            captured = super::draw_sidebar(
-                frame,
-                Rect::new(0, 0, 40, 3),
-                SidebarProps {
-                    sessions: &sessions,
-                    built: &built,
-                    focus_target: state.focus_target(),
-                    project_drag: None,
-                    sidebar_active: true,
-                    theme,
-                    show_help: false,
-                    confirm_kill: None,
-                    rename_input: None,
-                    show_borders: true,
-                    sidebar_tab: SidebarTab::Projects,
-                    agent_entries: &[],
-                    summary: &SummaryState::Idle,
-                    summary_age: None,
-                    spinner_idx: 0,
-                    summary_scroll: 0,
-                    summary_card_height: 0,
-                    tabs_mode: true,
-                    keybindings: &keybindings,
-                    update_available: None,
-                },
-            );
-        })
-        .unwrap();
+    let props = SidebarProps {
+        focus_target: state.focus_target(),
+        tabs_mode: true,
+        ..sidebar_props(&sessions, &built, theme, &keybindings)
+    };
+    let (terminal, captured) = render_sidebar(40, 12, Some(Rect::new(0, 0, 40, 3)), props);
 
     let menu = captured.menu.expect("menu remains pinned on overflow");
     assert_eq!(
@@ -223,16 +196,6 @@ fn overflowing_vertical_tabs_keep_focus_and_menu_visible() {
 
 // --- one geometry, one hit-test ---
 
-use ratatui::backend::TestBackend;
-use ratatui::layout::Rect;
-use ratatui::Terminal;
-
-use crate::geometry::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
-use crate::geometry::{HitKind, HitRegions};
-use crate::state::SidebarTab;
-use crate::summary_card::SummaryState;
-use crate::update::UpdateStatus;
-
 /// Render the sidebar at `width` x `height` on the Projects tab and return
 /// the captured hit registry. `has_update` toggles the footer banner.
 fn render_hits(width: u16, height: u16, has_update: bool) -> HitRegions {
@@ -246,41 +209,11 @@ fn render_hits(width: u16, height: u16, has_update: bool) -> HitRegions {
         checked_at: 0,
     };
 
-    let backend = TestBackend::new(width, height);
-    let mut terminal = Terminal::new(backend).unwrap();
-    let mut captured = HitRegions::default();
-    terminal
-        .draw(|frame| {
-            let area = frame.area();
-            captured = super::draw_sidebar(
-                frame,
-                area,
-                SidebarProps {
-                    sessions: &sessions,
-                    built: &built,
-                    focus_target: None,
-                    project_drag: None,
-                    sidebar_active: true,
-                    theme,
-                    show_help: false,
-                    confirm_kill: None,
-                    rename_input: None,
-                    show_borders: true,
-                    sidebar_tab: SidebarTab::Projects,
-                    agent_entries: &[],
-                    summary: &SummaryState::Idle,
-                    summary_age: None,
-                    spinner_idx: 0,
-                    summary_scroll: 0,
-                    summary_card_height: 0,
-                    tabs_mode: false,
-                    keybindings: &keybindings,
-                    update_available: has_update.then_some(&update),
-                },
-            );
-        })
-        .unwrap();
-    captured
+    let props = SidebarProps {
+        update_available: has_update.then_some(&update),
+        ..sidebar_props(&sessions, &built, theme, &keybindings)
+    };
+    render_sidebar(width, height, None, props).1
 }
 
 #[test]
@@ -318,39 +251,13 @@ fn header_shows_live_counts_and_opens_new_local_session() {
     let built = state.sidebar_layout(state.prefs.view_mode);
     let sessions = state.entries.clone();
 
-    let backend = TestBackend::new(50, 20);
-    let mut terminal = Terminal::new(backend).unwrap();
-    let mut captured = HitRegions::default();
-    terminal
-        .draw(|frame| {
-            captured = super::draw_sidebar(
-                frame,
-                frame.area(),
-                SidebarProps {
-                    sessions: &sessions,
-                    built: &built,
-                    focus_target: state.focus_target(),
-                    project_drag: None,
-                    sidebar_active: true,
-                    theme,
-                    show_help: false,
-                    confirm_kill: None,
-                    rename_input: None,
-                    show_borders: false,
-                    sidebar_tab: SidebarTab::Projects,
-                    agent_entries: &state.agent_entries,
-                    summary: &SummaryState::Idle,
-                    summary_age: None,
-                    spinner_idx: 0,
-                    summary_scroll: 0,
-                    summary_card_height: 0,
-                    tabs_mode: false,
-                    keybindings: &keybindings,
-                    update_available: None,
-                },
-            );
-        })
-        .unwrap();
+    let props = SidebarProps {
+        focus_target: state.focus_target(),
+        show_borders: false,
+        agent_entries: &state.agent_entries,
+        ..sidebar_props(&sessions, &built, theme, &keybindings)
+    };
+    let (terminal, captured) = render_sidebar(50, 20, None, props);
 
     let first_row: String = (0..50)
         .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
@@ -393,38 +300,12 @@ fn footer_is_contextual_and_drops_persistent_version_text() {
         let built = BuiltLayout::default();
         let keybindings = Keybindings::default();
         let sessions: Vec<crate::state::SessionEntry> = Vec::new();
-        let backend = TestBackend::new(50, 12);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                super::draw_sidebar(
-                    frame,
-                    frame.area(),
-                    SidebarProps {
-                        sessions: &sessions,
-                        built: &built,
-                        focus_target: None,
-                        project_drag: None,
-                        sidebar_active,
-                        theme,
-                        show_help: false,
-                        confirm_kill: None,
-                        rename_input: None,
-                        show_borders: false,
-                        sidebar_tab: SidebarTab::Projects,
-                        agent_entries: &[],
-                        summary: &SummaryState::Idle,
-                        summary_age: None,
-                        spinner_idx: 0,
-                        summary_scroll: 0,
-                        summary_card_height: 0,
-                        tabs_mode: false,
-                        keybindings: &keybindings,
-                        update_available: None,
-                    },
-                );
-            })
-            .unwrap();
+        let props = SidebarProps {
+            sidebar_active,
+            show_borders: false,
+            ..sidebar_props(&sessions, &built, theme, &keybindings)
+        };
+        let (terminal, _) = render_sidebar(50, 12, None, props);
         terminal
             .backend()
             .buffer()
@@ -488,39 +369,14 @@ fn agents_tab_publishes_clickable_agent_entries() {
     let agent_entries = state.agent_entries.clone();
     let sessions: Vec<crate::state::SessionEntry> = Vec::new();
 
-    let backend = TestBackend::new(40, 24);
-    let mut terminal = Terminal::new(backend).unwrap();
-    let mut captured = HitRegions::default();
-    terminal
-        .draw(|frame| {
-            captured = super::draw_sidebar(
-                frame,
-                frame.area(),
-                SidebarProps {
-                    sessions: &sessions,
-                    built: &built,
-                    focus_target: state.focus_target(),
-                    project_drag: None,
-                    sidebar_active: true,
-                    theme,
-                    show_help: false,
-                    confirm_kill: None,
-                    rename_input: None,
-                    show_borders: true,
-                    sidebar_tab: SidebarTab::Agents,
-                    agent_entries: &agent_entries,
-                    summary: &SummaryState::Idle,
-                    summary_age: None,
-                    spinner_idx: 0,
-                    summary_scroll: 0,
-                    summary_card_height: state.summary_card_height(),
-                    tabs_mode: false,
-                    keybindings: &keybindings,
-                    update_available: None,
-                },
-            );
-        })
-        .unwrap();
+    let props = SidebarProps {
+        focus_target: state.focus_target(),
+        sidebar_tab: SidebarTab::Agents,
+        agent_entries: &agent_entries,
+        summary_card_height: state.summary_card_height(),
+        ..sidebar_props(&sessions, &built, theme, &keybindings)
+    };
+    let (_, captured) = render_sidebar(40, 24, None, props);
 
     // Each agent row publishes a hit, in agent_entries order, with its pane.
     let panes: Vec<&str> = captured
@@ -581,39 +437,11 @@ fn remote_divider_buttons_register_below_their_top_margin() {
     let built = state.sidebar_layout(ViewMode::Expanded);
     let sessions = state.entries.clone();
 
-    let backend = TestBackend::new(40, 24);
-    let mut terminal = Terminal::new(backend).unwrap();
-    let mut captured = HitRegions::default();
-    terminal
-        .draw(|frame| {
-            captured = super::draw_sidebar(
-                frame,
-                frame.area(),
-                SidebarProps {
-                    sessions: &sessions,
-                    built: &built,
-                    focus_target: state.focus_target(),
-                    project_drag: None,
-                    sidebar_active: true,
-                    theme,
-                    show_help: false,
-                    confirm_kill: None,
-                    rename_input: None,
-                    show_borders: true,
-                    sidebar_tab: SidebarTab::Projects,
-                    agent_entries: &[],
-                    summary: &SummaryState::Idle,
-                    summary_age: None,
-                    spinner_idx: 0,
-                    summary_scroll: 0,
-                    summary_card_height: 0,
-                    tabs_mode: false,
-                    keybindings: &keybindings,
-                    update_available: None,
-                },
-            );
-        })
-        .unwrap();
+    let props = SidebarProps {
+        focus_target: state.focus_target(),
+        ..sidebar_props(&sessions, &built, theme, &keybindings)
+    };
+    let (terminal, captured) = render_sidebar(40, 24, None, props);
 
     // The remote divider publishes both of its buttons, in order.
     let h1: Vec<&crate::geometry::DividerHit> = captured
@@ -693,39 +521,11 @@ fn remote_divider_shows_forward_count() {
     let built = state.sidebar_layout(ViewMode::Expanded);
     let sessions = state.entries.clone();
 
-    let backend = TestBackend::new(40, 24);
-    let mut terminal = Terminal::new(backend).unwrap();
-    let mut captured = HitRegions::default();
-    terminal
-        .draw(|frame| {
-            captured = super::draw_sidebar(
-                frame,
-                frame.area(),
-                SidebarProps {
-                    sessions: &sessions,
-                    built: &built,
-                    focus_target: state.focus_target(),
-                    project_drag: None,
-                    sidebar_active: true,
-                    theme,
-                    show_help: false,
-                    confirm_kill: None,
-                    rename_input: None,
-                    show_borders: true,
-                    sidebar_tab: SidebarTab::Projects,
-                    agent_entries: &[],
-                    summary: &SummaryState::Idle,
-                    summary_age: None,
-                    spinner_idx: 0,
-                    summary_scroll: 0,
-                    summary_card_height: 0,
-                    tabs_mode: false,
-                    keybindings: &keybindings,
-                    update_available: None,
-                },
-            );
-        })
-        .unwrap();
+    let props = SidebarProps {
+        focus_target: state.focus_target(),
+        ..sidebar_props(&sessions, &built, theme, &keybindings)
+    };
+    let (terminal, captured) = render_sidebar(40, 24, None, props);
 
     // Buttons register left→right as badge, reconnect, more.
     let h1: Vec<&crate::geometry::DividerHit> = captured
