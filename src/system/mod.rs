@@ -174,6 +174,31 @@ pub enum LaneConfigOutcome {
     Unsupported,
 }
 
+/// Attachment-owned connection facts supplied transiently while a backend
+/// constructs an operational focus transport. This is not persisted lane
+/// metadata and cannot be used as a connection lookup key.
+pub(crate) enum AttachmentEndpoint<'a> {
+    Primary { client_locator: &'a str },
+    Managed { marker_id: u64 },
+}
+
+pub(crate) trait FocusTransportProvider: Send + Sync {
+    fn focus_transport(
+        &self,
+        lane: &LaneId,
+        endpoint: AttachmentEndpoint<'_>,
+    ) -> Option<crate::focus::FocusTransport>;
+}
+
+pub(crate) trait SummaryTransportProvider: Send + Sync {
+    fn summary_pane(
+        &self,
+        lane: &LaneId,
+        id: String,
+        target: String,
+    ) -> Option<crate::summary::SummaryPane>;
+}
+
 /// Backend-owned identifier for a lane action. The shell stores and returns
 /// this value without decoding string commands or matching system ids.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -226,6 +251,8 @@ pub struct LaneRuntime<'a> {
     session_control: Option<&'a dyn SessionControlProvider>,
     lane_actions: Option<&'a dyn LaneActionProvider>,
     lane_config: Option<&'a dyn LaneConfigProvider>,
+    focus_transport: Option<&'a dyn FocusTransportProvider>,
+    summary_transport: Option<&'a dyn SummaryTransportProvider>,
     pub session_capabilities: SessionCapabilities,
     pub lane_capabilities: LaneCapabilities,
 }
@@ -238,6 +265,8 @@ impl<'a> LaneRuntime<'a> {
             session_control: None,
             lane_actions: None,
             lane_config: None,
+            focus_transport: None,
+            summary_transport: None,
             session_capabilities: SessionCapabilities::default(),
             lane_capabilities: LaneCapabilities::default(),
         }
@@ -260,6 +289,19 @@ impl<'a> LaneRuntime<'a> {
 
     pub fn with_lane_config(mut self, config: &'a dyn LaneConfigProvider) -> Self {
         self.lane_config = Some(config);
+        self
+    }
+
+    pub(crate) fn with_focus_transport(mut self, provider: &'a dyn FocusTransportProvider) -> Self {
+        self.focus_transport = Some(provider);
+        self
+    }
+
+    pub(crate) fn with_summary_transport(
+        mut self,
+        provider: &'a dyn SummaryTransportProvider,
+    ) -> Self {
+        self.summary_transport = Some(provider);
         self
     }
 
@@ -295,6 +337,14 @@ impl<'a> LaneRuntime<'a> {
 
     pub fn lane_config(&self) -> Option<&'a dyn LaneConfigProvider> {
         self.lane_config
+    }
+
+    pub(crate) fn focus_transport(&self) -> Option<&'a dyn FocusTransportProvider> {
+        self.focus_transport
+    }
+
+    pub(crate) fn summary_transport(&self) -> Option<&'a dyn SummaryTransportProvider> {
+        self.summary_transport
     }
 }
 
@@ -483,6 +533,8 @@ mod tests {
         assert!(runtime.catalog().is_some());
         assert!(runtime.session_control().is_some());
         assert!(runtime.lane_actions().is_some());
+        assert!(runtime.focus_transport().is_some());
+        assert!(runtime.summary_transport().is_some());
     }
 
     #[test]
@@ -519,6 +571,8 @@ mod tests {
             .expect("snapshot");
         assert_eq!(snapshot.sessions[0].name, "fixture");
         assert!(runtime.session_control().is_none());
+        assert!(runtime.focus_transport().is_none());
+        assert!(runtime.summary_transport().is_none());
         assert!(matches!(
             runtime
                 .lane_actions()
@@ -566,5 +620,39 @@ mod tests {
             LaneConfigProvider::remove_lane(&system, &tmux::TmuxSystem::local_lane(), &mut config,),
             LaneConfigOutcome::Unsupported
         );
+    }
+
+    #[test]
+    fn tmux_transport_providers_build_backend_specific_targets() {
+        let system = tmux::TmuxSystem::default();
+        let local = tmux::TmuxSystem::local_lane();
+        let remote = tmux::TmuxSystem::host_lane("prod");
+
+        assert!(matches!(
+            FocusTransportProvider::focus_transport(
+                &system,
+                &local,
+                AttachmentEndpoint::Primary {
+                    client_locator: "/dev/ttys001",
+                },
+            ),
+            Some(crate::focus::FocusTransport::Local { client_tty })
+                if client_tty == "/dev/ttys001"
+        ));
+        assert!(matches!(
+            FocusTransportProvider::focus_transport(
+                &system,
+                &remote,
+                AttachmentEndpoint::Managed { marker_id: 7 },
+            ),
+            Some(crate::focus::FocusTransport::Remote { host, marker_id })
+                if host == "prod" && marker_id == 7
+        ));
+
+        let pane =
+            SummaryTransportProvider::summary_pane(&system, &remote, "prod:1".into(), "%9".into())
+                .expect("summary transport");
+        assert_eq!(pane.host.as_deref(), Some("prod"));
+        assert_eq!(pane.target, "%9");
     }
 }

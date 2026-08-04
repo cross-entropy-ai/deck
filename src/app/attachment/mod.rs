@@ -285,6 +285,32 @@ impl AttachmentManager {
         Self::remote_host(lane).and_then(|host| self.remote.live_marker_id(host))
     }
 
+    pub(crate) fn focus_transport(
+        &self,
+        lane: &LaneId,
+        provider: &dyn crate::system::FocusTransportProvider,
+    ) -> Option<(crate::focus::FocusTransport, u64)> {
+        if lane == &self.primary {
+            let terminal = self.terminal(lane)?;
+            provider
+                .focus_transport(
+                    lane,
+                    crate::system::AttachmentEndpoint::Primary {
+                        client_locator: terminal.slave_tty(),
+                    },
+                )
+                .map(|transport| (transport, 0))
+        } else {
+            let marker_id = self.live_marker_id(lane)?;
+            provider
+                .focus_transport(
+                    lane,
+                    crate::system::AttachmentEndpoint::Managed { marker_id },
+                )
+                .map(|transport| (transport, marker_id))
+        }
+    }
+
     pub(crate) fn marker_matches(&self, lane: &LaneId, marker_id: u64) -> bool {
         lane == &self.primary
             || (marker_id > 0 && self.generation(lane) > 0 && self.marker_id(lane) == marker_id)

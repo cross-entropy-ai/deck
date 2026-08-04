@@ -14,9 +14,10 @@ use crate::session::SessionControl;
 use crate::{remote_tmux, tmux};
 
 use super::{
-    CatalogError, ControlCtx, LaneActionId, LaneActionProvider, LaneCapabilities,
-    LaneConfigOutcome, LaneConfigProvider, LaneRuntime, LaneShellIntent, LaneSnapshot, SectionDef,
-    SessionCapabilities, SessionCatalog, SessionControlProvider, SnapshotCtx, SnapshotMode, System,
+    AttachmentEndpoint, CatalogError, ControlCtx, FocusTransportProvider, LaneActionId,
+    LaneActionProvider, LaneCapabilities, LaneConfigOutcome, LaneConfigProvider, LaneRuntime,
+    LaneShellIntent, LaneSnapshot, SectionDef, SessionCapabilities, SessionCatalog,
+    SessionControlProvider, SnapshotCtx, SnapshotMode, SummaryTransportProvider, System,
 };
 
 /// This system's id — the `system` half of every [`LaneId`] it produces.
@@ -185,7 +186,47 @@ impl System for TmuxSystem {
                 .with_session_control(self)
                 .with_lane_actions(self)
                 .with_lane_config(self)
+                .with_focus_transport(self)
+                .with_summary_transport(self)
                 .with_capabilities(tmux_session_capabilities(), tmux_lane_capabilities())
+        })
+    }
+}
+
+impl FocusTransportProvider for TmuxSystem {
+    fn focus_transport(
+        &self,
+        lane: &LaneId,
+        endpoint: AttachmentEndpoint<'_>,
+    ) -> Option<crate::focus::FocusTransport> {
+        match (Self::host_of(lane), endpoint) {
+            (None, AttachmentEndpoint::Primary { client_locator }) => {
+                Some(crate::focus::FocusTransport::Local {
+                    client_tty: client_locator.to_string(),
+                })
+            }
+            (Some(host), AttachmentEndpoint::Managed { marker_id }) if marker_id > 0 => {
+                Some(crate::focus::FocusTransport::Remote {
+                    host: host.to_string(),
+                    marker_id,
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
+impl SummaryTransportProvider for TmuxSystem {
+    fn summary_pane(
+        &self,
+        lane: &LaneId,
+        id: String,
+        target: String,
+    ) -> Option<crate::summary::SummaryPane> {
+        (lane.system() == TMUX).then(|| crate::summary::SummaryPane {
+            host: Self::host_of(lane).map(str::to_string),
+            id,
+            target,
         })
     }
 }
