@@ -23,7 +23,7 @@
 //!   1. [`reconcile_spawn_event`] decides staleness **purely from the
 //!      generation table**, never from `state.config_remotes`. So a removal
 //!      path may bump the generation before or after mutating
-//!      `config_remotes` (the `RemoveRemoteFromList` reducer retains config
+//!      `config_remotes` (the `RemoveLane` reducer retains config
 //!      first and offboards later; the reload diff offboards first). Don't
 //!      make reconcile read `config_remotes` — keying off config gets the
 //!      ordering subtly wrong.

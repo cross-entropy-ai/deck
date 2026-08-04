@@ -18,7 +18,7 @@ impl AppState {
         };
         let item = match view_mode {
             ViewMode::Compact => {
-                let prefix = e.host.as_deref().unwrap_or("local");
+                let prefix = self.section_title(&e.lane);
                 BasicItem::new(format!("{prefix}:{name}"))
             }
             ViewMode::Expanded => {
@@ -205,10 +205,8 @@ impl AppState {
     /// a Projects host always carrying a `NoSessions` row — so it always holds a
     /// focus slot. `agent_entries` and the layout both walk this.
     fn agent_entries_for(&self, lane: &LaneId) -> Vec<AgentEntry> {
-        let host = self.host_for_lane(lane);
         let mk = |kind| AgentEntry {
             lane: lane.clone(),
-            host: host.map(str::to_string),
             kind,
         };
         match self.section_agents(lane) {

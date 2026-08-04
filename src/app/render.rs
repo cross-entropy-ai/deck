@@ -61,24 +61,24 @@ impl App {
         let main_view = s.main_view;
         let warning_state = self.warning_state.as_ref();
         let remote_placeholder = s.focused_remote_placeholder().map(|entry| {
-            let host = entry.host.as_deref().unwrap_or_default();
+            let origin = s.section_title(&entry.lane);
             let (title, detail) = match entry.kind {
                 crate::state::SessionEntryKind::Connecting => (
-                    format!("Connecting to @{host}"),
+                    format!("Connecting to @{origin}"),
                     "Waiting for the remote terminal to connect".to_string(),
                 ),
                 crate::state::SessionEntryKind::Unreachable => (
-                    format!("Cannot reach @{host}"),
+                    format!("Cannot reach @{origin}"),
                     "Reconnect this host from the sidebar".to_string(),
                 ),
                 crate::state::SessionEntryKind::NoSessions => (
-                    format!("No sessions for @{host}"),
+                    format!("No sessions for @{origin}"),
                     "Create one from the host menu to attach here".to_string(),
                 ),
                 // A focused remote placeholder is never `Live`, but keep a
                 // sensible fallback string rather than panic.
                 crate::state::SessionEntryKind::Live { .. } => (
-                    format!("No attachable session for @{host}"),
+                    format!("No attachable session for @{origin}"),
                     "Create one from the host menu to attach here".to_string(),
                 ),
             };
@@ -338,7 +338,11 @@ impl App {
                     filtered: &ns.picker.filtered,
                     selected: ns.picker.selected,
                     error: ns.picker.error.as_deref(),
-                    host: ns.remote_host.as_deref(),
+                    host: ns
+                        .target_lane
+                        .as_ref()
+                        .filter(|lane| !s.is_primary_lane(lane))
+                        .and_then(|lane| s.host_for_lane(lane)),
                 };
                 ui::draw_new_session(frame, frame.area(), &view, theme);
             }

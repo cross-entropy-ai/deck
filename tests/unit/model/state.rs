@@ -1,9 +1,26 @@
 use super::*;
 
+#[test]
+fn generic_session_and_effect_dtos_do_not_regain_host_sentinels() {
+    let state_source = include_str!("../../../src/model/state/mod.rs");
+    let effects_source = include_str!("../../../src/model/effects.rs");
+    assert!(!state_source.contains("pub host: Option<String>"));
+    for removed in [
+        "ShowRemotePlaceholder",
+        "RemoveRemoteHost",
+        "OpenRemoteNewSessionPicker",
+        "SaveRemoteSessionOrder",
+    ] {
+        assert!(
+            !effects_source.contains(removed),
+            "legacy effect: {removed}"
+        );
+    }
+}
+
 fn make_session(name: &str) -> SessionEntry {
     SessionEntry {
         lane: crate::system::tmux::TmuxSystem::local_lane(),
-        host: None,
         name: name.to_string(),
         dir: format!("/tmp/{name}"),
         kind: SessionEntryKind::Live { is_current: false },
@@ -47,7 +64,6 @@ fn kind_for(unreachable: bool, loading: bool) -> SessionEntryKind {
 fn remote_row(host: &str, unreachable: bool, loading: bool) -> SessionEntry {
     SessionEntry {
         lane: crate::system::tmux::TmuxSystem::host_lane(host),
-        host: Some(host.to_string()),
         name: "s".to_string(),
         dir: "/tmp".to_string(),
         kind: kind_for(unreachable, loading),
@@ -57,25 +73,34 @@ fn remote_row(host: &str, unreachable: bool, loading: bool) -> SessionEntry {
 /// Set the remote rows on a freshly-built state, keeping the local block
 /// (built by `make_state`) at the front so `entries` stays in flat order.
 fn set_remote(state: &mut AppState, rows: Vec<SessionEntry>) {
-    state.entries.retain(|e| e.is_local());
+    let primary = crate::system::tmux::TmuxSystem::local_lane();
+    state.entries.retain(|entry| entry.lane == primary);
     state.entries.extend(rows);
 }
 
 #[test]
-fn mark_host_reconnecting_sets_loading_clears_unreachable() {
+fn mark_lane_reconnecting_sets_loading_clears_unreachable() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     set_remote(&mut state, vec![remote_row("h1", true, false)]);
-    state.mark_host_reconnecting("h1");
-    let row = state.entries.iter().find(|e| !e.is_local()).unwrap();
+    state.mark_lane_reconnecting(&crate::system::tmux::TmuxSystem::host_lane("h1"));
+    let row = state
+        .entries
+        .iter()
+        .find(|entry| entry.lane != crate::system::tmux::TmuxSystem::local_lane())
+        .unwrap();
     assert_eq!(row.kind, SessionEntryKind::Connecting);
 }
 
 #[test]
-fn mark_host_reconnecting_ignores_other_hosts() {
+fn mark_lane_reconnecting_ignores_other_lanes() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     set_remote(&mut state, vec![remote_row("h2", true, false)]);
-    state.mark_host_reconnecting("h1");
-    let row = state.entries.iter().find(|e| !e.is_local()).unwrap();
+    state.mark_lane_reconnecting(&crate::system::tmux::TmuxSystem::host_lane("h1"));
+    let row = state
+        .entries
+        .iter()
+        .find(|entry| entry.lane != crate::system::tmux::TmuxSystem::local_lane())
+        .unwrap();
     assert_eq!(row.kind, SessionEntryKind::Unreachable);
 }
 
@@ -98,7 +123,7 @@ fn agent_entries_ordered_local_then_hosts() {
     let hosts: Vec<Option<&str>> = state
         .agent_entries
         .iter()
-        .map(|r| r.host.as_deref())
+        .map(|entry| crate::system::tmux::TmuxSystem::host_of(&entry.lane))
         .collect();
     assert_eq!(hosts, vec![None, Some("h1")]);
 }
@@ -533,7 +558,9 @@ fn sidebar_layout_omits_local_header_in_compact() {
 #[test]
 fn sidebar_layout_keeps_local_divider_when_empty() {
     let mut empty = make_state(LayoutMode::Horizontal, false, 80, 24);
-    empty.entries.retain(|e| !e.is_local());
+    empty
+        .entries
+        .retain(|entry| entry.lane != crate::system::tmux::TmuxSystem::local_lane());
     empty.clamp_projects_focus();
     let built = empty.sidebar_layout(ViewMode::Expanded);
     assert!(
@@ -589,7 +616,10 @@ fn sidebar_footer_height_matches_renderer() {
 fn local_divider_menu_greys_remote_only_items() {
     use crate::menu::{ContextMenu, MenuItem, MenuKind};
     let menu = ContextMenu {
-        kind: MenuKind::LocalDivider,
+        kind: MenuKind::LaneDivider {
+            lane: crate::system::tmux::TmuxSystem::local_lane(),
+            primary: true,
+        },
         x: 0,
         y: 0,
         selected: 1,
@@ -727,7 +757,10 @@ fn vertical_tabs_hit_test_remote_sessions() {
     assert_eq!(hit, Some(2));
 
     let entry = state.entry_at(FocusTarget(hit.unwrap())).unwrap();
-    assert_eq!(entry.host.as_deref(), Some("h1"));
+    assert_eq!(
+        crate::system::tmux::TmuxSystem::host_of(&entry.lane),
+        Some("h1")
+    );
     assert_eq!(entry.name, "s");
 }
 
@@ -1069,16 +1102,26 @@ fn session_indexing_matches_direct_storage_after_filtered_removal() {
     // the entry at that exact position.
     for (i, expected) in ["a", "b", "c"].iter().enumerate() {
         let entry = state.entry_at(FocusTarget(i)).unwrap();
-        assert!(entry.is_local(), "flat index {i} should be local");
+        assert_eq!(
+            entry.lane,
+            crate::system::tmux::TmuxSystem::local_lane(),
+            "flat index {i} should be local"
+        );
         assert_eq!(&entry.name, expected);
-        assert_eq!(state.focusable_index_for(None, expected), Some(i));
+        assert_eq!(
+            state.focusable_index_for(&crate::system::tmux::TmuxSystem::local_lane(), expected),
+            Some(i)
+        );
     }
     // Remote rows follow the local block.
     let remote_flat = state.local_count();
     let entry = state.entry_at(FocusTarget(remote_flat)).unwrap();
-    assert_eq!(entry.host.as_deref(), Some("h1"));
     assert_eq!(
-        state.focusable_index_for(Some("h1"), "s"),
+        crate::system::tmux::TmuxSystem::host_of(&entry.lane),
+        Some("h1")
+    );
+    assert_eq!(
+        state.focusable_index_for(&crate::system::tmux::TmuxSystem::host_lane("h1"), "s"),
         Some(remote_flat)
     );
     assert_eq!(state.focusable_count(), 4);
@@ -1096,7 +1139,6 @@ fn flat_index_decodes_to_host_and_kind() {
             remote_row("d", true, false),  // Unreachable
             SessionEntry {
                 lane: crate::system::tmux::TmuxSystem::host_lane("e"),
-                host: Some("e".into()),
                 name: String::new(),
                 dir: String::new(),
                 kind: SessionEntryKind::NoSessions,
@@ -1106,14 +1148,21 @@ fn flat_index_decodes_to_host_and_kind() {
 
     // 0,1 local; 2 remote Live; 3 remote Unreachable; 4 remote NoSessions.
     let e0 = state.entry_at(FocusTarget(0)).unwrap();
-    assert!(e0.is_local() && e0.is_attachable());
+    assert_eq!(e0.lane, crate::system::tmux::TmuxSystem::local_lane());
+    assert!(e0.is_attachable());
 
     let e2 = state.entry_at(FocusTarget(2)).unwrap();
-    assert_eq!(e2.host.as_deref(), Some("h"));
+    assert_eq!(
+        crate::system::tmux::TmuxSystem::host_of(&e2.lane),
+        Some("h")
+    );
     assert!(e2.is_attachable());
 
     let e3 = state.entry_at(FocusTarget(3)).unwrap();
-    assert_eq!(e3.host.as_deref(), Some("d"));
+    assert_eq!(
+        crate::system::tmux::TmuxSystem::host_of(&e3.lane),
+        Some("d")
+    );
     assert_eq!(e3.kind, SessionEntryKind::Unreachable);
     assert!(!e3.is_attachable());
 
@@ -1123,8 +1172,14 @@ fn flat_index_decodes_to_host_and_kind() {
 
     assert!(state.entry_at(FocusTarget(5)).is_none());
     // Section key reads off the entry's host directly.
-    assert_eq!(state.section_key_of_focus(0), None);
-    assert_eq!(state.section_key_of_focus(2), Some("h".to_string()));
+    assert_eq!(
+        state.section_key_of_focus(0),
+        Some(crate::system::tmux::TmuxSystem::local_lane())
+    );
+    assert_eq!(
+        state.section_key_of_focus(2),
+        Some(crate::system::tmux::TmuxSystem::host_lane("h"))
+    );
 }
 
 #[test]
@@ -1135,7 +1190,6 @@ fn kill_policy_over_entries_guards_placeholder_and_last_remote() {
         vec![
             SessionEntry {
                 lane: crate::system::tmux::TmuxSystem::host_lane("e"),
-                host: Some("e".into()),
                 name: String::new(),
                 dir: String::new(),
                 kind: SessionEntryKind::NoSessions,
@@ -1152,7 +1206,7 @@ fn kill_policy_over_entries_guards_placeholder_and_last_remote() {
     let blocked =
         |s: &AppState, i: usize| s.kill_blocked_reason(s.entry_at(FocusTarget(i)).unwrap());
     assert_eq!(blocked(&state, 2), Some("no session to kill")); // placeholder
-    assert_eq!(blocked(&state, 3), Some("last session on host")); // solo
+    assert_eq!(blocked(&state, 3), Some("last session on lane")); // solo
     assert_eq!(blocked(&state, 4), None); // pair has a sibling
     assert_eq!(blocked(&state, 0), None); // two locals: killable
 }
@@ -1168,7 +1222,6 @@ fn no_sessions_name_is_a_normal_live_session_now() {
         vec![
             SessionEntry {
                 lane: crate::system::tmux::TmuxSystem::host_lane("h"),
-                host: Some("h".into()),
                 name: crate::state::NO_SESSIONS_LABEL.to_string(),
                 dir: "/tmp".into(),
                 kind: SessionEntryKind::Live { is_current: false },

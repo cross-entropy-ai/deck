@@ -73,7 +73,6 @@ impl App {
                 continue;
             }
 
-            let runtime_key = self.state.host_for_lane(&lane).map(str::to_string);
             let is_primary = self
                 .state
                 .system_sections
@@ -117,7 +116,6 @@ impl App {
 
                     fresh.extend(snapshot.sessions.into_iter().map(|session| SessionEntry {
                         lane: lane.clone(),
-                        host: runtime_key.clone(),
                         name: session.name,
                         dir: session.dir,
                         kind: SessionEntryKind::Live {
@@ -125,24 +123,17 @@ impl App {
                         },
                     }));
 
-                    if fresh.is_empty() {
-                        if let Some(key) = runtime_key.as_deref() {
-                            fresh.push(lane_placeholder(
-                                lane.clone(),
-                                key,
-                                SessionEntryKind::NoSessions,
-                            ));
-                        }
+                    if fresh.is_empty() && !is_primary {
+                        fresh.push(lane_placeholder(lane.clone(), SessionEntryKind::NoSessions));
                     }
                 }
                 Err(LaneRefreshError::Catalog(crate::system::CatalogError::Unreachable(_))) => {
                     if agents_requested {
                         self.state.agents.remove(&lane);
                     }
-                    if let Some(key) = runtime_key.as_deref() {
+                    if !is_primary {
                         fresh.push(lane_placeholder(
                             lane.clone(),
-                            key,
                             SessionEntryKind::Unreachable,
                         ));
                     }
@@ -205,10 +196,9 @@ impl App {
     }
 }
 
-fn lane_placeholder(lane: crate::lane::LaneId, key: &str, kind: SessionEntryKind) -> SessionEntry {
+fn lane_placeholder(lane: crate::lane::LaneId, kind: SessionEntryKind) -> SessionEntry {
     SessionEntry {
         lane,
-        host: Some(key.to_string()),
         name: String::new(),
         dir: String::new(),
         kind,

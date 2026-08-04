@@ -117,11 +117,12 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
         Command::ToggleSection => {
             // Toggle the group the focused row lives in. Both tabs fold
             // independently, so read the focused section from the active tab.
-            if state.agents_tab_active() {
-                Action::ToggleSection(state.agent_section_key_of_focus())
+            let lane = if state.agents_tab_active() {
+                state.agent_section_key_of_focus()
             } else {
-                Action::ToggleSection(state.section_key_of_focus(state.focused))
-            }
+                state.section_key_of_focus(state.focused)
+            };
+            lane.map_or(Action::None, Action::ToggleSection)
         }
         Command::FocusNext => Action::FocusNext,
         Command::FocusPrev => Action::FocusPrev,
@@ -167,7 +168,7 @@ fn open_port_forwards_action(state: &AppState) -> Action {
         if let Some(host) = state
             .focus_target()
             .and_then(|target| state.entry_at(target))
-            .and_then(|entry| entry.host.clone())
+            .and_then(|entry| state.host_for_lane(&entry.lane).map(str::to_string))
         {
             return Action::Pf(PfAction::Open(host));
         }

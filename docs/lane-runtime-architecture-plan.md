@@ -244,12 +244,13 @@ remain separate from the parent-terminal auto-theme probe in `termbg`.
 
 ### WP6 — Backend actions and compatibility-seam removal
 
-- [ ] Replace `ReconnectHost`, `OpenForwardOverlay`, `RemoveRemoteHost`, and
+- [x] Replace `ReconnectHost`, `OpenForwardOverlay`, `RemoveRemoteHost`, and
       host-based divider menu effects with lane actions/capabilities.
-- [ ] Move tmux/SSH-specific action interpretation entirely into its runtime
+- [x] Move tmux/SSH-specific action interpretation entirely into its runtime
       adapter, returning generic shell intents only where UI is required.
-- [ ] Remove `SessionEntry.host`, `SectionDef.runtime_key`, host-keyed runtime
-      maps, and `Option<String>` local/remote sentinels from generic layers.
+- [x] Remove `SessionEntry.host` and host/local sentinels from generic session,
+      overlay, menu, geometry, action, and effect DTOs.
+- [ ] Remove `SectionDef.runtime_key` and remaining host-keyed runtime maps.
 - [ ] Update config adapters, documentation, module comments, and naming.
 - [ ] Delete dead compatibility code only after `rg` proves it has no callers.
 

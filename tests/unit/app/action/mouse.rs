@@ -43,7 +43,6 @@ fn state_with_projects() -> AppState {
         .into_iter()
         .map(|name| SessionEntry {
             lane: crate::system::tmux::TmuxSystem::local_lane(),
-            host: None,
             name: name.into(),
             dir: "/tmp".into(),
             kind: SessionEntryKind::Live { is_current: false },

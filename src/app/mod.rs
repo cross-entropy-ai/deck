@@ -167,7 +167,6 @@ impl App {
         state.config_remotes = cfg.remotes.clone();
         state.system_sections = systems.sections();
 
-        let remotes: Vec<String> = cfg.remotes.iter().map(|r| r.host.clone()).collect();
         let primary_lane = state
             .primary_lane()
             .cloned()
@@ -186,11 +185,11 @@ impl App {
         // group with a "(connecting...)" row from the first frame, without
         // waiting for the slow ssh+tmux roundtrip. The first remote refresh
         // update overwrites these.
-        state.entries = remotes
+        state.entries = remote_lanes
             .iter()
-            .map(|host| {
+            .map(|lane| {
                 crate::state::SessionEntry::placeholder(
-                    host,
+                    lane.clone(),
                     crate::state::SessionEntryKind::Connecting,
                 )
             })

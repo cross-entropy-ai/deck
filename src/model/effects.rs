@@ -18,13 +18,13 @@ pub enum Effect {
     /// Show a remote host placeholder in the main pane. Used for
     /// synthetic rows like "(no sessions)" that are focusable but don't
     /// have a tmux session to attach to.
-    ShowRemotePlaceholder(String),
+    ShowLanePlaceholder(LaneId),
     KillSession(KillRequest),
     RenameSession(RenameRequest),
     /// Create a new tmux session with `req.name` at `req.dir`.
     CreateSession(CreateSessionRequest),
-    /// Detach a remote host from deck (equivalent to `deck remote remove <host>`).
-    RemoveRemoteHost(RemoveRemoteRequest),
+    /// Remove a configured non-primary lane from the shell and its backend.
+    RemoveLane(LaneId),
     /// Return a backend-owned lane action to its provider. The provider maps
     /// the typed id to a small generic shell intent; App never interprets the
     /// system id or action id.
@@ -34,8 +34,7 @@ pub enum Effect {
         anchor: LaneActionAnchor,
     },
     OpenPortForwardOverlay(LaneId),
-    OpenNewSessionPicker,
-    OpenRemoteNewSessionPicker(String),
+    OpenNewSessionPicker(LaneId),
     OpenAddRemotePicker,
     AddRemoteHost(String),
     RereadNewSessionEntries,
@@ -44,8 +43,7 @@ pub enum Effect {
         full_redraw: bool,
     },
     SaveConfig,
-    SaveSessionOrder,
-    SaveRemoteSessionOrder(String),
+    SaveSessionOrder(LaneId),
     ApplyTmuxTheme,
     /// Re-run the OSC 11 probe of the host terminal's background, so
     /// "follow terminal" theme mode picks the matching dark/light theme.
@@ -137,12 +135,6 @@ macro_rules! effect_predicates {
 #[cfg(test)]
 impl SideEffect {
     effect_finders! {
-        first_remote_placeholder: ShowRemotePlaceholder => &str;
-        first_save_remote_session_order: SaveRemoteSessionOrder => &str;
-        first_open_remote_new_session_picker: OpenRemoteNewSessionPicker => &str;
-    }
-
-    effect_finders! {
         first_kill_session: KillSession => &KillRequest;
         first_rename_session: RenameSession => &RenameRequest;
     }
@@ -154,28 +146,36 @@ impl SideEffect {
         })
     }
 
-    pub fn first_remove_remote_host(&self) -> Option<&str> {
+    pub fn first_lane_placeholder(&self) -> Option<&LaneId> {
         self.effects.iter().find_map(|effect| match effect {
-            Effect::RemoveRemoteHost(req) => Some(req.host.as_str()),
+            Effect::ShowLanePlaceholder(lane) => Some(lane),
+            _ => None,
+        })
+    }
+
+    pub fn first_saved_session_order(&self) -> Option<&LaneId> {
+        self.effects.iter().find_map(|effect| match effect {
+            Effect::SaveSessionOrder(lane) => Some(lane),
+            _ => None,
+        })
+    }
+
+    pub fn first_removed_lane(&self) -> Option<&LaneId> {
+        self.effects.iter().find_map(|effect| match effect {
+            Effect::RemoveLane(lane) => Some(lane),
             _ => None,
         })
     }
 
     effect_predicates! {
-        has_open_new_session_picker => Effect::OpenNewSessionPicker,
+        has_open_new_session_picker => Effect::OpenNewSessionPicker(_),
         has_resize_pty => Effect::ResizePty { .. },
         has_full_redraw_after_resize => Effect::ResizePty { full_redraw: true },
         has_save_config => Effect::SaveConfig,
-        has_save_session_order => Effect::SaveSessionOrder,
+        has_save_session_order => Effect::SaveSessionOrder(_),
         has_refresh_sessions => Effect::RefreshSessions,
         has_reread_new_session_entries => Effect::RereadNewSessionEntries,
     }
-}
-
-#[derive(Debug)]
-pub struct RemoveRemoteRequest {
-    pub lane: LaneId,
-    pub host: String,
 }
 
 /// Info needed to execute a kill: which session to kill, and optionally

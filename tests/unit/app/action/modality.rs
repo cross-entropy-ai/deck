@@ -18,7 +18,6 @@ fn make_state() -> AppState {
     state.entries = (0..3)
         .map(|i| SessionEntry {
             lane: crate::system::tmux::TmuxSystem::local_lane(),
-            host: None,
             name: format!("sess-{i}"),
             dir: format!("/tmp/sess-{i}"),
             kind: SessionEntryKind::Live { is_current: i == 0 },
@@ -44,14 +43,18 @@ fn open_modal(state: &mut AppState, modal: Modal) {
                 name: make_textarea(""),
                 focus: PickerFocus::Name,
                 picker,
-                remote_host: None,
+                target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
             });
         }
         Modal::AddRemote => {
             state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(vec![]));
         }
         Modal::Rename => {
-            state.overlay.renaming = Some(RenameState::new("sess-0".into(), "sess-0".into(), None));
+            state.overlay.renaming = Some(RenameState::new_with_lane(
+                "sess-0".into(),
+                "sess-0".into(),
+                crate::system::tmux::TmuxSystem::local_lane(),
+            ));
         }
         Modal::ContextMenu => {
             state.overlay.context_menu = Some(ContextMenu {
@@ -221,21 +224,18 @@ fn numeric_command_counts_only_visible_rows() {
         state.entries[0].clone(),
         SessionEntry {
             lane: crate::system::tmux::lane(Some("hidden")),
-            host: Some("hidden".into()),
             name: "hidden-a".into(),
             dir: "/tmp/hidden-a".into(),
             kind: SessionEntryKind::Live { is_current: false },
         },
         SessionEntry {
             lane: crate::system::tmux::lane(Some("hidden")),
-            host: Some("hidden".into()),
             name: "hidden-b".into(),
             dir: "/tmp/hidden-b".into(),
             kind: SessionEntryKind::Live { is_current: false },
         },
         SessionEntry {
             lane: crate::system::tmux::lane(Some("visible")),
-            host: Some("visible".into()),
             name: "visible-b".into(),
             dir: "/tmp/visible-b".into(),
             kind: SessionEntryKind::Live { is_current: false },
@@ -255,9 +255,12 @@ fn numeric_command_counts_only_visible_rows() {
 #[test]
 fn port_forward_shortcut_can_be_rebound() {
     let mut state = make_state();
+    state.config_remotes = vec![crate::config::RemoteConfig {
+        host: "prod".into(),
+        forwards: vec![],
+    }];
     state.entries = vec![SessionEntry {
         lane: crate::system::tmux::lane(Some("prod")),
-        host: Some("prod".into()),
         name: "main".into(),
         dir: "/srv/main".into(),
         kind: SessionEntryKind::Live { is_current: false },

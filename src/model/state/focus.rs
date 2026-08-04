@@ -17,20 +17,18 @@ impl AppState {
         (!self.is_primary_entry(entry) && !entry.is_attachable()).then_some(entry)
     }
 
-    /// Section key of the group flat focus index `idx` lives in: `None` local,
-    /// `Some(host)` remote. Used by the section-toggle keybinding and focus-skip
-    /// logic; out-of-range falls back to `None`.
-    pub fn section_key_of_focus(&self, idx: usize) -> Option<String> {
-        self.entries.get(idx).and_then(|e| e.host.clone())
+    /// Lane of the group flat focus index `idx` lives in.
+    pub fn section_key_of_focus(&self, idx: usize) -> Option<LaneId> {
+        self.entries.get(idx).map(|entry| entry.lane.clone())
     }
 
     /// Host of the group the Agents-tab cursor row lives in (`None` = local),
     /// the agent twin of `section_key_of_focus`. Used by the section-toggle
     /// keybinding and focus-skip logic on the Agents tab.
-    pub fn agent_section_key_of_focus(&self) -> Option<String> {
+    pub fn agent_section_key_of_focus(&self) -> Option<LaneId> {
         self.agent_entries
             .get(self.agent_focused)
-            .and_then(|e| e.host.clone())
+            .map(|entry| entry.lane.clone())
     }
 
     /// Whether the row at flat focus index `idx` sits in a collapsed group
@@ -38,15 +36,12 @@ impl AppState {
     /// against its own collapse set.
     pub fn is_focus_collapsed(&self, idx: usize) -> bool {
         if self.agents_tab_active() {
-            return self.agent_entries.get(idx).is_some_and(|e| {
-                self.collapsed_agent_sections
-                    .contains(lane(e.host.as_deref()).as_str())
-            });
+            return self
+                .agent_entries
+                .get(idx)
+                .is_some_and(|e| self.collapsed_agent_sections.contains(&e.lane));
         }
-        idx < self.focusable_count()
-            && self
-                .collapsed_sections
-                .contains(lane(self.section_key_of_focus(idx).as_deref()).as_str())
+        idx < self.focusable_count() && self.collapsed_sections.contains(&self.entries[idx].lane)
     }
 
     /// Decode the active tab's cursor into a focus target. Returns `None`
@@ -194,18 +189,20 @@ impl AppState {
         if !self.session_capabilities(&entry.lane).kill {
             return Some("lane does not support killing sessions");
         }
-        match &entry.host {
-            Some(_) if !entry.is_attachable() => Some("no session to kill"),
-            Some(host)
-                if attachable_on_host(&self.entries, Some(host))
-                    .nth(1)
-                    .is_none() =>
-            {
-                Some("last session on host")
-            }
-            None if self.local_count() <= 1 => Some("last local session"),
-            _ => None,
+        if !entry.is_attachable() {
+            return Some("no session to kill");
         }
+        if attachable_on_lane(&self.entries, &entry.lane)
+            .nth(1)
+            .is_none()
+        {
+            return Some(if self.is_primary_entry(entry) {
+                "last local session"
+            } else {
+                "last session on lane"
+            });
+        }
+        None
     }
 
     /// Whether the focused kill `entry` may be killed. See
@@ -333,11 +330,12 @@ impl AppState {
         // monotonically-increasing rank above any local one; their relative
         // order (config order) is preserved by the stable sort.
         let local_count = self.local_count();
-        let primary_lane = self.primary_lane().cloned();
+        let primary_lane = self
+            .primary_lane()
+            .cloned()
+            .or_else(|| self.entries.first().map(|entry| entry.lane.clone()));
         self.entries.sort_by_key(|e| {
-            let is_primary = primary_lane
-                .as_ref()
-                .map_or_else(|| e.is_local(), |lane| e.lane == *lane);
+            let is_primary = primary_lane.as_ref().is_some_and(|lane| e.lane == *lane);
             if is_primary {
                 (0usize, rank(e))
             } else {

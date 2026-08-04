@@ -40,9 +40,13 @@ pub(super) fn draw_sidebar_tabs(
         ..content
     };
     let mut spans: Vec<Span> = Vec::new();
+    let primary = sessions.first().map(|session| &session.lane);
     let labels: Vec<String> = sessions
         .iter()
-        .map(|session| crate::geometry::tab_label(session.host.as_deref(), session.display_name()))
+        .map(|session| {
+            let origin = (primary != Some(&session.lane)).then(|| session.lane.lane());
+            crate::geometry::tab_label(origin, session.display_name())
+        })
         .collect();
     let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
     let layout = tab_bar_layout(&label_refs, focused, content.width);

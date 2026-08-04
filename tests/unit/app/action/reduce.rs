@@ -10,7 +10,6 @@ use crate::state::{
 fn make_session(name: &str) -> SessionEntry {
     SessionEntry {
         lane: crate::system::tmux::TmuxSystem::local_lane(),
-        host: None,
         name: name.to_string(),
         dir: format!("/tmp/{}", name),
         kind: SessionEntryKind::Live { is_current: false },
@@ -33,6 +32,19 @@ fn make_test_state(n: usize) -> AppState {
         .collect();
     set_current(&mut state, 0);
     state.session_order = state.entries.iter().map(|s| s.name.clone()).collect();
+    set_capabilities(
+        &mut state,
+        crate::system::SessionCapabilities {
+            activate: true,
+            rename: true,
+            kill: true,
+        },
+        crate::system::LaneCapabilities {
+            create_session: true,
+            reorder_sessions: true,
+            actions: true,
+        },
+    );
     state.clamp_projects_focus();
     state
 }
@@ -57,14 +69,41 @@ fn set_capabilities(
 /// Append remote rows after the local block, preserving the unified store's
 /// "locals first, then remotes" flat order.
 fn set_remote(state: &mut AppState, rows: Vec<SessionEntry>) {
-    state.entries.retain(|e| e.is_local());
+    let primary = crate::system::tmux::TmuxSystem::local_lane();
+    state.entries.retain(|entry| entry.lane == primary);
     state.entries.extend(rows);
+}
+
+fn mount_remote_lane(state: &mut AppState, host: &str) {
+    state.system_sections.push(crate::system::SectionDef {
+        lane: crate::system::tmux::TmuxSystem::host_lane(host),
+        title: host.into(),
+        buttons: vec![],
+        top_margin: true,
+        primary: false,
+        runtime_key: Some(host.into()),
+        session_capabilities: crate::system::SessionCapabilities {
+            activate: true,
+            rename: true,
+            kill: true,
+        },
+        lane_capabilities: crate::system::LaneCapabilities {
+            create_session: true,
+            reorder_sessions: true,
+            actions: true,
+        },
+    });
 }
 
 /// The remote rows of `entries` (host == Some), in order — the slice the
 /// old `remote_sessions` field exposed.
 fn remote_entries(state: &AppState) -> Vec<&SessionEntry> {
-    state.entries.iter().filter(|e| !e.is_local()).collect()
+    let primary = crate::system::tmux::TmuxSystem::local_lane();
+    state
+        .entries
+        .iter()
+        .filter(|entry| entry.lane != primary)
+        .collect()
 }
 
 #[test]
@@ -183,7 +222,11 @@ fn sidebar_click_remote_no_sessions_does_not_refresh() {
     fx.merge(apply_action(&mut state, Action::FocusIndex(target)));
     fx.merge(apply_action(&mut state, Action::SwitchProject));
 
-    assert_eq!(fx.first_remote_placeholder(), Some("remote-a"));
+    assert_eq!(
+        fx.first_lane_placeholder()
+            .and_then(crate::system::tmux::TmuxSystem::host_of),
+        Some("remote-a")
+    );
     assert!(fx.first_activated_session().is_none());
     assert!(!fx.has_refresh_sessions());
 }
@@ -203,7 +246,7 @@ fn remote_live_session_uses_the_same_lane_qualified_activation_effect() {
         target.lane,
         crate::system::tmux::TmuxSystem::host_lane("remote-a")
     );
-    assert!(fx.first_remote_placeholder().is_none());
+    assert!(fx.first_lane_placeholder().is_none());
 }
 
 #[test]
@@ -502,10 +545,17 @@ fn open_local_divider_menu_greys_remote_items_and_starts_on_new_session() {
     let mut state = make_test_state(1);
     apply_action(
         &mut state,
-        Action::Menu(MenuAction::OpenLocalDivider { x: 5, y: 5 }),
+        Action::Menu(MenuAction::OpenLaneDivider {
+            lane: crate::system::tmux::TmuxSystem::local_lane(),
+            x: 5,
+            y: 5,
+        }),
     );
     let menu = state.overlay.context_menu.as_ref().expect("menu open");
-    assert!(matches!(menu.kind, crate::menu::MenuKind::LocalDivider));
+    assert!(matches!(
+        menu.kind,
+        crate::menu::MenuKind::LaneDivider { primary: true, .. }
+    ));
     // Highlight starts on the first enabled item, never a greyed one.
     assert_eq!(
         menu.items()[menu.selected],
@@ -524,12 +574,15 @@ fn local_divider_new_session_opens_local_picker() {
     let mut state = make_test_state(1);
     apply_action(
         &mut state,
-        Action::Menu(MenuAction::OpenLocalDivider { x: 0, y: 0 }),
+        Action::Menu(MenuAction::OpenLaneDivider {
+            lane: crate::system::tmux::TmuxSystem::local_lane(),
+            x: 0,
+            y: 0,
+        }),
     );
     let fx = apply_action(&mut state, Action::Menu(MenuAction::Confirm));
     // "New session" on the local divider routes to the local picker.
     assert!(fx.has_open_new_session_picker());
-    assert!(fx.first_open_remote_new_session_picker().is_none());
     // Confirming closes the menu.
     assert!(state.overlay.context_menu.is_none());
 }
@@ -630,7 +683,9 @@ fn reorder_local_session_leaves_remotes_pinned_after_in_order() {
     apply_action(&mut state, Action::ReorderSession(-1));
     assert_eq!(state.entries[0].name, "sess-1");
     assert_eq!(state.entries[1].name, "sess-0");
-    assert!(state.entries[..3].iter().all(|e| e.is_local()));
+    assert!(state.entries[..3]
+        .iter()
+        .all(|entry| entry.lane == crate::system::tmux::TmuxSystem::local_lane()));
     assert_eq!(
         remote_entries(&state)
             .iter()
@@ -660,7 +715,6 @@ fn remote_row(host: &str, name: &str) -> SessionEntry {
     };
     SessionEntry {
         lane: crate::system::tmux::TmuxSystem::host_lane(host),
-        host: Some(host.to_string()),
         name: if matches!(kind, SessionEntryKind::NoSessions) {
             String::new()
         } else {
@@ -688,9 +742,13 @@ fn reorder_remote_session_swaps_within_host_group() {
     assert_eq!(remote_entries(&state)[0].name, "b");
     assert_eq!(remote_entries(&state)[1].name, "a");
     assert_eq!(state.focused, 3, "focus follows the moved row");
-    assert_eq!(fx.first_save_remote_session_order(), Some("h"));
-    // Local order is untouched.
-    assert!(!fx.has_save_session_order());
+    assert_eq!(
+        fx.first_saved_session_order()
+            .and_then(crate::system::tmux::TmuxSystem::host_of),
+        Some("h")
+    );
+    // The single persistence effect targets the remote lane; local order is untouched.
+    assert_eq!(fx.effects().len(), 1);
 }
 
 #[test]
@@ -710,7 +768,7 @@ fn reorder_remote_session_stops_at_host_boundary() {
     let fx = apply_action(&mut state, Action::ReorderSession(1));
     assert_eq!(remote_entries(&state)[1].name, "b");
     assert_eq!(remote_entries(&state)[2].name, "c");
-    assert!(fx.first_save_remote_session_order().is_none());
+    assert!(fx.first_saved_session_order().is_none());
 }
 
 #[test]
@@ -734,11 +792,15 @@ fn drag_reorder_remote_moves_directly_within_host_only() {
             .collect::<Vec<_>>(),
         vec!["b", "c", "a", "d"]
     );
-    assert_eq!(fx.first_save_remote_session_order(), Some("h"));
+    assert_eq!(
+        fx.first_saved_session_order()
+            .and_then(crate::system::tmux::TmuxSystem::host_of),
+        Some("h")
+    );
 
     state.focused = 3;
     let fx = apply_action(&mut state, Action::ReorderSessionTo(4));
-    assert!(fx.first_save_remote_session_order().is_none());
+    assert!(fx.first_saved_session_order().is_none());
     assert_eq!(state.entries[3].name, "a");
 }
 
@@ -920,6 +982,7 @@ fn port_forwards_row_aggregates_across_hosts_and_targets_a_host() {
             forwards: vec![spec(8080), spec(9090)],
         },
     ];
+    mount_remote_lane(&mut state, "b");
     state.entries.push(remote_row("b", "session"));
     let row = &crate::app::settings::SETTING_ROWS[settings_row_index("Port forwards")];
     assert_eq!((row.value)(&state), "2 forwards");
@@ -963,14 +1026,21 @@ fn removing_a_remote_drops_its_forwards() {
         }],
     });
 
-    apply_action(&mut state, Action::RemoveRemoteFromList("prod".into()));
+    apply_action(
+        &mut state,
+        Action::RemoveLane(crate::system::tmux::TmuxSystem::host_lane("prod")),
+    );
 
     // The host is gone, so its nested forward rules go with it.
     assert!(state.config_remotes.iter().all(|r| r.host != "prod"));
 }
 
 fn rename_state(initial: &str) -> RenameState {
-    RenameState::new(initial.to_string(), initial.to_string(), None)
+    RenameState::new_with_lane(
+        initial.to_string(),
+        initial.to_string(),
+        crate::system::tmux::TmuxSystem::local_lane(),
+    )
 }
 
 fn rename_input_text(state: &AppState) -> &str {
@@ -998,7 +1068,11 @@ fn rename_input_key_appends_char() {
 #[test]
 fn rename_confirm_produces_side_effect() {
     let mut state = make_test_state(1);
-    let rs = RenameState::new("old".to_string(), "new-name".to_string(), None);
+    let rs = RenameState::new_with_lane(
+        "old".to_string(),
+        "new-name".to_string(),
+        crate::system::tmux::TmuxSystem::local_lane(),
+    );
     assert_eq!(rs.original_name, "old");
     state.overlay.renaming = Some(rs);
     let fx = apply_action(&mut state, Action::RenameConfirm);
@@ -1020,10 +1094,10 @@ fn rename_confirm_noop_when_unchanged() {
 #[test]
 fn rename_confirm_rejects_invalid_name_and_keeps_editor_open() {
     let mut state = make_test_state(1);
-    state.overlay.renaming = Some(RenameState::new(
+    state.overlay.renaming = Some(RenameState::new_with_lane(
         "sess-0".to_string(),
         "invalid.name".to_string(),
-        None,
+        crate::system::tmux::TmuxSystem::local_lane(),
     ));
 
     let fx = apply_action(&mut state, Action::RenameConfirm);
@@ -1039,10 +1113,10 @@ fn rename_confirm_rejects_invalid_name_and_keeps_editor_open() {
 #[test]
 fn rename_confirm_rejects_duplicate_on_same_backend() {
     let mut state = make_test_state(2);
-    state.overlay.renaming = Some(RenameState::new(
+    state.overlay.renaming = Some(RenameState::new_with_lane(
         "sess-0".to_string(),
         "sess-1".to_string(),
-        None,
+        crate::system::tmux::TmuxSystem::local_lane(),
     ));
 
     let fx = apply_action(&mut state, Action::RenameConfirm);
@@ -1073,7 +1147,7 @@ fn picker_state_with(input: &str, entries: Vec<String>) -> AppState {
         name: make_textarea(""),
         focus: PickerFocus::Dir,
         picker,
-        remote_host: None,
+        target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
     };
     ns.refilter();
     state.overlay.new_session = Some(ns);
@@ -1205,15 +1279,17 @@ fn open_host_divider_menu_uses_host_kind() {
     let mut state = make_test_state(1);
     crate::action::apply_action(
         &mut state,
-        Action::Menu(MenuAction::OpenHostDivider {
-            host: "h1".into(),
+        Action::Menu(MenuAction::OpenLaneDivider {
+            lane: crate::system::tmux::TmuxSystem::host_lane("h1"),
             x: 10,
             y: 5,
         }),
     );
     let menu = state.overlay.context_menu.as_ref().expect("menu opened");
     match &menu.kind {
-        crate::menu::MenuKind::HostDivider { host, .. } => assert_eq!(host, "h1"),
+        crate::menu::MenuKind::LaneDivider { lane, .. } => {
+            assert_eq!(crate::system::tmux::TmuxSystem::host_of(lane), Some("h1"))
+        }
         _ => panic!("expected HostDivider"),
     }
 }
@@ -1283,9 +1359,9 @@ fn pf_task_result_persists_forward_when_overlay_closed() {
 #[test]
 fn pf_task_result_marks_host_unreachable_on_master_failure() {
     let mut state = make_test_state(0);
+    mount_remote_lane(&mut state, "h1");
     state.entries = vec![SessionEntry {
         lane: crate::system::tmux::TmuxSystem::host_lane("h1"),
-        host: Some("h1".into()),
         name: "session-a".into(),
         dir: "/tmp".into(),
         kind: SessionEntryKind::Connecting,
@@ -1469,21 +1545,29 @@ fn remove_remote_from_list_drops_host_and_signals_stop() {
     ];
     state.entries = vec![remote_row("h1", "a"), remote_row("h2", "b")];
 
-    let fx = crate::action::apply_action(&mut state, Action::RemoveRemoteFromList("h1".into()));
+    let h1 = crate::system::tmux::TmuxSystem::host_lane("h1");
+    let fx = crate::action::apply_action(&mut state, Action::RemoveLane(h1.clone()));
 
     assert_eq!(state.config_remotes.len(), 1);
     assert_eq!(state.config_remotes[0].host, "h2");
     assert_eq!(remote_entries(&state).len(), 1);
-    assert_eq!(remote_entries(&state)[0].host.as_deref(), Some("h2"));
+    assert_eq!(
+        crate::system::tmux::TmuxSystem::host_of(&remote_entries(&state)[0].lane),
+        Some("h2")
+    );
     assert!(fx.has_save_config());
     assert!(fx.has_refresh_sessions());
-    assert_eq!(fx.first_remove_remote_host(), Some("h1"));
+    assert_eq!(fx.first_removed_lane(), Some(&h1));
 }
 
 #[test]
 fn host_divider_menu_has_new_session_first_and_remove_last() {
     use crate::menu::{MenuItem, MenuKind};
-    let items = MenuKind::HostDivider { host: "h".into() }.items();
+    let items = MenuKind::LaneDivider {
+        lane: crate::system::tmux::TmuxSystem::host_lane("h"),
+        primary: false,
+    }
+    .items();
     assert_eq!(items.first().copied(), Some(MenuItem::NewSession));
     assert!(items.contains(&MenuItem::PortForward));
     // "Remove from list" is destructive — keep it last.
@@ -1528,7 +1612,6 @@ fn placeholder_remote_menu_disables_rename_and_close() {
     for (label, kind) in cases {
         let row = SessionEntry {
             lane: crate::system::tmux::TmuxSystem::host_lane("h"),
-            host: Some("h".into()),
             name: String::new(),
             dir: String::new(),
             kind,
@@ -1556,7 +1639,6 @@ fn placeholder_remote_menu_disables_rename_and_close() {
 fn remote(host: &str, name: &str) -> SessionEntry {
     SessionEntry {
         lane: crate::system::tmux::TmuxSystem::host_lane(host),
-        host: Some(host.into()),
         name: name.into(),
         dir: "/srv".into(),
         kind: SessionEntryKind::Live { is_current: false },
@@ -1577,12 +1659,14 @@ fn remote_session_with_siblings_disables_nothing() {
 
     let local = SessionEntry {
         lane: crate::system::tmux::TmuxSystem::local_lane(),
-        host: None,
         name: "s".into(),
         dir: "/".into(),
         kind: SessionEntryKind::Live { is_current: false },
     };
-    assert!(session_menu_disabled(&local, &sessions, capabilities).is_empty());
+    let mut all_sessions = sessions;
+    all_sessions.push(local.clone());
+    assert!(session_menu_disabled(&local, &all_sessions, capabilities)
+        .contains(&crate::menu::MenuItem::Close));
 }
 
 #[test]
@@ -1665,7 +1749,10 @@ fn toggle_section_collapse_leaves_focus_put() {
         ],
     );
     state.focused = 2;
-    let fx = apply_action(&mut state, Action::ToggleSection(Some("h".to_string())));
+    let fx = apply_action(
+        &mut state,
+        Action::ToggleSection(crate::system::tmux::TmuxSystem::host_lane("h")),
+    );
     assert!(state
         .collapsed_sections
         .contains(crate::system::tmux::lane(Some("h")).as_str()));
@@ -1679,7 +1766,10 @@ fn toggle_section_expands_back() {
     state
         .collapsed_sections
         .insert(crate::system::tmux::lane(None));
-    let fx = apply_action(&mut state, Action::ToggleSection(None));
+    let fx = apply_action(
+        &mut state,
+        Action::ToggleSection(crate::system::tmux::TmuxSystem::local_lane()),
+    );
     assert!(!state
         .collapsed_sections
         .contains(crate::system::tmux::lane(None).as_str()));

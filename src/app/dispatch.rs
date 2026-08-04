@@ -259,10 +259,9 @@ impl App {
         use crate::session::executor::OpOutcome;
         let lane = outcome.lane;
         let is_primary = self.state.is_primary_lane(&lane);
-        let host = self.state.host_for_lane(&lane).map(str::to_string);
         match outcome.result {
             OpOutcome::Created { name } => {
-                self.post_create_switch(&lane, host, &name);
+                self.post_create_switch(&lane, &name);
                 // The submit-time `refresh_sessions` likely ran before the
                 // async create finished, so refresh again to surface the new
                 // row promptly under its group.
@@ -305,13 +304,14 @@ impl App {
                 // Apply only if the picker is still open on the same
                 // (host, parent); drop a listing for a parent the user has
                 // since edited. Re-derive the expected key like the submit did.
+                let primary_lane = self.state.primary_lane().cloned();
                 let still_current = self
                     .state
                     .overlay
                     .new_session
                     .as_ref()
-                    .map(new_session_list_query)
-                    .is_some_and(|(h, p)| h == host && p == path);
+                    .and_then(|state| new_session_list_query(state, primary_lane.as_ref()))
+                    .is_some_and(|(target_lane, expected)| target_lane == lane && expected == path);
                 if still_current {
                     if let Some(ns) = self.state.overlay.new_session.as_mut() {
                         match result {
@@ -482,7 +482,7 @@ impl App {
             .filter_map(|entry| {
                 let agent = entry.agent()?;
                 Some(crate::summary::SummaryPane {
-                    host: entry.host.clone(),
+                    host: self.state.host_for_lane(&entry.lane).map(str::to_string),
                     id: agent.location(),
                     target: agent.pane_id.clone(),
                 })

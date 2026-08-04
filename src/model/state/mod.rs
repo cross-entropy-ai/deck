@@ -14,6 +14,7 @@ use crate::keybindings::Keybindings;
 use crate::lane::LaneId;
 use crate::overlay::{Modal, OverlayState};
 use crate::summary_card::{SummaryCard, SummaryState, SUMMARY_MAX_HEIGHT, SUMMARY_MIN_HEIGHT};
+#[cfg(test)]
 use crate::system::tmux::lane;
 use crate::update::{UpdateCheckMode, UpdateStatus};
 
@@ -183,17 +184,12 @@ pub fn frame_rate_limit_label(fps: u16) -> &'static str {
 
 // --- Session data ---
 
-/// One row in the unified sidebar session store. Local and remote share this
-/// shape, keyed by `host` (`None` = local tmux server, `Some(host)` = remote
-/// over ssh) per the "one data type, key by `Option<String>` host" rule.
-/// `kind` carries the liveness/placeholder distinction — see [`SessionEntryKind`].
+/// One row in the unified sidebar session store. Every identity and grouping
+/// decision is lane-qualified; backend transport metadata does not enter this
+/// DTO. `kind` carries the liveness/placeholder distinction.
 #[derive(Debug, Clone)]
 pub struct SessionEntry {
-    /// Stable lane component of [`SessionEntry::id`]. `host` remains
-    /// temporarily for tmux-specific labels and configuration lookups.
     pub lane: crate::lane::LaneId,
-    /// `None` = local tmux server; `Some(host)` = a remote host over ssh.
-    pub host: Option<String>,
     pub name: String,
     pub dir: String,
     pub kind: SessionEntryKind,
@@ -230,12 +226,11 @@ impl SessionEntry {
         crate::model::session::SessionId::new(self.lane.clone(), self.name.clone())
     }
 
-    /// A synthetic status row for a remote host (`Connecting`/`Unreachable`/
+    /// A synthetic status row for a lane (`Connecting`/`Unreachable`/
     /// `NoSessions`): no session name or dir, the label comes from `kind`.
-    pub fn placeholder(host: &str, kind: SessionEntryKind) -> Self {
+    pub fn placeholder(lane: crate::lane::LaneId, kind: SessionEntryKind) -> Self {
         Self {
-            lane: crate::system::tmux::TmuxSystem::host_lane(host),
-            host: Some(host.to_string()),
+            lane,
             name: String::new(),
             dir: String::new(),
             kind,
@@ -248,11 +243,6 @@ impl SessionEntry {
     /// nothing to attach to, leaving the row stuck on "connecting…".
     pub fn is_attachable(&self) -> bool {
         matches!(self.kind, SessionEntryKind::Live { .. })
-    }
-
-    /// True for the local tmux server (`host == None`).
-    pub fn is_local(&self) -> bool {
-        self.host.is_none()
     }
 
     /// The row's display label. The placeholder strings are derived from
@@ -282,16 +272,14 @@ impl SessionEntry {
     }
 }
 
-/// The attachable (`Live`) sessions on `host` (`None` = local), in display
-/// order. The one filter behind the last-session-on-host kill policy and the
-/// per-host name/order collectors, so the call sites can't drift.
-pub fn attachable_on_host<'a>(
+/// The attachable (`Live`) sessions on one lane, in display order.
+pub fn attachable_on_lane<'a>(
     entries: &'a [SessionEntry],
-    host: Option<&'a str>,
+    lane: &'a LaneId,
 ) -> impl Iterator<Item = &'a SessionEntry> {
     entries
         .iter()
-        .filter(move |e| e.host.as_deref() == host && e.is_attachable())
+        .filter(move |entry| entry.lane == *lane && entry.is_attachable())
 }
 
 /// Identifies a focused sidebar row by its flat index. The index walks rows
@@ -703,12 +691,6 @@ impl AppState {
             .find(|section| section.lane == *lane)
             .and_then(|section| section.runtime_key.as_deref())
             .or_else(|| {
-                self.entries
-                    .iter()
-                    .find(|entry| entry.lane == *lane)
-                    .and_then(|entry| entry.host.as_deref())
-            })
-            .or_else(|| {
                 self.config_remotes
                     .iter()
                     .find(|remote| remote.host == lane.lane())
@@ -724,12 +706,6 @@ impl AppState {
             .iter()
             .find(|section| section.runtime_key.as_deref() == Some(host))
             .map(|section| &section.lane)
-            .or_else(|| {
-                self.entries
-                    .iter()
-                    .find(|entry| entry.host.as_deref() == Some(host))
-                    .map(|entry| &entry.lane)
-            })
     }
 
     /// The lane attached to Deck's embedded local terminal, if mounted.
@@ -744,9 +720,22 @@ impl AppState {
         self.primary_lane().is_some_and(|primary| primary == lane)
     }
 
+    pub fn section_title(&self, lane: &LaneId) -> String {
+        self.system_sections
+            .iter()
+            .find(|section| section.lane == *lane)
+            .map_or_else(|| lane.lane().to_string(), |section| section.title.clone())
+    }
+
     pub fn is_primary_entry(&self, entry: &SessionEntry) -> bool {
-        self.primary_lane()
-            .map_or_else(|| entry.is_local(), |lane| entry.lane == *lane)
+        self.primary_lane().map_or_else(
+            || {
+                self.entries
+                    .first()
+                    .is_some_and(|first| entry.lane == first.lane)
+            },
+            |lane| entry.lane == *lane,
+        )
     }
 
     /// Session operations advertised by the lane that owns `entry`.
@@ -1069,16 +1058,14 @@ impl AppState {
     /// `@local`, `Some(host)` = remote `@host`). `None` when the row isn't on a
     /// real divider (e.g. a no-agents placeholder header, not a collapse target).
     /// Used by the mouse layer to toggle a group when its divider is clicked.
-    pub fn divider_section_key_at(&self, row: u16) -> Option<Option<String>> {
+    pub fn divider_section_key_at(&self, row: u16) -> Option<LaneId> {
         let (built, viewport_y, scroll, _) = self.session_row_hit(row)?;
         // header_at_y returns the 0-based header section index, which is a
         // direct index into `sections`. Only real dividers toggle collapse.
         let section_idx = built.layout.header_at_y(viewport_y, scroll)?;
         let meta = built.sections.get(section_idx)?;
         if meta.divider {
-            // Returns the `Option<String>` host the mouse layer's collapse keys
-            // still speak; becomes a plain `LaneId` once those move over.
-            Some(self.host_for_lane(&meta.lane).map(str::to_string))
+            Some(meta.lane.clone())
         } else {
             None
         }
@@ -1096,7 +1083,10 @@ impl AppState {
         let labels: Vec<String> = self
             .entries
             .iter()
-            .map(|e| tab_label(e.host.as_deref(), &e.name))
+            .map(|entry| {
+                let origin = (!self.is_primary_entry(entry)).then(|| entry.lane.lane());
+                tab_label(origin, &entry.name)
+            })
             .collect();
         let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
         let content_width = self.term_width.saturating_sub(b.saturating_mul(2));
@@ -1150,24 +1140,14 @@ impl AppState {
     /// the highlight tracks the viewed session like keyboard nav does (j/k moves
     /// cursor *and* switches). Mirrors `FocusTarget` numbering: locals, then remotes.
     #[cfg(test)]
-    pub fn focusable_index_for(&self, host: Option<&str>, session: &str) -> Option<usize> {
+    pub fn focusable_index_for(&self, lane: &LaneId, session: &str) -> Option<usize> {
         self.entries
             .iter()
-            .position(|e| e.host.as_deref() == host && e.name == session)
+            .position(|entry| entry.lane == *lane && entry.name == session)
     }
 
-    /// Optimistically mark a host's rows as reconnecting so the sidebar
-    /// shows "(connecting...)" the instant the user hits the divider's
-    /// reconnect button, before the refresh round returns.
-    #[cfg(test)]
-    pub fn mark_host_reconnecting(&mut self, host: &str) {
-        for e in &mut self.entries {
-            if e.host.as_deref() == Some(host) {
-                e.kind = SessionEntryKind::Connecting;
-            }
-        }
-    }
-
+    /// Optimistically mark a lane's rows as reconnecting so the sidebar
+    /// updates before the refresh round returns.
     pub fn mark_lane_reconnecting(&mut self, lane: &LaneId) {
         for entry in &mut self.entries {
             if entry.lane == *lane {

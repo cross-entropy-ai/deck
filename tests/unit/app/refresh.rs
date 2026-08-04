@@ -14,7 +14,6 @@ fn kind_for(unreachable: bool, loading: bool) -> SessionEntryKind {
 fn row(host: &str, unreachable: bool, loading: bool) -> SessionEntry {
     SessionEntry {
         lane: crate::system::tmux::TmuxSystem::host_lane(host),
-        host: Some(host.to_string()),
         name: "s".to_string(),
         dir: "/tmp".to_string(),
         kind: kind_for(unreachable, loading),
@@ -25,7 +24,6 @@ fn row(host: &str, unreachable: bool, loading: bool) -> SessionEntry {
 fn no_sessions_row(host: &str) -> SessionEntry {
     SessionEntry {
         lane: crate::system::tmux::TmuxSystem::host_lane(host),
-        host: Some(host.to_string()),
         name: String::new(),
         dir: String::new(),
         kind: SessionEntryKind::NoSessions,

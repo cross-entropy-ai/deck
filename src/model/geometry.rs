@@ -382,7 +382,6 @@ impl Default for BuiltLayout {
 #[derive(Debug, Clone)]
 pub struct AgentEntry {
     pub lane: LaneId,
-    pub host: Option<String>,
     pub kind: AgentEntryKind,
 }
 

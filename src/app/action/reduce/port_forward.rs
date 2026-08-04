@@ -220,8 +220,9 @@ fn apply_pf_task_result(
             fx.save_config();
         }
         OpKind::Master(_) if !ok => {
+            let lane = state.lane_for_host(host).cloned();
             for entry in state.entries.iter_mut() {
-                if entry.host.as_deref() == Some(host) {
+                if lane.as_ref().is_some_and(|lane| entry.lane == *lane) {
                     entry.kind = crate::state::SessionEntryKind::Unreachable;
                 }
             }
