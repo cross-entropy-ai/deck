@@ -105,15 +105,28 @@ fn remote_entries(state: &AppState) -> Vec<&SessionEntry> {
 }
 
 #[test]
-fn focus_next_advances_and_switches() {
-    let mut state = make_test_state(5);
-    state.focused = 0;
-    let fx = apply_action(&mut state, Action::FocusNext);
-    assert_eq!(state.focused, 1);
-    assert_eq!(
-        fx.first_activated_session().map(|id| id.key.as_str()),
-        Some("sess-1")
-    );
+fn focus_steps_are_clamped_and_activate_only_after_movement() {
+    let cases = [
+        ("next", 0, 1, 1, Some("sess-1")),
+        ("next at end", 4, 1, 4, None),
+        ("previous", 3, -1, 2, Some("sess-2")),
+    ];
+    for (name, start, direction, expected, activated) in cases {
+        let mut state = make_test_state(5);
+        state.focused = start;
+        let action = if direction > 0 {
+            Action::FocusNext
+        } else {
+            Action::FocusPrev
+        };
+        let fx = apply_action(&mut state, action);
+        assert_eq!(state.focused, expected, "{name}");
+        assert_eq!(
+            fx.first_activated_session().map(|id| id.key.as_str()),
+            activated,
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -185,27 +198,6 @@ fn unsupported_lane_reorder_is_a_noop() {
     assert_eq!(state.entries[0].name, "sess-0");
     assert_eq!(state.focused, 1);
     assert!(!fx.has_save_session_order());
-}
-
-#[test]
-fn focus_next_stops_at_end() {
-    let mut state = make_test_state(5);
-    state.focused = 4;
-    let fx = apply_action(&mut state, Action::FocusNext);
-    assert_eq!(state.focused, 4);
-    assert!(fx.first_activated_session().is_none());
-}
-
-#[test]
-fn focus_prev_decrements_and_switches() {
-    let mut state = make_test_state(5);
-    state.focused = 3;
-    let fx = apply_action(&mut state, Action::FocusPrev);
-    assert_eq!(state.focused, 2);
-    assert_eq!(
-        fx.first_activated_session().map(|id| id.key.as_str()),
-        Some("sess-2")
-    );
 }
 
 #[test]
@@ -620,22 +612,26 @@ fn resize_signals_pty_resize() {
 }
 
 #[test]
-fn sidebar_resize_does_not_force_full_redraw() {
-    let mut state = make_test_state(1);
-    let fx = apply_action(&mut state, Action::ResizeSidebar(30));
-    assert_eq!(state.prefs.sidebar_width, 30);
-    assert!(fx.has_resize_pty());
-    assert!(!fx.has_full_redraw_after_resize());
-}
-
-#[test]
-fn sidebar_height_resize_does_not_force_full_redraw() {
-    let mut state = make_test_state(1);
-    state.prefs.layout_mode = LayoutMode::Vertical;
-    let fx = apply_action(&mut state, Action::ResizeSidebarHeight(5));
-    assert_eq!(state.prefs.sidebar_height, 5);
-    assert!(fx.has_resize_pty());
-    assert!(!fx.has_full_redraw_after_resize());
+fn sidebar_resizes_signal_pty_without_forcing_full_redraw() {
+    let cases = [
+        ("width", false, Action::ResizeSidebar(30), 30),
+        ("height", true, Action::ResizeSidebarHeight(5), 5),
+    ];
+    for (name, vertical, action, expected) in cases {
+        let mut state = make_test_state(1);
+        if vertical {
+            state.prefs.layout_mode = LayoutMode::Vertical;
+        }
+        let fx = apply_action(&mut state, action);
+        let actual = if vertical {
+            state.prefs.sidebar_height
+        } else {
+            state.prefs.sidebar_width
+        };
+        assert_eq!(actual, expected, "{name}");
+        assert!(fx.has_resize_pty(), "{name}");
+        assert!(!fx.has_full_redraw_after_resize(), "{name}");
+    }
 }
 
 #[test]
@@ -1433,47 +1429,34 @@ fn open_form_with_focus(
 }
 
 #[test]
-fn pf_add_input_drops_non_digits_in_port_fields() {
+fn pf_add_input_applies_each_field_policy() {
+    use crate::forwards::PfField;
     use crossterm::event::KeyCode;
-    let mut state = make_test_state(0);
-    open_form_with_focus(&mut state, crate::forwards::PfField::ListenPort, "");
-    for c in ['8', 'a', '0', '.', '8', '0'] {
-        crate::action::apply_action(
-            &mut state,
-            Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))),
-        );
-    }
-    let f = state
-        .overlay
-        .port_forward
-        .as_ref()
-        .unwrap()
-        .add_form
-        .as_ref()
-        .unwrap();
-    assert_eq!(f.field_text(crate::forwards::PfField::ListenPort), "8080");
-}
 
-#[test]
-fn pf_add_input_allows_non_digits_in_host_fields() {
-    use crossterm::event::KeyCode;
-    let mut state = make_test_state(0);
-    open_form_with_focus(&mut state, crate::forwards::PfField::TargetHost, "");
-    for c in ['h', '-', '1', '.', 'x'] {
-        crate::action::apply_action(
-            &mut state,
-            Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))),
-        );
+    let cases = [
+        ("numeric port", PfField::ListenPort, "8a0.80", "8080"),
+        ("host punctuation", PfField::TargetHost, "h-1.x", "h-1.x"),
+        ("host whitespace", PfField::TargetHost, "1 2\t7", "127"),
+    ];
+    for (name, field, input, expected) in cases {
+        let mut state = make_test_state(0);
+        open_form_with_focus(&mut state, field, "");
+        for character in input.chars() {
+            crate::action::apply_action(
+                &mut state,
+                Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(character)))),
+            );
+        }
+        let form = state
+            .overlay
+            .port_forward
+            .as_ref()
+            .unwrap()
+            .add_form
+            .as_ref()
+            .unwrap();
+        assert_eq!(form.field_text(field), expected, "{name}");
     }
-    let f = state
-        .overlay
-        .port_forward
-        .as_ref()
-        .unwrap()
-        .add_form
-        .as_ref()
-        .unwrap();
-    assert_eq!(f.field_text(crate::forwards::PfField::TargetHost), "h-1.x");
 }
 
 #[test]
@@ -1510,28 +1493,6 @@ fn pf_add_input_rejects_out_of_range_ports() {
         .as_ref()
         .unwrap();
     assert_eq!(f.field_text(crate::forwards::PfField::ListenPort), "65535");
-}
-
-#[test]
-fn pf_add_input_blocks_whitespace_in_host_fields() {
-    use crossterm::event::KeyCode;
-    let mut state = make_test_state(0);
-    open_form_with_focus(&mut state, crate::forwards::PfField::TargetHost, "");
-    for c in ['1', ' ', '2', '\t', '7'] {
-        crate::action::apply_action(
-            &mut state,
-            Action::Pf(PfAction::AddInputKey(key(KeyCode::Char(c)))),
-        );
-    }
-    let f = state
-        .overlay
-        .port_forward
-        .as_ref()
-        .unwrap()
-        .add_form
-        .as_ref()
-        .unwrap();
-    assert_eq!(f.field_text(crate::forwards::PfField::TargetHost), "127");
 }
 
 #[test]
