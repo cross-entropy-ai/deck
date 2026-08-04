@@ -44,7 +44,10 @@ impl App {
             .into_iter()
             .filter(|h| !existing.contains(h.as_str()))
             .collect();
-        self.state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(hosts));
+        self.state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(
+            crate::app::ssh::config_adapter::owner(),
+            hosts,
+        ));
     }
 
     fn new_session_target(&self, lane: &crate::lane::LaneId) -> NewSessionTarget {

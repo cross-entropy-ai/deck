@@ -151,6 +151,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
             &ctx,
             TabsProps {
                 sessions: props.sessions,
+                built: props.built,
                 focused,
                 sidebar_active: props.sidebar_active,
                 show_borders: props.show_borders,

@@ -321,20 +321,8 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.overlay.confirm_kill = false;
         }
         Action::RemoveLane(lane) => {
-            // Mirror `deck remote remove <host>` on the in-memory copy: drop
-            // the host from config_remotes (save_config persists it) and clear
-            // its session rows so the sidebar updates before the next refresh.
-            // The host's forward *rules* ride inside its `RemoteConfig`, so
-            // they're dropped here too.
-            let Some(host) = state.host_for_lane(&lane).map(str::to_string) else {
-                return fx;
-            };
-            state.config_remotes.retain(|r| r.host != host);
-            state.entries.retain(|entry| entry.lane != lane);
-            state.clamp_projects_focus();
-            state.clamp_agent_focus();
-            fx.save_config();
-            fx.refresh_sessions();
+            // Configuration ownership belongs to the lane runtime. App applies
+            // the provider's typed result and reconciles state after success.
             fx.push(Effect::RemoveLane(lane));
         }
         Action::ReorderSession(direction) => {
@@ -737,34 +725,21 @@ fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffec
             state.overlay.add_remote = None;
         }
         AddRemoteAction::Confirm => {
-            // Resolve first (immutable borrow released before we mutate state).
-            let chosen = state
-                .overlay
-                .add_remote
-                .as_ref()
-                .and_then(|ar| ar.chosen_host());
-            let host = match chosen {
-                Some(h) if !state.config_remotes.iter().any(|r| r.host == h) => h,
-                other => {
-                    let msg = if other.is_none() {
-                        "enter a hostname"
-                    } else {
-                        "already added"
-                    };
-                    if let Some(ar) = state.overlay.add_remote.as_mut() {
-                        ar.picker.error = Some(msg.into());
-                    }
-                    return fx;
-                }
-            };
-            state.config_remotes.push(crate::config::RemoteConfig {
-                host: host.clone(),
-                forwards: vec![],
+            let request = state.overlay.add_remote.as_ref().and_then(|picker| {
+                picker
+                    .chosen_host()
+                    .map(|candidate| (picker.owner.clone(), candidate))
             });
-            state.overlay.add_remote = None;
-            fx.save_config();
-            fx.refresh_sessions();
-            fx.push(Effect::AddRemoteHost(host));
+            match request {
+                Some((owner, candidate)) => {
+                    fx.push(Effect::AddConfiguredLane { owner, candidate });
+                }
+                None => {
+                    if let Some(ar) = state.overlay.add_remote.as_mut() {
+                        ar.picker.error = Some("enter a lane identifier".into());
+                    }
+                }
+            }
         }
     }
     fx

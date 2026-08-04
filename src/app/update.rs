@@ -18,17 +18,21 @@ fn apply_config_save_result(
 }
 
 impl App {
+    pub(super) fn config_snapshot(&self) -> crate::config::Config {
+        self.state.prefs.to_config(
+            self.raw_keybindings.clone(),
+            self.state.config_remotes.clone(),
+            crate::system::tmux::hosts_from_lanes(&self.state.collapsed_sections),
+            crate::system::tmux::hosts_from_lanes(&self.state.collapsed_agent_sections),
+        )
+    }
+
     pub(super) fn save_config(&mut self) {
         // The single prefs→Config mapping (`Prefs::to_config`), fed the
         // runtime fields outside `Prefs`: `raw_keybindings` (lives on `App`);
         // `config_remotes` (UI-managed `forwards` here; CLI changes flow in via
         // hot-reload); `collapsed_sections` (runtime state, not a pref).
-        let config = self.state.prefs.to_config(
-            self.raw_keybindings.clone(),
-            self.state.config_remotes.clone(),
-            crate::system::tmux::hosts_from_lanes(&self.state.collapsed_sections),
-            crate::system::tmux::hosts_from_lanes(&self.state.collapsed_agent_sections),
-        );
+        let config = self.config_snapshot();
         // Keep the injected backends and the model's materialized section
         // definitions aligned with an in-app remote/forward edit before the
         // next refresh or render.

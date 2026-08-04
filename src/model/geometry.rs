@@ -322,6 +322,10 @@ pub struct SectionMeta {
     /// it. For a non-divider placeholder header it's still set; read `divider`
     /// to tell them apart.
     pub lane: LaneId,
+    /// Backend-provided presentation label for this lane.
+    pub title: String,
+    /// Whether this is the embedded primary lane.
+    pub primary: bool,
     /// Buttons on this divider, left→right, matching the `BasicItem`
     /// `.button()` order. Empty for placeholder headers (empty-local /
     /// no-agents / detecting).
@@ -333,8 +337,7 @@ pub struct SectionMeta {
 }
 
 /// Switches distinguishing the two sidebar tabs built through the shared
-/// `build_sections` skeleton. The section structure (local then one per
-/// remote host) is identical; only these toggles and per-row content differ.
+/// `build_sections` skeleton. Only these toggles and per-row content differ.
 #[derive(Debug, Clone, Copy)]
 pub struct SectionLayoutOpts {
     /// Push local / host divider headers. Projects omits them in Compact

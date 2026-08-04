@@ -193,12 +193,12 @@ impl App {
     fn pump_port_forward(&mut self) -> Redraw {
         let mut redraw = Redraw::No;
         while let Ok(r) = self.port_forward_rx.try_recv() {
-            let host = r.kind.host().to_string();
+            let (lane, op, ok, message) = r.into_lane_result();
             self.dispatch(Action::Pf(PfAction::TaskResult {
-                host,
-                op: r.kind,
-                ok: r.ok,
-                message: r.message,
+                lane,
+                op,
+                ok,
+                message,
             }));
             redraw = Redraw::Force;
         }

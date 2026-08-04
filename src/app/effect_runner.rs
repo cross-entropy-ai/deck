@@ -85,14 +85,30 @@ impl App {
                     );
                 }
                 Effect::RemoveLane(lane) => {
-                    if let Some(host) = self.state.host_for_lane(lane) {
-                        let _ = self.port_forward_tx.send(
-                            crate::app::ssh::port_forward_task::Op::StopHost {
-                                host: host.to_string(),
-                            },
-                        );
+                    let mut config = self.config_snapshot();
+                    let outcome = self
+                        .systems
+                        .runtime(lane)
+                        .and_then(|runtime| runtime.lane_config())
+                        .map(|provider| provider.remove_lane(lane, &mut config));
+                    match outcome {
+                        Some(crate::system::LaneConfigOutcome::Removed) => {
+                            self.state.config_remotes = config.remotes;
+                            crate::app::ssh::port_forward_task::stop_lane(
+                                &self.port_forward_tx,
+                                lane,
+                            );
+                            self.offboard_remote_host(lane);
+                            self.state.entries.retain(|entry| entry.lane != *lane);
+                            self.state.clamp_projects_focus();
+                            self.state.clamp_agent_focus();
+                            self.save_config();
+                            self.request_refresh();
+                        }
+                        Some(crate::system::LaneConfigOutcome::Unsupported) | None => {
+                            self.state.show_warning("lane does not support removal")
+                        }
                     }
-                    self.offboard_remote_host(lane);
                 }
                 Effect::InvokeLaneAction {
                     lane,
@@ -117,9 +133,7 @@ impl App {
                                 self.request_refresh();
                             }
                             crate::system::LaneShellIntent::OpenPortForwards => {
-                                if let Some(host) = self.state.host_for_lane(lane) {
-                                    self.dispatch(Action::Pf(PfAction::Open(host.to_string())));
-                                }
+                                self.dispatch(Action::Pf(PfAction::Open(lane.clone())));
                             }
                             crate::system::LaneShellIntent::OpenContextMenu { anchor } => {
                                 self.dispatch(Action::Menu(MenuAction::OpenLaneDivider {
@@ -132,8 +146,13 @@ impl App {
                     }
                 }
                 Effect::OpenPortForwardOverlay(lane) => {
-                    if let Some(host) = self.state.host_for_lane(lane) {
-                        self.dispatch(Action::Pf(PfAction::Open(host.to_string())));
+                    self.dispatch(Action::Pf(PfAction::Open(lane.clone())));
+                }
+                Effect::OpenConfiguredPortForwards => {
+                    if let Some(lane) = crate::app::ssh::config_adapter::preferred_forward_lane(
+                        &self.state.config_remotes,
+                    ) {
+                        self.dispatch(Action::Pf(PfAction::Open(lane)));
                     }
                 }
                 Effect::ApplyTmuxTheme => crate::tmux::apply_theme(self.state.active_theme()),
@@ -142,7 +161,32 @@ impl App {
                 Effect::RereadNewSessionEntries => self.request_new_session_listing(),
                 Effect::OpenNewSessionPicker(lane) => self.open_new_session_picker(lane.clone()),
                 Effect::OpenAddRemotePicker => self.open_add_remote_picker(),
-                Effect::AddRemoteHost(host) => self.onboard_remote_host(host),
+                Effect::AddConfiguredLane { owner, candidate } => {
+                    let mut config = self.config_snapshot();
+                    let outcome = self
+                        .systems
+                        .config_provider(owner)
+                        .map(|provider| provider.add_lane(candidate, &mut config));
+                    match outcome {
+                        Some(crate::system::LaneConfigAddOutcome::Added(lane)) => {
+                            self.state.config_remotes = config.remotes;
+                            self.state.overlay.add_remote = None;
+                            self.save_config();
+                            self.onboard_lane(&lane);
+                            self.request_refresh();
+                        }
+                        Some(crate::system::LaneConfigAddOutcome::AlreadyExists) => {
+                            if let Some(picker) = self.state.overlay.add_remote.as_mut() {
+                                picker.picker.error = Some("already added".into());
+                            }
+                        }
+                        Some(crate::system::LaneConfigAddOutcome::Invalid) | None => {
+                            if let Some(picker) = self.state.overlay.add_remote.as_mut() {
+                                picker.picker.error = Some("invalid lane identifier".into());
+                            }
+                        }
+                    }
+                }
                 Effect::Quit => {}
             }
         }

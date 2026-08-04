@@ -123,14 +123,13 @@ impl AppState {
                 .cloned()
                 .unwrap_or_else(|| crate::system::SectionDef {
                     lane: lane_id.clone(),
-                    title: self
-                        .host_for_lane(lane_id)
-                        .unwrap_or(lane_id.lane())
-                        .to_string(),
+                    title: self.section_title(lane_id),
                     buttons: Vec::new(),
-                    top_margin: self.host_for_lane(lane_id).is_some(),
-                    primary: false,
-                    runtime_key: self.host_for_lane(lane_id).map(str::to_string),
+                    top_margin: false,
+                    primary: self
+                        .entries
+                        .first()
+                        .is_some_and(|entry| entry.lane == *lane_id),
                     session_capabilities: crate::system::SessionCapabilities::default(),
                     lane_capabilities: crate::system::LaneCapabilities::default(),
                 });
@@ -154,6 +153,8 @@ impl AppState {
                 }
                 sections.push(SectionMeta {
                     lane: def.lane.clone(),
+                    title: def.title,
+                    primary: def.primary,
                     buttons: def.buttons,
                     divider: true,
                 });

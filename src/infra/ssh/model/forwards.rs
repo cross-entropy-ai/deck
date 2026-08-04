@@ -231,7 +231,7 @@ impl PfAddForm {
 
 #[derive(Debug, Clone)]
 pub struct PortForwardOverlay {
-    pub host: String,
+    pub lane: crate::lane::LaneId,
     pub selected: usize,
     pub add_form: Option<PfAddForm>,
     pub status: Option<String>,

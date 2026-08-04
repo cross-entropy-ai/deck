@@ -481,11 +481,10 @@ impl App {
             .iter()
             .filter_map(|entry| {
                 let agent = entry.agent()?;
-                Some(crate::summary::SummaryPane {
-                    host: self.state.host_for_lane(&entry.lane).map(str::to_string),
-                    id: agent.location(),
-                    target: agent.pane_id.clone(),
-                })
+                self.systems
+                    .runtime(&entry.lane)?
+                    .summary_transport()?
+                    .summary_pane(&entry.lane, agent.location(), agent.pane_id.clone())
             })
             .collect();
         let template = self.state.prefs.summary_prompt.clone();
@@ -517,36 +516,15 @@ impl App {
         self.state.cancel_summary();
     }
 
-    /// Resolve the focus transport for `host` (`None` = local) and the
-    /// `marker_id` that tags the resulting outcome. `marker_id` lets a
-    /// reconnect (which mints a new id) reject a completion from the old
-    /// connection; local has no generation, so 0 is a harmless placeholder.
-    /// Returns `None` when a remote host has no live marker yet — the caller
-    /// bails, since the remote focus script would just abort server-side.
+    /// Resolve a backend-owned focus transport through the lane runtime and
+    /// attachment boundary. App never interprets the lane or constructs
+    /// local/SSH transport variants.
     fn focus_transport(
         &self,
         lane: &crate::lane::LaneId,
     ) -> Option<(crate::focus::FocusTransport, u64)> {
-        if lane == self.attachments.primary_lane() {
-            self.attachments.terminal(lane).map(|pane| {
-                (
-                    crate::focus::FocusTransport::Local {
-                        client_tty: pane.slave_tty().to_string(),
-                    },
-                    0,
-                )
-            })
-        } else {
-            let host = self.state.host_for_lane(lane)?;
-            let marker_id = self.attachments.live_marker_id(lane)?;
-            Some((
-                crate::focus::FocusTransport::Remote {
-                    host: host.to_string(),
-                    marker_id,
-                },
-                marker_id,
-            ))
-        }
+        let provider = self.systems.runtime(lane)?.focus_transport()?;
+        self.attachments.focus_transport(lane, provider)
     }
 
     pub(super) fn switch_to_agent_pane(&mut self, target: crate::geometry::AgentTarget) {
@@ -745,19 +723,21 @@ impl App {
                 return;
             }
         };
-        let host = overlay.host.clone();
+        let lane = overlay.lane.clone();
         // Reject a forward whose listen identity (mode + bind addr + listen
         // port) is already configured, before bothering ssh — else the user
         // sees a cryptic "bind: Address already in use", or a silent no-op when
         // ssh treats it as idempotent.
         // Not `state.remote_config()` — `overlay` holds a live &mut
         // into `self.state`, so only a disjoint field borrow compiles here.
-        let already_exists = self
-            .state
-            .config_remotes
-            .iter()
-            .find(|r| r.host == host)
-            .is_some_and(|r| r.forwards.iter().any(|f| f.same_listen_identity(&spec)));
+        let already_exists =
+            crate::app::ssh::config_adapter::remote_for_lane(&self.state.config_remotes, &lane)
+                .is_some_and(|remote| {
+                    remote
+                        .forwards
+                        .iter()
+                        .any(|forward| forward.same_listen_identity(&spec))
+                });
         if already_exists {
             overlay.status = Some(format!(
                 "Port {} is already being forwarded.",
@@ -767,46 +747,40 @@ impl App {
         }
         form.submitting = true;
         overlay.status = Some("applying...".into());
-        let _ = self
-            .port_forward_tx
-            .send(crate::app::ssh::port_forward_task::Op::AddForward { host, spec });
+        crate::app::ssh::port_forward_task::add_for_lane(&self.port_forward_tx, &lane, spec);
     }
 
     /// Cancel-then-remove. Spec semantics: remove from config regardless
     /// of worker outcome (avoid ghost entries). Save via the existing
     /// `save_config` path.
     fn pf_delete_selected(&mut self) {
-        let (host, spec) = {
+        let (lane, spec) = {
             let Some(overlay) = self.state.overlay.port_forward.as_ref() else {
                 return;
             };
-            let host = overlay.host.clone();
+            let lane = overlay.lane.clone();
             let idx = overlay.selected;
-            let Some(spec) = self
-                .state
-                .remote_config(&host)
-                .and_then(|r| r.forwards.get(idx))
-                .cloned()
+            let Some(spec) =
+                crate::app::ssh::config_adapter::remote_for_lane(&self.state.config_remotes, &lane)
+                    .and_then(|remote| remote.forwards.get(idx))
+                    .cloned()
             else {
                 return;
             };
-            (host, spec)
+            (lane, spec)
         };
 
-        if let Some(r) = self
-            .state
-            .config_remotes
-            .iter_mut()
-            .find(|r| r.host == host)
-        {
-            r.forwards.retain(|s| *s != spec);
+        if let Some(remote) = crate::app::ssh::config_adapter::remote_for_lane_mut(
+            &mut self.state.config_remotes,
+            &lane,
+        ) {
+            remote.forwards.retain(|candidate| *candidate != spec);
         }
         self.save_config();
 
-        let new_len = self
-            .state
-            .remote_config(&host)
-            .map_or(0, |r| r.forwards.len());
+        let new_len =
+            crate::app::ssh::config_adapter::remote_for_lane(&self.state.config_remotes, &lane)
+                .map_or(0, |remote| remote.forwards.len());
         if let Some(overlay) = self.state.overlay.port_forward.as_mut() {
             if overlay.selected >= new_len {
                 overlay.selected = new_len.saturating_sub(1);
@@ -814,8 +788,6 @@ impl App {
             overlay.status = Some("cancelling...".into());
         }
 
-        let _ = self
-            .port_forward_tx
-            .send(crate::app::ssh::port_forward_task::Op::CancelForward { host, spec });
+        crate::app::ssh::port_forward_task::cancel_for_lane(&self.port_forward_tx, &lane, spec);
     }
 }

@@ -60,7 +60,6 @@ fn set_capabilities(
         buttons: vec![],
         top_margin: false,
         primary: true,
-        runtime_key: None,
         session_capabilities: session,
         lane_capabilities: lane,
     }];
@@ -81,7 +80,6 @@ fn mount_remote_lane(state: &mut AppState, host: &str) {
         buttons: vec![],
         top_margin: true,
         primary: false,
-        runtime_key: Some(host.into()),
         session_capabilities: crate::system::SessionCapabilities {
             activate: true,
             rename: true,
@@ -989,16 +987,15 @@ fn port_forwards_row_aggregates_across_hosts_and_targets_a_host() {
 
     state.settings.selected = settings_row_index("Port forwards");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    // Opens the first host that actually has forwards ("b"), not "a".
+    // Selection is resolved at the SSH/config adapter boundary, not here.
     assert!(matches!(
         fx.effects(),
-        [crate::effects::Effect::OpenPortForwardOverlay(lane)]
-            if crate::system::tmux::TmuxSystem::host_of(lane) == Some("b")
+        [crate::effects::Effect::OpenConfiguredPortForwards]
     ));
 }
 
 #[test]
-fn port_forwards_row_is_noop_without_hosts() {
+fn port_forwards_row_defers_empty_config_handling_to_adapter() {
     let mut state = make_test_state(1);
     state.config_remotes.clear();
     let row = &crate::app::settings::SETTING_ROWS[settings_row_index("Port forwards")];
@@ -1006,11 +1003,14 @@ fn port_forwards_row_is_noop_without_hosts() {
 
     state.settings.selected = settings_row_index("Port forwards");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert!(fx.effects().is_empty());
+    assert!(matches!(
+        fx.effects(),
+        [crate::effects::Effect::OpenConfiguredPortForwards]
+    ));
 }
 
 #[test]
-fn removing_a_remote_drops_its_forwards() {
+fn removing_a_lane_defers_config_mutation_to_runtime() {
     use crate::config::RemoteConfig;
     use crate::forwards::{ForwardMode, ForwardSpec};
 
@@ -1026,13 +1026,16 @@ fn removing_a_remote_drops_its_forwards() {
         }],
     });
 
-    apply_action(
+    let fx = apply_action(
         &mut state,
         Action::RemoveLane(crate::system::tmux::TmuxSystem::host_lane("prod")),
     );
 
-    // The host is gone, so its nested forward rules go with it.
-    assert!(state.config_remotes.iter().all(|r| r.host != "prod"));
+    assert_eq!(state.config_remotes.len(), 1);
+    assert_eq!(
+        fx.first_removed_lane(),
+        Some(&crate::system::tmux::TmuxSystem::host_lane("prod"))
+    );
 }
 
 fn rename_state(initial: &str) -> RenameState {
@@ -1297,10 +1300,11 @@ fn open_host_divider_menu_uses_host_kind() {
 #[test]
 fn open_port_forward_clears_menu_and_opens_overlay() {
     let mut state = make_test_state(1);
-    crate::action::apply_action(&mut state, Action::Pf(PfAction::Open("h1".into())));
+    let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
+    crate::action::apply_action(&mut state, Action::Pf(PfAction::Open(lane.clone())));
     assert!(state.overlay.context_menu.is_none());
     let o = state.overlay.port_forward.as_ref().expect("overlay open");
-    assert_eq!(o.host, "h1");
+    assert_eq!(o.lane, lane);
     assert_eq!(o.selected, 0);
 }
 
@@ -1308,7 +1312,7 @@ fn open_port_forward_clears_menu_and_opens_overlay() {
 fn pf_add_open_creates_default_form() {
     let mut state = make_test_state(1);
     state.overlay.port_forward = Some(crate::forwards::PortForwardOverlay {
-        host: "h".into(),
+        lane: crate::system::tmux::TmuxSystem::host_lane("h"),
         selected: 0,
         add_form: None,
         status: None,
@@ -1340,8 +1344,8 @@ fn pf_task_result_persists_forward_when_overlay_closed() {
     crate::action::apply_action(
         &mut state,
         Action::Pf(PfAction::TaskResult {
-            host: "h1".into(),
-            op: crate::app::ssh::port_forward_task::OpKind::Forward("h1".into(), spec.clone()),
+            lane: crate::system::tmux::TmuxSystem::host_lane("h1"),
+            op: crate::action::PfTaskKind::Forward(spec.clone()),
             ok: true,
             message: String::new(),
         }),
@@ -1370,8 +1374,8 @@ fn pf_task_result_marks_host_unreachable_on_master_failure() {
     crate::action::apply_action(
         &mut state,
         Action::Pf(PfAction::TaskResult {
-            host: "h1".into(),
-            op: crate::app::ssh::port_forward_task::OpKind::Master("h1".into()),
+            lane: crate::system::tmux::TmuxSystem::host_lane("h1"),
+            op: crate::action::PfTaskKind::Master,
             ok: false,
             message: "connection refused".into(),
         }),
@@ -1397,7 +1401,7 @@ fn open_form_with_focus(
         t
     };
     state.overlay.port_forward = Some(crate::forwards::PortForwardOverlay {
-        host: "h".into(),
+        lane: crate::system::tmux::TmuxSystem::host_lane("h"),
         selected: 0,
         add_form: Some(crate::forwards::PfAddForm {
             mode: crate::forwards::ForwardMode::Local,
@@ -1531,7 +1535,7 @@ fn pf_add_input_blocks_whitespace_in_host_fields() {
 }
 
 #[test]
-fn remove_remote_from_list_drops_host_and_signals_stop() {
+fn remove_lane_emits_one_runtime_owned_mutation() {
     let mut state = make_test_state(0);
     state.config_remotes = vec![
         crate::config::RemoteConfig {
@@ -1548,15 +1552,10 @@ fn remove_remote_from_list_drops_host_and_signals_stop() {
     let h1 = crate::system::tmux::TmuxSystem::host_lane("h1");
     let fx = crate::action::apply_action(&mut state, Action::RemoveLane(h1.clone()));
 
-    assert_eq!(state.config_remotes.len(), 1);
-    assert_eq!(state.config_remotes[0].host, "h2");
-    assert_eq!(remote_entries(&state).len(), 1);
-    assert_eq!(
-        crate::system::tmux::TmuxSystem::host_of(&remote_entries(&state)[0].lane),
-        Some("h2")
-    );
-    assert!(fx.has_save_config());
-    assert!(fx.has_refresh_sessions());
+    assert_eq!(state.config_remotes.len(), 2);
+    assert_eq!(remote_entries(&state).len(), 2);
+    assert!(!fx.has_save_config());
+    assert!(!fx.has_refresh_sessions());
     assert_eq!(fx.first_removed_lane(), Some(&h1));
 }
 

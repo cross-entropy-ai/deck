@@ -5,6 +5,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
+use crate::geometry::BuiltLayout;
 use crate::geometry::{tab_bar_layout, truncate, TAB_OVERFLOW_MARKER, TAB_SEPARATOR};
 
 use super::super::text::pad_line;
@@ -14,6 +15,7 @@ use crate::state::{SessionEntry, SessionEntryKind};
 
 pub(super) struct TabsProps<'a> {
     pub sessions: &'a [SessionEntry],
+    pub built: &'a BuiltLayout,
     pub focused: usize,
     pub sidebar_active: bool,
     pub show_borders: bool,
@@ -40,11 +42,17 @@ pub(super) fn draw_sidebar_tabs(
         ..content
     };
     let mut spans: Vec<Span> = Vec::new();
-    let primary = sessions.first().map(|session| &session.lane);
     let labels: Vec<String> = sessions
         .iter()
         .map(|session| {
-            let origin = (primary != Some(&session.lane)).then(|| session.lane.lane());
+            let section = props
+                .built
+                .sections
+                .iter()
+                .find(|section| section.lane == session.lane);
+            let origin = section
+                .filter(|section| !section.primary)
+                .map(|section| section.title.as_str());
             crate::geometry::tab_label(origin, session.display_name())
         })
         .collect();

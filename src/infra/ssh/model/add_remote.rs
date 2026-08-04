@@ -7,6 +7,7 @@ use crate::picker::FilterPicker;
 
 #[derive(Debug, Clone)]
 pub struct AddRemoteState {
+    pub owner: crate::system::SystemId,
     /// Input + `~/.ssh/config` candidates (minus hosts already in
     /// config.remotes) + filtered/selected/error. The candidate list is set
     /// when the picker opens; the reducer never refills it.
@@ -15,8 +16,9 @@ pub struct AddRemoteState {
 
 impl AddRemoteState {
     /// Open over the given candidate hosts; all visible initially.
-    pub fn new(hosts: Vec<String>) -> Self {
+    pub fn new(owner: crate::system::SystemId, hosts: Vec<String>) -> Self {
         Self {
+            owner,
             picker: FilterPicker::new(hosts),
         }
     }

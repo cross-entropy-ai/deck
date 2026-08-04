@@ -29,6 +29,19 @@ pub struct SystemRegistry<'a> {
     systems: Vec<&'a dyn System>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SystemId(String);
+
+impl SystemId {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 impl<'a> SystemRegistry<'a> {
     pub fn new(systems: Vec<&'a dyn System>) -> Self {
         Self { systems }
@@ -40,6 +53,18 @@ impl<'a> SystemRegistry<'a> {
         for system in &self.systems {
             system.configure(config);
         }
+    }
+
+    pub fn config_provider(&self, owner: &SystemId) -> Option<&dyn LaneConfigProvider> {
+        let system = self
+            .systems
+            .iter()
+            .copied()
+            .find(|system| system.id() == owner.as_str())?;
+        system
+            .lanes()
+            .into_iter()
+            .find_map(|lane| system.runtime(&lane)?.lane_config())
     }
 
     /// Resolve the owner of a lane. Unknown ids stay explicit rather than
@@ -161,6 +186,64 @@ pub trait LaneActionProvider: Send + Sync {
     ) -> Vec<LaneShellIntent>;
 }
 
+/// Backend-owned configuration mutations addressed by lane identity.
+/// The shell supplies the persisted configuration as a whole and applies the
+/// typed outcome; only the owning backend interprets its lane representation.
+pub trait LaneConfigProvider: Send + Sync {
+    fn add_lane(&self, candidate: &str, config: &mut Config) -> LaneConfigAddOutcome;
+    fn remove_lane(&self, lane: &LaneId, config: &mut Config) -> LaneConfigOutcome;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaneConfigAddOutcome {
+    Added(LaneId),
+    AlreadyExists,
+    Invalid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaneConfigOutcome {
+    Removed,
+    Unsupported,
+}
+
+/// Attachment-owned connection facts supplied transiently while a backend
+/// constructs an operational focus transport. This is not persisted lane
+/// metadata and cannot be used as a connection lookup key.
+pub(crate) enum AttachmentEndpoint<'a> {
+    Primary { client_locator: &'a str },
+    Managed { marker_id: u64 },
+}
+
+pub(crate) trait FocusTransportProvider: Send + Sync {
+    fn focus_transport(
+        &self,
+        lane: &LaneId,
+        endpoint: AttachmentEndpoint<'_>,
+    ) -> Option<crate::focus::FocusTransport>;
+}
+
+pub(crate) trait SummaryTransportProvider: Send + Sync {
+    fn summary_pane(
+        &self,
+        lane: &LaneId,
+        id: String,
+        target: String,
+    ) -> Option<crate::summary::SummaryPane>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachmentRole {
+    Primary,
+    Managed,
+}
+
+/// Declares that a lane owns a terminal attachment and how the shell mounts
+/// it. Connection details remain inside the backend/attachment adapter.
+pub trait AttachmentProvider: Send + Sync {
+    fn role(&self, lane: &LaneId) -> Option<AttachmentRole>;
+}
+
 /// Backend-owned identifier for a lane action. The shell stores and returns
 /// this value without decoding string commands or matching system ids.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -212,6 +295,10 @@ pub struct LaneRuntime<'a> {
     catalog: Option<&'a dyn SessionCatalog>,
     session_control: Option<&'a dyn SessionControlProvider>,
     lane_actions: Option<&'a dyn LaneActionProvider>,
+    lane_config: Option<&'a dyn LaneConfigProvider>,
+    focus_transport: Option<&'a dyn FocusTransportProvider>,
+    summary_transport: Option<&'a dyn SummaryTransportProvider>,
+    attachment: Option<&'a dyn AttachmentProvider>,
     pub session_capabilities: SessionCapabilities,
     pub lane_capabilities: LaneCapabilities,
 }
@@ -223,6 +310,10 @@ impl<'a> LaneRuntime<'a> {
             catalog: None,
             session_control: None,
             lane_actions: None,
+            lane_config: None,
+            focus_transport: None,
+            summary_transport: None,
+            attachment: None,
             session_capabilities: SessionCapabilities::default(),
             lane_capabilities: LaneCapabilities::default(),
         }
@@ -240,6 +331,29 @@ impl<'a> LaneRuntime<'a> {
 
     pub fn with_lane_actions(mut self, actions: &'a dyn LaneActionProvider) -> Self {
         self.lane_actions = Some(actions);
+        self
+    }
+
+    pub fn with_lane_config(mut self, config: &'a dyn LaneConfigProvider) -> Self {
+        self.lane_config = Some(config);
+        self
+    }
+
+    pub(crate) fn with_focus_transport(mut self, provider: &'a dyn FocusTransportProvider) -> Self {
+        self.focus_transport = Some(provider);
+        self
+    }
+
+    pub(crate) fn with_summary_transport(
+        mut self,
+        provider: &'a dyn SummaryTransportProvider,
+    ) -> Self {
+        self.summary_transport = Some(provider);
+        self
+    }
+
+    pub fn with_attachment(mut self, provider: &'a dyn AttachmentProvider) -> Self {
+        self.attachment = Some(provider);
         self
     }
 
@@ -271,6 +385,22 @@ impl<'a> LaneRuntime<'a> {
 
     pub fn lane_actions(&self) -> Option<&'a dyn LaneActionProvider> {
         self.lane_actions
+    }
+
+    pub fn lane_config(&self) -> Option<&'a dyn LaneConfigProvider> {
+        self.lane_config
+    }
+
+    pub(crate) fn focus_transport(&self) -> Option<&'a dyn FocusTransportProvider> {
+        self.focus_transport
+    }
+
+    pub(crate) fn summary_transport(&self) -> Option<&'a dyn SummaryTransportProvider> {
+        self.summary_transport
+    }
+
+    pub fn attachment(&self) -> Option<&'a dyn AttachmentProvider> {
+        self.attachment
     }
 }
 
@@ -330,11 +460,8 @@ pub struct SectionDef {
     pub top_margin: bool,
     /// Whether this lane is backed by Deck's embedded local terminal. Exactly
     /// one built-in lane has this role; other foreground systems must not be
-    /// mistaken for it merely because they have no runtime connection key.
+    /// mistaken for it.
     pub primary: bool,
-    /// Optional runtime connection key. The shell treats it as opaque; the
-    /// built-in tmux system uses the SSH host for reconnect/PTY workflows.
-    pub runtime_key: Option<String>,
     pub session_capabilities: SessionCapabilities,
     pub lane_capabilities: LaneCapabilities,
 }
@@ -377,7 +504,6 @@ mod tests {
                 }],
                 top_margin: true,
                 primary: false,
-                runtime_key: None,
                 // Deliberately stale declarations: the registry replaces
                 // these values from the runtime composition below.
                 session_capabilities: SessionCapabilities {
@@ -459,6 +585,9 @@ mod tests {
         assert!(runtime.catalog().is_some());
         assert!(runtime.session_control().is_some());
         assert!(runtime.lane_actions().is_some());
+        assert!(runtime.focus_transport().is_some());
+        assert!(runtime.summary_transport().is_some());
+        assert!(runtime.attachment().is_some());
     }
 
     #[test]
@@ -495,6 +624,13 @@ mod tests {
             .expect("snapshot");
         assert_eq!(snapshot.sessions[0].name, "fixture");
         assert!(runtime.session_control().is_none());
+        assert!(runtime.lane_config().is_none());
+        assert!(runtime.focus_transport().is_none());
+        assert!(runtime.summary_transport().is_none());
+        assert!(runtime.attachment().is_none());
+        assert!(registry
+            .config_provider(&SystemId::new(test.id()))
+            .is_none());
         assert!(matches!(
             runtime
                 .lane_actions()
@@ -521,5 +657,78 @@ mod tests {
             CatalogError::Unreachable("timeout".into()).to_string(),
             "unreachable: timeout"
         );
+    }
+
+    #[test]
+    fn tmux_lane_config_provider_owns_lane_to_config_translation() {
+        let system = tmux::TmuxSystem::default();
+        let lane = tmux::TmuxSystem::host_lane("prod");
+        let mut config = Config::default();
+        config.remotes.push(crate::config::RemoteConfig {
+            host: "prod".into(),
+            forwards: vec![],
+        });
+
+        assert_eq!(
+            LaneConfigProvider::remove_lane(&system, &lane, &mut config),
+            LaneConfigOutcome::Removed
+        );
+        assert!(config.remotes.is_empty());
+        assert_eq!(
+            LaneConfigProvider::remove_lane(&system, &tmux::TmuxSystem::local_lane(), &mut config,),
+            LaneConfigOutcome::Unsupported
+        );
+
+        assert_eq!(
+            LaneConfigProvider::add_lane(&system, "next", &mut config),
+            LaneConfigAddOutcome::Added(tmux::TmuxSystem::host_lane("next"))
+        );
+        assert_eq!(
+            LaneConfigProvider::add_lane(&system, "next", &mut config),
+            LaneConfigAddOutcome::AlreadyExists
+        );
+    }
+
+    #[test]
+    fn tmux_transport_providers_build_backend_specific_targets() {
+        let system = tmux::TmuxSystem::default();
+        let local = tmux::TmuxSystem::local_lane();
+        let remote = tmux::TmuxSystem::host_lane("prod");
+
+        assert_eq!(
+            AttachmentProvider::role(&system, &local),
+            Some(AttachmentRole::Primary)
+        );
+        assert_eq!(
+            AttachmentProvider::role(&system, &remote),
+            Some(AttachmentRole::Managed)
+        );
+
+        assert!(matches!(
+            FocusTransportProvider::focus_transport(
+                &system,
+                &local,
+                AttachmentEndpoint::Primary {
+                    client_locator: "/dev/ttys001",
+                },
+            ),
+            Some(crate::focus::FocusTransport::Local { client_tty })
+                if client_tty == "/dev/ttys001"
+        ));
+        assert!(matches!(
+            FocusTransportProvider::focus_transport(
+                &system,
+                &remote,
+                AttachmentEndpoint::Managed { marker_id: 7 },
+            ),
+            Some(crate::focus::FocusTransport::Remote { host, marker_id })
+                if host == "prod" && marker_id == 7
+        ));
+
+        let pane =
+            SummaryTransportProvider::summary_pane(&system, &remote, "prod:1".into(), "%9".into())
+                .expect("summary transport");
+        assert_eq!(pane.host.as_deref(), Some("prod"));
+        assert_eq!(pane.target, "%9");
     }
 }

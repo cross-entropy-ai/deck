@@ -17,10 +17,10 @@ use super::widgets::{
 use super::NewSessionView;
 
 pub fn draw_new_session(frame: &mut Frame, area: Rect, view: &NewSessionView, theme: &Theme) {
-    // Title carries the target host for remote creation so it's obvious the
-    // dir browser is listing that host, not the local machine.
-    let title = match view.host {
-        Some(host) => format!(" New session · @{host} "),
+    // The title carries the non-primary lane label so the picker target stays
+    // clear without exposing connection metadata to UI.
+    let title = match view.lane_title {
+        Some(lane_title) => format!(" New session · {lane_title} "),
         None => " New session ".to_string(),
     };
     let footer = if view.focus_name {

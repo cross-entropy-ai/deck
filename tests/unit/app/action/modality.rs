@@ -47,7 +47,10 @@ fn open_modal(state: &mut AppState, modal: Modal) {
             });
         }
         Modal::AddRemote => {
-            state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(vec![]));
+            state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(
+                crate::system::SystemId::new("fixture"),
+                vec![],
+            ));
         }
         Modal::Rename => {
             state.overlay.renaming = Some(RenameState::new_with_lane(
@@ -66,7 +69,7 @@ fn open_modal(state: &mut AppState, modal: Modal) {
         }
         Modal::PortForward => {
             state.overlay.port_forward = Some(crate::forwards::PortForwardOverlay {
-                host: "h".into(),
+                lane: crate::system::tmux::TmuxSystem::host_lane("h"),
                 selected: 0,
                 add_form: None,
                 status: None,
@@ -286,7 +289,8 @@ fn port_forward_shortcut_can_be_rebound() {
             &KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
             &state
         ),
-        Action::Pf(crate::action::PfAction::Open(host)) if host == "prod"
+        Action::Pf(crate::action::PfAction::Open(lane))
+            if lane == crate::system::tmux::TmuxSystem::host_lane("prod")
     ));
 }
 

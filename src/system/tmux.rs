@@ -14,9 +14,11 @@ use crate::session::SessionControl;
 use crate::{remote_tmux, tmux};
 
 use super::{
-    CatalogError, ControlCtx, LaneActionId, LaneActionProvider, LaneCapabilities, LaneRuntime,
-    LaneShellIntent, LaneSnapshot, SectionDef, SessionCapabilities, SessionCatalog,
-    SessionControlProvider, SnapshotCtx, SnapshotMode, System,
+    AttachmentEndpoint, AttachmentProvider, AttachmentRole, CatalogError, ControlCtx,
+    FocusTransportProvider, LaneActionId, LaneActionProvider, LaneCapabilities,
+    LaneConfigAddOutcome, LaneConfigOutcome, LaneConfigProvider, LaneRuntime, LaneShellIntent,
+    LaneSnapshot, SectionDef, SessionCapabilities, SessionCatalog, SessionControlProvider,
+    SnapshotCtx, SnapshotMode, SummaryTransportProvider, System,
 };
 
 /// This system's id — the `system` half of every [`LaneId`] it produces.
@@ -104,7 +106,6 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId) -> SectionDef {
             buttons: vec![menu_button()],
             top_margin: false,
             primary: true,
-            runtime_key: None,
             session_capabilities: tmux_session_capabilities(),
             lane_capabilities: tmux_lane_capabilities(),
         },
@@ -120,7 +121,6 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId) -> SectionDef {
                 buttons,
                 top_margin: true,
                 primary: false,
-                runtime_key: Some(host.to_string()),
                 session_capabilities: tmux_session_capabilities(),
                 lane_capabilities: tmux_lane_capabilities(),
             }
@@ -184,8 +184,92 @@ impl System for TmuxSystem {
                 .with_catalog(self)
                 .with_session_control(self)
                 .with_lane_actions(self)
+                .with_lane_config(self)
+                .with_focus_transport(self)
+                .with_summary_transport(self)
+                .with_attachment(self)
                 .with_capabilities(tmux_session_capabilities(), tmux_lane_capabilities())
         })
+    }
+}
+
+impl AttachmentProvider for TmuxSystem {
+    fn role(&self, lane: &LaneId) -> Option<AttachmentRole> {
+        (lane.system() == TMUX).then(|| {
+            if Self::host_of(lane).is_none() {
+                AttachmentRole::Primary
+            } else {
+                AttachmentRole::Managed
+            }
+        })
+    }
+}
+
+impl FocusTransportProvider for TmuxSystem {
+    fn focus_transport(
+        &self,
+        lane: &LaneId,
+        endpoint: AttachmentEndpoint<'_>,
+    ) -> Option<crate::focus::FocusTransport> {
+        match (Self::host_of(lane), endpoint) {
+            (None, AttachmentEndpoint::Primary { client_locator }) => {
+                Some(crate::focus::FocusTransport::Local {
+                    client_tty: client_locator.to_string(),
+                })
+            }
+            (Some(host), AttachmentEndpoint::Managed { marker_id }) if marker_id > 0 => {
+                Some(crate::focus::FocusTransport::Remote {
+                    host: host.to_string(),
+                    marker_id,
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
+impl SummaryTransportProvider for TmuxSystem {
+    fn summary_pane(
+        &self,
+        lane: &LaneId,
+        id: String,
+        target: String,
+    ) -> Option<crate::summary::SummaryPane> {
+        (lane.system() == TMUX).then(|| crate::summary::SummaryPane {
+            host: Self::host_of(lane).map(str::to_string),
+            id,
+            target,
+        })
+    }
+}
+
+impl LaneConfigProvider for TmuxSystem {
+    fn add_lane(&self, candidate: &str, config: &mut Config) -> LaneConfigAddOutcome {
+        let host = candidate.trim();
+        if host.is_empty() {
+            return LaneConfigAddOutcome::Invalid;
+        }
+        if config.remotes.iter().any(|remote| remote.host == host) {
+            return LaneConfigAddOutcome::AlreadyExists;
+        }
+        config.remotes.push(RemoteConfig {
+            host: host.to_string(),
+            forwards: vec![],
+        });
+        LaneConfigAddOutcome::Added(Self::host_lane(host))
+    }
+
+    fn remove_lane(&self, lane: &LaneId, config: &mut Config) -> LaneConfigOutcome {
+        let Some(host) = Self::host_of(lane) else {
+            return LaneConfigOutcome::Unsupported;
+        };
+        let before = config.remotes.len();
+        config.remotes.retain(|remote| remote.host != host);
+        if config.remotes.len() == before {
+            LaneConfigOutcome::Unsupported
+        } else {
+            LaneConfigOutcome::Removed
+        }
     }
 }
 

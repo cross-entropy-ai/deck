@@ -4,16 +4,46 @@ use super::*;
 fn generic_session_and_effect_dtos_do_not_regain_host_sentinels() {
     let state_source = include_str!("../../../src/model/state/mod.rs");
     let effects_source = include_str!("../../../src/model/effects.rs");
+    let system_source = include_str!("../../../src/system/mod.rs");
+    let actions_source = include_str!("../../../src/app/action/mod.rs");
+    let forwards_source = include_str!("../../../src/infra/ssh/model/forwards.rs");
     assert!(!state_source.contains("pub host: Option<String>"));
+    assert!(!system_source.contains("runtime_key"));
+    assert!(!forwards_source.contains("pub host: String"));
+    assert!(!actions_source.contains("TaskResult {\n        host:"));
     for removed in [
         "ShowRemotePlaceholder",
         "RemoveRemoteHost",
         "OpenRemoteNewSessionPicker",
         "SaveRemoteSessionOrder",
+        "AddRemoteHost",
     ] {
         assert!(
             !effects_source.contains(removed),
             "legacy effect: {removed}"
+        );
+    }
+
+    for (name, source) in [
+        ("state", state_source),
+        ("layout", include_str!("../../../src/model/state/layout.rs")),
+        (
+            "keyboard",
+            include_str!("../../../src/app/action/keyboard.rs"),
+        ),
+        (
+            "menu reducer",
+            include_str!("../../../src/app/action/reduce/menu.rs"),
+        ),
+        (
+            "port-forward reducer",
+            include_str!("../../../src/app/action/reduce/port_forward.rs"),
+        ),
+        ("tabs UI", include_str!("../../../src/ui/sidebar/tabs.rs")),
+    ] {
+        assert!(
+            !source.contains(".lane()"),
+            "lane payload decoded in {name}"
         );
     }
 }
@@ -25,6 +55,19 @@ fn make_session(name: &str) -> SessionEntry {
         dir: format!("/tmp/{name}"),
         kind: SessionEntryKind::Live { is_current: false },
     }
+}
+
+#[test]
+fn unknown_lane_titles_are_neutral_and_distinct() {
+    let state = AppState::new(80, 24);
+    let first = LaneId::new("fixture", "first");
+    let second = LaneId::new("fixture", "second");
+
+    let first_title = state.section_title(&first);
+    let second_title = state.section_title(&second);
+    assert!(first_title.starts_with("unknown lane ("), "{first_title}");
+    assert!(second_title.starts_with("unknown lane ("), "{second_title}");
+    assert_ne!(first_title, second_title);
 }
 
 fn make_state(
@@ -444,19 +487,8 @@ fn detected(session: &str, pane_id: &str) -> crate::agent::DetectedAgent {
 }
 
 #[test]
-fn apply_remote_agents_drops_stale_on_failed_probe() {
-    use crate::config::RemoteConfig;
+fn apply_lane_agents_drops_stale_on_failed_probe() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.config_remotes = vec![
-        RemoteConfig {
-            host: "h1".into(),
-            forwards: vec![],
-        },
-        RemoteConfig {
-            host: "h2".into(),
-            forwards: vec![],
-        },
-    ];
     // Prior round: local + both hosts had detected agents.
     state.agents.insert(
         crate::system::tmux::lane(None),
@@ -472,11 +504,25 @@ fn apply_remote_agents_drops_stale_on_failed_probe() {
     );
 
     // This round queried both hosts; only h1's probe succeeded.
-    let covered: std::collections::HashSet<String> =
-        ["h1".to_string(), "h2".to_string()].into_iter().collect();
+    let covered: std::collections::HashSet<_> = [
+        crate::system::tmux::lane(Some("h1")),
+        crate::system::tmux::lane(Some("h2")),
+    ]
+    .into_iter()
+    .collect();
     let mut fresh = std::collections::HashMap::new();
-    fresh.insert("h1".to_string(), vec![detected("h1new", "%11")]);
-    state.apply_remote_agents(covered, fresh);
+    fresh.insert(
+        crate::system::tmux::lane(Some("h1")),
+        vec![detected("h1new", "%11")],
+    );
+    let mounted = [
+        crate::system::tmux::lane(None),
+        crate::system::tmux::lane(Some("h1")),
+        crate::system::tmux::lane(Some("h2")),
+    ]
+    .into_iter()
+    .collect();
+    state.apply_lane_agents(covered, fresh, &mounted);
 
     // h1 updated, h2 (failed probe) cleared, local untouched.
     assert_eq!(
@@ -498,14 +544,15 @@ fn apply_remote_agents_drops_stale_on_failed_probe() {
 }
 
 #[test]
-fn apply_remote_agents_prunes_unconfigured_hosts() {
+fn apply_lane_agents_prunes_unmounted_lanes() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     // No remotes configured; a leftover host entry should be pruned.
     state.agents.insert(
         crate::system::tmux::lane(Some("ghost")),
         vec![detected("s", "%1")],
     );
-    state.apply_remote_agents(Default::default(), Default::default());
+    let mounted = [crate::system::tmux::lane(None)].into_iter().collect();
+    state.apply_lane_agents(Default::default(), Default::default(), &mounted);
     assert!(!state
         .agents
         .contains_key(crate::system::tmux::lane(Some("ghost")).as_str()));

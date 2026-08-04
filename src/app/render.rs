@@ -330,6 +330,11 @@ impl App {
             }
 
             if let Some(ns) = new_session_overlay {
+                let lane_title = ns
+                    .target_lane
+                    .as_ref()
+                    .filter(|lane| !s.is_primary_lane(lane))
+                    .map(|lane| s.section_title(lane));
                 let view = ui::NewSessionView {
                     name: &ns.name,
                     focus_name: matches!(ns.focus, crate::new_session::PickerFocus::Name),
@@ -338,11 +343,7 @@ impl App {
                     filtered: &ns.picker.filtered,
                     selected: ns.picker.selected,
                     error: ns.picker.error.as_deref(),
-                    host: ns
-                        .target_lane
-                        .as_ref()
-                        .filter(|lane| !s.is_primary_lane(lane))
-                        .and_then(|lane| s.host_for_lane(lane)),
+                    lane_title: lane_title.as_deref(),
                 };
                 ui::draw_new_session(frame, frame.area(), &view, theme);
             }
@@ -353,11 +354,18 @@ impl App {
 
             if let Some(overlay) = port_forward_overlay {
                 let pf_area = frame.area();
+                let lane_title = self.state.section_title(&overlay.lane);
+                let forwards = crate::app::ssh::config_adapter::remote_for_lane(
+                    &self.state.config_remotes,
+                    &overlay.lane,
+                )
+                .map_or(&[][..], |remote| remote.forwards.as_slice());
                 crate::ui::overlays::port_forward::draw_port_forward(
                     frame,
                     pf_area,
                     overlay,
-                    &self.state.config_remotes,
+                    &lane_title,
+                    forwards,
                     theme,
                 );
             }
