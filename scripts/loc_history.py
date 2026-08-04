@@ -48,6 +48,7 @@ VIEWS = {
         "title": "deck — code composition by module over time (src/ + tests/)",
         "output": "scripts/loc_src_dirs.png",
         "legend": "module (latest share)",
+        "paths": ("src/*.rs", "tests/*.rs"),
     },
 }
 
@@ -91,10 +92,13 @@ def day_commits():
     return commits
 
 
-def breakdown(sha, categorize):
+def breakdown(sha, categorize, paths=()):
     """Count tracked text lines at ``sha`` using the selected categorizer."""
+    command = ["git", "grep", "-I", "-c", "", sha]
+    if paths:
+        command.extend(["--", *paths])
     result = subprocess.run(
-        ["git", "grep", "-I", "-c", "", sha], capture_output=True, text=True
+        command, capture_output=True, text=True
     )
     counts = defaultdict(int)
     for line in result.stdout.splitlines():
@@ -141,7 +145,7 @@ def render(view_name, commits):
     dates = list(commits)
     series = {category: [] for category in categories}
     for sha in commits.values():
-        counts = breakdown(sha, categorize)
+        counts = breakdown(sha, categorize, spec.get("paths", ()))
         for category in categories:
             series[category].append(counts.get(category, 0))
 
