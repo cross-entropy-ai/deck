@@ -691,7 +691,10 @@ impl AppState {
         self.system_sections
             .iter()
             .find(|section| section.lane == *lane)
-            .map_or_else(|| "session".to_string(), |section| section.title.clone())
+            .map_or_else(
+                || format!("unknown lane ({})", lane.diagnostic_label()),
+                |section| section.title.clone(),
+            )
     }
 
     pub fn is_primary_entry(&self, entry: &SessionEntry) -> bool {

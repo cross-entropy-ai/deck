@@ -57,6 +57,19 @@ fn make_session(name: &str) -> SessionEntry {
     }
 }
 
+#[test]
+fn unknown_lane_titles_are_neutral_and_distinct() {
+    let state = AppState::new(80, 24);
+    let first = LaneId::new("fixture", "first");
+    let second = LaneId::new("fixture", "second");
+
+    let first_title = state.section_title(&first);
+    let second_title = state.section_title(&second);
+    assert!(first_title.starts_with("unknown lane ("), "{first_title}");
+    assert!(second_title.starts_with("unknown lane ("), "{second_title}");
+    assert_ne!(first_title, second_title);
+}
+
 fn make_state(
     layout_mode: LayoutMode,
     show_borders: bool,

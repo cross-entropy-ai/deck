@@ -123,7 +123,7 @@ impl AppState {
                 .cloned()
                 .unwrap_or_else(|| crate::system::SectionDef {
                     lane: lane_id.clone(),
-                    title: "session".to_string(),
+                    title: self.section_title(lane_id),
                     buttons: Vec::new(),
                     top_margin: false,
                     primary: self

@@ -52,6 +52,36 @@ impl LaneId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Stable, printable label for diagnostics and missing-metadata UI.
+    ///
+    /// The hash comes first so OS-level thread-name truncation still
+    /// distinguishes lanes. The readable suffix is bounded and replaces
+    /// punctuation/control characters that are awkward in debuggers and logs.
+    pub fn diagnostic_label(&self) -> String {
+        const READABLE_MAX: usize = 24;
+
+        // FNV-1a is sufficient here: this is a stable diagnostic discriminator,
+        // not an identity or security boundary.
+        let hash = self.as_str().bytes().fold(0x811c_9dc5_u32, |hash, byte| {
+            (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+        });
+        let readable: String = self
+            .system()
+            .chars()
+            .chain(std::iter::once('-'))
+            .chain(self.lane().chars())
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                    ch
+                } else {
+                    '-'
+                }
+            })
+            .take(READABLE_MAX)
+            .collect();
+        format!("{hash:08x}-{readable}")
+    }
 }
 
 impl Borrow<str> for LaneId {

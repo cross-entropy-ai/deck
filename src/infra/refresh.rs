@@ -346,10 +346,11 @@ fn collect_parallel(
         .into_iter()
         .map(|runtime| {
             let lane_for_fallback = runtime.lane().clone();
+            let thread_name = format!("deck-refresh-{}", runtime.lane().diagnostic_label());
             let client_locator = client_locator.clone();
             let compiled = Arc::clone(&compiled);
             thread::Builder::new()
-                .name("deck-lane-refresh".to_string())
+                .name(thread_name)
                 .spawn(move || {
                     collect_one(runtime, probe_agents, &client_locator, compiled.as_slice())
                 })

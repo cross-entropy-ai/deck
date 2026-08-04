@@ -37,3 +37,18 @@ fn lane_name_may_contain_dots_and_dashes() {
     assert_eq!(id.system(), "tmux");
     assert_eq!(id.lane(), "user@host-1.example.com");
 }
+
+#[test]
+fn diagnostic_label_is_stable_printable_and_lane_specific() {
+    let first = LaneId::new("fixture", "a lane/with controls\n");
+    let same = LaneId::new("fixture", "a lane/with controls\n");
+    let second = LaneId::new("fixture", "a lane/with controls\t");
+
+    assert_eq!(first.diagnostic_label(), same.diagnostic_label());
+    assert_ne!(first.diagnostic_label(), second.diagnostic_label());
+    assert!(first
+        .diagnostic_label()
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.')));
+    assert!(first.diagnostic_label().len() <= 8 + 1 + 24);
+}
