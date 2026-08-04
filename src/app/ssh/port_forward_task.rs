@@ -213,6 +213,16 @@ pub fn spawn(results: Sender<OpResult>) -> Sender<Op> {
     op_tx
 }
 
+/// Stop SSH forwarding for a lane at the built-in adapter boundary. Generic
+/// effect routing remains lane-keyed and never decodes the lane payload.
+pub(crate) fn stop_lane(sender: &Sender<Op>, lane: &crate::lane::LaneId) {
+    if let Some(host) = crate::system::tmux::TmuxSystem::host_of(lane) {
+        let _ = sender.send(Op::StopHost {
+            host: host.to_string(),
+        });
+    }
+}
+
 #[cfg(test)]
 #[path = "../../../tests/unit/app/port_forward_task.rs"]
 mod tests;

@@ -14,9 +14,9 @@ use crate::session::SessionControl;
 use crate::{remote_tmux, tmux};
 
 use super::{
-    CatalogError, ControlCtx, LaneActionId, LaneActionProvider, LaneCapabilities, LaneRuntime,
-    LaneShellIntent, LaneSnapshot, SectionDef, SessionCapabilities, SessionCatalog,
-    SessionControlProvider, SnapshotCtx, SnapshotMode, System,
+    CatalogError, ControlCtx, LaneActionId, LaneActionProvider, LaneCapabilities,
+    LaneConfigOutcome, LaneConfigProvider, LaneRuntime, LaneShellIntent, LaneSnapshot, SectionDef,
+    SessionCapabilities, SessionCatalog, SessionControlProvider, SnapshotCtx, SnapshotMode, System,
 };
 
 /// This system's id — the `system` half of every [`LaneId`] it produces.
@@ -184,8 +184,24 @@ impl System for TmuxSystem {
                 .with_catalog(self)
                 .with_session_control(self)
                 .with_lane_actions(self)
+                .with_lane_config(self)
                 .with_capabilities(tmux_session_capabilities(), tmux_lane_capabilities())
         })
+    }
+}
+
+impl LaneConfigProvider for TmuxSystem {
+    fn remove_lane(&self, lane: &LaneId, config: &mut Config) -> LaneConfigOutcome {
+        let Some(host) = Self::host_of(lane) else {
+            return LaneConfigOutcome::Unsupported;
+        };
+        let before = config.remotes.len();
+        config.remotes.retain(|remote| remote.host != host);
+        if config.remotes.len() == before {
+            LaneConfigOutcome::Unsupported
+        } else {
+            LaneConfigOutcome::Removed
+        }
     }
 }
 

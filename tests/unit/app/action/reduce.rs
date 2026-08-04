@@ -1010,7 +1010,7 @@ fn port_forwards_row_is_noop_without_hosts() {
 }
 
 #[test]
-fn removing_a_remote_drops_its_forwards() {
+fn removing_a_lane_defers_config_mutation_to_runtime() {
     use crate::config::RemoteConfig;
     use crate::forwards::{ForwardMode, ForwardSpec};
 
@@ -1026,13 +1026,16 @@ fn removing_a_remote_drops_its_forwards() {
         }],
     });
 
-    apply_action(
+    let fx = apply_action(
         &mut state,
         Action::RemoveLane(crate::system::tmux::TmuxSystem::host_lane("prod")),
     );
 
-    // The host is gone, so its nested forward rules go with it.
-    assert!(state.config_remotes.iter().all(|r| r.host != "prod"));
+    assert_eq!(state.config_remotes.len(), 1);
+    assert_eq!(
+        fx.first_removed_lane(),
+        Some(&crate::system::tmux::TmuxSystem::host_lane("prod"))
+    );
 }
 
 fn rename_state(initial: &str) -> RenameState {
@@ -1531,7 +1534,7 @@ fn pf_add_input_blocks_whitespace_in_host_fields() {
 }
 
 #[test]
-fn remove_remote_from_list_drops_host_and_signals_stop() {
+fn remove_lane_emits_one_runtime_owned_mutation() {
     let mut state = make_test_state(0);
     state.config_remotes = vec![
         crate::config::RemoteConfig {
@@ -1548,15 +1551,10 @@ fn remove_remote_from_list_drops_host_and_signals_stop() {
     let h1 = crate::system::tmux::TmuxSystem::host_lane("h1");
     let fx = crate::action::apply_action(&mut state, Action::RemoveLane(h1.clone()));
 
-    assert_eq!(state.config_remotes.len(), 1);
-    assert_eq!(state.config_remotes[0].host, "h2");
-    assert_eq!(remote_entries(&state).len(), 1);
-    assert_eq!(
-        crate::system::tmux::TmuxSystem::host_of(&remote_entries(&state)[0].lane),
-        Some("h2")
-    );
-    assert!(fx.has_save_config());
-    assert!(fx.has_refresh_sessions());
+    assert_eq!(state.config_remotes.len(), 2);
+    assert_eq!(remote_entries(&state).len(), 2);
+    assert!(!fx.has_save_config());
+    assert!(!fx.has_refresh_sessions());
     assert_eq!(fx.first_removed_lane(), Some(&h1));
 }
 

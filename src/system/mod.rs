@@ -161,6 +161,19 @@ pub trait LaneActionProvider: Send + Sync {
     ) -> Vec<LaneShellIntent>;
 }
 
+/// Backend-owned configuration mutations addressed by lane identity.
+/// The shell supplies the persisted configuration as a whole and applies the
+/// typed outcome; only the owning backend interprets its lane representation.
+pub trait LaneConfigProvider: Send + Sync {
+    fn remove_lane(&self, lane: &LaneId, config: &mut Config) -> LaneConfigOutcome;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaneConfigOutcome {
+    Removed,
+    Unsupported,
+}
+
 /// Backend-owned identifier for a lane action. The shell stores and returns
 /// this value without decoding string commands or matching system ids.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -212,6 +225,7 @@ pub struct LaneRuntime<'a> {
     catalog: Option<&'a dyn SessionCatalog>,
     session_control: Option<&'a dyn SessionControlProvider>,
     lane_actions: Option<&'a dyn LaneActionProvider>,
+    lane_config: Option<&'a dyn LaneConfigProvider>,
     pub session_capabilities: SessionCapabilities,
     pub lane_capabilities: LaneCapabilities,
 }
@@ -223,6 +237,7 @@ impl<'a> LaneRuntime<'a> {
             catalog: None,
             session_control: None,
             lane_actions: None,
+            lane_config: None,
             session_capabilities: SessionCapabilities::default(),
             lane_capabilities: LaneCapabilities::default(),
         }
@@ -240,6 +255,11 @@ impl<'a> LaneRuntime<'a> {
 
     pub fn with_lane_actions(mut self, actions: &'a dyn LaneActionProvider) -> Self {
         self.lane_actions = Some(actions);
+        self
+    }
+
+    pub fn with_lane_config(mut self, config: &'a dyn LaneConfigProvider) -> Self {
+        self.lane_config = Some(config);
         self
     }
 
@@ -271,6 +291,10 @@ impl<'a> LaneRuntime<'a> {
 
     pub fn lane_actions(&self) -> Option<&'a dyn LaneActionProvider> {
         self.lane_actions
+    }
+
+    pub fn lane_config(&self) -> Option<&'a dyn LaneConfigProvider> {
+        self.lane_config
     }
 }
 
@@ -520,6 +544,27 @@ mod tests {
         assert_eq!(
             CatalogError::Unreachable("timeout".into()).to_string(),
             "unreachable: timeout"
+        );
+    }
+
+    #[test]
+    fn tmux_lane_config_provider_owns_lane_to_config_translation() {
+        let system = tmux::TmuxSystem::default();
+        let lane = tmux::TmuxSystem::host_lane("prod");
+        let mut config = Config::default();
+        config.remotes.push(crate::config::RemoteConfig {
+            host: "prod".into(),
+            forwards: vec![],
+        });
+
+        assert_eq!(
+            LaneConfigProvider::remove_lane(&system, &lane, &mut config),
+            LaneConfigOutcome::Removed
+        );
+        assert!(config.remotes.is_empty());
+        assert_eq!(
+            LaneConfigProvider::remove_lane(&system, &tmux::TmuxSystem::local_lane(), &mut config,),
+            LaneConfigOutcome::Unsupported
         );
     }
 }

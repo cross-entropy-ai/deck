@@ -85,14 +85,30 @@ impl App {
                     );
                 }
                 Effect::RemoveLane(lane) => {
-                    if let Some(host) = self.state.host_for_lane(lane) {
-                        let _ = self.port_forward_tx.send(
-                            crate::app::ssh::port_forward_task::Op::StopHost {
-                                host: host.to_string(),
-                            },
-                        );
+                    let mut config = self.config_snapshot();
+                    let outcome = self
+                        .systems
+                        .runtime(lane)
+                        .and_then(|runtime| runtime.lane_config())
+                        .map(|provider| provider.remove_lane(lane, &mut config));
+                    match outcome {
+                        Some(crate::system::LaneConfigOutcome::Removed) => {
+                            self.state.config_remotes = config.remotes;
+                            crate::app::ssh::port_forward_task::stop_lane(
+                                &self.port_forward_tx,
+                                lane,
+                            );
+                            self.offboard_remote_host(lane);
+                            self.state.entries.retain(|entry| entry.lane != *lane);
+                            self.state.clamp_projects_focus();
+                            self.state.clamp_agent_focus();
+                            self.save_config();
+                            self.request_refresh();
+                        }
+                        Some(crate::system::LaneConfigOutcome::Unsupported) | None => {
+                            self.state.show_warning("lane does not support removal")
+                        }
                     }
-                    self.offboard_remote_host(lane);
                 }
                 Effect::InvokeLaneAction {
                     lane,
