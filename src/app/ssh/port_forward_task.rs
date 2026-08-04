@@ -63,6 +63,26 @@ pub struct OpResult {
     pub message: String,
 }
 
+impl OpResult {
+    pub(crate) fn into_lane_result(
+        self,
+    ) -> (crate::lane::LaneId, crate::action::PfTaskKind, bool, String) {
+        let host = self.kind.host().to_string();
+        let kind = match self.kind {
+            OpKind::Master(_) => crate::action::PfTaskKind::Master,
+            OpKind::Forward(_, spec) => crate::action::PfTaskKind::Forward(spec),
+            OpKind::Cancel(_) => crate::action::PfTaskKind::Cancel,
+            OpKind::Exit(_) => crate::action::PfTaskKind::Exit,
+        };
+        (
+            crate::system::tmux::TmuxSystem::host_lane(&host),
+            kind,
+            self.ok,
+            self.message,
+        )
+    }
+}
+
 /// Indirection over actually shelling out — lets tests verify ordering
 /// without spawning ssh.
 pub trait Runner: Send + 'static {
@@ -219,6 +239,24 @@ pub(crate) fn stop_lane(sender: &Sender<Op>, lane: &crate::lane::LaneId) {
     if let Some(host) = crate::system::tmux::TmuxSystem::host_of(lane) {
         let _ = sender.send(Op::StopHost {
             host: host.to_string(),
+        });
+    }
+}
+
+pub(crate) fn add_for_lane(sender: &Sender<Op>, lane: &crate::lane::LaneId, spec: ForwardSpec) {
+    if let Some(host) = crate::system::tmux::TmuxSystem::host_of(lane) {
+        let _ = sender.send(Op::AddForward {
+            host: host.to_string(),
+            spec,
+        });
+    }
+}
+
+pub(crate) fn cancel_for_lane(sender: &Sender<Op>, lane: &crate::lane::LaneId, spec: ForwardSpec) {
+    if let Some(host) = crate::system::tmux::TmuxSystem::host_of(lane) {
+        let _ = sender.send(Op::CancelForward {
+            host: host.to_string(),
+            spec,
         });
     }
 }

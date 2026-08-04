@@ -34,6 +34,7 @@ pub enum Effect {
         anchor: LaneActionAnchor,
     },
     OpenPortForwardOverlay(LaneId),
+    OpenConfiguredPortForwards,
     OpenNewSessionPicker(LaneId),
     OpenAddRemotePicker,
     AddRemoteHost(String),

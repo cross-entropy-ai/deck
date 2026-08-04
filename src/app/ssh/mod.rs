@@ -7,6 +7,7 @@
 //! - [`port_forward_task`]: port-forward worker owning SSH ControlMaster
 //!   process lifecycle.
 
+pub(crate) mod config_adapter;
 pub mod port_forward_task;
 pub(super) mod remote_conn;
 mod remote_spawn;

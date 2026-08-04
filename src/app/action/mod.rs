@@ -223,7 +223,7 @@ pub enum MenuAction {
 
 #[derive(Debug)]
 pub enum PfAction {
-    Open(String),
+    Open(crate::lane::LaneId),
     Close,
     FocusUp,
     FocusDown,
@@ -240,11 +240,19 @@ pub enum PfAction {
     /// are mapped to their own actions before reaching this variant.
     AddInputKey(crossterm::event::KeyEvent),
     TaskResult {
-        host: String,
-        op: crate::app::ssh::port_forward_task::OpKind,
+        lane: crate::lane::LaneId,
+        op: PfTaskKind,
         ok: bool,
         message: String,
     },
+}
+
+#[derive(Debug, Clone)]
+pub enum PfTaskKind {
+    Master,
+    Forward(crate::forwards::ForwardSpec),
+    Cancel,
+    Exit,
 }
 
 #[derive(Debug)]

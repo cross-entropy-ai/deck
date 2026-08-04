@@ -353,11 +353,18 @@ impl App {
 
             if let Some(overlay) = port_forward_overlay {
                 let pf_area = frame.area();
+                let lane_title = self.state.section_title(&overlay.lane);
+                let forwards = crate::app::ssh::config_adapter::remote_for_lane(
+                    &self.state.config_remotes,
+                    &overlay.lane,
+                )
+                .map_or(&[][..], |remote| remote.forwards.as_slice());
                 crate::ui::overlays::port_forward::draw_port_forward(
                     frame,
                     pf_area,
                     overlay,
-                    &self.state.config_remotes,
+                    &lane_title,
+                    forwards,
                     theme,
                 );
             }

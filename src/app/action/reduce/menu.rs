@@ -6,7 +6,7 @@ use crate::effects::{Effect, SideEffect};
 use crate::menu::{session_menu_disabled, ContextMenu, MenuItem, MenuKind};
 use crate::state::AppState;
 
-use super::{apply_action, Action, MenuAction, PfAction, SettingsAction};
+use super::{apply_action, Action, MenuAction, SettingsAction};
 
 pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffect {
     let mut fx = SideEffect::default();
@@ -109,12 +109,7 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                         fx.push(Effect::OpenNewSessionPicker(lane.clone()))
                     }
                     Some(MenuItem::PortForward) => {
-                        if let Some(host) = state.host_for_lane(&lane) {
-                            fx.merge(apply_action(
-                                state,
-                                Action::Pf(PfAction::Open(host.to_string())),
-                            ))
-                        }
+                        fx.push(Effect::OpenPortForwardOverlay(lane));
                     }
                     Some(MenuItem::RemoveFromList) if !primary => {
                         fx.merge(apply_action(state, Action::RemoveLane(lane)))

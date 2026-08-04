@@ -989,16 +989,15 @@ fn port_forwards_row_aggregates_across_hosts_and_targets_a_host() {
 
     state.settings.selected = settings_row_index("Port forwards");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    // Opens the first host that actually has forwards ("b"), not "a".
+    // Selection is resolved at the SSH/config adapter boundary, not here.
     assert!(matches!(
         fx.effects(),
-        [crate::effects::Effect::OpenPortForwardOverlay(lane)]
-            if crate::system::tmux::TmuxSystem::host_of(lane) == Some("b")
+        [crate::effects::Effect::OpenConfiguredPortForwards]
     ));
 }
 
 #[test]
-fn port_forwards_row_is_noop_without_hosts() {
+fn port_forwards_row_defers_empty_config_handling_to_adapter() {
     let mut state = make_test_state(1);
     state.config_remotes.clear();
     let row = &crate::app::settings::SETTING_ROWS[settings_row_index("Port forwards")];
@@ -1006,7 +1005,10 @@ fn port_forwards_row_is_noop_without_hosts() {
 
     state.settings.selected = settings_row_index("Port forwards");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert!(fx.effects().is_empty());
+    assert!(matches!(
+        fx.effects(),
+        [crate::effects::Effect::OpenConfiguredPortForwards]
+    ));
 }
 
 #[test]
@@ -1300,10 +1302,11 @@ fn open_host_divider_menu_uses_host_kind() {
 #[test]
 fn open_port_forward_clears_menu_and_opens_overlay() {
     let mut state = make_test_state(1);
-    crate::action::apply_action(&mut state, Action::Pf(PfAction::Open("h1".into())));
+    let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
+    crate::action::apply_action(&mut state, Action::Pf(PfAction::Open(lane.clone())));
     assert!(state.overlay.context_menu.is_none());
     let o = state.overlay.port_forward.as_ref().expect("overlay open");
-    assert_eq!(o.host, "h1");
+    assert_eq!(o.lane, lane);
     assert_eq!(o.selected, 0);
 }
 
@@ -1311,7 +1314,7 @@ fn open_port_forward_clears_menu_and_opens_overlay() {
 fn pf_add_open_creates_default_form() {
     let mut state = make_test_state(1);
     state.overlay.port_forward = Some(crate::forwards::PortForwardOverlay {
-        host: "h".into(),
+        lane: crate::system::tmux::TmuxSystem::host_lane("h"),
         selected: 0,
         add_form: None,
         status: None,
@@ -1343,8 +1346,8 @@ fn pf_task_result_persists_forward_when_overlay_closed() {
     crate::action::apply_action(
         &mut state,
         Action::Pf(PfAction::TaskResult {
-            host: "h1".into(),
-            op: crate::app::ssh::port_forward_task::OpKind::Forward("h1".into(), spec.clone()),
+            lane: crate::system::tmux::TmuxSystem::host_lane("h1"),
+            op: crate::action::PfTaskKind::Forward(spec.clone()),
             ok: true,
             message: String::new(),
         }),
@@ -1373,8 +1376,8 @@ fn pf_task_result_marks_host_unreachable_on_master_failure() {
     crate::action::apply_action(
         &mut state,
         Action::Pf(PfAction::TaskResult {
-            host: "h1".into(),
-            op: crate::app::ssh::port_forward_task::OpKind::Master("h1".into()),
+            lane: crate::system::tmux::TmuxSystem::host_lane("h1"),
+            op: crate::action::PfTaskKind::Master,
             ok: false,
             message: "connection refused".into(),
         }),
@@ -1400,7 +1403,7 @@ fn open_form_with_focus(
         t
     };
     state.overlay.port_forward = Some(crate::forwards::PortForwardOverlay {
-        host: "h".into(),
+        lane: crate::system::tmux::TmuxSystem::host_lane("h"),
         selected: 0,
         add_form: Some(crate::forwards::PfAddForm {
             mode: crate::forwards::ForwardMode::Local,

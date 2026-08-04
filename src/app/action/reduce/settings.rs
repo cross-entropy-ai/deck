@@ -59,16 +59,7 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         // that has forwards (else the first host); per-host editing stays on
         // each `@host` divider's `[⇄N]` badge button.
         SettingsAction::OpenPortForwards => {
-            if let Some(r) = state
-                .config_remotes
-                .iter()
-                .find(|r| !r.forwards.is_empty())
-                .or_else(|| state.config_remotes.first())
-            {
-                if let Some(lane) = state.lane_for_host(&r.host) {
-                    fx.push(Effect::OpenPortForwardOverlay(lane.clone()));
-                }
-            }
+            fx.push(Effect::OpenConfiguredPortForwards);
         }
         SettingsAction::OpenThemePicker(slot) => {
             // Opens as a standalone overlay over the current view: from the

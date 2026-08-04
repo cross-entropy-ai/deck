@@ -133,9 +133,7 @@ impl App {
                                 self.request_refresh();
                             }
                             crate::system::LaneShellIntent::OpenPortForwards => {
-                                if let Some(host) = self.state.host_for_lane(lane) {
-                                    self.dispatch(Action::Pf(PfAction::Open(host.to_string())));
-                                }
+                                self.dispatch(Action::Pf(PfAction::Open(lane.clone())));
                             }
                             crate::system::LaneShellIntent::OpenContextMenu { anchor } => {
                                 self.dispatch(Action::Menu(MenuAction::OpenLaneDivider {
@@ -148,8 +146,13 @@ impl App {
                     }
                 }
                 Effect::OpenPortForwardOverlay(lane) => {
-                    if let Some(host) = self.state.host_for_lane(lane) {
-                        self.dispatch(Action::Pf(PfAction::Open(host.to_string())));
+                    self.dispatch(Action::Pf(PfAction::Open(lane.clone())));
+                }
+                Effect::OpenConfiguredPortForwards => {
+                    if let Some(lane) = crate::app::ssh::config_adapter::preferred_forward_lane(
+                        &self.state.config_remotes,
+                    ) {
+                        self.dispatch(Action::Pf(PfAction::Open(lane)));
                     }
                 }
                 Effect::ApplyTmuxTheme => crate::tmux::apply_theme(self.state.active_theme()),

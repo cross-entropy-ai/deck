@@ -66,7 +66,7 @@ fn open_modal(state: &mut AppState, modal: Modal) {
         }
         Modal::PortForward => {
             state.overlay.port_forward = Some(crate::forwards::PortForwardOverlay {
-                host: "h".into(),
+                lane: crate::system::tmux::TmuxSystem::host_lane("h"),
                 selected: 0,
                 add_form: None,
                 status: None,
@@ -286,7 +286,8 @@ fn port_forward_shortcut_can_be_rebound() {
             &KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
             &state
         ),
-        Action::Pf(crate::action::PfAction::Open(host)) if host == "prod"
+        Action::Pf(crate::action::PfAction::Open(lane))
+            if lane == crate::system::tmux::TmuxSystem::host_lane("prod")
     ));
 }
 

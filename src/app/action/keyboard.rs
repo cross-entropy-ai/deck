@@ -165,12 +165,14 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
 fn open_port_forwards_action(state: &AppState) -> Action {
     // Port-forward is a per-host/session action — Projects tab only.
     if !state.agents_tab_active() {
-        if let Some(host) = state
+        if let Some(lane) = state
             .focus_target()
             .and_then(|target| state.entry_at(target))
-            .and_then(|entry| state.host_for_lane(&entry.lane).map(str::to_string))
+            .map(|entry| entry.lane.clone())
         {
-            return Action::Pf(PfAction::Open(host));
+            if !state.is_primary_lane(&lane) {
+                return Action::Pf(PfAction::Open(lane));
+            }
         }
     }
     Action::None

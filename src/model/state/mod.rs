@@ -677,11 +677,6 @@ impl AppState {
         self.settings.theme_picker_selected = theme_index;
     }
 
-    /// This host's entry in the mirrored `Config.remotes`, if configured.
-    pub fn remote_config(&self, host: &str) -> Option<&crate::config::RemoteConfig> {
-        self.config_remotes.iter().find(|r| r.host == host)
-    }
-
     /// Presentation/connection host associated with `lane`, when this is a
     /// configured remote lane. Generic routing uses the lane itself; this
     /// compatibility value is consulted only by tmux/SSH-specific workflows.
@@ -696,16 +691,6 @@ impl AppState {
                     .find(|remote| remote.host == lane.lane())
                     .map(|remote| remote.host.as_str())
             })
-    }
-
-    /// Compatibility lookup from the built-in tmux/SSH runtime key to its
-    /// lane. Attachment ownership remains lane-keyed; host-bearing effects use
-    /// this only at the adapter boundary until WP6 removes those effects.
-    pub fn lane_for_host(&self, host: &str) -> Option<&LaneId> {
-        self.system_sections
-            .iter()
-            .find(|section| section.runtime_key.as_deref() == Some(host))
-            .map(|section| &section.lane)
     }
 
     /// The lane attached to Deck's embedded local terminal, if mounted.

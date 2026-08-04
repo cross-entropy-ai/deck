@@ -6,7 +6,6 @@ use ratatui::widgets::{Paragraph, Widget, Wrap};
 use ratatui::Frame;
 use ratatui_textarea::TextArea;
 
-use crate::config::RemoteConfig;
 use crate::forwards::{ForwardMode, ForwardSpec};
 use crate::forwards::{PfAddForm, PfField, PortForwardOverlay};
 use crate::theme::Theme;
@@ -18,15 +17,11 @@ pub fn draw_port_forward(
     frame: &mut Frame,
     area: Rect,
     overlay: &PortForwardOverlay,
-    remotes: &[RemoteConfig],
+    lane_title: &str,
+    forwards: &[ForwardSpec],
     theme: &Theme,
 ) {
     let buf = frame.buffer_mut();
-    let forwards: &[ForwardSpec] = remotes
-        .iter()
-        .find(|r| r.host == overlay.host)
-        .map(|r| r.forwards.as_slice())
-        .unwrap_or(&[]);
 
     let body_height = if overlay.add_form.is_some() {
         // Sized to the form's content rows so only ~1 blank line trails the
@@ -40,8 +35,8 @@ pub fn draw_port_forward(
     let modal = centered_rect(area, OVERLAY_WIDTH, total_height);
 
     let title = match &overlay.add_form {
-        Some(_) => format!("Port Forward — {}  \u{25b8} add", overlay.host),
-        None => format!("Port Forward — {}", overlay.host),
+        Some(_) => format!("Port Forward — {lane_title}  \u{25b8} add"),
+        None => format!("Port Forward — {lane_title}"),
     };
     let inner = popup_frame(
         buf,

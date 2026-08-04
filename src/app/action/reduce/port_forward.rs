@@ -7,14 +7,15 @@ use crate::forwards::{ForwardMode, PfAddForm, PfField, PortForwardOverlay};
 use crate::state::{cycle_option, step_clamped, AppState};
 
 use super::PfAction;
+use crate::action::PfTaskKind;
 
 pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
     let mut fx = SideEffect::default();
     match action {
-        PfAction::Open(host) => {
+        PfAction::Open(lane) => {
             state.overlay.context_menu = None;
             state.overlay.port_forward = Some(PortForwardOverlay {
-                host,
+                lane,
                 selected: 0,
                 add_form: None,
                 status: None,
@@ -42,9 +43,13 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
             }
         }
         PfAction::FocusDown => {
-            let host = state.overlay.port_forward.as_ref().map(|o| o.host.clone());
-            if let Some(host) = host {
-                let len = forwards_len(state, &host);
+            let lane = state
+                .overlay
+                .port_forward
+                .as_ref()
+                .map(|overlay| overlay.lane.clone());
+            if let Some(lane) = lane {
+                let len = forwards_len(state, &lane);
                 if let Some(o) = state.overlay.port_forward.as_mut() {
                     o.selected = step_clamped(o.selected, len, 1);
                 }
@@ -56,12 +61,12 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
         PfAction::AddSubmit | PfAction::Delete => {}
 
         PfAction::TaskResult {
-            host,
+            lane,
             op,
             ok,
             message,
         } => {
-            fx.merge(apply_pf_task_result(state, &host, &op, ok, &message));
+            fx.merge(apply_pf_task_result(state, &lane, &op, ok, &message));
         }
 
         // Every remaining action edits the open add form; one guard for all.
@@ -88,8 +93,9 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
     fx
 }
 
-fn forwards_len(state: &AppState, host: &str) -> usize {
-    state.remote_config(host).map_or(0, |r| r.forwards.len())
+fn forwards_len(state: &AppState, lane: &crate::lane::LaneId) -> usize {
+    crate::app::ssh::config_adapter::remote_for_lane(&state.config_remotes, lane)
+        .map_or(0, |remote| remote.forwards.len())
 }
 
 /// Field navigation order for the port-forward add form. Dynamic mode
@@ -201,28 +207,29 @@ fn humanize_forward_error(raw: &str) -> String {
 /// On failure: keep the form open, clear `submitting`, set the error status.
 fn apply_pf_task_result(
     state: &mut AppState,
-    host: &str,
-    op: &crate::app::ssh::port_forward_task::OpKind,
+    lane: &crate::lane::LaneId,
+    op: &PfTaskKind,
     ok: bool,
     message: &str,
 ) -> SideEffect {
-    use crate::app::ssh::port_forward_task::OpKind;
     let mut fx = SideEffect::default();
 
     // --- Side effects independent of overlay state ---
     match op {
-        OpKind::Forward(_, spec) if ok => {
-            if let Some(r) = state.config_remotes.iter_mut().find(|r| r.host == host) {
-                if !r.forwards.contains(spec) {
-                    r.forwards.push(spec.clone());
+        PfTaskKind::Forward(spec) if ok => {
+            if let Some(remote) = crate::app::ssh::config_adapter::remote_for_lane_mut(
+                &mut state.config_remotes,
+                lane,
+            ) {
+                if !remote.forwards.contains(spec) {
+                    remote.forwards.push(spec.clone());
                 }
             }
             fx.save_config();
         }
-        OpKind::Master(_) if !ok => {
-            let lane = state.lane_for_host(host).cloned();
+        PfTaskKind::Master if !ok => {
             for entry in state.entries.iter_mut() {
-                if lane.as_ref().is_some_and(|lane| entry.lane == *lane) {
+                if entry.lane == *lane {
                     entry.kind = crate::state::SessionEntryKind::Unreachable;
                 }
             }
@@ -230,15 +237,15 @@ fn apply_pf_task_result(
         _ => {}
     }
 
-    // --- Overlay UI updates (gated on overlay being open for this host) ---
+    // --- Overlay UI updates (gated on overlay being open for this lane) ---
     let Some(overlay) = state.overlay.port_forward.as_mut() else {
         return fx;
     };
-    if overlay.host != host {
+    if overlay.lane != *lane {
         return fx;
     }
     match op {
-        OpKind::Forward(_, _) => {
+        PfTaskKind::Forward(_) => {
             if ok {
                 overlay.add_form = None;
                 overlay.status = Some("Forward added.".into());
@@ -249,19 +256,19 @@ fn apply_pf_task_result(
                 overlay.status = Some(humanize_forward_error(message));
             }
         }
-        OpKind::Cancel(_) => {
+        PfTaskKind::Cancel => {
             overlay.status = Some(if ok {
                 "forward cancelled".into()
             } else {
                 format!("warn: cancel failed ({})", message)
             });
         }
-        OpKind::Master(_) => {
+        PfTaskKind::Master => {
             if !ok {
                 overlay.status = Some(format!("master: {}", message));
             }
         }
-        OpKind::Exit(_) => {
+        PfTaskKind::Exit => {
             if !ok {
                 overlay.status = Some(format!("exit: {}", message));
             }
