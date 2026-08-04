@@ -145,7 +145,7 @@ fails only at the compatibility seams targeted below.
 
 - [ ] Introduce `SessionId` and migrate selection, agent targets, focus
       bookkeeping, request DTOs, and session lookup to it.
-- [ ] Replace `SwitchSession` and `SwitchRemote` with `ActivateSession`.
+- [x] Replace `SwitchSession` and `SwitchRemote` with `ActivateSession`.
 - [ ] Replace local/remote picker and order effects with lane-keyed commands.
 - [ ] Replace host-bearing kill/rename/create routing with `SessionId` or
       `LaneId` as appropriate.

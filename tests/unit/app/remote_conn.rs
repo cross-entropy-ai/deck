@@ -287,7 +287,11 @@ fn verify_switch_refires_only_when_marker_advanced_and_host_still_active() {
     mgr.record_switch_submit(lane, "h", "sess", 5);
     let fire = mgr.verify_switch("h").expect("marker advanced → re-fire");
     assert_eq!(fire.host, "h");
-    assert_eq!(fire.name, "sess");
+    assert_eq!(fire.target.key, "sess");
+    assert_eq!(
+        fire.target.lane,
+        crate::system::tmux::TmuxSystem::host_lane("h")
+    );
 }
 
 #[test]

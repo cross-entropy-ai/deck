@@ -254,6 +254,11 @@ pub(crate) fn reconcile_spawn_event(
 /// The remote-connection state machine: conn map + spawner + active host +
 /// the deferred-switch / switch-verify ledgers + the spawn-generation
 /// counter.
+pub(in crate::app) struct PendingSwitch {
+    pub target: crate::model::session::SessionId,
+    pub host: String,
+}
+
 pub(crate) struct RemoteConnManager {
     /// One connection per configured remote host (status + attach PTY),
     /// seeded for every host at startup; the PTY arrives asynchronously.
@@ -271,7 +276,7 @@ pub(crate) struct RemoteConnManager {
     /// A switch deferred until a host's attach PTY finishes (re)connecting.
     /// Set when creating a session on a host whose PTY isn't live yet, or
     /// when a switch is requested mid-connect; fired from `MarkerReady`.
-    pending_switch: Option<crate::effects::RemoteSwitchRequest>,
+    pending_switch: Option<PendingSwitch>,
     /// Per-host record of the last `switch-client` submitted: `(target
     /// session, marker id at submit)`. On the `Switched` outcome we re-read
     /// the marker; if it advanced (the connection respawned while the switch
@@ -463,13 +468,13 @@ impl RemoteConnManager {
 
     /// Apply a drained spawn event via the pure [`reconcile_spawn_event`]
     /// decision, doing the IO it implies. Returns a
-    /// [`crate::effects::RemoteSwitchRequest`] when a held switch should now run
+    /// [`PendingSwitch`] when a held switch should now run
     /// (the caller owns `switch_to_remote`, so the manager can't call it
     /// directly).
     pub(in crate::app) fn apply_spawn_event(
         &mut self,
         ev: RemoteSpawnEvent,
-    ) -> Option<crate::effects::RemoteSwitchRequest> {
+    ) -> Option<PendingSwitch> {
         match reconcile_spawn_event(&self.conns, &self.generations, &ev) {
             SpawnDecision::Drop => None,
             SpawnDecision::ApplySpawned => {
@@ -511,19 +516,15 @@ impl RemoteConnManager {
     // --- pending switch ---
 
     pub(crate) fn set_pending_switch(&mut self, lane: crate::lane::LaneId, host: &str, name: &str) {
-        self.pending_switch = Some(crate::effects::RemoteSwitchRequest {
-            lane,
+        self.pending_switch = Some(PendingSwitch {
+            target: crate::model::session::SessionId::new(lane, name),
             host: host.to_string(),
-            name: name.to_string(),
         });
     }
 
     /// Take the pending switch iff it targets `host` (so the caller can
     /// fire it). Used when a host's marker confirms.
-    fn take_pending_switch_for(
-        &mut self,
-        host: &str,
-    ) -> Option<crate::effects::RemoteSwitchRequest> {
+    fn take_pending_switch_for(&mut self, host: &str) -> Option<PendingSwitch> {
         self.pending_switch.take_if(|req| req.host == host)
     }
 
@@ -544,19 +545,15 @@ impl RemoteConnManager {
     /// only when the host is still active and its marker advanced since submit
     /// (the connection respawned while the op sat in the FIFO, so it no-op'd
     /// against a dead marker). Removes the verify entry either way.
-    pub(crate) fn verify_switch(
-        &mut self,
-        host: &str,
-    ) -> Option<crate::effects::RemoteSwitchRequest> {
+    pub(in crate::app) fn verify_switch(&mut self, host: &str) -> Option<PendingSwitch> {
         let (lane, name, submitted_marker) = self.switch_verify.remove(host)?;
         if !self.active_is(host) {
             return None;
         }
         let current_marker = self.marker_id(host);
-        (current_marker != submitted_marker).then_some(crate::effects::RemoteSwitchRequest {
-            lane,
+        (current_marker != submitted_marker).then_some(PendingSwitch {
+            target: crate::model::session::SessionId::new(lane, name),
             host: host.to_string(),
-            name,
         })
     }
 

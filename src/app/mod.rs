@@ -108,9 +108,8 @@ pub struct App {
     /// child.
     summary_worker: Option<crate::worker::Worker<(), Result<String, String>>>,
     /// Monotonic id stamped on each focus-affecting action (agent click,
-    /// session switch). A remote focus worker captures it at spawn; its outcome
-    /// commits only if no newer action bumped this since, so a slow ssh focus
-    /// can't clobber a later user action.
+    /// session activation). A queued focus captures it at submission; its
+    /// outcome commits only if no newer action bumped this since.
     focus_seq: u64,
     /// True while an active-pane probe thread is outstanding. Single-flights
     /// the periodic probe so a slow ssh roundtrip can't pile up threads.

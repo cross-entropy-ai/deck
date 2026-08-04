@@ -141,7 +141,7 @@ impl App {
         while let Some(ev) = self.remote.try_recv() {
             redraw = Redraw::Force;
             if let Some(fire) = self.remote.apply_spawn_event(ev) {
-                self.switch_to_remote(fire.lane, &fire.host, &fire.name);
+                self.switch_to_remote(fire.target.lane, &fire.host, &fire.target.key);
             }
         }
         redraw

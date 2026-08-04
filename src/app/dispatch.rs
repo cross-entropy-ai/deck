@@ -398,6 +398,23 @@ impl App {
         // changed. Wide-char residue is handled in bridge.rs via `set_skip`.
     }
 
+    /// Temporary attachment compatibility adapter for the unified activation
+    /// effect. Reducers and effects only know `SessionId`; until WP4 makes
+    /// attachments lane-keyed, App translates the lane to the built-in local
+    /// terminal or remote SSH pane here.
+    pub(super) fn activate_session(&mut self, id: crate::model::session::SessionId) {
+        if self.state.is_primary_lane(&id.lane) {
+            self.switch_to_session_if_safe(id.lane, &id.key);
+        } else if let Some(host) = self.state.host_for_lane(&id.lane).map(str::to_string) {
+            self.switch_to_remote(id.lane, &host, &id.key);
+        } else {
+            self.state.show_warning(format!(
+                "session attachment is unavailable for lane {}",
+                id.lane.as_str()
+            ));
+        }
+    }
+
     /// (Re)establish the persistent `ssh -tt host tmux attach` PTY for a host:
     /// drop any dead pane, mark the connection `Connecting`, kick the spawner.
     /// Without this a host that blips would stay unswitchable until restart
@@ -464,7 +481,7 @@ impl App {
     /// re-fire (re-reading the current marker, or holding via pending switch).
     fn verify_remote_switch(&mut self, host: &str) {
         if let Some(fire) = self.remote.verify_switch(host) {
-            self.switch_to_remote(fire.lane, &fire.host, &fire.name);
+            self.switch_to_remote(fire.target.lane, &fire.host, &fire.target.key);
         }
     }
 

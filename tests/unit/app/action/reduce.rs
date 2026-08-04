@@ -56,7 +56,10 @@ fn focus_next_advances_and_switches() {
     state.focused = 0;
     let fx = apply_action(&mut state, Action::FocusNext);
     assert_eq!(state.focused, 1);
-    assert_eq!(fx.first_switch_session(), Some("sess-1"));
+    assert_eq!(
+        fx.first_activated_session().map(|id| id.key.as_str()),
+        Some("sess-1")
+    );
 }
 
 #[test]
@@ -65,7 +68,7 @@ fn focus_next_stops_at_end() {
     state.focused = 4;
     let fx = apply_action(&mut state, Action::FocusNext);
     assert_eq!(state.focused, 4);
-    assert!(fx.first_switch_session().is_none());
+    assert!(fx.first_activated_session().is_none());
 }
 
 #[test]
@@ -74,7 +77,10 @@ fn focus_prev_decrements_and_switches() {
     state.focused = 3;
     let fx = apply_action(&mut state, Action::FocusPrev);
     assert_eq!(state.focused, 2);
-    assert_eq!(fx.first_switch_session(), Some("sess-2"));
+    assert_eq!(
+        fx.first_activated_session().map(|id| id.key.as_str()),
+        Some("sess-2")
+    );
 }
 
 #[test]
@@ -90,8 +96,26 @@ fn sidebar_click_remote_no_sessions_does_not_refresh() {
     fx.merge(apply_action(&mut state, Action::SwitchProject));
 
     assert_eq!(fx.first_remote_placeholder(), Some("remote-a"));
-    assert!(fx.first_switch_session().is_none());
+    assert!(fx.first_activated_session().is_none());
     assert!(!fx.has_refresh_sessions());
+}
+
+#[test]
+fn remote_live_session_uses_the_same_lane_qualified_activation_effect() {
+    let mut state = make_test_state(1);
+    state.entries.push(remote_row("remote-a", "work"));
+    state.focused = state.local_count();
+
+    let fx = apply_action(&mut state, Action::SwitchProject);
+    let target = fx
+        .first_activated_session()
+        .expect("a live remote row should activate");
+    assert_eq!(target.key, "work");
+    assert_eq!(
+        target.lane,
+        crate::system::tmux::TmuxSystem::host_lane("remote-a")
+    );
+    assert!(fx.first_remote_placeholder().is_none());
 }
 
 #[test]
@@ -363,7 +387,10 @@ fn switch_project_returns_session_name() {
     let mut state = make_test_state(3);
     state.focused = 2;
     let fx = apply_action(&mut state, Action::SwitchProject);
-    assert_eq!(fx.first_switch_session(), Some("sess-2"));
+    assert_eq!(
+        fx.first_activated_session().map(|id| id.key.as_str()),
+        Some("sess-2")
+    );
     assert!(fx.has_refresh_sessions());
 }
 

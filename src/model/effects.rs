@@ -4,13 +4,13 @@
 
 use crate::geometry::AgentTarget;
 use crate::lane::LaneId;
+use crate::model::session::SessionId;
 
 #[derive(Debug)]
 pub enum Effect {
-    SwitchSession(SessionSwitchRequest),
-    /// Switch the main view to a remote session. Carries (host, name)
-    /// — App's dispatch layer routes the `tmux switch-client` over ssh.
-    SwitchRemote(RemoteSwitchRequest),
+    /// Activate a live session through its lane-qualified identity. Attachment
+    /// transport selection stays below the reducer/effect protocol.
+    ActivateSession(SessionId),
     /// Focus a detected agent's pane (Agents tab Enter / number jump).
     /// App's dispatch layer routes this exactly like an agent-row click.
     SwitchAgentPane(AgentTarget),
@@ -149,9 +149,9 @@ impl SideEffect {
         first_rename_session: RenameSession => &RenameRequest;
     }
 
-    pub fn first_switch_session(&self) -> Option<&str> {
+    pub fn first_activated_session(&self) -> Option<&SessionId> {
         self.effects.iter().find_map(|effect| match effect {
-            Effect::SwitchSession(req) => Some(req.name.as_str()),
+            Effect::ActivateSession(id) => Some(id),
             _ => None,
         })
     }
@@ -172,12 +172,6 @@ impl SideEffect {
         has_refresh_sessions => Effect::RefreshSessions,
         has_reread_new_session_entries => Effect::RereadNewSessionEntries,
     }
-}
-
-#[derive(Debug)]
-pub struct SessionSwitchRequest {
-    pub lane: LaneId,
-    pub name: String,
 }
 
 #[derive(Debug)]
@@ -215,12 +209,4 @@ pub struct CreateSessionRequest {
     pub dir: String,
     /// Exact mounted backend lane on which to create the session.
     pub lane: LaneId,
-}
-
-/// Info needed to switch the main view to a remote tmux session.
-#[derive(Debug)]
-pub struct RemoteSwitchRequest {
-    pub lane: LaneId,
-    pub host: String,
-    pub name: String,
 }

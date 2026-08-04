@@ -14,12 +14,7 @@ impl App {
     pub(super) fn execute_side_effects(&mut self, effects: &SideEffect) {
         for effect in effects.effects() {
             match effect {
-                Effect::SwitchSession(req) => {
-                    self.switch_to_session_if_safe(req.lane.clone(), &req.name);
-                }
-                Effect::SwitchRemote(req) => {
-                    self.switch_to_remote(req.lane.clone(), &req.host, &req.name);
-                }
+                Effect::ActivateSession(id) => self.activate_session(id.clone()),
                 Effect::SwitchAgentPane(target) => self.switch_to_agent_pane(target.clone()),
                 Effect::ShowRemotePlaceholder(host) => {
                     if self

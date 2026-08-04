@@ -1,7 +1,4 @@
-use crate::effects::{
-    Effect, KillRequest, RemoteSwitchRequest, RemoveRemoteRequest, RenameRequest,
-    SessionSwitchRequest, SideEffect,
-};
+use crate::effects::{Effect, KillRequest, RemoveRemoteRequest, RenameRequest, SideEffect};
 use crate::new_session::textarea_line;
 use crate::overlay::RenameState;
 use crate::state::{AppState, FocusMode, LayoutMode, MainView, SidebarTab, ViewMode};
@@ -29,32 +26,16 @@ fn close_settings_page(state: &mut AppState) {
     state.overlay.summary_lang_input = None;
 }
 
-/// Fill the `SideEffect` field for the focused row — `SwitchSession` for a
-/// local row, `SwitchRemote` for a remote one. Local-vs-remote dispatch reads
-/// `entry.host` off the focused `SessionEntry` (via `AppState::entry_at`)
-/// rather than taking apart the flat focus index.
+/// Activate the focused live session through one lane-qualified identity.
+/// Synthetic placeholder rows have no session identity and retain their
+/// temporary presentation-only effect until attachments become lane-keyed.
 fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) -> bool {
     let Some(target) = state.focus_target() else {
         return false;
     };
     match state.entry_at(target) {
-        Some(entry) if entry.is_local() => {
-            fx.push(Effect::SwitchSession(SessionSwitchRequest {
-                lane: entry.lane.clone(),
-                name: entry.name.clone(),
-            }));
-            true
-        }
-        // Reached only for non-local entries (the `is_local` arm caught
-        // locals), which always have `host = Some`. Synthetic placeholder rows
-        // (connecting, unreachable, "no sessions") have no real session — skip
-        // silently so a click doesn't fire a doomed remote switch.
         Some(entry) if entry.is_attachable() => {
-            fx.push(Effect::SwitchRemote(RemoteSwitchRequest {
-                lane: entry.lane.clone(),
-                host: entry.host.clone().expect("non-local entry has a host"),
-                name: entry.name.clone(),
-            }));
+            fx.push(Effect::ActivateSession(entry.id()));
             true
         }
         Some(entry) => {
@@ -189,7 +170,7 @@ fn reorder_session_to(state: &mut AppState, target: usize, fx: &mut SideEffect) 
     let Some(target_entry) = state.entries.get(target) else {
         return;
     };
-    if !target_entry.is_local() {
+    if !state.is_primary_entry(target_entry) {
         return;
     }
     let name = entry.name.clone();
@@ -208,7 +189,7 @@ fn reorder_session_to(state: &mut AppState, target: usize, fx: &mut SideEffect) 
     if let Some(new_focused) = state
         .entries
         .iter()
-        .position(|e| e.is_local() && e.name == name)
+        .position(|e| state.is_primary_entry(e) && e.name == name)
     {
         state.focused = new_focused;
     }
