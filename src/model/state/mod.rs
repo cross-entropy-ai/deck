@@ -733,6 +733,41 @@ impl AppState {
             .map_or_else(|| entry.is_local(), |lane| entry.lane == *lane)
     }
 
+    /// Session operations advertised by the lane that owns `entry`.
+    ///
+    /// The all-enabled fallback preserves isolated model tests and rows that
+    /// arrive before their section metadata. Production sections are always
+    /// materialized from `LaneRuntime`, so mounted partial backends use their
+    /// explicit (normally restrictive) capability set.
+    pub fn session_capabilities(&self, lane: &LaneId) -> crate::system::SessionCapabilities {
+        self.system_sections
+            .iter()
+            .find(|section| section.lane == *lane)
+            .map_or(
+                crate::system::SessionCapabilities {
+                    activate: true,
+                    rename: true,
+                    kill: true,
+                },
+                |section| section.session_capabilities,
+            )
+    }
+
+    /// Lane-wide operations advertised by the lane runtime.
+    pub fn lane_capabilities(&self, lane: &LaneId) -> crate::system::LaneCapabilities {
+        self.system_sections
+            .iter()
+            .find(|section| section.lane == *lane)
+            .map_or(
+                crate::system::LaneCapabilities {
+                    create_session: true,
+                    reorder_sessions: true,
+                    actions: true,
+                },
+                |section| section.lane_capabilities,
+            )
+    }
+
     /// Set the reload strip's status and (re)start its TTL.
     pub fn set_reload_status(&mut self, status: ReloadStatus) {
         self.reload_status = Some(status);

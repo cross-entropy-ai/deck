@@ -45,11 +45,12 @@ impl<'a> SystemRegistry<'a> {
 
     /// Resolve the owner of a lane. Unknown ids stay explicit rather than
     /// falling through to a default backend.
-    pub fn for_lane(&self, lane: &LaneId) -> Option<&'a dyn System> {
+    pub fn runtime(&self, lane: &LaneId) -> Option<LaneRuntime<'a>> {
         self.systems
             .iter()
             .copied()
             .find(|system| system.id() == lane.system())
+            .and_then(|system| system.runtime(lane))
     }
 
     /// Materialize display definitions in registry/lane order. These values
@@ -58,20 +59,32 @@ impl<'a> SystemRegistry<'a> {
         self.systems
             .iter()
             .flat_map(|system| {
-                system
-                    .lanes()
-                    .into_iter()
-                    .filter_map(|lane| system.section_for(&lane))
+                system.lanes().into_iter().filter_map(|lane| {
+                    let runtime = system.runtime(&lane)?;
+                    let mut section = system.section_for(&lane)?;
+                    section.session_capabilities = runtime.session_capabilities;
+                    section.lane_capabilities = runtime.lane_capabilities;
+                    if !runtime.lane_capabilities.actions {
+                        section.buttons.clear();
+                    }
+                    Some(section)
+                })
             })
             .collect()
     }
 
     /// Snapshot routing pairs in registry/lane order. Used by the refresh
     /// worker so adding a System automatically adds its lanes to polling.
-    pub fn snapshot_routes(&self) -> Vec<(&'a dyn System, LaneId)> {
+    pub fn snapshot_routes(&self) -> Vec<LaneRuntime<'a>> {
         self.systems
             .iter()
-            .flat_map(|system| system.lanes().into_iter().map(|lane| (*system, lane)))
+            .flat_map(|system| {
+                system
+                    .lanes()
+                    .into_iter()
+                    .filter_map(|lane| system.runtime(&lane))
+                    .filter(LaneRuntime::has_catalog)
+            })
             .collect()
     }
 }
@@ -107,26 +120,37 @@ pub trait System: Send + Sync {
     /// every session row keeps a section) and calls this to style each one.
     fn section_for(&self, lane: &LaneId) -> Option<SectionDef>;
 
+    /// Compose only the capabilities this lane actually supports. A
+    /// catalog-only backend returns a runtime without control/action ports.
+    fn runtime(&self, lane: &LaneId) -> Option<LaneRuntime<'_>>;
+}
+
+pub trait SessionCatalog: Send + Sync {
     /// Snapshot one lane's sessions + detected agents. Run off the UI thread by
-    /// the refresh worker. `None` means the lane was unreachable this round
-    /// (distinct from a reachable lane with no sessions). `probe_agents` is the
-    /// shell's hint that the Agents tab is active — when false a backend should
+    /// the refresh worker. Reachability and backend failures remain distinct
+    /// typed errors; a successful empty snapshot means the lane is reachable
+    /// but has no sessions. `probe_agents` is the shell's hint that the Agents
+    /// tab is active — when false a backend should
     /// skip the (possibly expensive) agent detection and leave
     /// [`LaneSnapshot::agents`] `None`.
-    fn snapshot(&self, lane: &LaneId, ctx: &SnapshotCtx<'_>) -> Option<LaneSnapshot>;
+    fn snapshot(&self, lane: &LaneId, ctx: &SnapshotCtx<'_>) -> Result<LaneSnapshot, CatalogError>;
 
     /// Whether a lane should be sampled inline with the coalesced refresh
     /// worker or on the guarded parallel background path.
     fn snapshot_mode(&self, _lane: &LaneId) -> SnapshotMode {
         SnapshotMode::Background
     }
+}
 
+pub trait SessionControlProvider: Send + Sync {
     /// The control-plane handle for one lane (switch/rename/kill/create/…),
     /// run on the executor's per-lane worker thread. `ctx` carries the shell
     /// runtime state a backend may need to construct it (e.g. tmux reads the
     /// local client tty and a remote's reconnect marker id).
     fn control(&self, lane: &LaneId, ctx: &ControlCtx) -> Box<dyn SessionControl + Send>;
+}
 
+pub trait LaneActionProvider: Send + Sync {
     /// Handle a click on a button this system declared on `lane`'s divider,
     /// identified by the button's [`command`](SectionButton::command). `(x, y)`
     /// is the button's screen position, for commands that open positioned UI
@@ -136,8 +160,107 @@ pub trait System: Send + Sync {
     fn on_button(&self, lane: &LaneId, command: &str, x: u16, y: u16) -> Vec<Effect>;
 }
 
-/// Runtime state a [`System`] needs to build a [`control`](System::control)
-/// handle. Connection generations are lane-keyed, so the context carries no
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SessionCapabilities {
+    pub activate: bool,
+    pub rename: bool,
+    pub kill: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LaneCapabilities {
+    pub create_session: bool,
+    pub reorder_sessions: bool,
+    pub actions: bool,
+}
+
+#[derive(Clone)]
+pub struct LaneRuntime<'a> {
+    lane: LaneId,
+    catalog: Option<&'a dyn SessionCatalog>,
+    session_control: Option<&'a dyn SessionControlProvider>,
+    lane_actions: Option<&'a dyn LaneActionProvider>,
+    pub session_capabilities: SessionCapabilities,
+    pub lane_capabilities: LaneCapabilities,
+}
+
+impl<'a> LaneRuntime<'a> {
+    pub fn new(lane: &LaneId) -> Self {
+        Self {
+            lane: lane.clone(),
+            catalog: None,
+            session_control: None,
+            lane_actions: None,
+            session_capabilities: SessionCapabilities::default(),
+            lane_capabilities: LaneCapabilities::default(),
+        }
+    }
+
+    pub fn with_catalog(mut self, catalog: &'a dyn SessionCatalog) -> Self {
+        self.catalog = Some(catalog);
+        self
+    }
+
+    pub fn with_session_control(mut self, control: &'a dyn SessionControlProvider) -> Self {
+        self.session_control = Some(control);
+        self
+    }
+
+    pub fn with_lane_actions(mut self, actions: &'a dyn LaneActionProvider) -> Self {
+        self.lane_actions = Some(actions);
+        self
+    }
+
+    pub fn with_capabilities(
+        mut self,
+        session: SessionCapabilities,
+        lane: LaneCapabilities,
+    ) -> Self {
+        self.session_capabilities = session;
+        self.lane_capabilities = lane;
+        self
+    }
+
+    pub fn lane(&self) -> &LaneId {
+        &self.lane
+    }
+
+    pub fn has_catalog(&self) -> bool {
+        self.catalog.is_some()
+    }
+
+    pub fn catalog(&self) -> Option<&'a dyn SessionCatalog> {
+        self.catalog
+    }
+
+    pub fn session_control(&self) -> Option<&'a dyn SessionControlProvider> {
+        self.session_control
+    }
+
+    pub fn lane_actions(&self) -> Option<&'a dyn LaneActionProvider> {
+        self.lane_actions
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CatalogError {
+    Unreachable(String),
+    Backend(String),
+}
+
+impl std::fmt::Display for CatalogError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unreachable(detail) => write!(f, "unreachable: {detail}"),
+            Self::Backend(detail) => f.write_str(detail),
+        }
+    }
+}
+
+impl std::error::Error for CatalogError {}
+
+/// Runtime state a session-control provider needs to build a handle.
+/// Connection generations are lane-keyed, so the context carries no
 /// backend-specific host identity.
 pub struct ControlCtx<'a> {
     /// Client locator used by backends with an embedded local terminal.
@@ -180,10 +303,11 @@ pub struct SectionDef {
     /// Optional runtime connection key. The shell treats it as opaque; the
     /// built-in tmux system uses the SSH host for reconnect/PTY workflows.
     pub runtime_key: Option<String>,
+    pub session_capabilities: SessionCapabilities,
+    pub lane_capabilities: LaneCapabilities,
 }
 
-/// One lane's refresh result. Returned inside `Option` — `None` from
-/// [`snapshot`](System::snapshot) means the lane was unreachable.
+/// One lane's successful refresh result.
 #[derive(Debug, Clone)]
 pub struct LaneSnapshot {
     pub sessions: Vec<SessionSnapshot>,
@@ -197,37 +321,6 @@ pub struct LaneSnapshot {
 mod tests {
     use super::*;
 
-    struct TestControl;
-
-    impl SessionControl for TestControl {
-        fn switch_to(&self, _name: &str) -> crate::session::SessionControlResult {
-            Ok(())
-        }
-
-        fn rename(&self, _old: &str, _new: &str) -> crate::session::SessionControlResult {
-            Ok(())
-        }
-
-        fn kill(&self, _name: &str) -> crate::session::SessionControlResult {
-            Ok(())
-        }
-
-        fn create(&self, _name: &str, _dir: &str) -> crate::session::SessionControlResult {
-            Ok(())
-        }
-
-        fn persist_order(&self, _order: &[String]) -> crate::session::SessionControlResult {
-            Ok(())
-        }
-
-        fn list_dir(
-            &self,
-            _path: &str,
-        ) -> crate::session::SessionControlResult<crate::session::DirListing> {
-            Ok(crate::session::DirListing { entries: vec![] })
-        }
-    }
-
     struct TestSystem;
 
     impl System for TestSystem {
@@ -236,22 +329,64 @@ mod tests {
         }
 
         fn lanes(&self) -> Vec<LaneId> {
-            vec![LaneId::new(self.id(), "primary")]
+            vec![
+                LaneId::new(self.id(), "primary"),
+                LaneId::new(self.id(), "catalog-only"),
+            ]
         }
 
         fn section_for(&self, lane: &LaneId) -> Option<SectionDef> {
             (lane.system() == self.id()).then(|| SectionDef {
                 lane: lane.clone(),
-                title: "test backend".into(),
-                buttons: vec![],
+                title: lane.lane().into(),
+                buttons: vec![SectionButton {
+                    glyph: "!".into(),
+                    command: "refresh".into(),
+                }],
                 top_margin: true,
                 primary: false,
                 runtime_key: None,
+                // Deliberately stale declarations: the registry replaces
+                // these values from the runtime composition below.
+                session_capabilities: SessionCapabilities {
+                    activate: true,
+                    rename: true,
+                    kill: true,
+                },
+                lane_capabilities: LaneCapabilities::default(),
             })
         }
 
-        fn snapshot(&self, lane: &LaneId, _ctx: &SnapshotCtx<'_>) -> Option<LaneSnapshot> {
-            (lane.system() == self.id()).then(|| LaneSnapshot {
+        fn runtime(&self, lane: &LaneId) -> Option<LaneRuntime<'_>> {
+            if lane.system() != self.id() {
+                return None;
+            }
+            let runtime = LaneRuntime::new(lane).with_catalog(self);
+            Some(if lane.lane() == "primary" {
+                runtime.with_lane_actions(self).with_capabilities(
+                    SessionCapabilities::default(),
+                    LaneCapabilities {
+                        create_session: false,
+                        reorder_sessions: false,
+                        actions: true,
+                    },
+                )
+            } else {
+                runtime
+            })
+        }
+    }
+
+    impl SessionCatalog for TestSystem {
+        fn snapshot(
+            &self,
+            lane: &LaneId,
+            _ctx: &SnapshotCtx<'_>,
+        ) -> Result<LaneSnapshot, CatalogError> {
+            if lane.system() != self.id() {
+                return Err(CatalogError::Backend("lane is not owned by test".into()));
+            }
+            Ok(LaneSnapshot {
                 sessions: vec![crate::model::session::SessionSnapshot {
                     name: "fixture".into(),
                     dir: "/fixture".into(),
@@ -262,13 +397,11 @@ mod tests {
                 agents: Some(vec![]),
             })
         }
+    }
 
-        fn control(&self, _lane: &LaneId, _ctx: &ControlCtx) -> Box<dyn SessionControl + Send> {
-            Box::new(TestControl)
-        }
-
+    impl LaneActionProvider for TestSystem {
         fn on_button(&self, _lane: &LaneId, _command: &str, _x: u16, _y: u16) -> Vec<Effect> {
-            vec![]
+            vec![Effect::RefreshSessions]
         }
     }
 
@@ -276,26 +409,43 @@ mod tests {
     fn unknown_lane_does_not_fall_back_to_tmux() {
         let registry = builtin_registry();
         let lane = LaneId::new("fake-second-system", "primary");
-        assert!(registry.for_lane(&lane).is_none());
+        assert!(registry.runtime(&lane).is_none());
     }
 
     #[test]
     fn registered_lane_resolves_its_owner() {
         let registry = builtin_registry();
         let lane = tmux::TmuxSystem::local_lane();
-        assert_eq!(registry.for_lane(&lane).map(System::id), Some(tmux::TMUX));
+        let runtime = registry.runtime(&lane).expect("tmux runtime");
+        assert!(runtime.catalog().is_some());
+        assert!(runtime.session_control().is_some());
+        assert!(runtime.lane_actions().is_some());
     }
 
     #[test]
-    fn second_system_mounts_sections_snapshots_and_control_without_shell_changes() {
+    fn partial_system_mounts_snapshot_and_actions_without_dummy_control() {
         let test = TestSystem;
         let registry = SystemRegistry::new(vec![&test]);
         let sections = registry.sections();
-        assert_eq!(sections.len(), 1);
-        assert_eq!(sections[0].title, "test backend");
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].title, "primary");
+        assert_eq!(
+            sections[0].session_capabilities,
+            SessionCapabilities::default()
+        );
+        assert!(sections[0].lane_capabilities.actions);
+        assert_eq!(sections[0].buttons.len(), 1);
+        assert!(sections[1].buttons.is_empty());
 
-        let (system, lane) = registry.snapshot_routes().pop().expect("snapshot route");
-        let snapshot = system
+        let runtime = registry
+            .snapshot_routes()
+            .into_iter()
+            .find(|runtime| runtime.lane().lane() == "primary")
+            .expect("snapshot route");
+        let lane = runtime.lane().clone();
+        let snapshot = runtime
+            .catalog()
+            .expect("catalog port")
             .snapshot(
                 &lane,
                 &SnapshotCtx {
@@ -305,15 +455,26 @@ mod tests {
             )
             .expect("snapshot");
         assert_eq!(snapshot.sessions[0].name, "fixture");
+        assert!(runtime.session_control().is_none());
+        assert!(matches!(
+            runtime
+                .lane_actions()
+                .expect("lane action port")
+                .on_button(&lane, "refresh", 1, 2)
+                .as_slice(),
+            [Effect::RefreshSessions]
+        ));
+    }
 
-        let generations = HashMap::new();
-        let control = registry.for_lane(&lane).expect("lane owner").control(
-            &lane,
-            &ControlCtx {
-                local_client: "fixture-client",
-                connection_generations: &generations,
-            },
+    #[test]
+    fn backend_catalog_failure_remains_distinct_from_unreachable() {
+        assert_eq!(
+            CatalogError::Backend("malformed response".into()).to_string(),
+            "malformed response"
         );
-        assert!(control.switch_to("fixture").is_ok());
+        assert_eq!(
+            CatalogError::Unreachable("timeout".into()).to_string(),
+            "unreachable: timeout"
+        );
     }
 }

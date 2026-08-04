@@ -21,7 +21,9 @@ use std::thread;
 
 use crate::exclude;
 use crate::lane::LaneId;
-use crate::system::{LaneSnapshot, SnapshotCtx, SnapshotMode, System, SystemRegistry};
+use crate::system::{
+    CatalogError, LaneRuntime, LaneSnapshot, SnapshotCtx, SnapshotMode, SystemRegistry,
+};
 
 pub struct RefreshRequest {
     pub slave_tty: String,
@@ -32,12 +34,29 @@ pub struct RefreshRequest {
     pub show_agents: bool,
 }
 
-/// One lane's refresh result. `None` means the backend was unreachable; an
-/// empty successful snapshot is a reachable lane with no sessions.
+/// One lane's refresh result. Catalog/worker failures remain typed so App can
+/// distinguish network reachability from an internal execution failure.
 pub struct LaneRefresh {
     pub lane: LaneId,
-    pub snapshot: Option<LaneSnapshot>,
+    pub snapshot: Result<LaneSnapshot, LaneRefreshError>,
     pub agents_requested: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaneRefreshError {
+    Catalog(CatalogError),
+    WorkerSpawn(String),
+    WorkerPanicked,
+}
+
+impl std::fmt::Display for LaneRefreshError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Catalog(error) => error.fmt(f),
+            Self::WorkerSpawn(error) => write!(f, "could not start lane worker: {error}"),
+            Self::WorkerPanicked => f.write_str("lane worker panicked"),
+        }
+    }
 }
 
 /// An update from the refresh worker. Foreground lanes arrive immediately;
@@ -229,10 +248,12 @@ fn worker_loop(
             cached_raw = req.exclude_patterns.clone();
         }
 
-        let (foreground, background): (Vec<_>, Vec<_>) = systems
-            .snapshot_routes()
-            .into_iter()
-            .partition(|(system, lane)| system.snapshot_mode(lane) == SnapshotMode::Foreground);
+        let (foreground, background): (Vec<_>, Vec<_>) =
+            systems.snapshot_routes().into_iter().partition(|runtime| {
+                runtime.catalog().is_some_and(|catalog| {
+                    catalog.snapshot_mode(runtime.lane()) == SnapshotMode::Foreground
+                })
+            });
 
         // Fast lanes update synchronously so the sidebar populates immediately.
         if !foreground.is_empty() {
@@ -270,11 +291,10 @@ fn worker_loop(
     }
 }
 
-type SnapshotRoute = (&'static dyn System, LaneId);
+type SnapshotRoute = LaneRuntime<'static>;
 
 fn collect_one(
-    system: &'static dyn System,
-    lane: LaneId,
+    runtime: LaneRuntime<'static>,
     probe_agents: bool,
     client_locator: &str,
     compiled: &[regex::Regex],
@@ -283,8 +303,13 @@ fn collect_one(
         probe_agents,
         client_locator,
     };
-    let mut snapshot = system.snapshot(&lane, &ctx);
-    if let Some(snapshot) = snapshot.as_mut() {
+    let lane = runtime.lane().clone();
+    let mut snapshot = runtime
+        .catalog()
+        .expect("snapshot routes require a catalog")
+        .snapshot(&lane, &ctx)
+        .map_err(LaneRefreshError::Catalog);
+    if let Ok(snapshot) = snapshot.as_mut() {
         snapshot
             .sessions
             .retain(|session| !exclude::session_excluded(&session.name, compiled));
@@ -307,7 +332,7 @@ fn collect_sequential(
 ) -> Vec<LaneRefresh> {
     routes
         .into_iter()
-        .map(|(system, lane)| collect_one(system, lane, probe_agents, client_locator, compiled))
+        .map(|runtime| collect_one(runtime, probe_agents, client_locator, compiled))
         .collect()
 }
 
@@ -319,37 +344,34 @@ fn collect_parallel(
 ) -> Vec<LaneRefresh> {
     let handles: Vec<_> = routes
         .into_iter()
-        .map(|(system, lane)| {
-            let lane_for_fallback = lane.clone();
+        .map(|runtime| {
+            let lane_for_fallback = runtime.lane().clone();
             let client_locator = client_locator.clone();
             let compiled = Arc::clone(&compiled);
             thread::Builder::new()
-                .name(format!("deck-lane-{}", lane.lane()))
+                .name(format!("deck-lane-{}", runtime.lane().lane()))
                 .spawn(move || {
-                    collect_one(
-                        system,
-                        lane,
-                        probe_agents,
-                        &client_locator,
-                        compiled.as_slice(),
-                    )
+                    collect_one(runtime, probe_agents, &client_locator, compiled.as_slice())
                 })
                 .map_or_else(
-                    |_| (lane_for_fallback.clone(), None),
-                    |handle| (lane_for_fallback.clone(), Some(handle)),
+                    |error| (lane_for_fallback.clone(), Err(error.to_string())),
+                    |handle| (lane_for_fallback.clone(), Ok(handle)),
                 )
         })
         .collect();
     handles
         .into_iter()
-        .map(|(lane, handle)| {
-            handle
-                .and_then(|handle| handle.join().ok())
-                .unwrap_or(LaneRefresh {
-                    lane,
-                    snapshot: None,
-                    agents_requested: probe_agents,
-                })
+        .map(|(lane, handle)| match handle {
+            Ok(handle) => handle.join().unwrap_or(LaneRefresh {
+                lane,
+                snapshot: Err(LaneRefreshError::WorkerPanicked),
+                agents_requested: probe_agents,
+            }),
+            Err(error) => LaneRefresh {
+                lane,
+                snapshot: Err(LaneRefreshError::WorkerSpawn(error)),
+                agents_requested: probe_agents,
+            },
         })
         .collect()
 }

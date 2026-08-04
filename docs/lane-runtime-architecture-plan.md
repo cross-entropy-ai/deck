@@ -129,7 +129,7 @@ This prevents artificial "session" methods that have no session target.
 
 ### WP0 — Lock the architecture with contract tests
 
-- [ ] Add compile/runtime fixture coverage for a second, non-tmux system.
+- [x] Add compile/runtime fixture coverage for a second, non-tmux system.
 - [ ] Exercise the fixture through App-facing effect routing, attachment
       selection, activation, snapshot, and one lane action—not registry lookup
       alone.
@@ -176,18 +176,29 @@ independently.
 
 ### WP3 — Split the System interface into narrow runtime ports
 
-- [ ] Extract catalog, session-control, lane-control, lane-action, and
-      attachment-provider ports.
-- [ ] Compose them in a `LaneRuntime` returned/resolved by the registry.
-- [ ] Keep `System` responsible only for configuration and lane enumeration, or
-      replace it with an equivalent composition-root abstraction.
-- [ ] Change snapshot failure from `Option<LaneSnapshot>` to a typed result so
-      internal worker failure is not rendered as network unreachability.
-- [ ] Express lane/session capabilities in model data and disable/hide
-      unsupported UI actions from capabilities.
+- [x] Extract catalog, session-control, and lane-action ports. Lane-control and
+      attachment-provider ports remain intentionally deferred to WP4/WP6.
+- [x] Compose the available ports in a `LaneRuntime` returned/resolved by the
+      registry; ports unsupported by a lane are absent rather than dummy.
+- [x] Keep `System` responsible for configuration, lane enumeration, section
+      presentation, and runtime composition: a composition-root abstraction
+      rather than one operational god interface.
+- [x] Change snapshot failure from `Option<LaneSnapshot>` to a typed result so
+      catalog unreachability, backend failure, worker spawn failure, and worker
+      panic do not collapse into the same UI state.
+- [x] Express lane/session capabilities in model data and disable/hide
+      unsupported activation, rename, kill, reorder, menu, and divider-button
+      actions from capabilities.
 
-Exit: adding a backend with only catalog + activation capabilities requires no
-dummy implementations and no App changes.
+Remaining WP3 compatibility boundary: standardized lane creation and terminal
+attachment capabilities are not routed through generic UI yet. They stay on
+the existing tmux adapter until WP4/WP6; no terminal ownership or config shape
+changed in this package.
+
+Exit achieved for catalog-only and catalog + lane-action fixtures: neither
+requires dummy session-control implementations or App changes. Generic
+activation for a backend without the existing control plane remains coupled to
+the WP4 attachment-provider work.
 
 ### WP4 — Lane-keyed attachment manager
 

@@ -131,6 +131,8 @@ impl AppState {
                     top_margin: self.host_for_lane(lane_id).is_some(),
                     primary: false,
                     runtime_key: self.host_for_lane(lane_id).map(str::to_string),
+                    session_capabilities: crate::system::SessionCapabilities::default(),
+                    lane_capabilities: crate::system::LaneCapabilities::default(),
                 });
             if opts.show_headers {
                 // Section dividers stay muted on purpose — least distraction,

@@ -191,6 +191,9 @@ impl AppState {
     ///  - a host's last live session would tear that host's tmux server down;
     ///  - the last local session would leave deck attached to nothing.
     pub fn kill_blocked_reason(&self, entry: &SessionEntry) -> Option<&'static str> {
+        if !self.session_capabilities(&entry.lane).kill {
+            return Some("lane does not support killing sessions");
+        }
         match &entry.host {
             Some(_) if !entry.is_attachable() => Some("no session to kill"),
             Some(host)

@@ -37,6 +37,23 @@ fn make_test_state(n: usize) -> AppState {
     state
 }
 
+fn set_capabilities(
+    state: &mut AppState,
+    session: crate::system::SessionCapabilities,
+    lane: crate::system::LaneCapabilities,
+) {
+    state.system_sections = vec![crate::system::SectionDef {
+        lane: crate::system::tmux::TmuxSystem::local_lane(),
+        title: "test".into(),
+        buttons: vec![],
+        top_margin: false,
+        primary: true,
+        runtime_key: None,
+        session_capabilities: session,
+        lane_capabilities: lane,
+    }];
+}
+
 /// Append remote rows after the local block, preserving the unified store's
 /// "locals first, then remotes" flat order.
 fn set_remote(state: &mut AppState, rows: Vec<SessionEntry>) {
@@ -60,6 +77,77 @@ fn focus_next_advances_and_switches() {
         fx.first_activated_session().map(|id| id.key.as_str()),
         Some("sess-1")
     );
+}
+
+#[test]
+fn unsupported_activation_is_not_emitted() {
+    let mut state = make_test_state(2);
+    set_capabilities(
+        &mut state,
+        crate::system::SessionCapabilities::default(),
+        crate::system::LaneCapabilities::default(),
+    );
+    state.focused = 1;
+
+    let fx = apply_action(&mut state, Action::SwitchProject);
+
+    assert!(fx.first_activated_session().is_none());
+    assert!(!fx.has_refresh_sessions());
+}
+
+#[test]
+fn unsupported_session_mutations_are_disabled_and_reducer_guarded() {
+    let mut state = make_test_state(2);
+    set_capabilities(
+        &mut state,
+        crate::system::SessionCapabilities {
+            activate: true,
+            rename: false,
+            kill: false,
+        },
+        crate::system::LaneCapabilities {
+            create_session: false,
+            reorder_sessions: true,
+            actions: false,
+        },
+    );
+    apply_action(
+        &mut state,
+        Action::Menu(MenuAction::OpenSession {
+            target: crate::state::FocusTarget(0),
+            x: 1,
+            y: 1,
+        }),
+    );
+    let menu = state.overlay.context_menu.as_ref().expect("session menu");
+    assert!(menu.disabled().contains(&crate::menu::MenuItem::Rename));
+    assert!(menu.disabled().contains(&crate::menu::MenuItem::Close));
+
+    apply_action(&mut state, Action::StartRename);
+    assert!(state.overlay.renaming.is_none());
+    apply_action(&mut state, Action::KillSession);
+    assert!(!state.overlay.confirm_kill);
+}
+
+#[test]
+fn unsupported_lane_reorder_is_a_noop() {
+    let mut state = make_test_state(3);
+    set_capabilities(
+        &mut state,
+        crate::system::SessionCapabilities {
+            activate: true,
+            rename: true,
+            kill: true,
+        },
+        crate::system::LaneCapabilities::default(),
+    );
+    state.focused = 1;
+
+    let fx = apply_action(&mut state, Action::ReorderSession(-1));
+
+    assert_eq!(state.entries[0].name, "sess-0");
+    assert_eq!(state.focused, 1);
+    assert!(!fx.has_save_session_order());
 }
 
 #[test]
@@ -1443,7 +1531,15 @@ fn placeholder_remote_menu_disables_rename_and_close() {
             dir: String::new(),
             kind,
         };
-        let disabled = session_menu_disabled(&row, std::slice::from_ref(&row));
+        let disabled = session_menu_disabled(
+            &row,
+            std::slice::from_ref(&row),
+            crate::system::SessionCapabilities {
+                activate: true,
+                rename: true,
+                kill: true,
+            },
+        );
         assert!(
             disabled.contains(&MenuItem::Rename),
             "{label}: Rename disabled"
@@ -1470,7 +1566,12 @@ fn remote_session_with_siblings_disables_nothing() {
     use crate::menu::session_menu_disabled;
     // Host "h" has two live sessions, so killing either is fine.
     let sessions = vec![remote("h", "work"), remote("h", "other")];
-    assert!(session_menu_disabled(&sessions[0], &sessions).is_empty());
+    let capabilities = crate::system::SessionCapabilities {
+        activate: true,
+        rename: true,
+        kill: true,
+    };
+    assert!(session_menu_disabled(&sessions[0], &sessions, capabilities).is_empty());
 
     let local = SessionEntry {
         lane: crate::system::tmux::TmuxSystem::local_lane(),
@@ -1479,7 +1580,7 @@ fn remote_session_with_siblings_disables_nothing() {
         dir: "/".into(),
         kind: SessionEntryKind::Live { is_current: false },
     };
-    assert!(session_menu_disabled(&local, &sessions).is_empty());
+    assert!(session_menu_disabled(&local, &sessions, capabilities).is_empty());
 }
 
 #[test]
@@ -1488,7 +1589,15 @@ fn last_remote_session_disables_close_only() {
     // "solo" is the only session on its host; a session on a *different*
     // host doesn't count toward it.
     let sessions = vec![remote("h", "solo"), remote("other", "x")];
-    let disabled = session_menu_disabled(&sessions[0], &sessions);
+    let disabled = session_menu_disabled(
+        &sessions[0],
+        &sessions,
+        crate::system::SessionCapabilities {
+            activate: true,
+            rename: true,
+            kill: true,
+        },
+    );
     assert!(
         disabled.contains(&MenuItem::Close),
         "Close disabled for last session"

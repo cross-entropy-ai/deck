@@ -187,8 +187,12 @@ impl App {
                 // Decision A: the System owns what its divider buttons do. Ask
                 // it for the effects and run them through the normal pipeline.
                 let mut fx = crate::effects::SideEffect::default();
-                if let Some(system) = self.systems.for_lane(&lane) {
-                    for e in system.on_button(&lane, &command, x, y) {
+                if let Some(actions) = self
+                    .systems
+                    .runtime(&lane)
+                    .and_then(|runtime| runtime.lane_actions())
+                {
+                    for e in actions.on_button(&lane, &command, x, y) {
                         fx.push(e);
                     }
                 } else {
@@ -248,8 +252,9 @@ impl App {
             connection_generations: &connection_generations,
         };
         self.systems
-            .for_lane(lane)
-            .map(|system| system.control(lane, &ctx))
+            .runtime(lane)
+            .and_then(|runtime| runtime.session_control())
+            .map(|control| control.control(lane, &ctx))
     }
 
     /// Build the backend for `host` and hand `op` to the executor's per-host

@@ -1,4 +1,4 @@
-use crate::refresh::{LaneRefresh, RefreshRequest, RefreshUpdate};
+use crate::refresh::{LaneRefresh, LaneRefreshError, RefreshRequest, RefreshUpdate};
 use crate::state::{SessionEntry, SessionEntryKind};
 
 use super::App;
@@ -77,7 +77,7 @@ impl App {
             let mut fresh = Vec::new();
 
             match snapshot {
-                Some(mut snapshot) => {
+                Ok(mut snapshot) => {
                     if agents_requested {
                         match snapshot.agents.take() {
                             Some(agents) => {
@@ -130,7 +130,7 @@ impl App {
                         }
                     }
                 }
-                None => {
+                Err(LaneRefreshError::Catalog(crate::system::CatalogError::Unreachable(_))) => {
                     if agents_requested {
                         self.state.agents.remove(&lane);
                     }
@@ -141,6 +141,13 @@ impl App {
                             SessionEntryKind::Unreachable,
                         ));
                     }
+                }
+                Err(error) => {
+                    self.state.show_warning(format!(
+                        "session refresh failed for {}: {error}",
+                        lane.as_str()
+                    ));
+                    continue;
                 }
             }
 

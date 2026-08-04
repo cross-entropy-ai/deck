@@ -35,8 +35,12 @@ fn fill_switch_effect(state: &AppState, fx: &mut SideEffect) -> bool {
     };
     match state.entry_at(target) {
         Some(entry) if entry.is_attachable() => {
-            fx.push(Effect::ActivateSession(entry.id()));
-            true
+            if state.session_capabilities(&entry.lane).activate {
+                fx.push(Effect::ActivateSession(entry.id()));
+                true
+            } else {
+                false
+            }
         }
         Some(entry) => {
             fx.push(Effect::ShowRemotePlaceholder(
@@ -149,6 +153,9 @@ fn reorder_session_to(state: &mut AppState, target: usize, fx: &mut SideEffect) 
     let Some(entry) = state.entries.get(source) else {
         return;
     };
+    if !state.lane_capabilities(&entry.lane).reorder_sessions {
+        return;
+    }
     if let Some(host) = entry.host.clone() {
         if !entry.is_attachable()
             || !state.entries[target].is_attachable()
@@ -362,7 +369,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 return fx;
             };
             // Don't rename a synthetic placeholder row (no real session).
-            if !entry.is_attachable() {
+            if !entry.is_attachable() || !state.session_capabilities(&entry.lane).rename {
                 return fx;
             }
             let name = entry.name.clone();

@@ -57,16 +57,27 @@ pub(crate) fn run_ssh(
 
 /// List tmux sessions on `host`.
 ///
-/// - `None` — ssh couldn't reach the host (refused/timeout/auth/DNS, all
-///   reported as ssh's own exit 255).
-/// - `Some(empty)` — reachable but no tmux server (`list-sessions` exited
+/// - `Err(Unreachable)` — ssh couldn't reach the host (refused/timeout/auth/DNS,
+///   reported as ssh's own exit 255 or a command timeout).
+/// - `Err(Backend)` — the local ssh process or remote tmux command failed for
+///   a non-connectivity reason.
+/// - `Ok(empty)` — reachable but no tmux server (`list-sessions` exited
 ///   non-zero with "no server running").
-/// - `Some(non-empty)` — the live session list.
-pub fn list_sessions(host: &str) -> Option<Vec<SessionSnapshot>> {
+/// - `Ok(non-empty)` — the live session list.
+pub fn list_sessions(host: &str) -> Result<Vec<SessionSnapshot>, ListSessionsError> {
     list_sessions_with(default_runner(), host)
 }
 
-fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<SessionSnapshot>> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListSessionsError {
+    Unreachable(String),
+    Backend(String),
+}
+
+fn list_sessions_with(
+    runner: &dyn CommandRunner,
+    host: &str,
+) -> Result<Vec<SessionSnapshot>, ListSessionsError> {
     // `$'...'` (bash/zsh ANSI-C quoting) makes the remote shell treat `#`
     // literally (no comment) and `\t` as a splittable tab byte; a
     // POSIX-only shell would need a different escape. Trailing
@@ -80,12 +91,15 @@ fn list_sessions_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Sess
         // No window-activity probe (unlike local): nothing reads remote
         // activity, so the extra `list-windows -a` roundtrip per host per
         // tick would be waste. Rows parse with `activity = 0`.
-        Ok(raw) => Some(parse_sessions(&raw, &HashMap::new())),
+        Ok(raw) => Ok(parse_sessions(&raw, &HashMap::new())),
         // "no server running" is the *only* failure read as empty: the host
         // is reachable, just sessionless. Other non-zero exits (tmux
         // missing, permission, PATH) and ssh failures stay unreachable.
-        Err(err) if is_no_server_error(&err) => Some(Vec::new()),
-        Err(_) => None,
+        Err(err) if is_no_server_error(&err) => Ok(Vec::new()),
+        Err(err) if is_unreachable_error(&err) => {
+            Err(ListSessionsError::Unreachable(err.to_string()))
+        }
+        Err(err) => Err(ListSessionsError::Backend(err.to_string())),
     }
 }
 
@@ -223,6 +237,14 @@ fn is_no_server_error(err: &CommandError) -> bool {
     msg.contains("no server running")
         || msg.contains("failed to connect to server")
         || msg.contains("error connecting to")
+}
+
+fn is_unreachable_error(err: &CommandError) -> bool {
+    match err {
+        CommandError::Timeout { .. } => true,
+        CommandError::NonZero { status, .. } => status.code() == Some(255),
+        CommandError::Spawn { .. } => false,
+    }
 }
 
 /// Single-quote a value so the remote shell treats it as one literal

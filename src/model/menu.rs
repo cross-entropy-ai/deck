@@ -2,6 +2,7 @@
 //! and the `ContextMenu` overlay state with its enabled/disabled logic.
 
 use crate::state::{attachable_on_host, FocusTarget, SessionEntry};
+use crate::system::SessionCapabilities;
 
 // One list for local and remote rows. No "Switch" item — focus already
 // switches. On a remote row Rename/Close map to `ssh <host> tmux <cmd>`.
@@ -15,6 +16,7 @@ const PLACEHOLDER_DISABLED_ITEMS: &[MenuItem] = SESSION_MENU_ITEMS;
 // host: killing it would tear down that host's tmux server. Rename is
 // still fine.
 const LAST_REMOTE_SESSION_DISABLED: &[MenuItem] = &[MenuItem::Close];
+const RENAME_DISABLED: &[MenuItem] = &[MenuItem::Rename];
 // Host divider [...] menu acts on the whole remote *group*. RemoveFromList
 // is equivalent to `deck remote remove <host>`.
 const HOST_DIVIDER_MENU_ITEMS: &[MenuItem] = &[
@@ -126,13 +128,20 @@ impl MenuKind {
 pub fn session_menu_disabled(
     entry: &SessionEntry,
     entries: &[SessionEntry],
+    capabilities: SessionCapabilities,
 ) -> &'static [MenuItem] {
-    match &entry.host {
-        Some(_) if !entry.is_attachable() => PLACEHOLDER_DISABLED_ITEMS,
-        Some(host) if attachable_on_host(entries, Some(host)).nth(1).is_none() => {
-            LAST_REMOTE_SESSION_DISABLED
-        }
-        _ => &[],
+    if !entry.is_attachable() || (!capabilities.rename && !capabilities.kill) {
+        return PLACEHOLDER_DISABLED_ITEMS;
+    }
+    let last_remote = entry
+        .host
+        .as_ref()
+        .is_some_and(|host| attachable_on_host(entries, Some(host)).nth(1).is_none());
+    match (capabilities.rename, capabilities.kill && !last_remote) {
+        (false, false) => PLACEHOLDER_DISABLED_ITEMS,
+        (false, true) => RENAME_DISABLED,
+        (true, false) => LAST_REMOTE_SESSION_DISABLED,
+        (true, true) => &[],
     }
 }
 

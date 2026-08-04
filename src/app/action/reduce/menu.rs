@@ -21,10 +21,17 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
             // subsequent keyboard actions (or menu confirmations)
             // operate on it.
             state.focused = target.0;
+            let capabilities = state
+                .entry_at(target)
+                .map(|entry| state.session_capabilities(&entry.lane));
             let kind = match state.entry_at(target) {
                 Some(entry) => MenuKind::Session {
                     focus: target,
-                    disabled: session_menu_disabled(entry, &state.entries),
+                    disabled: session_menu_disabled(
+                        entry,
+                        &state.entries,
+                        capabilities.expect("entry capability resolved"),
+                    ),
                 },
                 // Index points outside any row — treat as a global
                 // right-click. Shouldn't happen since mouse hit-test

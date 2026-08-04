@@ -152,3 +152,68 @@ fn in_flight_remote_task_is_not_spawned_twice() {
     assert!(!spawn_called.get());
     assert!(in_flight.load(Ordering::Acquire));
 }
+
+struct UnreachableCatalog;
+
+impl crate::system::SessionCatalog for UnreachableCatalog {
+    fn snapshot(
+        &self,
+        _lane: &crate::lane::LaneId,
+        _ctx: &crate::system::SnapshotCtx<'_>,
+    ) -> Result<crate::system::LaneSnapshot, crate::system::CatalogError> {
+        Err(crate::system::CatalogError::Unreachable("offline".into()))
+    }
+}
+
+struct BrokenCatalog;
+
+impl crate::system::SessionCatalog for BrokenCatalog {
+    fn snapshot(
+        &self,
+        _lane: &crate::lane::LaneId,
+        _ctx: &crate::system::SnapshotCtx<'_>,
+    ) -> Result<crate::system::LaneSnapshot, crate::system::CatalogError> {
+        Err(crate::system::CatalogError::Backend(
+            "invalid payload".into(),
+        ))
+    }
+}
+
+static UNREACHABLE_CATALOG: UnreachableCatalog = UnreachableCatalog;
+static BROKEN_CATALOG: BrokenCatalog = BrokenCatalog;
+
+#[test]
+fn collect_one_preserves_unreachable_catalog_failure() {
+    let lane = crate::lane::LaneId::new("fixture", "offline");
+    let refresh = collect_one(
+        crate::system::LaneRuntime::new(&lane).with_catalog(&UNREACHABLE_CATALOG),
+        false,
+        "fixture-client",
+        &[],
+    );
+
+    assert!(matches!(
+        refresh.snapshot,
+        Err(LaneRefreshError::Catalog(
+            crate::system::CatalogError::Unreachable(ref detail)
+        )) if detail == "offline"
+    ));
+}
+
+#[test]
+fn collect_one_preserves_backend_failure_without_calling_it_unreachable() {
+    let lane = crate::lane::LaneId::new("fixture", "broken");
+    let refresh = collect_one(
+        crate::system::LaneRuntime::new(&lane).with_catalog(&BROKEN_CATALOG),
+        false,
+        "fixture-client",
+        &[],
+    );
+
+    assert!(matches!(
+        refresh.snapshot,
+        Err(LaneRefreshError::Catalog(
+            crate::system::CatalogError::Backend(ref detail)
+        )) if detail == "invalid payload"
+    ));
+}
