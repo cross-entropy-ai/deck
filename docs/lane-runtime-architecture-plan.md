@@ -327,9 +327,9 @@ such in the PR.
 - [ ] The non-tmux fixture crosses the full App-to-terminal contract without
       editing App, reducer variants, or renderer.
 - [x] No generic module branches on local/remote or carries a host sentinel.
-- [ ] Same-lane display mutations are FIFO and failure-complete.
-- [ ] OSC behavior is surface-scoped and covered for local/remote-independent
+- [x] Same-lane display mutations are FIFO and failure-complete.
+- [x] OSC behavior is surface-scoped and covered for local/remote-independent
       paths.
 - [x] Workspace gates pass.
 - [x] Architecture docs describe the implemented state, not the intended one.
-- [ ] PR lists manual smoke-test evidence and explicitly identifies unrun rows.
+- [x] PR lists manual smoke-test evidence and explicitly identifies unrun rows.
