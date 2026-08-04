@@ -137,19 +137,14 @@ impl App {
         let main_view_terminal = self.state.main_view == MainView::Terminal;
         let theme = self.state.active_theme();
         let mut died_lanes = Vec::new();
+        let mut osc52_sink = io::stdout();
         for (lane, pane) in self.attachments.panes_mut() {
             let lane_is_active = *lane == active_lane;
-            if Self::drain_pane(
-                &mut pane.pty,
-                &mut pane.parser,
-                &mut pane.alive,
-                lane_is_active,
-                lane_is_active && main_view_terminal,
-                theme,
-            ) {
+            let outcome = pane.drain(lane_is_active, theme, &mut osc52_sink);
+            if outcome.had_output && lane_is_active && main_view_terminal {
                 redraw = redraw.merge(Redraw::Soft);
             }
-            if !pane.alive {
+            if !pane.alive() {
                 died_lanes.push(lane.clone());
             }
         }
@@ -165,15 +160,10 @@ impl App {
     fn pump_upgrade_pty(&mut self) -> Redraw {
         let upgrade_view_active = self.state.main_view == MainView::Upgrade;
         let theme = self.state.active_theme();
+        let mut osc52_sink = io::stdout();
         if let Some(ref mut inst) = self.upgrade_instance {
-            if Self::drain_pane(
-                &mut inst.pty,
-                &mut inst.parser,
-                &mut inst.alive,
-                false,
-                upgrade_view_active,
-                theme,
-            ) {
+            let outcome = inst.drain(upgrade_view_active, theme, &mut osc52_sink);
+            if outcome.had_output && upgrade_view_active {
                 return Redraw::Soft;
             }
         }
@@ -188,7 +178,7 @@ impl App {
             && self
                 .upgrade_instance
                 .as_ref()
-                .is_some_and(|inst| !inst.alive)
+                .is_some_and(|inst| !inst.alive())
         {
             self.upgrade_instance = None;
             self.state.main_view = MainView::Terminal;

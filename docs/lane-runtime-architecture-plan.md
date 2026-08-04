@@ -224,18 +224,23 @@ follow-up; this package does not claim the WP4 exit complete.
 
 ### WP5 — TerminalSurface and OSC boundary
 
-- [ ] Rename/extract `TerminalPane` as `TerminalSurface` in a terminal module.
-- [ ] Keep PTY read/write/resize, vt100 parsing, OSC 10/11 reply generation,
+- [x] Rename/extract `TerminalPane` as `TerminalSurface` in a terminal module.
+- [x] Keep PTY read/write/resize, vt100 parsing, OSC 10/11 reply generation,
       and OSC 52 forwarding in this boundary.
-- [ ] Make OSC forwarding conditional on the active `TerminalSurface` rather
+- [x] Make OSC forwarding conditional on the active `TerminalSurface` rather
       than local/remote origin.
-- [ ] Keep parent-terminal OSC 11 auto-theme probing in the shell lifecycle and
+- [x] Keep parent-terminal OSC 11 auto-theme probing in the shell lifecycle and
       document the distinction.
-- [ ] Add parser tests for split/multiple OSC sequences and inactive-surface
+- [x] Add parser tests for split/multiple OSC sequences and inactive-surface
       clipboard suppression.
 
 Exit: OSC behavior is identical for any attachment provider and no Session API
 mentions OSC.
+
+WP5 exit achieved. Each surface owns a bounded incremental OSC scanner, so
+split and repeated BEL/ST-terminated sequences are handled without retaining
+an unlimited unterminated payload. Child color queries and clipboard requests
+remain separate from the parent-terminal auto-theme probe in `termbg`.
 
 ### WP6 — Backend actions and compatibility-seam removal
 

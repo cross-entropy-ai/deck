@@ -199,12 +199,12 @@ impl App {
             let active_lane = self.attachments.active_lane().clone();
             let attachment_failure = self.attachments.failure(&active_lane).map(str::to_string);
             let active_attachment_dead = self.active_terminal().is_none();
-            let screen = self.active_terminal().map(|pane| pane.parser.screen());
+            let screen = self.active_terminal().map(|surface| surface.screen());
             let upgrade_screen = match main_view {
                 MainView::Upgrade => self
                     .upgrade_instance
                     .as_ref()
-                    .map(|inst| inst.parser.screen()),
+                    .map(|surface| surface.screen()),
                 _ => None,
             };
             let background_screen = match (warning_state, main_view) {

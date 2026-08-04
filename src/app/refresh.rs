@@ -8,7 +8,7 @@ impl App {
         let slave_tty = self
             .attachments
             .terminal(self.attachments.primary_lane())
-            .map(|pane| pane.pty.slave_tty.clone())
+            .map(|pane| pane.slave_tty().to_string())
             .unwrap_or_default();
         RefreshRequest {
             // Tracks only the LOCAL tmux server's current-session (drives

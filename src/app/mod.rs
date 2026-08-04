@@ -13,6 +13,7 @@ mod reload;
 mod render;
 mod run;
 pub mod settings;
+mod terminal;
 mod update;
 
 use std::collections::BTreeMap;
@@ -22,7 +23,6 @@ use std::time::{Duration, Instant};
 use crate::config::{Config, KeyBindingValue};
 use crate::keybindings::Keybindings;
 use crate::overlay::WarningState;
-use crate::pty::Pty;
 use crate::refresh::RefreshWorker;
 use crate::state::{AppState, MainView};
 use crate::theme::THEMES;
@@ -30,6 +30,7 @@ use crate::tmux;
 use crate::update::UpdateCheckMode;
 
 use self::attachment::AttachmentManager;
+use self::terminal::TerminalSurface;
 use self::update::bootstrap_update_check;
 pub(super) use focus_executor::ActivePaneOutcome;
 use focus_executor::ActivePaneProbeExecutor;
@@ -42,25 +43,6 @@ const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 3600);
 fn render_min_interval(frame_rate_limit: u16) -> Duration {
     let fps = crate::state::normalize_frame_rate_limit(frame_rate_limit).max(1);
     Duration::from_micros(1_000_000 / u64::from(fps))
-}
-
-/// A PTY-backed terminal view in the main pane. The local `tmux attach`, each
-/// remote `ssh -t host tmux attach`, and the upgrade pane are all this
-/// struct — the render / input / resize code doesn't care which.
-pub(super) struct TerminalPane {
-    pub pty: Pty,
-    pub parser: vt100::Parser,
-    pub alive: bool,
-}
-
-impl TerminalPane {
-    pub(super) fn new(pty: Pty, rows: u16, cols: u16) -> Self {
-        Self {
-            pty,
-            parser: vt100::Parser::new(rows, cols, 0),
-            alive: true,
-        }
-    }
 }
 
 pub struct App {
@@ -80,7 +62,7 @@ pub struct App {
     session_exec: crate::session::executor::SessionExecutor,
     raw_keybindings: BTreeMap<String, KeyBindingValue>,
     update_checker: Option<crate::update::UpdateChecker>,
-    upgrade_instance: Option<TerminalPane>,
+    upgrade_instance: Option<TerminalSurface>,
     last_update_request: Option<Instant>,
     /// Last config-file mtime deck itself wrote or the watcher accepted.
     /// `save_config` refreshes it after writing so the ~2s config watcher in
@@ -178,7 +160,7 @@ impl App {
 
         let (pty_rows, pty_cols) = state.pty_size();
         let pty = Self::spawn_tmux_pty((pty_rows, pty_cols), attach_override.as_deref())?;
-        let local_terminal = TerminalPane::new(pty, pty_rows, pty_cols);
+        let local_terminal = TerminalSurface::new(pty, pty_rows, pty_cols);
 
         // Seed the in-memory mirror of remote configs so port-forward
         // state is available from the very first frame.
@@ -196,7 +178,7 @@ impl App {
             .filter(|section| section.runtime_key.is_some())
             .map(|section| section.lane.clone())
             .collect();
-        let pty_size = pty::pane_size(pty_rows, pty_cols);
+        let pty_size = terminal::pty_size(pty_rows, pty_cols);
         let attachments =
             AttachmentManager::start(primary_lane, local_terminal, &remote_lanes, pty_size);
 
@@ -307,11 +289,11 @@ impl App {
     /// The terminal pane that owns the main view: local by default, or the
     /// remote pane for the active host. Falls back to local if the active host's
     /// pane has been dropped (e.g. connection died, not yet re-spawned).
-    pub(super) fn active_terminal(&self) -> Option<&TerminalPane> {
+    pub(super) fn active_terminal(&self) -> Option<&TerminalSurface> {
         self.attachments.active_terminal()
     }
 
-    pub(super) fn active_terminal_mut(&mut self) -> Option<&mut TerminalPane> {
+    pub(super) fn active_terminal_mut(&mut self) -> Option<&mut TerminalSurface> {
         self.attachments.active_terminal_mut()
     }
 
@@ -322,12 +304,12 @@ impl App {
         match self.state.main_view {
             MainView::Upgrade => {
                 if let Some(ref mut inst) = self.upgrade_instance {
-                    let _ = inst.pty.write(bytes);
+                    let _ = inst.write(bytes);
                 }
             }
             MainView::Terminal => {
                 if let Some(terminal) = self.active_terminal_mut() {
-                    let _ = terminal.pty.write(bytes);
+                    let _ = terminal.write(bytes);
                 }
             }
             MainView::Settings => {}

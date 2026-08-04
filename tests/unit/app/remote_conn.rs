@@ -329,9 +329,9 @@ fn test_pty_size() -> portable_pty::PtySize {
     }
 }
 
-/// A minimal live `TerminalPane` for `is_live`-gated tests. Spawning a real
+/// A minimal live `TerminalSurface` for `is_live`-gated tests. Spawning a real
 /// PTY (`true`/`echo`) is cheap and avoids faking vt100 internals.
-fn fake_pane() -> crate::app::TerminalPane {
+fn fake_pane() -> crate::app::TerminalSurface {
     let pty = crate::pty::Pty::spawn(
         "true",
         &[],
@@ -343,7 +343,7 @@ fn fake_pane() -> crate::app::TerminalPane {
         },
     )
     .expect("spawn `true` for a test PTY");
-    crate::app::TerminalPane::new(pty, 1, 1)
+    crate::app::TerminalSurface::new(pty, 1, 1)
 }
 
 fn exhausted_retry() -> MarkerRetry {

@@ -47,7 +47,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use super::remote_spawn::{RemoteSpawnEvent, RemoteSpawner};
-use crate::app::TerminalPane;
+use crate::app::TerminalSurface;
 
 /// Liveness of the persistent `ssh -tt host tmux attach` PTY for a remote
 /// host. Distinct from whether a one-shot `list_sessions` ssh call succeeds —
@@ -70,7 +70,7 @@ pub(crate) enum RemoteConnStatus {
 /// the two can't drift.
 pub(crate) struct RemoteConn {
     pub(crate) status: RemoteConnStatus,
-    pub(crate) pane: Option<TerminalPane>,
+    pub(crate) pane: Option<TerminalSurface>,
     /// Id of the client-tty marker file this connection's attach wrapper
     /// wrote (see `remote_spawn`). Switch/focus pass it to `remote_tmux` so
     /// they read *this* connection's marker, never a prior one's. `0` for a
@@ -91,7 +91,7 @@ pub(crate) struct RemoteConn {
 
 impl RemoteConn {
     /// A freshly-spawned connection: PTY live, marker not yet confirmed.
-    fn connected(pane: TerminalPane, client_marker_id: u64) -> Self {
+    fn connected(pane: TerminalSurface, client_marker_id: u64) -> Self {
         Self {
             status: RemoteConnStatus::Connected,
             pane: Some(pane),
@@ -347,7 +347,7 @@ impl RemoteConnManager {
     }
 
     /// Transfer a freshly-spawned pane to the lane-keyed attachment owner.
-    pub(crate) fn take_pane(&mut self, host: &str) -> Option<TerminalPane> {
+    pub(crate) fn take_pane(&mut self, host: &str) -> Option<TerminalSurface> {
         self.conns.get_mut(host).and_then(|conn| conn.pane.take())
     }
 

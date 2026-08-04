@@ -252,7 +252,7 @@ impl App {
         let local_client = self
             .attachments
             .terminal(self.attachments.primary_lane())
-            .map(|pane| pane.pty.slave_tty.as_str())
+            .map(|surface| surface.slave_tty())
             .unwrap_or_default();
         let ctx = crate::system::ControlCtx {
             local_client,
@@ -566,7 +566,7 @@ impl App {
             self.attachments.terminal(lane).map(|pane| {
                 (
                     crate::focus::FocusTransport::Local {
-                        client_tty: pane.pty.slave_tty.clone(),
+                        client_tty: pane.slave_tty().to_string(),
                     },
                     0,
                 )

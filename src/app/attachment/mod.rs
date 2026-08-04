@@ -13,16 +13,16 @@ use crate::lane::LaneId;
 use crate::model::session::SessionId;
 
 use super::ssh::remote_conn::{RemoteConnManager, RemoteConnStatus};
-use super::TerminalPane;
+use super::TerminalSurface;
 
 #[expect(
     clippy::large_enum_variant,
-    reason = "the architecture contract intentionally makes Connected own TerminalPane"
+    reason = "the architecture contract intentionally makes Connected own TerminalSurface"
 )]
 pub(crate) enum AttachmentState {
     Disconnected,
     Connecting,
-    Connected(TerminalPane),
+    Connected(TerminalSurface),
     Failed(String),
 }
 
@@ -47,7 +47,7 @@ impl AttachmentManager {
     /// "Always available" is startup policy here, not a special field on App.
     pub(crate) fn start(
         primary: LaneId,
-        primary_pane: TerminalPane,
+        primary_pane: TerminalSurface,
         remote_lanes: &[LaneId],
         pty_size: PtySize,
     ) -> Self {
@@ -89,12 +89,12 @@ impl AttachmentManager {
         self.states.get(lane)
     }
 
-    pub(crate) fn active_terminal(&self) -> Option<&TerminalPane> {
+    pub(crate) fn active_terminal(&self) -> Option<&TerminalSurface> {
         self.terminal(&self.active)
             .or_else(|| self.terminal(&self.primary))
     }
 
-    pub(crate) fn active_terminal_mut(&mut self) -> Option<&mut TerminalPane> {
+    pub(crate) fn active_terminal_mut(&mut self) -> Option<&mut TerminalSurface> {
         let key = if matches!(
             self.states.get(&self.active),
             Some(AttachmentState::Connected(_))
@@ -106,21 +106,21 @@ impl AttachmentManager {
         self.terminal_mut(&key)
     }
 
-    pub(crate) fn terminal(&self, lane: &LaneId) -> Option<&TerminalPane> {
+    pub(crate) fn terminal(&self, lane: &LaneId) -> Option<&TerminalSurface> {
         match self.states.get(lane) {
             Some(AttachmentState::Connected(pane)) => Some(pane),
             _ => None,
         }
     }
 
-    pub(crate) fn terminal_mut(&mut self, lane: &LaneId) -> Option<&mut TerminalPane> {
+    pub(crate) fn terminal_mut(&mut self, lane: &LaneId) -> Option<&mut TerminalSurface> {
         match self.states.get_mut(lane) {
             Some(AttachmentState::Connected(pane)) => Some(pane),
             _ => None,
         }
     }
 
-    pub(crate) fn panes_mut(&mut self) -> impl Iterator<Item = (&LaneId, &mut TerminalPane)> {
+    pub(crate) fn panes_mut(&mut self) -> impl Iterator<Item = (&LaneId, &mut TerminalSurface)> {
         self.states
             .iter_mut()
             .filter_map(|(lane, state)| match state {
@@ -153,7 +153,7 @@ impl AttachmentManager {
     }
 
     pub(crate) fn is_live(&self, lane: &LaneId) -> bool {
-        self.terminal(lane).is_some_and(|pane| pane.alive)
+        self.terminal(lane).is_some_and(TerminalSurface::alive)
     }
 
     pub(crate) fn is_connecting(&self, lane: &LaneId) -> bool {
@@ -174,7 +174,7 @@ impl AttachmentManager {
         }
     }
 
-    pub(crate) fn replace_primary(&mut self, pane: TerminalPane) {
+    pub(crate) fn replace_primary(&mut self, pane: TerminalSurface) {
         self.states
             .insert(self.primary.clone(), AttachmentState::Connected(pane));
     }
@@ -332,9 +332,9 @@ mod tests {
         }
     }
 
-    fn pane() -> TerminalPane {
+    fn pane() -> TerminalSurface {
         let pty = crate::pty::Pty::spawn("true", &[], size()).expect("spawn test PTY");
-        TerminalPane::new(pty, 2, 3)
+        TerminalSurface::new(pty, 2, 3)
     }
 
     #[test]

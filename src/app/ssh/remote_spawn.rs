@@ -9,7 +9,7 @@
 //! 1. `RemoteSpawner::start(hosts, size)` kicks one thread per host; threads
 //!    own no shared state beyond the response channel.
 //! 2. Each tick the main loop calls `try_recv` to drain events without
-//!    blocking; the app inserts the `TerminalPane` or stamps a failure.
+//!    blocking; the app inserts the `TerminalSurface` or stamps a failure.
 //! 3. Threads exit when their spawn is done. Respawns are triggered on demand
 //!    by `App::respawn_remote_host` (reconnect button, refresh auto-recovery,
 //!    onboarding).
@@ -23,7 +23,7 @@ use portable_pty::PtySize;
 
 use crate::pty::Pty;
 
-use crate::app::TerminalPane;
+use crate::app::TerminalSurface;
 
 /// Allocates a process-unique id for each PTY (re)spawn so every connection
 /// gets its own client-tty marker file — see `remote_tmux::client_marker_path`
@@ -36,13 +36,13 @@ fn next_marker_id() -> u64 {
 
 /// One result per spawn attempt.
 ///
-/// `pane` is boxed because `TerminalPane` carries a `vt100::Parser` (~768
+/// `pane` is boxed because `TerminalSurface` carries a `vt100::Parser` (~768
 /// bytes); inline, the `Failed` variant would pay the same cost. The box is
 /// short-lived: the consumer unboxes immediately into `remote_terminals`.
 pub(in crate::app) enum RemoteSpawnEvent {
     Spawned {
         host: String,
-        pane: Box<TerminalPane>,
+        pane: Box<TerminalSurface>,
         /// Id of the client-tty marker this PTY's attach wrapper writes;
         /// stored on the `RemoteConn` so switch/focus read *this*
         /// connection's marker.
@@ -197,7 +197,7 @@ fn spawn_one(
             argv.push(host_for_args.as_str());
             argv.push(remote_cmd.as_str());
             let pane = match Pty::spawn("ssh", &argv, size) {
-                Ok(pty) => Box::new(TerminalPane::new(pty, size.rows, size.cols)),
+                Ok(pty) => Box::new(TerminalSurface::new(pty, size.rows, size.cols)),
                 Err(error) => {
                     let _ = tx.send(RemoteSpawnEvent::Failed {
                         host,
