@@ -14,10 +14,11 @@ use crate::session::SessionControl;
 use crate::{remote_tmux, tmux};
 
 use super::{
-    AttachmentEndpoint, CatalogError, ControlCtx, FocusTransportProvider, LaneActionId,
-    LaneActionProvider, LaneCapabilities, LaneConfigOutcome, LaneConfigProvider, LaneRuntime,
-    LaneShellIntent, LaneSnapshot, SectionDef, SessionCapabilities, SessionCatalog,
-    SessionControlProvider, SnapshotCtx, SnapshotMode, SummaryTransportProvider, System,
+    AttachmentEndpoint, AttachmentProvider, AttachmentRole, CatalogError, ControlCtx,
+    FocusTransportProvider, LaneActionId, LaneActionProvider, LaneCapabilities, LaneConfigOutcome,
+    LaneConfigProvider, LaneRuntime, LaneShellIntent, LaneSnapshot, SectionDef,
+    SessionCapabilities, SessionCatalog, SessionControlProvider, SnapshotCtx, SnapshotMode,
+    SummaryTransportProvider, System,
 };
 
 /// This system's id — the `system` half of every [`LaneId`] it produces.
@@ -105,7 +106,6 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId) -> SectionDef {
             buttons: vec![menu_button()],
             top_margin: false,
             primary: true,
-            runtime_key: None,
             session_capabilities: tmux_session_capabilities(),
             lane_capabilities: tmux_lane_capabilities(),
         },
@@ -121,7 +121,6 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId) -> SectionDef {
                 buttons,
                 top_margin: true,
                 primary: false,
-                runtime_key: Some(host.to_string()),
                 session_capabilities: tmux_session_capabilities(),
                 lane_capabilities: tmux_lane_capabilities(),
             }
@@ -188,7 +187,20 @@ impl System for TmuxSystem {
                 .with_lane_config(self)
                 .with_focus_transport(self)
                 .with_summary_transport(self)
+                .with_attachment(self)
                 .with_capabilities(tmux_session_capabilities(), tmux_lane_capabilities())
+        })
+    }
+}
+
+impl AttachmentProvider for TmuxSystem {
+    fn role(&self, lane: &LaneId) -> Option<AttachmentRole> {
+        (lane.system() == TMUX).then(|| {
+            if Self::host_of(lane).is_none() {
+                AttachmentRole::Primary
+            } else {
+                AttachmentRole::Managed
+            }
         })
     }
 }

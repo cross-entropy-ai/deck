@@ -65,11 +65,9 @@ owning provider and executes only the returned generic `LaneShellIntent`; App
 does not match system ids or backend action ids.
 
 `SectionDef.primary` identifies the one lane backed by Deck's embedded local
-terminal; absence of a runtime key alone does not imply that role.
-`SectionDef.runtime_key` is an optional opaque connection key. Generic routing
-still uses `LaneId`; the key exists only for shell-owned attachment workflows
-that need to correlate a section with a persistent client. tmux uses the SSH
-host name.
+terminal. Attachment, focus, summary, configuration, and lane-action behavior
+are optional runtime capabilities; section presentation contains no connection
+key.
 
 ## Extension test
 

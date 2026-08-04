@@ -42,7 +42,7 @@ fn respawns_reachable_host_whose_pty_is_not_live() {
     let got = lanes_needing_respawn(
         &rows,
         &crate::system::tmux::TmuxSystem::local_lane(),
-        |lane| lane.lane() == "h1",
+        |lane| *lane == crate::system::tmux::TmuxSystem::host_lane("h1"),
     );
     assert_eq!(
         got,
@@ -109,7 +109,9 @@ fn mark_connecting_rows_reflects_pty_liveness() {
         row("up", false, false),   // PTY connected -> stays Live (green)
         row("down", true, false),  // unreachable -> untouched (red)
     ];
-    mark_connecting_rows(&mut rows, |lane| lane.lane() == "conn");
+    mark_connecting_rows(&mut rows, |lane| {
+        *lane == crate::system::tmux::TmuxSystem::host_lane("conn")
+    });
     assert_eq!(
         rows[0].kind,
         SessionEntryKind::Connecting,

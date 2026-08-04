@@ -14,8 +14,6 @@ use crate::keybindings::Keybindings;
 use crate::lane::LaneId;
 use crate::overlay::{Modal, OverlayState};
 use crate::summary_card::{SummaryCard, SummaryState, SUMMARY_MAX_HEIGHT, SUMMARY_MIN_HEIGHT};
-#[cfg(test)]
-use crate::system::tmux::lane;
 use crate::update::{UpdateCheckMode, UpdateStatus};
 
 mod focus;
@@ -677,22 +675,6 @@ impl AppState {
         self.settings.theme_picker_selected = theme_index;
     }
 
-    /// Presentation/connection host associated with `lane`, when this is a
-    /// configured remote lane. Generic routing uses the lane itself; this
-    /// compatibility value is consulted only by tmux/SSH-specific workflows.
-    pub fn host_for_lane(&self, lane: &LaneId) -> Option<&str> {
-        self.system_sections
-            .iter()
-            .find(|section| section.lane == *lane)
-            .and_then(|section| section.runtime_key.as_deref())
-            .or_else(|| {
-                self.config_remotes
-                    .iter()
-                    .find(|remote| remote.host == lane.lane())
-                    .map(|remote| remote.host.as_str())
-            })
-    }
-
     /// The lane attached to Deck's embedded local terminal, if mounted.
     pub fn primary_lane(&self) -> Option<&LaneId> {
         self.system_sections
@@ -709,7 +691,7 @@ impl AppState {
         self.system_sections
             .iter()
             .find(|section| section.lane == *lane)
-            .map_or_else(|| lane.lane().to_string(), |section| section.title.clone())
+            .map_or_else(|| "session".to_string(), |section| section.title.clone())
     }
 
     pub fn is_primary_entry(&self, entry: &SessionEntry) -> bool {
@@ -1062,15 +1044,15 @@ impl AppState {
         if row != b {
             return None;
         }
-        // Build labels in the same flat order the tab renderer walks —
-        // local rows first, then remotes as `host:session` — so a hit
-        // maps straight to a `FocusTarget` flat index.
+        // Build labels in the same flat order and from the same section
+        // presentation metadata as the tab renderer.
         let labels: Vec<String> = self
             .entries
             .iter()
             .map(|entry| {
-                let origin = (!self.is_primary_entry(entry)).then(|| entry.lane.lane());
-                tab_label(origin, &entry.name)
+                let origin =
+                    (!self.is_primary_entry(entry)).then(|| self.section_title(&entry.lane));
+                tab_label(origin.as_deref(), &entry.name)
             })
             .collect();
         let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
@@ -1147,35 +1129,25 @@ impl AppState {
         self.agents.get(lane.as_str()).map(Vec::as_slice)
     }
 
-    /// Fold a remote refresh round's agent detection into `agents`.
-    /// `covered_hosts` = every host queried; `fresh` = per-host result for
-    /// hosts whose probe succeeded. A covered host missing from `fresh` had a
-    /// failed probe, so its stale list is dropped (else dead pane ids keep
-    /// rendering as clickable footer lines). The local `None` key is untouched;
-    /// hosts no longer configured are pruned.
+    /// Fold a refresh round's agent detection into `agents` using only lane
+    /// identities. A covered lane missing from `fresh` had a failed probe, so
+    /// its stale list is dropped; lanes no longer mounted are pruned.
     #[cfg(test)]
-    pub fn apply_remote_agents(
+    pub fn apply_lane_agents(
         &mut self,
-        covered_hosts: std::collections::HashSet<String>,
-        fresh: HashMap<String, Vec<crate::agent::DetectedAgent>>,
+        covered_lanes: std::collections::HashSet<LaneId>,
+        fresh: HashMap<LaneId, Vec<crate::agent::DetectedAgent>>,
+        mounted_lanes: &std::collections::HashSet<LaneId>,
     ) {
-        for host in covered_hosts {
-            if !fresh.contains_key(&host) {
-                self.agents.remove(lane(Some(&host)).as_str());
+        for lane in covered_lanes {
+            if !fresh.contains_key(&lane) {
+                self.agents.remove(lane.as_str());
             }
         }
-        for (host, list) in fresh {
-            self.agents.insert(lane(Some(&host)), list);
+        for (lane, list) in fresh {
+            self.agents.insert(lane, list);
         }
-        let configured: std::collections::HashSet<&str> = self
-            .config_remotes
-            .iter()
-            .map(|r| r.host.as_str())
-            .collect();
-        self.agents.retain(|k, _| {
-            let l = k.lane();
-            l == "local" || configured.contains(l)
-        });
+        self.agents.retain(|lane, _| mounted_lanes.contains(lane));
     }
 
     /// The active theme, resolved from the saved index. Layout builders bake

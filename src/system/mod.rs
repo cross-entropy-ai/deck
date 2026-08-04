@@ -199,6 +199,18 @@ pub(crate) trait SummaryTransportProvider: Send + Sync {
     ) -> Option<crate::summary::SummaryPane>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachmentRole {
+    Primary,
+    Managed,
+}
+
+/// Declares that a lane owns a terminal attachment and how the shell mounts
+/// it. Connection details remain inside the backend/attachment adapter.
+pub trait AttachmentProvider: Send + Sync {
+    fn role(&self, lane: &LaneId) -> Option<AttachmentRole>;
+}
+
 /// Backend-owned identifier for a lane action. The shell stores and returns
 /// this value without decoding string commands or matching system ids.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -253,6 +265,7 @@ pub struct LaneRuntime<'a> {
     lane_config: Option<&'a dyn LaneConfigProvider>,
     focus_transport: Option<&'a dyn FocusTransportProvider>,
     summary_transport: Option<&'a dyn SummaryTransportProvider>,
+    attachment: Option<&'a dyn AttachmentProvider>,
     pub session_capabilities: SessionCapabilities,
     pub lane_capabilities: LaneCapabilities,
 }
@@ -267,6 +280,7 @@ impl<'a> LaneRuntime<'a> {
             lane_config: None,
             focus_transport: None,
             summary_transport: None,
+            attachment: None,
             session_capabilities: SessionCapabilities::default(),
             lane_capabilities: LaneCapabilities::default(),
         }
@@ -302,6 +316,11 @@ impl<'a> LaneRuntime<'a> {
         provider: &'a dyn SummaryTransportProvider,
     ) -> Self {
         self.summary_transport = Some(provider);
+        self
+    }
+
+    pub fn with_attachment(mut self, provider: &'a dyn AttachmentProvider) -> Self {
+        self.attachment = Some(provider);
         self
     }
 
@@ -345,6 +364,10 @@ impl<'a> LaneRuntime<'a> {
 
     pub(crate) fn summary_transport(&self) -> Option<&'a dyn SummaryTransportProvider> {
         self.summary_transport
+    }
+
+    pub fn attachment(&self) -> Option<&'a dyn AttachmentProvider> {
+        self.attachment
     }
 }
 
@@ -404,11 +427,8 @@ pub struct SectionDef {
     pub top_margin: bool,
     /// Whether this lane is backed by Deck's embedded local terminal. Exactly
     /// one built-in lane has this role; other foreground systems must not be
-    /// mistaken for it merely because they have no runtime connection key.
+    /// mistaken for it.
     pub primary: bool,
-    /// Optional runtime connection key. The shell treats it as opaque; the
-    /// built-in tmux system uses the SSH host for reconnect/PTY workflows.
-    pub runtime_key: Option<String>,
     pub session_capabilities: SessionCapabilities,
     pub lane_capabilities: LaneCapabilities,
 }
@@ -451,7 +471,6 @@ mod tests {
                 }],
                 top_margin: true,
                 primary: false,
-                runtime_key: None,
                 // Deliberately stale declarations: the registry replaces
                 // these values from the runtime composition below.
                 session_capabilities: SessionCapabilities {
@@ -535,6 +554,7 @@ mod tests {
         assert!(runtime.lane_actions().is_some());
         assert!(runtime.focus_transport().is_some());
         assert!(runtime.summary_transport().is_some());
+        assert!(runtime.attachment().is_some());
     }
 
     #[test]
@@ -573,6 +593,7 @@ mod tests {
         assert!(runtime.session_control().is_none());
         assert!(runtime.focus_transport().is_none());
         assert!(runtime.summary_transport().is_none());
+        assert!(runtime.attachment().is_none());
         assert!(matches!(
             runtime
                 .lane_actions()
@@ -627,6 +648,15 @@ mod tests {
         let system = tmux::TmuxSystem::default();
         let local = tmux::TmuxSystem::local_lane();
         let remote = tmux::TmuxSystem::host_lane("prod");
+
+        assert_eq!(
+            AttachmentProvider::role(&system, &local),
+            Some(AttachmentRole::Primary)
+        );
+        assert_eq!(
+            AttachmentProvider::role(&system, &remote),
+            Some(AttachmentRole::Managed)
+        );
 
         assert!(matches!(
             FocusTransportProvider::focus_transport(

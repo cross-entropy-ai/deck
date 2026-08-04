@@ -349,7 +349,7 @@ fn collect_parallel(
             let client_locator = client_locator.clone();
             let compiled = Arc::clone(&compiled);
             thread::Builder::new()
-                .name(format!("deck-lane-{}", runtime.lane().lane()))
+                .name("deck-lane-refresh".to_string())
                 .spawn(move || {
                     collect_one(runtime, probe_agents, &client_locator, compiled.as_slice())
                 })

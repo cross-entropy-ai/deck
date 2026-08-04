@@ -60,7 +60,6 @@ fn set_capabilities(
         buttons: vec![],
         top_margin: false,
         primary: true,
-        runtime_key: None,
         session_capabilities: session,
         lane_capabilities: lane,
     }];
@@ -81,7 +80,6 @@ fn mount_remote_lane(state: &mut AppState, host: &str) {
         buttons: vec![],
         top_margin: true,
         primary: false,
-        runtime_key: Some(host.into()),
         session_capabilities: crate::system::SessionCapabilities {
             activate: true,
             rename: true,

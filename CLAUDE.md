@@ -71,11 +71,9 @@ When adding any per-session/per-lane feature:
   distinction upward.
 - **Key in-memory stores by `LaneId`** (`{system}\x1f{lane}`), not by host:
   `AppState.agents`, `collapsed_sections`, the executor's FIFO lanes. Use
-  `crate::system::for_lane(&lane)` to reach the owning system; never match on
-  the system id or `lane.lane()` outside a `System` impl. (Some request DTOs —
-  `KillRequest`/`RenameRequest`/`CreateSessionRequest`, `SessionEntry.host`,
-  `AgentTarget` — still carry `Option<String>` host and are bridged via
-  `system::tmux::lane(host)`; migrating them to `LaneId` is pending.)
+  the injected `SystemRegistry` to reach the owning runtime; never match on
+  the system id or `lane.lane()` outside a `System` or transport adapter.
+  Session, agent, overlay, action, and effect DTOs carry `LaneId` directly.
 - **The local/remote (and tmux-specific) split lives inside `TmuxSystem`.**
   `tmux/local.rs` and `tmux/remote.rs` gather inputs differently, then feed
   the *same* pure logic (`agent::detect_agents`, `tmux_parse::parse_sessions`),

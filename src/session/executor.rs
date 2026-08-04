@@ -252,7 +252,7 @@ impl SessionExecutor {
         // can't park a dead sender that swallows later ops.
         let outcome_tx = self.outcome_tx.clone();
         let (tx, rx) = mpsc::channel::<Job>();
-        let name = format!("deck-session-{}-{}", lane.system(), lane.lane());
+        let name = "deck-session-lane".to_string();
         spawn(name, Box::new(move || worker_loop(rx, outcome_tx)))
             .map_err(|error| SessionSubmitError::WorkerSpawn(error.to_string()))?;
         tx.send(job)

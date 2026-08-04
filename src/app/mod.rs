@@ -174,7 +174,13 @@ impl App {
         let remote_lanes: Vec<_> = state
             .system_sections
             .iter()
-            .filter(|section| section.runtime_key.is_some())
+            .filter(|section| {
+                systems
+                    .runtime(&section.lane)
+                    .and_then(|runtime| runtime.attachment())
+                    .and_then(|provider| provider.role(&section.lane))
+                    == Some(crate::system::AttachmentRole::Managed)
+            })
             .map(|section| section.lane.clone())
             .collect();
         let pty_size = terminal::pty_size(pty_rows, pty_cols);

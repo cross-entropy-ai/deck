@@ -32,9 +32,8 @@ pub struct NewSessionView<'a> {
     pub filtered: &'a [usize],
     pub selected: usize,
     pub error: Option<&'a str>,
-    /// `Some(host)` when creating on a remote host — shown in the title,
-    /// and the dir browser is listing that host over ssh.
-    pub host: Option<&'a str>,
+    /// Optional non-primary lane label shown in the title.
+    pub lane_title: Option<&'a str>,
 }
 
 /// One settings row, reduced to display strings by the render loop. The

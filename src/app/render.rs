@@ -330,6 +330,11 @@ impl App {
             }
 
             if let Some(ns) = new_session_overlay {
+                let lane_title = ns
+                    .target_lane
+                    .as_ref()
+                    .filter(|lane| !s.is_primary_lane(lane))
+                    .map(|lane| s.section_title(lane));
                 let view = ui::NewSessionView {
                     name: &ns.name,
                     focus_name: matches!(ns.focus, crate::new_session::PickerFocus::Name),
@@ -338,11 +343,7 @@ impl App {
                     filtered: &ns.picker.filtered,
                     selected: ns.picker.selected,
                     error: ns.picker.error.as_deref(),
-                    host: ns
-                        .target_lane
-                        .as_ref()
-                        .filter(|lane| !s.is_primary_lane(lane))
-                        .and_then(|lane| s.host_for_lane(lane)),
+                    lane_title: lane_title.as_deref(),
                 };
                 ui::draw_new_session(frame, frame.area(), &view, theme);
             }
