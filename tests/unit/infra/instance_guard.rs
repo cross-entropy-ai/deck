@@ -9,15 +9,15 @@ use std::time::{Duration, Instant};
 /// Spawn a long-running child that genuinely IS a binary named `deck`, so
 /// `pid_looks_like_deck` recognizes it. That check matches the executable's
 /// basename (`ps comm=`), not the argv, so a `sleep` with a `deck` argv[0]
-/// does not count. Copy `sleep` to a
+/// does not count. Link `sleep` from a
 /// temp path whose file name is exactly our package name and run that; the
-/// returned dir holds the copied binary and should be removed once the
+/// returned dir holds the link and should be removed once the
 /// child is reaped.
 fn spawn_deck_named(tag: &str) -> (std::process::Child, PathBuf) {
     let dir = std::env::temp_dir().join(format!("deck-test-bin-{tag}-{}", std::process::id()));
     let _ = fs::create_dir_all(&dir);
     let bin = dir.join(env!("CARGO_PKG_NAME"));
-    fs::copy("/bin/sleep", &bin).expect("copy sleep to a deck-named binary");
+    std::os::unix::fs::symlink("/bin/sleep", &bin).expect("link sleep as a deck-named executable");
     let child = std::process::Command::new(&bin)
         .arg("30")
         .spawn()
