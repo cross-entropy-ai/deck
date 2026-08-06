@@ -244,9 +244,8 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 }
 
 fn settings_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
-    // Enter activates the selected setting just like Right: this follows the
-    // usual list/menu interaction for submenus, pickers, and toggles. Left is
-    // still distinct for settings that cycle in both directions.
+    // Settings use one activation gesture: Enter. Left/right intentionally do
+    // nothing here so they cannot unexpectedly open or change a row.
     Action::Settings(match nav_key(key) {
         Some(Nav::Close) if state.settings.current_page() != crate::state::SettingsPage::Root => {
             SettingsAction::Back
@@ -254,8 +253,7 @@ fn settings_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
         Some(Nav::Close) => SettingsAction::Close,
         Some(Nav::Down) => SettingsAction::Next,
         Some(Nav::Up) => SettingsAction::Prev,
-        Some(Nav::Left) => SettingsAction::AdjustPrev,
-        Some(Nav::Right | Nav::Confirm) => SettingsAction::Adjust,
+        Some(Nav::Confirm) => SettingsAction::Adjust,
         _ => return Action::None,
     })
 }

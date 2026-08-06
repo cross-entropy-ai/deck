@@ -109,7 +109,6 @@ pub enum SettingsAction {
     Next,
     Prev,
     Adjust,
-    AdjustPrev,
     /// Open the theme picker for one slot: the fixed theme (the sidebar `t`
     /// key and the "Theme" row) or the dark/light slot "follow terminal" mode
     /// chooses from.

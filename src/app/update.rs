@@ -126,7 +126,7 @@ impl App {
 
 pub(super) fn format_update_check_help(last_checked_secs: Option<u64>) -> String {
     let version = format!("Current version {}", env!("CARGO_PKG_VERSION"));
-    let controls = "Left/right toggles auto update check";
+    let controls = "Enter toggles auto update check";
     let Some(ts) = last_checked_secs else {
         return format!("{}\n{}", version, controls);
     };

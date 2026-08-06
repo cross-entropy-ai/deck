@@ -435,6 +435,27 @@ fn enter_opens_theme_submenu_and_its_theme_picker() {
 }
 
 #[test]
+fn settings_left_and_right_do_nothing() {
+    use crate::action::key_to_action;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = make_test_state(1);
+    state.main_view = MainView::Settings;
+    select_settings_row(&mut state, "Appearance");
+
+    for code in [
+        KeyCode::Left,
+        KeyCode::Right,
+        KeyCode::Char('h'),
+        KeyCode::Char('l'),
+    ] {
+        let key = KeyEvent::new(code, KeyModifiers::NONE);
+        assert!(matches!(key_to_action(&key, &state), Action::None));
+    }
+    assert_eq!(state.settings.current_page(), SettingsPage::Root);
+}
+
+#[test]
 fn theme_submenu_shows_fixed_or_dark_light_rows_based_on_auto() {
     use crate::app::settings::setting_rows;
 
@@ -1066,12 +1087,12 @@ fn settings_adjust_frame_rate_cycles_and_saves() {
 }
 
 #[test]
-fn frame_rate_cycle_wraps_in_both_directions() {
+fn frame_rate_cycle_wraps_forward() {
     let mut state = make_test_state(1);
-    state.prefs.frame_rate_limit = 2;
+    state.prefs.frame_rate_limit = 10;
     open_settings_page(&mut state, SettingsPage::Appearance);
     select_settings_row(&mut state, "Frame rate");
-    apply_action(&mut state, Action::Settings(SettingsAction::AdjustPrev));
+    apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_eq!(state.prefs.frame_rate_limit, 30);
 
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
@@ -1122,11 +1143,11 @@ fn root_and_appearance_pages_group_rows_as_requested() {
         labels,
         vec![
             "Appearance",
+            "Agents",
+            "Remote",
             "Exclude",
             "Keybindings",
             "Update check",
-            "Agents",
-            "Remote"
         ]
     );
     for nested in [

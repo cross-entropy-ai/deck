@@ -67,9 +67,9 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
         Line::raw(""),
     ];
     let footer_text = if settings.page != SettingsPage::Root {
-        "  j/k move  h/l change  Enter select  Esc back"
+        "  j/k move  Enter select  Esc back"
     } else {
-        "  j/k move  h/l change  Enter select  Esc close"
+        "  j/k move  Enter select  Esc close"
     };
     let footer = Line::from(Span::styled(footer_text, Style::default().fg(theme.muted)));
 

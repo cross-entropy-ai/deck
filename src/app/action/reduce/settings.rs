@@ -41,18 +41,11 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             let selected = step_clamped(state.settings.selected(), total, -1);
             state.settings.set_selected(selected);
         }
-        SettingsAction::Adjust | SettingsAction::AdjustPrev => {
-            let direction = if matches!(action, SettingsAction::AdjustPrev) {
-                -1
-            } else {
-                1
-            };
+        SettingsAction::Adjust => {
             // Look up the selected row and fire its adjust — the row, not a
             // positional match, is the source of truth.
             let selected = state.settings.selected();
-            let inner_action = setting_rows(state)
-                .get(selected)
-                .map(|row| (row.adjust)(direction));
+            let inner_action = setting_rows(state).get(selected).map(|row| (row.adjust)());
             if let Some(inner_action) = inner_action {
                 let inner = apply_action(state, inner_action);
                 fx.merge(inner);

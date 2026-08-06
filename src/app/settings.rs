@@ -16,14 +16,14 @@ use crate::theme::{ThemeSlot, THEMES};
 use super::update::format_update_check_help;
 
 /// One row of the settings page. The closures borrow `&AppState` so the
-/// renderer builds display strings each frame; `adjust` maps a direction
-/// (`+1` right / `-1` left) to the action left/right (or Enter) fires on that
-/// row — toggles and openers ignore the direction.
+/// renderer builds display strings each frame; `adjust` is the action Enter
+/// fires on that row. Left and right intentionally have no settings-page
+/// meaning.
 pub struct SettingRow {
     pub label: &'static str,
     pub value: fn(&AppState) -> String,
     pub help: fn(&AppState) -> String,
-    pub adjust: fn(i32) -> Action,
+    pub adjust: fn() -> Action,
 }
 
 /// The root settings page, top to bottom.
@@ -37,20 +37,32 @@ pub const SETTING_ROWS: &[SettingRow] = &[
             };
             format!("{view} · {} FPS  ›", s.prefs.frame_rate_limit)
         },
-        help: |_| "Enter/right opens appearance settings".to_string(),
-        adjust: |_| Action::Settings(SettingsAction::OpenPage(SettingsPage::Appearance)),
+        help: |_| "Enter opens appearance settings".to_string(),
+        adjust: || Action::Settings(SettingsAction::OpenPage(SettingsPage::Appearance)),
+    },
+    SettingRow {
+        label: "Agents",
+        value: |_| "Configure  ›".to_string(),
+        help: |_| "Enter opens agent settings".to_string(),
+        adjust: || Action::Settings(SettingsAction::OpenPage(SettingsPage::Agents)),
+    },
+    SettingRow {
+        label: "Remote",
+        value: |s| format!("{} hosts  ›", s.config_remotes.len()),
+        help: |_| "Enter opens remote settings".to_string(),
+        adjust: || Action::Settings(SettingsAction::OpenPage(SettingsPage::Remote)),
     },
     SettingRow {
         label: "Exclude",
         value: |s| format!("{} patterns", s.prefs.exclude_patterns.len()),
-        help: |_| "Left/right opens the pattern editor".to_string(),
-        adjust: |_| Action::Settings(SettingsAction::ExcludeOpen),
+        help: |_| "Enter opens the pattern editor".to_string(),
+        adjust: || Action::Settings(SettingsAction::ExcludeOpen),
     },
     SettingRow {
         label: "Keybindings",
         value: |_| "View".to_string(),
-        help: |_| "Left/right shows current key bindings".to_string(),
-        adjust: |_| Action::Settings(SettingsAction::OpenKeybindingsView),
+        help: |_| "Enter shows current key bindings".to_string(),
+        adjust: || Action::Settings(SettingsAction::OpenKeybindingsView),
     },
     SettingRow {
         label: "Update check",
@@ -63,19 +75,7 @@ pub const SETTING_ROWS: &[SettingRow] = &[
             .to_string()
         },
         help: |s| format_update_check_help(s.update_last_checked_secs),
-        adjust: |_| Action::Settings(SettingsAction::ToggleUpdateCheck),
-    },
-    SettingRow {
-        label: "Agents",
-        value: |_| "Configure  ›".to_string(),
-        help: |_| "Enter/right opens agent settings".to_string(),
-        adjust: |_| Action::Settings(SettingsAction::OpenPage(SettingsPage::Agents)),
-    },
-    SettingRow {
-        label: "Remote",
-        value: |s| format!("{} hosts  ›", s.config_remotes.len()),
-        help: |_| "Enter/right opens remote settings".to_string(),
-        adjust: |_| Action::Settings(SettingsAction::OpenPage(SettingsPage::Remote)),
+        adjust: || Action::Settings(SettingsAction::ToggleUpdateCheck),
     },
 ];
 
@@ -88,8 +88,8 @@ const THEME_PAGE_ROW: SettingRow = SettingRow {
             format!("{}  ›", THEMES[s.prefs.theme_index].name)
         }
     },
-    help: |_| "Enter/right opens theme settings".to_string(),
-    adjust: |_| Action::Settings(SettingsAction::OpenPage(SettingsPage::Theme)),
+    help: |_| "Enter opens theme settings".to_string(),
+    adjust: || Action::Settings(SettingsAction::OpenPage(SettingsPage::Theme)),
 };
 
 const LAYOUT_ROW: SettingRow = SettingRow {
@@ -98,15 +98,15 @@ const LAYOUT_ROW: SettingRow = SettingRow {
         LayoutMode::Horizontal => "Horizontal".to_string(),
         LayoutMode::Vertical => "Vertical".to_string(),
     },
-    help: |_| "Left/right toggles the split direction".to_string(),
-    adjust: |_| Action::ToggleLayout,
+    help: |_| "Enter toggles the split direction".to_string(),
+    adjust: || Action::ToggleLayout,
 };
 
 const BORDERS_ROW: SettingRow = SettingRow {
     label: "Borders",
     value: |s| if s.prefs.show_borders { "On" } else { "Off" }.to_string(),
-    help: |_| "Left/right toggles pane borders".to_string(),
-    adjust: |_| Action::ToggleBorders,
+    help: |_| "Enter toggles pane borders".to_string(),
+    adjust: || Action::ToggleBorders,
 };
 
 const VIEW_ROW: SettingRow = SettingRow {
@@ -115,8 +115,8 @@ const VIEW_ROW: SettingRow = SettingRow {
         ViewMode::Expanded => "Expanded".to_string(),
         ViewMode::Compact => "Compact".to_string(),
     },
-    help: |_| "Left/right toggles compact mode".to_string(),
-    adjust: |_| Action::ToggleViewMode,
+    help: |_| "Enter toggles compact mode".to_string(),
+    adjust: || Action::ToggleViewMode,
 };
 
 const FRAME_RATE_ROW: SettingRow = SettingRow {
@@ -126,11 +126,11 @@ const FRAME_RATE_ROW: SettingRow = SettingRow {
         if s.prefs.frame_rate_limit == 30 {
             "Smooth increases terminal rendering pressure"
         } else {
-            "Left/right cycles the render limit"
+            "Enter cycles the render limit"
         }
         .to_string()
     },
-    adjust: |dir| Action::Settings(SettingsAction::CycleFrameRateLimit(dir)),
+    adjust: || Action::Settings(SettingsAction::CycleFrameRateLimit(1)),
 };
 
 const AUTO_THEME_ROW: SettingRow = SettingRow {
@@ -145,35 +145,35 @@ const AUTO_THEME_ROW: SettingRow = SettingRow {
         }
     },
     help: |_| "Follow the terminal's own background color (OSC 11)".to_string(),
-    adjust: |_| Action::Settings(SettingsAction::ToggleThemeAuto),
+    adjust: || Action::Settings(SettingsAction::ToggleThemeAuto),
 };
 
 const FIXED_THEME_ROW: SettingRow = SettingRow {
     label: "Theme",
     value: |s| THEMES[s.prefs.theme_index].name.to_string(),
     help: |_| "Theme used while Auto theme is off".to_string(),
-    adjust: |_| Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Fixed)),
+    adjust: || Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Fixed)),
 };
 
 const DARK_THEME_ROW: SettingRow = SettingRow {
     label: "Dark theme",
     value: |s| THEMES[s.prefs.dark_theme_index].name.to_string(),
     help: |_| "Theme used when the terminal background is dark".to_string(),
-    adjust: |_| Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Dark)),
+    adjust: || Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Dark)),
 };
 
 const LIGHT_THEME_ROW: SettingRow = SettingRow {
     label: "Light theme",
     value: |s| THEMES[s.prefs.light_theme_index].name.to_string(),
     help: |_| "Theme used when the terminal background is light".to_string(),
-    adjust: |_| Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Light)),
+    adjust: || Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Light)),
 };
 
 const TRANSPARENT_BACKGROUND_ROW: SettingRow = SettingRow {
     label: "Transparent background",
     value: |s| if s.prefs.transparent_bg { "On" } else { "Off" }.to_string(),
     help: |_| "Use the terminal's default background (enables transparency)".to_string(),
-    adjust: |_| Action::ToggleTransparentBg,
+    adjust: || Action::ToggleTransparentBg,
 };
 
 const AGENTS_PROBE_ROW: SettingRow = SettingRow {
@@ -181,29 +181,29 @@ const AGENTS_PROBE_ROW: SettingRow = SettingRow {
     value: |s| {
         crate::state::agents_probe_interval_label(s.prefs.agents_probe_interval_secs).to_string()
     },
-    help: |_| "Left/right cycles how often the Agents tab probes".to_string(),
-    adjust: |dir| Action::Settings(SettingsAction::CycleAgentsProbeInterval(dir)),
+    help: |_| "Enter cycles how often the Agents tab probes".to_string(),
+    adjust: || Action::Settings(SettingsAction::CycleAgentsProbeInterval(1)),
 };
 
 const SUMMARY_ROW: SettingRow = SettingRow {
     label: "Summary",
     value: |s| if s.prefs.summary_enabled { "On" } else { "Off" }.to_string(),
-    help: |_| "Enter/right shows or hides the inline Summary card".to_string(),
-    adjust: |_| Action::Settings(SettingsAction::ToggleSummary),
+    help: |_| "Enter shows or hides the inline Summary card".to_string(),
+    adjust: || Action::Settings(SettingsAction::ToggleSummary),
 };
 
 const SUMMARY_LANGUAGE_ROW: SettingRow = SettingRow {
     label: "Summary lang",
     value: |s| crate::summary::language_label(&s.prefs.summary_language).to_string(),
-    help: |_| "Enter/right edits the generated summary's language".to_string(),
-    adjust: |_| Action::Summary(SummaryAction::OpenLanguageEditor),
+    help: |_| "Enter edits the generated summary's language".to_string(),
+    adjust: || Action::Summary(SummaryAction::OpenLanguageEditor),
 };
 
 const REMOTES_ROW: SettingRow = SettingRow {
     label: "Remotes",
     value: |s| format!("{} hosts", s.config_remotes.len()),
-    help: |_| "Enter/right adds a remote SSH host".to_string(),
-    adjust: |_| Action::Settings(SettingsAction::OpenAddRemotePicker),
+    help: |_| "Enter adds a remote SSH host".to_string(),
+    adjust: || Action::Settings(SettingsAction::OpenAddRemotePicker),
 };
 
 const PORT_FORWARDS_ROW: SettingRow = SettingRow {
@@ -217,8 +217,8 @@ const PORT_FORWARDS_ROW: SettingRow = SettingRow {
         0 => "none".to_string(),
         n => format!("{n} forwards"),
     },
-    help: |_| "Enter/right opens a configured host's port forwards".to_string(),
-    adjust: |_| Action::Settings(SettingsAction::OpenPortForwards),
+    help: |_| "Enter opens a configured host's port forwards".to_string(),
+    adjust: || Action::Settings(SettingsAction::OpenPortForwards),
 };
 
 /// Rows visible on the Theme page. A fixed theme and the automatic
