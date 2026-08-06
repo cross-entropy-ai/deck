@@ -6,6 +6,7 @@ use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::keybindings::{Command, Keybindings};
+use crate::state::SettingsSubmenu;
 use crate::theme::Theme;
 use crate::ui::widgets::{
     centered_rect, clamp_popup_height, field_row, full_width_row, list_item_line, popup_frame,
@@ -23,25 +24,49 @@ fn max_width<'a>(it: impl Iterator<Item = &'a str>, floor: usize) -> usize {
 pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView, theme: &Theme) {
     frame.render_widget(Block::default().style(Style::default().bg(theme.bg)), area);
 
+    let (title, context, description) = match settings.submenu {
+        Some(SettingsSubmenu::Theme) => (
+            "Theme",
+            "settings",
+            "Choose a fixed theme or follow the terminal's appearance.",
+        ),
+        Some(SettingsSubmenu::Agents) => (
+            "Agents",
+            "settings",
+            "Configure agent probes and generated summaries.",
+        ),
+        Some(SettingsSubmenu::Remote) => (
+            "Remote",
+            "settings",
+            "Manage remote hosts and port forwards.",
+        ),
+        None => (
+            "Settings",
+            "main pane",
+            "Change appearance and layout without leaving the current session.",
+        ),
+    };
     let header: Vec<Line> = vec![
         Line::raw(""),
         Line::from(vec![
             Span::styled(
-                "  Settings",
+                format!("  {title}"),
                 Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
             ),
-            Span::styled("  main pane", Style::default().fg(theme.dim)),
+            Span::styled(format!("  {context}"), Style::default().fg(theme.dim)),
         ]),
         Line::from(Span::styled(
-            "  Change appearance and layout without leaving the current session.",
+            format!("  {description}"),
             Style::default().fg(theme.subtle),
         )),
         Line::raw(""),
     ];
-    let footer = Line::from(Span::styled(
-        "  j/k move  h/l change  Enter select  Esc close",
-        Style::default().fg(theme.muted),
-    ));
+    let footer_text = if settings.submenu.is_some() {
+        "  j/k move  h/l change  Enter select  Esc back"
+    } else {
+        "  j/k move  h/l change  Enter select  Esc close"
+    };
+    let footer = Line::from(Span::styled(footer_text, Style::default().fg(theme.muted)));
 
     // Window the entries so the selected row stays visible on a short terminal
     // (#15). Each entry is variable-height; size the window by how many *whole*
@@ -498,6 +523,7 @@ mod tests {
                 let view = SettingsView {
                     selected: last,
                     rows,
+                    submenu: None,
                     exclude_editor: None,
                     keybindings: &keybindings,
                     keybindings_view_open: false,

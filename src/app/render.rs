@@ -12,7 +12,7 @@ use crate::state::{FocusMode, LayoutMode, MainView};
 use crate::theme::THEMES;
 use crate::ui::{self, SettingRowView, SettingsView};
 
-use super::settings::SETTING_ROWS;
+use super::settings::setting_rows;
 use super::App;
 
 impl App {
@@ -396,8 +396,10 @@ impl App {
     /// `Vec<SettingRowView>`.
     fn build_settings_view(&self) -> SettingsView<'_> {
         let s = &self.state;
-        let rows: Vec<SettingRowView> = SETTING_ROWS
-            .iter()
+        let submenu = s.settings.submenu;
+        let source_rows = setting_rows(s);
+        let rows: Vec<SettingRowView> = source_rows
+            .into_iter()
             .map(|row| SettingRowView {
                 label: row.label,
                 value: (row.value)(s),
@@ -405,8 +407,13 @@ impl App {
             })
             .collect();
         SettingsView {
-            selected: s.settings.selected,
+            selected: if submenu.is_some() {
+                s.settings.submenu_selected
+            } else {
+                s.settings.selected
+            },
             rows,
+            submenu,
             exclude_editor: s
                 .overlay
                 .exclude_editor

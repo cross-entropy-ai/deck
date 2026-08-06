@@ -49,6 +49,7 @@ pub struct SettingRowView {
 pub struct SettingsView<'a> {
     pub selected: usize,
     pub rows: Vec<SettingRowView>,
+    pub submenu: Option<crate::state::SettingsSubmenu>,
     pub exclude_editor: Option<ExcludeEditorView<'a>>,
     pub keybindings: &'a Keybindings,
     pub keybindings_view_open: bool,

@@ -33,7 +33,7 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     }
 
     if state.main_view == MainView::Settings && state.focus_mode == FocusMode::Main {
-        return settings_key_to_action(key);
+        return settings_key_to_action(key, state);
     }
 
     match state.focus_mode {
@@ -243,15 +243,17 @@ fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     Action::None
 }
 
-fn settings_key_to_action(key: &KeyEvent) -> Action {
-    // Adjust/toggle/open is left/right only — Enter and Space deliberately
-    // do nothing, so a stray Enter never flips a setting or opens an editor.
+fn settings_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
+    // Enter activates the selected setting just like Right: this follows the
+    // usual list/menu interaction for submenus, pickers, and toggles. Left is
+    // still distinct for settings that cycle in both directions.
     Action::Settings(match nav_key(key) {
+        Some(Nav::Close) if state.settings.submenu.is_some() => SettingsAction::CloseSubmenu,
         Some(Nav::Close) => SettingsAction::Close,
         Some(Nav::Down) => SettingsAction::Next,
         Some(Nav::Up) => SettingsAction::Prev,
         Some(Nav::Left) => SettingsAction::AdjustPrev,
-        Some(Nav::Right) => SettingsAction::Adjust,
+        Some(Nav::Right | Nav::Confirm) => SettingsAction::Adjust,
         _ => return Action::None,
     })
 }

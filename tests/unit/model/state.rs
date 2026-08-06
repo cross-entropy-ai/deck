@@ -297,11 +297,45 @@ fn agents_layout_groups_agents_under_host_dividers() {
     );
     state.rebuild_agent_entries();
 
-    let built = state.agents_layout();
+    let built = state.agents_layout(ViewMode::Expanded);
     // Two focusable agent rows (local agent, then h1's), in agent_entries order.
     assert_eq!(built.layout.row_count(), 2);
     // Focusable count on the Agents tab is the agent count, not session count.
     assert_eq!(state.focusable_count(), 2);
+}
+
+#[test]
+fn current_layout_compacts_agents_without_group_headers() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 100, 24);
+    state.prefs.sidebar_tab = SidebarTab::Agents;
+    state.prefs.view_mode = ViewMode::Compact;
+    state.agents.insert(
+        crate::system::tmux::lane(None),
+        vec![detected("agent", "%1")],
+    );
+    state.rebuild_agent_entries();
+
+    let built = state.current_layout(state.prefs.view_mode);
+    assert!(
+        built.sections.is_empty(),
+        "compact Agents view carries no group dividers",
+    );
+    assert!(
+        built
+            .layout
+            .items()
+            .iter()
+            .all(|item| item.kind == ratatui_sectioned_list::ItemKind::Row),
+        "compact Agents view is rows only",
+    );
+    assert!(
+        built
+            .layout
+            .items()
+            .iter()
+            .any(|item| item.data.title.contains("local:agent:1")),
+        "compact agent row retains its origin without a divider",
+    );
 }
 
 #[test]
@@ -322,7 +356,10 @@ fn agents_sections_fold_via_their_own_collapse_set() {
     // Both sections expanded: neither agent row is hidden from focus.
     assert!(!state.is_focus_collapsed(0));
     assert!(!state.is_focus_collapsed(1));
-    let expanded_height = state.agents_layout().layout.total_height();
+    let expanded_height = state
+        .agents_layout(ViewMode::Expanded)
+        .layout
+        .total_height();
 
     // Folding the local section on the Agents tab hides its agent row (focus
     // skips it, layout shrinks), and touches only the Agents collapse set —
@@ -333,7 +370,11 @@ fn agents_sections_fold_via_their_own_collapse_set() {
     assert!(state.is_focus_collapsed(0), "local agent row now hidden");
     assert!(!state.is_focus_collapsed(1), "h1 agent row still visible");
     assert!(
-        state.agents_layout().layout.total_height() < expanded_height,
+        state
+            .agents_layout(ViewMode::Expanded)
+            .layout
+            .total_height()
+            < expanded_height,
         "collapsing a section shrinks the rendered layout",
     );
     assert!(
@@ -431,7 +472,7 @@ fn agents_layout_shows_placeholder_for_empty_section() {
     // cursor can land on it; activating it is a guarded no-op.
     state.agents.insert(crate::system::tmux::lane(None), vec![]);
     state.rebuild_agent_entries();
-    let built = state.agents_layout();
+    let built = state.agents_layout(ViewMode::Expanded);
     assert!(
         built
             .layout
@@ -461,7 +502,7 @@ fn unknown_agent_uses_a_non_color_status_glyph() {
     );
     state.rebuild_agent_entries();
 
-    let built = state.agents_layout();
+    let built = state.agents_layout(ViewMode::Expanded);
     assert!(built
         .layout
         .items()

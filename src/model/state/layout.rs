@@ -51,7 +51,8 @@ impl AppState {
     /// (cursor follows the active pane, see `steer_marker_to_pane`) carries "you
     /// are here". Empty-section placeholder shows `detecting…` (not yet probed)
     /// or `no agents` (probed, none found).
-    fn agent_item(&self, entry: &AgentEntry) -> BasicItem {
+    fn agent_item(&self, entry: &AgentEntry, view_mode: ViewMode) -> BasicItem {
+        let prefix = || self.section_title(&entry.lane);
         match &entry.kind {
             AgentEntryKind::Agent(agent) => {
                 let dot = match agent.status {
@@ -60,10 +61,18 @@ impl AppState {
                     crate::agent::AgentStatus::Waiting => "◐",
                     crate::agent::AgentStatus::Unknown => "?",
                 };
-                BasicItem::new(format!("{dot} {}", agent.location()))
+                let location = match view_mode {
+                    ViewMode::Compact => format!("{}:{}", prefix(), agent.location()),
+                    ViewMode::Expanded => agent.location(),
+                };
+                BasicItem::new(format!("{dot} {location}"))
             }
             AgentEntryKind::Placeholder { probed } => {
-                BasicItem::new(if *probed { "no agents" } else { "detecting…" })
+                let status = if *probed { "no agents" } else { "detecting…" };
+                BasicItem::new(match view_mode {
+                    ViewMode::Compact => format!("{}:{status}", prefix()),
+                    ViewMode::Expanded => status.to_string(),
+                })
             }
         }
     }
@@ -370,19 +379,20 @@ impl AppState {
         );
     }
 
-    /// Build the Agents-tab layout: a local/host divider per section with
-    /// its rows beneath — a focusable row per detected agent, or one placeholder
-    /// when empty (`detecting…` / `no agents`). Every row maps 1:1 to a stored
-    /// `agent_entries` element so focus/scroll/hit-test stay in sync.
-    pub fn agents_layout(&self) -> BuiltLayout {
+    /// Build the Agents-tab layout: Expanded uses a local/host divider per
+    /// section; Compact omits dividers and prefixes each single-line row with
+    /// its origin. Every row maps 1:1 to a stored `agent_entries` element so
+    /// focus/scroll/hit-test stay in sync.
+    pub fn agents_layout(&self, view_mode: ViewMode) -> BuiltLayout {
         // Sections fold independently of Projects via `collapsed_agent_sections`.
         // The Summary card is a separate widget pinned above, so the list is
         // pure `BasicItem`.
+        let show_headers = matches!(view_mode, ViewMode::Expanded);
         self.build_sections(
             SectionLayoutOpts {
-                show_headers: true,
-                collapsible: true,
-                remote_header_margin: true,
+                show_headers,
+                collapsible: show_headers,
+                remote_header_margin: show_headers,
             },
             &self.collapsed_agent_sections,
             |layout, _sections, lane_id| {
@@ -391,7 +401,7 @@ impl AppState {
                     .iter()
                     .filter(|entry| entry.lane == *lane_id)
                 {
-                    layout.push_row_auto(self.agent_item(entry));
+                    layout.push_row_auto(self.agent_item(entry, view_mode));
                 }
             },
         )
@@ -402,7 +412,7 @@ impl AppState {
     /// scroll) use this so they all see the same rows for the active tab.
     pub fn current_layout(&self, view_mode: ViewMode) -> BuiltLayout {
         if self.agents_tab_active() {
-            self.agents_layout()
+            self.agents_layout(view_mode)
         } else {
             self.sidebar_layout(view_mode)
         }

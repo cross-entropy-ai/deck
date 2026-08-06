@@ -124,7 +124,7 @@ fn idle_summary_without_agents_is_compact_and_disabled() {
         .agents
         .insert(crate::system::tmux::lane(None), Vec::new());
     state.rebuild_agent_entries();
-    let built = state.agents_layout();
+    let built = state.agents_layout(crate::state::ViewMode::Expanded);
     let sessions: Vec<crate::state::SessionEntry> = Vec::new();
 
     let props = SidebarProps {
@@ -365,7 +365,7 @@ fn agents_tab_publishes_clickable_agent_entries() {
         .agents
         .insert(crate::system::tmux::lane(Some("h1")), vec![mk("%9")]);
     state.rebuild_agent_entries();
-    let built = state.agents_layout();
+    let built = state.agents_layout(crate::state::ViewMode::Expanded);
     let agent_entries = state.agent_entries.clone();
     let sessions: Vec<crate::state::SessionEntry> = Vec::new();
 

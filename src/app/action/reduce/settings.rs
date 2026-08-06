@@ -2,7 +2,7 @@
 //! keybindings view, exclude-pattern editor). Split out of `reduce` to keep
 //! the top-level dispatcher readable; entry point is `reduce_settings`.
 
-use crate::app::settings::SETTING_ROWS;
+use crate::app::settings::setting_rows;
 use crate::effects::{Effect, SideEffect};
 use crate::state::{step_clamped, AppState, FocusMode, MainView};
 use crate::theme::THEMES;
@@ -15,19 +15,40 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         SettingsAction::Open => {
             state.main_view = MainView::Settings;
             state.focus_mode = FocusMode::Main;
+            state.settings.submenu = None;
             state.settings.theme_picker_open = false;
             state.settings.theme_picker_selected = state.prefs.theme_index;
         }
         SettingsAction::Close => {
             state.main_view = MainView::Terminal;
             state.focus_mode = FocusMode::Main;
+            state.settings.submenu = None;
             state.settings.theme_picker_open = false;
         }
+        SettingsAction::OpenSubmenu(submenu) => {
+            state.settings.submenu = Some(submenu);
+            state.settings.submenu_selected = 0;
+        }
+        SettingsAction::CloseSubmenu => {
+            state.settings.submenu = None;
+        }
         SettingsAction::Next => {
-            state.settings.selected = step_clamped(state.settings.selected, SETTING_ROWS.len(), 1);
+            let total = setting_rows(state).len();
+            if state.settings.submenu.is_some() {
+                state.settings.submenu_selected =
+                    step_clamped(state.settings.submenu_selected, total, 1);
+            } else {
+                state.settings.selected = step_clamped(state.settings.selected, total, 1);
+            }
         }
         SettingsAction::Prev => {
-            state.settings.selected = step_clamped(state.settings.selected, SETTING_ROWS.len(), -1);
+            let total = setting_rows(state).len();
+            if state.settings.submenu.is_some() {
+                state.settings.submenu_selected =
+                    step_clamped(state.settings.submenu_selected, total, -1);
+            } else {
+                state.settings.selected = step_clamped(state.settings.selected, total, -1);
+            }
         }
         SettingsAction::Adjust | SettingsAction::AdjustPrev => {
             let direction = if matches!(action, SettingsAction::AdjustPrev) {
@@ -37,8 +58,16 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             };
             // Look up the selected row and fire its adjust — the row, not a
             // positional match, is the source of truth.
-            if let Some(row) = SETTING_ROWS.get(state.settings.selected) {
-                let inner = apply_action(state, (row.adjust)(direction));
+            let selected = if state.settings.submenu.is_some() {
+                state.settings.submenu_selected
+            } else {
+                state.settings.selected
+            };
+            let inner_action = setting_rows(state)
+                .get(selected)
+                .map(|row| (row.adjust)(direction));
+            if let Some(inner_action) = inner_action {
+                let inner = apply_action(state, inner_action);
                 fx.merge(inner);
             }
         }

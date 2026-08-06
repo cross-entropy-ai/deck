@@ -38,6 +38,7 @@ fn parse_json_without_optional_fields_uses_defaults() {
 
 #[test]
 fn unsupported_frame_rate_limit_normalizes_to_default() {
+    assert_eq!(crate::state::DEFAULT_FRAME_RATE_LIMIT, 30);
     assert_eq!(crate::state::normalize_frame_rate_limit(15), 30);
     assert_eq!(crate::state::frame_rate_limit_label(15), "Smooth 30 FPS");
 }

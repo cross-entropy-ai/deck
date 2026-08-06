@@ -3,8 +3,8 @@ use super::{
 };
 use crate::overlay::RenameState;
 use crate::state::{
-    AppState, FocusMode, LayoutMode, MainView, SessionEntry, SessionEntryKind, ViewMode,
-    NO_SESSIONS_LABEL,
+    AppState, FocusMode, LayoutMode, MainView, SessionEntry, SessionEntryKind, SettingsSubmenu,
+    ViewMode, NO_SESSIONS_LABEL,
 };
 
 fn make_session(name: &str) -> SessionEntry {
@@ -390,14 +390,142 @@ fn open_settings_switches_main_pane_to_settings() {
 }
 
 #[test]
-fn settings_adjust_theme_opens_picker() {
+fn settings_adjust_theme_opens_submenu() {
     let mut state = make_test_state(1);
-    state.prefs.theme_index = 0;
-    state.settings.selected = 0;
+    state.settings.selected = settings_row_index("Theme");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert!(state.settings.theme_picker_open);
-    assert_eq!(state.settings.theme_picker_selected, 0);
+    assert_eq!(state.settings.submenu, Some(SettingsSubmenu::Theme));
+    assert_eq!(state.settings.submenu_selected, 0);
+    assert!(!state.settings.theme_picker_open);
     assert!(!fx.has_save_config());
+}
+
+#[test]
+fn enter_opens_theme_submenu_and_its_theme_picker() {
+    use crate::action::key_to_action;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = make_test_state(1);
+    state.main_view = MainView::Settings;
+    state.settings.selected = settings_row_index("Theme");
+    state.prefs.theme_auto = false;
+    let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+
+    let action = key_to_action(&enter, &state);
+    assert!(matches!(action, Action::Settings(SettingsAction::Adjust)));
+    apply_action(&mut state, action);
+    assert_eq!(state.settings.submenu, Some(SettingsSubmenu::Theme));
+
+    apply_action(&mut state, Action::Settings(SettingsAction::Next));
+    let action = key_to_action(&enter, &state);
+    apply_action(&mut state, action);
+    assert!(state.settings.theme_picker_open);
+    assert_eq!(
+        state.settings.theme_picker_slot,
+        crate::theme::ThemeSlot::Fixed
+    );
+}
+
+#[test]
+fn theme_submenu_shows_fixed_or_dark_light_rows_based_on_auto() {
+    use crate::app::settings::setting_rows;
+
+    let mut state = make_test_state(1);
+    state.settings.submenu = Some(SettingsSubmenu::Theme);
+    state.prefs.theme_auto = false;
+    assert_eq!(
+        setting_rows(&state)
+            .iter()
+            .map(|row| row.label)
+            .collect::<Vec<_>>(),
+        vec!["Auto theme", "Theme", "Transparent background"]
+    );
+
+    state.prefs.theme_auto = true;
+    assert_eq!(
+        setting_rows(&state)
+            .iter()
+            .map(|row| row.label)
+            .collect::<Vec<_>>(),
+        vec![
+            "Auto theme",
+            "Dark theme",
+            "Light theme",
+            "Transparent background"
+        ]
+    );
+}
+
+#[test]
+fn theme_submenu_routes_each_conditional_theme_picker_slot() {
+    let mut state = make_test_state(1);
+    state.settings.submenu = Some(SettingsSubmenu::Theme);
+    state.settings.submenu_selected = 1;
+
+    state.prefs.theme_auto = false;
+    apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    assert_eq!(
+        state.settings.theme_picker_slot,
+        crate::theme::ThemeSlot::Fixed
+    );
+
+    state.settings.theme_picker_open = false;
+    state.prefs.theme_auto = true;
+    apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    assert_eq!(
+        state.settings.theme_picker_slot,
+        crate::theme::ThemeSlot::Dark
+    );
+
+    state.settings.theme_picker_open = false;
+    state.settings.submenu_selected = 2;
+    apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    assert_eq!(
+        state.settings.theme_picker_slot,
+        crate::theme::ThemeSlot::Light
+    );
+}
+
+#[test]
+fn theme_submenu_toggles_auto_and_transparent_background() {
+    let mut state = make_test_state(1);
+    state.settings.submenu = Some(SettingsSubmenu::Theme);
+    state.settings.submenu_selected = 0;
+    state.prefs.theme_auto = false;
+
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    assert!(state.prefs.theme_auto);
+    assert!(fx.has_save_config());
+    assert!(fx
+        .effects()
+        .iter()
+        .any(|effect| matches!(effect, crate::effects::Effect::ProbeTerminalBg)));
+
+    state.settings.submenu_selected = 3;
+    let before = state.prefs.transparent_bg;
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    assert_eq!(state.prefs.transparent_bg, !before);
+    assert!(fx.has_save_config());
+}
+
+#[test]
+fn escape_from_theme_submenu_returns_to_root_settings() {
+    use crate::action::key_to_action;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = make_test_state(1);
+    state.main_view = MainView::Settings;
+    state.settings.submenu = Some(SettingsSubmenu::Theme);
+    let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+
+    let action = key_to_action(&esc, &state);
+    assert!(matches!(
+        action,
+        Action::Settings(SettingsAction::CloseSubmenu)
+    ));
+    apply_action(&mut state, action);
+    assert_eq!(state.settings.submenu, None);
+    assert_eq!(state.main_view, MainView::Settings);
 }
 
 #[test]
@@ -935,6 +1063,27 @@ fn settings_next_clamps_to_total_row_count() {
     assert_eq!(state.settings.selected, total - 1);
 }
 
+#[test]
+fn root_settings_groups_secondary_rows_into_submenus() {
+    let labels: Vec<&str> = crate::app::settings::SETTING_ROWS
+        .iter()
+        .map(|row| row.label)
+        .collect();
+    assert!(labels.contains(&"Theme"));
+    assert!(labels.contains(&"Agents"));
+    assert!(labels.contains(&"Remote"));
+    for nested in [
+        "Auto theme",
+        "Agents probe",
+        "Summary",
+        "Summary lang",
+        "Remotes",
+        "Port forwards",
+    ] {
+        assert!(!labels.contains(&nested), "{nested} belongs in a submenu");
+    }
+}
+
 fn settings_row_index(label: &str) -> usize {
     crate::app::settings::SETTING_ROWS
         .iter()
@@ -943,9 +1092,50 @@ fn settings_row_index(label: &str) -> usize {
 }
 
 #[test]
-fn settings_remotes_row_opens_the_add_remote_picker() {
+fn agents_submenu_contains_and_routes_agent_settings() {
+    use crate::app::settings::setting_rows;
+
     let mut state = make_test_state(1);
-    state.settings.selected = settings_row_index("Remotes");
+    state.settings.selected = settings_row_index("Agents");
+    apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    assert_eq!(state.settings.submenu, Some(SettingsSubmenu::Agents));
+    assert_eq!(
+        setting_rows(&state)
+            .iter()
+            .map(|row| row.label)
+            .collect::<Vec<_>>(),
+        vec!["Agents probe", "Summary", "Summary lang"]
+    );
+
+    state.prefs.agents_probe_interval_secs = 2;
+    apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    assert_eq!(state.prefs.agents_probe_interval_secs, 5);
+
+    state.settings.submenu_selected = 1;
+    let summary_before = state.prefs.summary_enabled;
+    apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    assert_eq!(state.prefs.summary_enabled, !summary_before);
+
+    state.settings.submenu_selected = 2;
+    apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    assert!(state.overlay.summary_lang_input.is_some());
+}
+
+#[test]
+fn settings_remotes_row_opens_the_add_remote_picker() {
+    use crate::app::settings::setting_rows;
+
+    let mut state = make_test_state(1);
+    state.settings.selected = settings_row_index("Remote");
+    apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    assert_eq!(state.settings.submenu, Some(SettingsSubmenu::Remote));
+    assert_eq!(
+        setting_rows(&state)
+            .iter()
+            .map(|row| row.label)
+            .collect::<Vec<_>>(),
+        vec!["Remotes", "Port forwards"]
+    );
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(fx
         .effects()
@@ -978,10 +1168,15 @@ fn port_forwards_row_aggregates_across_hosts_and_targets_a_host() {
     ];
     mount_remote_lane(&mut state, "b");
     state.entries.push(remote_row("b", "session"));
-    let row = &crate::app::settings::SETTING_ROWS[settings_row_index("Port forwards")];
+    state.settings.submenu = Some(SettingsSubmenu::Remote);
+    let rows = crate::app::settings::setting_rows(&state);
+    let row = rows
+        .iter()
+        .find(|row| row.label == "Port forwards")
+        .unwrap();
     assert_eq!((row.value)(&state), "2 forwards");
 
-    state.settings.selected = settings_row_index("Port forwards");
+    state.settings.submenu_selected = 1;
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     // Selection is resolved at the SSH/config adapter boundary, not here.
     assert!(matches!(
@@ -994,10 +1189,15 @@ fn port_forwards_row_aggregates_across_hosts_and_targets_a_host() {
 fn port_forwards_row_defers_empty_config_handling_to_adapter() {
     let mut state = make_test_state(1);
     state.config_remotes.clear();
-    let row = &crate::app::settings::SETTING_ROWS[settings_row_index("Port forwards")];
+    state.settings.submenu = Some(SettingsSubmenu::Remote);
+    let rows = crate::app::settings::setting_rows(&state);
+    let row = rows
+        .iter()
+        .find(|row| row.label == "Port forwards")
+        .unwrap();
     assert_eq!((row.value)(&state), "none");
 
-    state.settings.selected = settings_row_index("Port forwards");
+    state.settings.submenu_selected = 1;
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(matches!(
         fx.effects(),

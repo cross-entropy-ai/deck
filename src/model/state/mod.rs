@@ -288,12 +288,27 @@ pub struct FocusTarget(pub usize);
 
 // --- Settings page state ---
 
+/// The second-level settings page currently open. `None` is the root page;
+/// one enum keeps submenus mutually exclusive and gives input/rendering a
+/// single navigation source of truth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsSubmenu {
+    Theme,
+    Agents,
+    Remote,
+}
+
 /// UI state for the settings page and its sub-popovers (theme picker,
 /// keybindings viewer). Update-check fields stay on `AppState` since many
 /// paths outside settings touch them (refresh loop, banner, hit-testing).
 #[derive(Debug, Default)]
 pub struct SettingsState {
     pub selected: usize,
+
+    /// All second-level pages share a cursor; returning to the root restores
+    /// its independently retained `selected` row.
+    pub submenu: Option<SettingsSubmenu>,
+    pub submenu_selected: usize,
 
     /// Theme picker overlay (open inside the settings page).
     pub theme_picker_open: bool,
