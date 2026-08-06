@@ -103,9 +103,9 @@ pub enum Action {
 pub enum SettingsAction {
     Open,
     Close,
-    /// Enter/leave one of the second-level settings pages.
-    OpenSubmenu(crate::state::SettingsSubmenu),
-    CloseSubmenu,
+    /// Push/pop a page in the hierarchical Settings navigator.
+    OpenPage(crate::state::SettingsPage),
+    Back,
     Next,
     Prev,
     Adjust,

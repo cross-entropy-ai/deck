@@ -288,27 +288,31 @@ pub struct FocusTarget(pub usize);
 
 // --- Settings page state ---
 
-/// The second-level settings page currently open. `None` is the root page;
-/// one enum keeps submenus mutually exclusive and gives input/rendering a
-/// single navigation source of truth.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SettingsSubmenu {
+/// One page in the hierarchical Settings navigator.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SettingsPage {
+    #[default]
+    Root,
+    Appearance,
     Theme,
     Agents,
     Remote,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SettingsPageFrame {
+    pub page: SettingsPage,
+    pub selected: usize,
+}
+
 /// UI state for the settings page and its sub-popovers (theme picker,
 /// keybindings viewer). Update-check fields stay on `AppState` since many
 /// paths outside settings touch them (refresh loop, banner, hit-testing).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SettingsState {
-    pub selected: usize,
-
-    /// All second-level pages share a cursor; returning to the root restores
-    /// its independently retained `selected` row.
-    pub submenu: Option<SettingsSubmenu>,
-    pub submenu_selected: usize,
+    /// Navigation history, always rooted at `Root`. Each frame owns its cursor
+    /// so popping a child restores the parent's previous selection.
+    pub page_stack: Vec<SettingsPageFrame>,
 
     /// Theme picker overlay (open inside the settings page).
     pub theme_picker_open: bool,
@@ -320,6 +324,69 @@ pub struct SettingsState {
     /// Keybindings viewer overlay (read-only).
     pub keybindings_view_open: bool,
     pub keybindings_view_scroll: u16,
+}
+
+impl Default for SettingsState {
+    fn default() -> Self {
+        Self {
+            page_stack: vec![SettingsPageFrame {
+                page: SettingsPage::Root,
+                selected: 0,
+            }],
+            theme_picker_open: false,
+            theme_picker_selected: 0,
+            theme_picker_slot: crate::theme::ThemeSlot::default(),
+            keybindings_view_open: false,
+            keybindings_view_scroll: 0,
+        }
+    }
+}
+
+impl SettingsState {
+    pub fn current_page(&self) -> SettingsPage {
+        self.page_stack
+            .last()
+            .map(|frame| frame.page)
+            .unwrap_or(SettingsPage::Root)
+    }
+
+    pub fn selected(&self) -> usize {
+        self.page_stack
+            .last()
+            .map(|frame| frame.selected)
+            .unwrap_or(0)
+    }
+
+    pub fn set_selected(&mut self, selected: usize) {
+        if let Some(frame) = self.page_stack.last_mut() {
+            frame.selected = selected;
+        } else {
+            self.reset_pages();
+            self.page_stack[0].selected = selected;
+        }
+    }
+
+    pub fn push_page(&mut self, page: SettingsPage) {
+        self.page_stack
+            .push(SettingsPageFrame { page, selected: 0 });
+    }
+
+    /// Pop one child page. Root is never removed.
+    pub fn pop_page(&mut self) -> bool {
+        if self.page_stack.len() <= 1 {
+            return false;
+        }
+        self.page_stack.pop();
+        true
+    }
+
+    pub fn reset_pages(&mut self) {
+        self.page_stack.clear();
+        self.page_stack.push(SettingsPageFrame {
+            page: SettingsPage::Root,
+            selected: 0,
+        });
+    }
 }
 
 // --- Prefs ---

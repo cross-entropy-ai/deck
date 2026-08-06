@@ -10,7 +10,7 @@
 //! beside the value and action it describes.
 
 use crate::action::{Action, SettingsAction, SummaryAction};
-use crate::state::{AppState, LayoutMode, SettingsSubmenu, ViewMode};
+use crate::state::{AppState, LayoutMode, SettingsPage, ViewMode};
 use crate::theme::{ThemeSlot, THEMES};
 
 use super::update::format_update_check_help;
@@ -26,58 +26,19 @@ pub struct SettingRow {
     pub adjust: fn(i32) -> Action,
 }
 
-/// The settings page, top to bottom. Order is load-bearing: the reducer
-/// indexes this by `state.settings.selected`, and the renderer draws it in
-/// sequence.
+/// The root settings page, top to bottom.
 pub const SETTING_ROWS: &[SettingRow] = &[
     SettingRow {
-        label: "Theme",
+        label: "Appearance",
         value: |s| {
-            if s.prefs.theme_auto {
-                "Auto  ›".to_string()
-            } else {
-                format!("{}  ›", THEMES[s.prefs.theme_index].name)
-            }
+            let view = match s.prefs.view_mode {
+                ViewMode::Expanded => "Expanded",
+                ViewMode::Compact => "Compact",
+            };
+            format!("{view} · {} FPS  ›", s.prefs.frame_rate_limit)
         },
-        help: |_| "Enter/right opens theme settings".to_string(),
-        adjust: |_| Action::Settings(SettingsAction::OpenSubmenu(SettingsSubmenu::Theme)),
-    },
-    SettingRow {
-        label: "Layout",
-        value: |s| match s.prefs.layout_mode {
-            LayoutMode::Horizontal => "Horizontal".to_string(),
-            LayoutMode::Vertical => "Vertical".to_string(),
-        },
-        help: |_| "Left/right toggles the split direction".to_string(),
-        adjust: |_| Action::ToggleLayout,
-    },
-    SettingRow {
-        label: "Borders",
-        value: |s| if s.prefs.show_borders { "On" } else { "Off" }.to_string(),
-        help: |_| "Left/right toggles pane borders".to_string(),
-        adjust: |_| Action::ToggleBorders,
-    },
-    SettingRow {
-        label: "View",
-        value: |s| match s.prefs.view_mode {
-            ViewMode::Expanded => "Expanded".to_string(),
-            ViewMode::Compact => "Compact".to_string(),
-        },
-        help: |_| "Left/right toggles compact mode".to_string(),
-        adjust: |_| Action::ToggleViewMode,
-    },
-    SettingRow {
-        label: "Frame rate",
-        value: |s| crate::state::frame_rate_limit_label(s.prefs.frame_rate_limit).to_string(),
-        help: |s| {
-            if s.prefs.frame_rate_limit == 30 {
-                "Smooth increases terminal rendering pressure"
-            } else {
-                "Left/right cycles the render limit"
-            }
-            .to_string()
-        },
-        adjust: |dir| Action::Settings(SettingsAction::CycleFrameRateLimit(dir)),
+        help: |_| "Enter/right opens appearance settings".to_string(),
+        adjust: |_| Action::Settings(SettingsAction::OpenPage(SettingsPage::Appearance)),
     },
     SettingRow {
         label: "Exclude",
@@ -108,15 +69,69 @@ pub const SETTING_ROWS: &[SettingRow] = &[
         label: "Agents",
         value: |_| "Configure  ›".to_string(),
         help: |_| "Enter/right opens agent settings".to_string(),
-        adjust: |_| Action::Settings(SettingsAction::OpenSubmenu(SettingsSubmenu::Agents)),
+        adjust: |_| Action::Settings(SettingsAction::OpenPage(SettingsPage::Agents)),
     },
     SettingRow {
         label: "Remote",
         value: |s| format!("{} hosts  ›", s.config_remotes.len()),
         help: |_| "Enter/right opens remote settings".to_string(),
-        adjust: |_| Action::Settings(SettingsAction::OpenSubmenu(SettingsSubmenu::Remote)),
+        adjust: |_| Action::Settings(SettingsAction::OpenPage(SettingsPage::Remote)),
     },
 ];
+
+const THEME_PAGE_ROW: SettingRow = SettingRow {
+    label: "Theme",
+    value: |s| {
+        if s.prefs.theme_auto {
+            "Auto  ›".to_string()
+        } else {
+            format!("{}  ›", THEMES[s.prefs.theme_index].name)
+        }
+    },
+    help: |_| "Enter/right opens theme settings".to_string(),
+    adjust: |_| Action::Settings(SettingsAction::OpenPage(SettingsPage::Theme)),
+};
+
+const LAYOUT_ROW: SettingRow = SettingRow {
+    label: "Layout",
+    value: |s| match s.prefs.layout_mode {
+        LayoutMode::Horizontal => "Horizontal".to_string(),
+        LayoutMode::Vertical => "Vertical".to_string(),
+    },
+    help: |_| "Left/right toggles the split direction".to_string(),
+    adjust: |_| Action::ToggleLayout,
+};
+
+const BORDERS_ROW: SettingRow = SettingRow {
+    label: "Borders",
+    value: |s| if s.prefs.show_borders { "On" } else { "Off" }.to_string(),
+    help: |_| "Left/right toggles pane borders".to_string(),
+    adjust: |_| Action::ToggleBorders,
+};
+
+const VIEW_ROW: SettingRow = SettingRow {
+    label: "View",
+    value: |s| match s.prefs.view_mode {
+        ViewMode::Expanded => "Expanded".to_string(),
+        ViewMode::Compact => "Compact".to_string(),
+    },
+    help: |_| "Left/right toggles compact mode".to_string(),
+    adjust: |_| Action::ToggleViewMode,
+};
+
+const FRAME_RATE_ROW: SettingRow = SettingRow {
+    label: "Frame rate",
+    value: |s| crate::state::frame_rate_limit_label(s.prefs.frame_rate_limit).to_string(),
+    help: |s| {
+        if s.prefs.frame_rate_limit == 30 {
+            "Smooth increases terminal rendering pressure"
+        } else {
+            "Left/right cycles the render limit"
+        }
+        .to_string()
+    },
+    adjust: |dir| Action::Settings(SettingsAction::CycleFrameRateLimit(dir)),
+};
 
 const AUTO_THEME_ROW: SettingRow = SettingRow {
     label: "Auto theme",
@@ -206,7 +221,7 @@ const PORT_FORWARDS_ROW: SettingRow = SettingRow {
     adjust: |_| Action::Settings(SettingsAction::OpenPortForwards),
 };
 
-/// Rows visible in the Theme submenu. A fixed theme and the automatic
+/// Rows visible on the Theme page. A fixed theme and the automatic
 /// dark/light pair are mutually exclusive, keeping the page compact while
 /// making the effect of Auto theme explicit.
 fn theme_setting_rows(state: &AppState) -> Vec<&'static SettingRow> {
@@ -227,14 +242,21 @@ fn theme_setting_rows(state: &AppState) -> Vec<&'static SettingRow> {
 }
 
 /// The visible descriptor rows for the active settings page. Renderer and
-/// reducer both call this so submenu presentation and actions stay aligned.
+/// reducer both call this so page presentation and actions stay aligned.
 pub fn setting_rows(state: &AppState) -> Vec<&'static SettingRow> {
-    match state.settings.submenu {
-        None => SETTING_ROWS.iter().collect(),
-        Some(SettingsSubmenu::Theme) => theme_setting_rows(state),
-        Some(SettingsSubmenu::Agents) => {
+    match state.settings.current_page() {
+        SettingsPage::Root => SETTING_ROWS.iter().collect(),
+        SettingsPage::Appearance => vec![
+            &THEME_PAGE_ROW,
+            &LAYOUT_ROW,
+            &BORDERS_ROW,
+            &VIEW_ROW,
+            &FRAME_RATE_ROW,
+        ],
+        SettingsPage::Theme => theme_setting_rows(state),
+        SettingsPage::Agents => {
             vec![&AGENTS_PROBE_ROW, &SUMMARY_ROW, &SUMMARY_LANGUAGE_ROW]
         }
-        Some(SettingsSubmenu::Remote) => vec![&REMOTES_ROW, &PORT_FORWARDS_ROW],
+        SettingsPage::Remote => vec![&REMOTES_ROW, &PORT_FORWARDS_ROW],
     }
 }

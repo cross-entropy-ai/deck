@@ -37,8 +37,8 @@ pub struct NewSessionView<'a> {
 }
 
 /// One settings row, reduced to display strings by the render loop. The
-/// `app::settings::SETTING_ROWS` table sources label/value/help; the loop runs
-/// each row's closures against `&AppState` and hands results here, keeping
+/// `app::settings::setting_rows` sources label/value/help for the active page;
+/// the loop runs each row's closures against `&AppState` and hands results here, keeping
 /// `draw_settings_page` a pure `ui` fn that never sees `AppState`.
 pub struct SettingRowView {
     pub label: &'static str,
@@ -49,7 +49,7 @@ pub struct SettingRowView {
 pub struct SettingsView<'a> {
     pub selected: usize,
     pub rows: Vec<SettingRowView>,
-    pub submenu: Option<crate::state::SettingsSubmenu>,
+    pub page: crate::state::SettingsPage,
     pub exclude_editor: Option<ExcludeEditorView<'a>>,
     pub keybindings: &'a Keybindings,
     pub keybindings_view_open: bool,

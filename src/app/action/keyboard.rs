@@ -248,7 +248,9 @@ fn settings_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     // usual list/menu interaction for submenus, pickers, and toggles. Left is
     // still distinct for settings that cycle in both directions.
     Action::Settings(match nav_key(key) {
-        Some(Nav::Close) if state.settings.submenu.is_some() => SettingsAction::CloseSubmenu,
+        Some(Nav::Close) if state.settings.current_page() != crate::state::SettingsPage::Root => {
+            SettingsAction::Back
+        }
         Some(Nav::Close) => SettingsAction::Close,
         Some(Nav::Down) => SettingsAction::Next,
         Some(Nav::Up) => SettingsAction::Prev,

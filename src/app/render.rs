@@ -391,12 +391,12 @@ impl App {
         Ok(())
     }
 
-    /// `SETTING_ROWS` reduced to display strings. Done here, holding
+    /// The active page's descriptor rows reduced to display strings. Done here, holding
     /// `&AppState`, so `draw_settings_page` stays a pure `ui` fn over
     /// `Vec<SettingRowView>`.
     fn build_settings_view(&self) -> SettingsView<'_> {
         let s = &self.state;
-        let submenu = s.settings.submenu;
+        let page = s.settings.current_page();
         let source_rows = setting_rows(s);
         let rows: Vec<SettingRowView> = source_rows
             .into_iter()
@@ -407,13 +407,9 @@ impl App {
             })
             .collect();
         SettingsView {
-            selected: if submenu.is_some() {
-                s.settings.submenu_selected
-            } else {
-                s.settings.selected
-            },
+            selected: s.settings.selected(),
             rows,
-            submenu,
+            page,
             exclude_editor: s
                 .overlay
                 .exclude_editor

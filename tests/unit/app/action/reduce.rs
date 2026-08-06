@@ -3,7 +3,7 @@ use super::{
 };
 use crate::overlay::RenameState;
 use crate::state::{
-    AppState, FocusMode, LayoutMode, MainView, SessionEntry, SessionEntryKind, SettingsSubmenu,
+    AppState, FocusMode, LayoutMode, MainView, SessionEntry, SessionEntryKind, SettingsPage,
     ViewMode, NO_SESSIONS_LABEL,
 };
 
@@ -390,12 +390,16 @@ fn open_settings_switches_main_pane_to_settings() {
 }
 
 #[test]
-fn settings_adjust_theme_opens_submenu() {
+fn settings_adjust_appearance_then_theme_pushes_pages() {
     let mut state = make_test_state(1);
-    state.settings.selected = settings_row_index("Theme");
+    select_settings_row(&mut state, "Appearance");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert_eq!(state.settings.submenu, Some(SettingsSubmenu::Theme));
-    assert_eq!(state.settings.submenu_selected, 0);
+    assert_eq!(state.settings.current_page(), SettingsPage::Appearance);
+    select_settings_row(&mut state, "Theme");
+    apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    assert_eq!(state.settings.current_page(), SettingsPage::Theme);
+    assert_eq!(state.settings.page_stack.len(), 3);
+    assert_eq!(state.settings.selected(), 0);
     assert!(!state.settings.theme_picker_open);
     assert!(!fx.has_save_config());
 }
@@ -407,14 +411,18 @@ fn enter_opens_theme_submenu_and_its_theme_picker() {
 
     let mut state = make_test_state(1);
     state.main_view = MainView::Settings;
-    state.settings.selected = settings_row_index("Theme");
+    select_settings_row(&mut state, "Appearance");
     state.prefs.theme_auto = false;
     let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
 
     let action = key_to_action(&enter, &state);
     assert!(matches!(action, Action::Settings(SettingsAction::Adjust)));
     apply_action(&mut state, action);
-    assert_eq!(state.settings.submenu, Some(SettingsSubmenu::Theme));
+    assert_eq!(state.settings.current_page(), SettingsPage::Appearance);
+
+    let action = key_to_action(&enter, &state);
+    apply_action(&mut state, action);
+    assert_eq!(state.settings.current_page(), SettingsPage::Theme);
 
     apply_action(&mut state, Action::Settings(SettingsAction::Next));
     let action = key_to_action(&enter, &state);
@@ -431,7 +439,8 @@ fn theme_submenu_shows_fixed_or_dark_light_rows_based_on_auto() {
     use crate::app::settings::setting_rows;
 
     let mut state = make_test_state(1);
-    state.settings.submenu = Some(SettingsSubmenu::Theme);
+    open_settings_page(&mut state, SettingsPage::Appearance);
+    open_settings_page(&mut state, SettingsPage::Theme);
     state.prefs.theme_auto = false;
     assert_eq!(
         setting_rows(&state)
@@ -459,8 +468,9 @@ fn theme_submenu_shows_fixed_or_dark_light_rows_based_on_auto() {
 #[test]
 fn theme_submenu_routes_each_conditional_theme_picker_slot() {
     let mut state = make_test_state(1);
-    state.settings.submenu = Some(SettingsSubmenu::Theme);
-    state.settings.submenu_selected = 1;
+    open_settings_page(&mut state, SettingsPage::Appearance);
+    open_settings_page(&mut state, SettingsPage::Theme);
+    state.settings.set_selected(1);
 
     state.prefs.theme_auto = false;
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
@@ -478,7 +488,7 @@ fn theme_submenu_routes_each_conditional_theme_picker_slot() {
     );
 
     state.settings.theme_picker_open = false;
-    state.settings.submenu_selected = 2;
+    state.settings.set_selected(2);
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_eq!(
         state.settings.theme_picker_slot,
@@ -489,8 +499,9 @@ fn theme_submenu_routes_each_conditional_theme_picker_slot() {
 #[test]
 fn theme_submenu_toggles_auto_and_transparent_background() {
     let mut state = make_test_state(1);
-    state.settings.submenu = Some(SettingsSubmenu::Theme);
-    state.settings.submenu_selected = 0;
+    open_settings_page(&mut state, SettingsPage::Appearance);
+    open_settings_page(&mut state, SettingsPage::Theme);
+    state.settings.set_selected(0);
     state.prefs.theme_auto = false;
 
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
@@ -501,7 +512,7 @@ fn theme_submenu_toggles_auto_and_transparent_background() {
         .iter()
         .any(|effect| matches!(effect, crate::effects::Effect::ProbeTerminalBg)));
 
-    state.settings.submenu_selected = 3;
+    state.settings.set_selected(3);
     let before = state.prefs.transparent_bg;
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_eq!(state.prefs.transparent_bg, !before);
@@ -509,23 +520,51 @@ fn theme_submenu_toggles_auto_and_transparent_background() {
 }
 
 #[test]
-fn escape_from_theme_submenu_returns_to_root_settings() {
+fn escape_pops_one_settings_page_at_a_time_then_closes_root() {
     use crate::action::key_to_action;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     let mut state = make_test_state(1);
     state.main_view = MainView::Settings;
-    state.settings.submenu = Some(SettingsSubmenu::Theme);
+    select_settings_row(&mut state, "Appearance");
+    open_settings_page(&mut state, SettingsPage::Appearance);
+    select_settings_row(&mut state, "Theme");
+    open_settings_page(&mut state, SettingsPage::Theme);
     let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
 
     let action = key_to_action(&esc, &state);
-    assert!(matches!(
-        action,
-        Action::Settings(SettingsAction::CloseSubmenu)
-    ));
+    assert!(matches!(action, Action::Settings(SettingsAction::Back)));
     apply_action(&mut state, action);
-    assert_eq!(state.settings.submenu, None);
+    assert_eq!(state.settings.current_page(), SettingsPage::Appearance);
+    assert_eq!(state.settings.selected(), 0, "Appearance cursor restored");
+
+    let action = key_to_action(&esc, &state);
+    apply_action(&mut state, action);
+    assert_eq!(state.settings.current_page(), SettingsPage::Root);
+    assert_eq!(state.settings.selected(), 0, "Root cursor restored");
     assert_eq!(state.main_view, MainView::Settings);
+
+    let action = key_to_action(&esc, &state);
+    apply_action(&mut state, action);
+    assert_eq!(state.main_view, MainView::Terminal);
+}
+
+#[test]
+fn settings_page_stack_preserves_each_page_cursor() {
+    let mut state = make_test_state(1);
+    state.settings.set_selected(4);
+    open_settings_page(&mut state, SettingsPage::Appearance);
+    state.settings.set_selected(3);
+    open_settings_page(&mut state, SettingsPage::Theme);
+    state.settings.set_selected(2);
+
+    assert!(state.settings.pop_page());
+    assert_eq!(state.settings.current_page(), SettingsPage::Appearance);
+    assert_eq!(state.settings.selected(), 3);
+    assert!(state.settings.pop_page());
+    assert_eq!(state.settings.current_page(), SettingsPage::Root);
+    assert_eq!(state.settings.selected(), 4);
+    assert!(!state.settings.pop_page(), "Root stays on the stack");
 }
 
 #[test]
@@ -599,7 +638,8 @@ fn theme_picker_next_at_end_still_saves() {
 #[test]
 fn settings_adjust_layout_resizes_and_saves() {
     let mut state = make_test_state(1);
-    state.settings.selected = settings_row_index("Layout");
+    open_settings_page(&mut state, SettingsPage::Appearance);
+    select_settings_row(&mut state, "Layout");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_eq!(state.prefs.layout_mode, LayoutMode::Vertical);
     assert!(fx.has_resize_pty());
@@ -620,6 +660,8 @@ fn toggle_focus() {
 fn toggle_focus_to_sidebar_closes_settings() {
     let mut state = make_test_state(1);
     apply_action(&mut state, Action::Settings(SettingsAction::Open));
+    open_settings_page(&mut state, SettingsPage::Appearance);
+    open_settings_page(&mut state, SettingsPage::Theme);
     state.settings.theme_picker_open = true;
     assert_eq!(state.main_view, MainView::Settings);
 
@@ -628,6 +670,8 @@ fn toggle_focus_to_sidebar_closes_settings() {
     apply_action(&mut state, Action::ToggleFocus);
     assert_eq!(state.focus_mode, FocusMode::Sidebar);
     assert_eq!(state.main_view, MainView::Terminal);
+    assert_eq!(state.settings.current_page(), SettingsPage::Root);
+    assert_eq!(state.settings.page_stack.len(), 1);
     assert!(!state.settings.theme_picker_open);
 }
 
@@ -930,7 +974,7 @@ fn drag_reorder_remote_moves_directly_within_host_only() {
 fn open_close_exclude_editor() {
     let mut state = make_test_state(1);
     state.main_view = MainView::Settings;
-    state.settings.selected = 4;
+    state.settings.set_selected(4);
     apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
     assert!(state.overlay.exclude_editor.is_some());
     apply_action(&mut state, Action::Settings(SettingsAction::ExcludeClose));
@@ -1014,7 +1058,8 @@ fn toggle_view_mode_flips_and_saves() {
 fn settings_adjust_frame_rate_cycles_and_saves() {
     let mut state = make_test_state(1);
     state.prefs.frame_rate_limit = 5;
-    state.settings.selected = settings_row_index("Frame rate");
+    open_settings_page(&mut state, SettingsPage::Appearance);
+    select_settings_row(&mut state, "Frame rate");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_eq!(state.prefs.frame_rate_limit, 10);
     assert!(fx.has_save_config());
@@ -1024,7 +1069,8 @@ fn settings_adjust_frame_rate_cycles_and_saves() {
 fn frame_rate_cycle_wraps_in_both_directions() {
     let mut state = make_test_state(1);
     state.prefs.frame_rate_limit = 2;
-    state.settings.selected = settings_row_index("Frame rate");
+    open_settings_page(&mut state, SettingsPage::Appearance);
+    select_settings_row(&mut state, "Frame rate");
     apply_action(&mut state, Action::Settings(SettingsAction::AdjustPrev));
     assert_eq!(state.prefs.frame_rate_limit, 30);
 
@@ -1035,7 +1081,7 @@ fn frame_rate_cycle_wraps_in_both_directions() {
 #[test]
 fn settings_adjust_exclude_opens_editor_after_frame_rate_row() {
     let mut state = make_test_state(1);
-    state.settings.selected = settings_row_index("Exclude");
+    select_settings_row(&mut state, "Exclude");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(state.overlay.exclude_editor.is_some());
     assert!(!fx.has_save_config());
@@ -1044,7 +1090,7 @@ fn settings_adjust_exclude_opens_editor_after_frame_rate_row() {
 #[test]
 fn settings_adjust_keybindings_opens_view_after_exclude_row() {
     let mut state = make_test_state(1);
-    state.settings.selected = settings_row_index("Keybindings");
+    select_settings_row(&mut state, "Keybindings");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(state.settings.keybindings_view_open);
     assert!(!fx.has_save_config());
@@ -1055,25 +1101,41 @@ fn settings_next_clamps_to_total_row_count() {
     // Next clamps at the last row of the page.
     use crate::app::settings::SETTING_ROWS;
     let mut state = make_test_state(1);
-    state.settings.selected = 0;
+    state.settings.set_selected(0);
     let total = SETTING_ROWS.len();
     for _ in 0..(total + 5) {
         apply_action(&mut state, Action::Settings(SettingsAction::Next));
     }
-    assert_eq!(state.settings.selected, total - 1);
+    assert_eq!(state.settings.selected(), total - 1);
 }
 
 #[test]
-fn root_settings_groups_secondary_rows_into_submenus() {
+fn root_and_appearance_pages_group_rows_as_requested() {
+    use crate::app::settings::setting_rows;
+
+    let mut state = make_test_state(1);
     let labels: Vec<&str> = crate::app::settings::SETTING_ROWS
         .iter()
         .map(|row| row.label)
         .collect();
-    assert!(labels.contains(&"Theme"));
-    assert!(labels.contains(&"Agents"));
-    assert!(labels.contains(&"Remote"));
+    assert_eq!(
+        labels,
+        vec![
+            "Appearance",
+            "Exclude",
+            "Keybindings",
+            "Update check",
+            "Agents",
+            "Remote"
+        ]
+    );
     for nested in [
         "Auto theme",
+        "Theme",
+        "Layout",
+        "Borders",
+        "View",
+        "Frame rate",
         "Agents probe",
         "Summary",
         "Summary lang",
@@ -1082,13 +1144,31 @@ fn root_settings_groups_secondary_rows_into_submenus() {
     ] {
         assert!(!labels.contains(&nested), "{nested} belongs in a submenu");
     }
+
+    open_settings_page(&mut state, SettingsPage::Appearance);
+    assert_eq!(
+        setting_rows(&state)
+            .iter()
+            .map(|row| row.label)
+            .collect::<Vec<_>>(),
+        vec!["Theme", "Layout", "Borders", "View", "Frame rate"]
+    );
 }
 
-fn settings_row_index(label: &str) -> usize {
-    crate::app::settings::SETTING_ROWS
+fn settings_row_index(state: &AppState, label: &str) -> usize {
+    crate::app::settings::setting_rows(state)
         .iter()
         .position(|r| r.label == label)
         .unwrap()
+}
+
+fn select_settings_row(state: &mut AppState, label: &str) {
+    let selected = settings_row_index(state, label);
+    state.settings.set_selected(selected);
+}
+
+fn open_settings_page(state: &mut AppState, page: SettingsPage) {
+    state.settings.push_page(page);
 }
 
 #[test]
@@ -1096,9 +1176,9 @@ fn agents_submenu_contains_and_routes_agent_settings() {
     use crate::app::settings::setting_rows;
 
     let mut state = make_test_state(1);
-    state.settings.selected = settings_row_index("Agents");
+    select_settings_row(&mut state, "Agents");
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert_eq!(state.settings.submenu, Some(SettingsSubmenu::Agents));
+    assert_eq!(state.settings.current_page(), SettingsPage::Agents);
     assert_eq!(
         setting_rows(&state)
             .iter()
@@ -1111,12 +1191,12 @@ fn agents_submenu_contains_and_routes_agent_settings() {
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_eq!(state.prefs.agents_probe_interval_secs, 5);
 
-    state.settings.submenu_selected = 1;
+    state.settings.set_selected(1);
     let summary_before = state.prefs.summary_enabled;
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert_eq!(state.prefs.summary_enabled, !summary_before);
 
-    state.settings.submenu_selected = 2;
+    state.settings.set_selected(2);
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(state.overlay.summary_lang_input.is_some());
 }
@@ -1126,9 +1206,9 @@ fn settings_remotes_row_opens_the_add_remote_picker() {
     use crate::app::settings::setting_rows;
 
     let mut state = make_test_state(1);
-    state.settings.selected = settings_row_index("Remote");
+    select_settings_row(&mut state, "Remote");
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert_eq!(state.settings.submenu, Some(SettingsSubmenu::Remote));
+    assert_eq!(state.settings.current_page(), SettingsPage::Remote);
     assert_eq!(
         setting_rows(&state)
             .iter()
@@ -1168,7 +1248,7 @@ fn port_forwards_row_aggregates_across_hosts_and_targets_a_host() {
     ];
     mount_remote_lane(&mut state, "b");
     state.entries.push(remote_row("b", "session"));
-    state.settings.submenu = Some(SettingsSubmenu::Remote);
+    open_settings_page(&mut state, SettingsPage::Remote);
     let rows = crate::app::settings::setting_rows(&state);
     let row = rows
         .iter()
@@ -1176,7 +1256,7 @@ fn port_forwards_row_aggregates_across_hosts_and_targets_a_host() {
         .unwrap();
     assert_eq!((row.value)(&state), "2 forwards");
 
-    state.settings.submenu_selected = 1;
+    state.settings.set_selected(1);
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     // Selection is resolved at the SSH/config adapter boundary, not here.
     assert!(matches!(
@@ -1189,7 +1269,7 @@ fn port_forwards_row_aggregates_across_hosts_and_targets_a_host() {
 fn port_forwards_row_defers_empty_config_handling_to_adapter() {
     let mut state = make_test_state(1);
     state.config_remotes.clear();
-    state.settings.submenu = Some(SettingsSubmenu::Remote);
+    open_settings_page(&mut state, SettingsPage::Remote);
     let rows = crate::app::settings::setting_rows(&state);
     let row = rows
         .iter()
@@ -1197,7 +1277,7 @@ fn port_forwards_row_defers_empty_config_handling_to_adapter() {
         .unwrap();
     assert_eq!((row.value)(&state), "none");
 
-    state.settings.submenu_selected = 1;
+    state.settings.set_selected(1);
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(matches!(
         fx.effects(),

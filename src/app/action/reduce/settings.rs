@@ -15,40 +15,31 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         SettingsAction::Open => {
             state.main_view = MainView::Settings;
             state.focus_mode = FocusMode::Main;
-            state.settings.submenu = None;
+            state.settings.reset_pages();
             state.settings.theme_picker_open = false;
             state.settings.theme_picker_selected = state.prefs.theme_index;
         }
         SettingsAction::Close => {
             state.main_view = MainView::Terminal;
             state.focus_mode = FocusMode::Main;
-            state.settings.submenu = None;
+            state.settings.reset_pages();
             state.settings.theme_picker_open = false;
         }
-        SettingsAction::OpenSubmenu(submenu) => {
-            state.settings.submenu = Some(submenu);
-            state.settings.submenu_selected = 0;
+        SettingsAction::OpenPage(page) => {
+            state.settings.push_page(page);
         }
-        SettingsAction::CloseSubmenu => {
-            state.settings.submenu = None;
+        SettingsAction::Back => {
+            state.settings.pop_page();
         }
         SettingsAction::Next => {
             let total = setting_rows(state).len();
-            if state.settings.submenu.is_some() {
-                state.settings.submenu_selected =
-                    step_clamped(state.settings.submenu_selected, total, 1);
-            } else {
-                state.settings.selected = step_clamped(state.settings.selected, total, 1);
-            }
+            let selected = step_clamped(state.settings.selected(), total, 1);
+            state.settings.set_selected(selected);
         }
         SettingsAction::Prev => {
             let total = setting_rows(state).len();
-            if state.settings.submenu.is_some() {
-                state.settings.submenu_selected =
-                    step_clamped(state.settings.submenu_selected, total, -1);
-            } else {
-                state.settings.selected = step_clamped(state.settings.selected, total, -1);
-            }
+            let selected = step_clamped(state.settings.selected(), total, -1);
+            state.settings.set_selected(selected);
         }
         SettingsAction::Adjust | SettingsAction::AdjustPrev => {
             let direction = if matches!(action, SettingsAction::AdjustPrev) {
@@ -58,11 +49,7 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             };
             // Look up the selected row and fire its adjust — the row, not a
             // positional match, is the source of truth.
-            let selected = if state.settings.submenu.is_some() {
-                state.settings.submenu_selected
-            } else {
-                state.settings.selected
-            };
+            let selected = state.settings.selected();
             let inner_action = setting_rows(state)
                 .get(selected)
                 .map(|row| (row.adjust)(direction));

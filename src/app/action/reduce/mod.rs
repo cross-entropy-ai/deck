@@ -20,7 +20,7 @@ fn close_settings_page(state: &mut AppState) {
         return;
     }
     state.main_view = MainView::Terminal;
-    state.settings.submenu = None;
+    state.settings.reset_pages();
     state.settings.theme_picker_open = false;
     state.settings.keybindings_view_open = false;
     state.overlay.exclude_editor = None;
