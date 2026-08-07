@@ -438,13 +438,17 @@ impl App {
                 }
             }
 
-            // Backstop for terminals that answer `CSI ? 996 n` but don't push
-            // changes (no mode 2031), and the initial resolve — the ticker is
-            // seeded due so the first iteration asks. Writing the query never
-            // touches input: the answer comes back through crossterm as an
+            // Initial resolve: the ticker is seeded due, so the first iteration
+            // asks, and it keeps re-asking until the terminal answers once
+            // (some answer only after their surface has settled). After that,
+            // changes arrive on their own via mode 2031. Writing the query never
+            // touches input — the answer comes back through crossterm as an
             // `Event::ColorScheme` like any other event, and terminals that
-            // implement neither query stay silent.
-            if theme_poll.due(Instant::now()) && self.state.prefs.theme_auto {
+            // implement neither query stay silent forever.
+            if !self.scheme_answered
+                && self.state.prefs.theme_auto
+                && theme_poll.due(Instant::now())
+            {
                 self.query_color_scheme();
             }
 

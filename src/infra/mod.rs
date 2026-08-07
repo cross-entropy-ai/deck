@@ -6,6 +6,7 @@ pub mod parser;
 pub mod pty;
 pub mod refresh;
 pub mod self_update;
+pub mod seqlog;
 pub mod shutdown;
 pub mod ssh;
 pub mod summary;

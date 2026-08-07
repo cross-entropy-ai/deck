@@ -262,25 +262,16 @@ fn color_scheme_report(theme: &Theme) -> Vec<u8> {
     format!("\x1b[?997;{scheme}n").into_bytes()
 }
 
-/// Append every recognized sequence, and deck's reply, to the file named by
-/// `DECK_SEQ_LOG` (e.g. `DECK_SEQ_LOG=/tmp/deck.log deck`). Unset = no logging
-/// and no file handle. Debug aid for seeing what a child actually asks for.
+/// Record a sequence a child sent, and deck's reply, when `DECK_SEQ_LOG` is set.
 fn log_sequence(sequence: &[u8], reply: Option<&[u8]>) {
-    let Ok(path) = std::env::var("DECK_SEQ_LOG") else {
-        return;
-    };
-    let Ok(mut file) = std::fs::File::options()
-        .create(true)
-        .append(true)
-        .open(path)
-    else {
-        return;
-    };
-    let show = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace('\x1b', "\\e");
-    let _ = match reply {
-        Some(reply) => writeln!(file, "{} -> {}", show(sequence), show(reply)),
-        None => writeln!(file, "{}", show(sequence)),
-    };
+    let sequence = crate::seqlog::show(sequence);
+    match reply {
+        Some(reply) => crate::seqlog::log(&format!(
+            "child {sequence} -> {}",
+            crate::seqlog::show(reply)
+        )),
+        None => crate::seqlog::log(&format!("child {sequence}")),
+    }
 }
 
 fn handle_osc(

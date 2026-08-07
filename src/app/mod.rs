@@ -106,6 +106,10 @@ pub struct App {
     /// refresh. Explicit refresh-causing actions still run, and the following
     /// periodic tick resumes normally.
     pub(super) suppress_next_periodic_refresh: bool,
+    /// Set once the host terminal has answered a color-scheme query or pushed a
+    /// report. Retires the startup query retry; changes after that arrive on
+    /// their own via DEC mode 2031.
+    pub(super) scheme_answered: bool,
 }
 
 impl App {
@@ -225,6 +229,7 @@ impl App {
             focus_seq: 0,
             own_session: tmux::own_session(),
             suppress_next_periodic_refresh: false,
+            scheme_answered: false,
         };
 
         // "Follow terminal" resolves a frame later: `run` asks on its first
@@ -255,12 +260,19 @@ impl App {
     /// never touches terminal input. Terminals that don't implement the query
     /// stay silent and "follow terminal" keeps the assumed dark.
     pub(super) fn query_color_scheme(&self) {
+        crate::seqlog::log("host ask \x1b[?996n");
         let _ = crossterm::execute!(io::stdout(), crossterm::event::QueryColorScheme);
     }
 
     /// Record the scheme the terminal just reported and re-resolve the theme.
     /// Returns whether the effective theme moved.
     pub(super) fn set_terminal_scheme(&mut self, dark: bool) -> bool {
+        let scheme = if dark { 1 } else { 2 };
+        crate::seqlog::log(&format!("host got \x1b[?997;{scheme}n"));
+        // `CSI ? 996 n` is a one-shot query by design; mode 2031 is the ongoing
+        // channel. Once the terminal has answered once, stop re-querying — a
+        // later flaky answer would otherwise overwrite a correct pushed one.
+        self.scheme_answered = true;
         let before = self.state.active_theme_index();
         self.state.terminal_is_dark = dark;
         let changed = self.state.active_theme_index() != before;
