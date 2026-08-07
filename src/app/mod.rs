@@ -106,10 +106,11 @@ pub struct App {
     /// refresh. Explicit refresh-causing actions still run, and the following
     /// periodic tick resumes normally.
     pub(super) suppress_next_periodic_refresh: bool,
-    /// Set once the host terminal has answered a color-scheme query or pushed a
-    /// report. Retires the startup query retry; changes after that arrive on
-    /// their own via DEC mode 2031.
-    pub(super) scheme_answered: bool,
+    /// Set once the host terminal has reported a scheme with `CSI ? 997`. It
+    /// therefore implements mode 2031 too and will push every later change, so
+    /// deck stops asking and ignores the OSC 11 fallback. Terminals without the
+    /// protocol leave this false and get asked on a tick forever.
+    pub(super) scheme_via_protocol: bool,
 }
 
 impl App {
@@ -229,7 +230,7 @@ impl App {
             focus_seq: 0,
             own_session: tmux::own_session(),
             suppress_next_periodic_refresh: false,
-            scheme_answered: false,
+            scheme_via_protocol: false,
         };
 
         // "Follow terminal" resolves a frame later: `run` asks on its first
@@ -260,19 +261,42 @@ impl App {
     /// never touches terminal input. Terminals that don't implement the query
     /// stay silent and "follow terminal" keeps the assumed dark.
     pub(super) fn query_color_scheme(&self) {
-        crate::seqlog::log("host ask \x1b[?996n");
-        let _ = crossterm::execute!(io::stdout(), crossterm::event::QueryColorScheme);
+        crate::seqlog::log("host ask \x1b[?996n \x1b]11;?");
+        let _ = crossterm::execute!(
+            io::stdout(),
+            crossterm::event::QueryColorScheme,
+            crossterm::event::QueryBackgroundColor
+        );
     }
 
-    /// Record the scheme the terminal just reported and re-resolve the theme.
-    /// Returns whether the effective theme moved.
+    /// Fall back to the background color the terminal reported (OSC 11) when it
+    /// doesn't speak the color-scheme protocol — which is most of them. Ignored
+    /// once a `CSI ? 997` has arrived: that's the terminal's own verdict, and it
+    /// beats guessing from a color.
+    pub(super) fn set_terminal_background(&mut self, color: (u8, u8, u8)) -> bool {
+        if self.scheme_via_protocol {
+            return false;
+        }
+        let (r, g, b) = color;
+        crate::seqlog::log(&format!("host got \x1b]11;rgb:{r:02x}/{g:02x}/{b:02x}"));
+        // Rec. 601 luma, split at mid-gray: anything darker reads as a dark
+        // terminal. The same weighting `theme::Theme::is_dark` uses.
+        let luma = 0.299 * f64::from(r) + 0.587 * f64::from(g) + 0.114 * f64::from(b);
+        self.apply_terminal_scheme(luma < 128.0)
+    }
+
+    /// Record the scheme the terminal reported for itself (`CSI ? 997`) and
+    /// re-resolve the theme. Returns whether the effective theme moved.
     pub(super) fn set_terminal_scheme(&mut self, dark: bool) -> bool {
         let scheme = if dark { 1 } else { 2 };
         crate::seqlog::log(&format!("host got \x1b[?997;{scheme}n"));
-        // `CSI ? 996 n` is a one-shot query by design; mode 2031 is the ongoing
-        // channel. Once the terminal has answered once, stop re-querying — a
-        // later flaky answer would otherwise overwrite a correct pushed one.
-        self.scheme_answered = true;
+        // This terminal speaks the protocol, so mode 2031 will report every
+        // later change: stop asking, and stop deriving anything from OSC 11.
+        self.scheme_via_protocol = true;
+        self.apply_terminal_scheme(dark)
+    }
+
+    fn apply_terminal_scheme(&mut self, dark: bool) -> bool {
         let before = self.state.active_theme_index();
         self.state.terminal_is_dark = dark;
         let changed = self.state.active_theme_index() != before;

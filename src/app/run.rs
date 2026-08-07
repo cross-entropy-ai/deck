@@ -400,6 +400,16 @@ impl App {
                         };
                         redraw.apply(&mut needs_render, &mut force_render);
                     }
+                    // The fallback answer, for the many terminals that report a
+                    // background color but not a scheme.
+                    Event::TerminalColor { code: 11, color } => {
+                        let redraw = if self.set_terminal_background(color) {
+                            Redraw::Force
+                        } else {
+                            Redraw::No
+                        };
+                        redraw.apply(&mut needs_render, &mut force_render);
+                    }
                     // Coming back from wherever the user just flipped their
                     // system appearance: re-ask right away rather than waiting
                     // out the tick. Terminals that push (mode 2031) have already
@@ -438,14 +448,16 @@ impl App {
                 }
             }
 
-            // Initial resolve: the ticker is seeded due, so the first iteration
-            // asks, and it keeps re-asking until the terminal answers once
-            // (some answer only after their surface has settled). After that,
-            // changes arrive on their own via mode 2031. Writing the query never
-            // touches input — the answer comes back through crossterm as an
-            // `Event::ColorScheme` like any other event, and terminals that
-            // implement neither query stay silent forever.
-            if !self.scheme_answered
+            // Ask the terminal what it's showing. The ticker is seeded due, so
+            // the first iteration resolves the startup theme; after that this is
+            // how a terminal without mode 2031 (most of them, including ones
+            // that answer only OSC 11) still tracks a light/dark flip. One that
+            // does push stops being asked — see `scheme_via_protocol`.
+            //
+            // Asking never touches input: both answers come back through
+            // crossterm as ordinary events, and a terminal that implements
+            // neither query stays silent forever.
+            if !self.scheme_via_protocol
                 && self.state.prefs.theme_auto
                 && theme_poll.due(Instant::now())
             {
