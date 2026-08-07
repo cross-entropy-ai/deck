@@ -16,14 +16,16 @@
 use std::io;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{self, ColorScheme, Event, KeyEventKind};
 use ratatui::DefaultTerminal;
 
 use crate::action::{self, Action, PfAction};
 use crate::state::{FocusMode, MainView};
 use crate::summary_card::SummaryState;
 
-use super::{render_min_interval, App, CONFIG_POLL_INTERVAL, POLL_MS, REFRESH_INTERVAL};
+use super::{
+    render_min_interval, App, CONFIG_POLL_INTERVAL, POLL_MS, REFRESH_INTERVAL, THEME_POLL_INTERVAL,
+};
 
 /// Whether a loop iteration needs to repaint, and how urgently. `Soft`
 /// schedules a render but lets the frame-rate gate throttle it; `Force`
@@ -286,6 +288,9 @@ impl App {
         // `self.config_mtime_seen` (see `save_config`) so they don't read back
         // as external edits.
         let mut config_poll = Ticker::new(CONFIG_POLL_INTERVAL);
+        // Auto theme watcher: re-ask the host terminal for its color scheme so
+        // a light/dark flip lands while deck is running and focused.
+        let mut theme_poll = Ticker::new_due(THEME_POLL_INTERVAL);
 
         loop {
             let mut redraw = Redraw::No;
@@ -384,13 +389,22 @@ impl App {
                         needs_render = true;
                         force_render = true;
                     }
-                    // Coming back from wherever the user just flipped their
-                    // system appearance: re-resolve Auto mode's dark/light pick.
-                    Event::FocusGained => {
-                        let flipped = self.reprobe_terminal_bg_on_focus();
-                        let redraw = if flipped { Redraw::Force } else { Redraw::No };
+                    // The terminal telling us its scheme changed (DEC mode 2031,
+                    // enabled by `TerminalGuard`). This is the good path: no
+                    // probe, no lag, and it works through ssh and tmux.
+                    Event::ColorScheme(scheme) => {
+                        let redraw = if self.set_terminal_scheme(scheme == ColorScheme::Dark) {
+                            Redraw::Force
+                        } else {
+                            Redraw::No
+                        };
                         redraw.apply(&mut needs_render, &mut force_render);
                     }
+                    // Coming back from wherever the user just flipped their
+                    // system appearance: re-ask right away rather than waiting
+                    // out the tick. Terminals that push (mode 2031) have already
+                    // told us and will answer this with the same value.
+                    Event::FocusGained if self.state.prefs.theme_auto => self.query_color_scheme(),
                     _ => {}
                 }
             }
@@ -422,6 +436,16 @@ impl App {
                     self.request_refresh();
                     self.probe_active_pane();
                 }
+            }
+
+            // Backstop for terminals that answer `CSI ? 996 n` but don't push
+            // changes (no mode 2031), and the initial resolve — the ticker is
+            // seeded due so the first iteration asks. Writing the query never
+            // touches input: the answer comes back through crossterm as an
+            // `Event::ColorScheme` like any other event, and terminals that
+            // implement neither query stay silent.
+            if theme_poll.due(Instant::now()) && self.state.prefs.theme_auto {
+                self.query_color_scheme();
             }
 
             if config_poll.due(Instant::now()) {

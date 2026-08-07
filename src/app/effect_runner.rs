@@ -155,8 +155,8 @@ impl App {
                         self.dispatch(Action::Pf(PfAction::Open(lane)));
                     }
                 }
-                Effect::ApplyTmuxTheme => crate::tmux::apply_theme(self.state.active_theme()),
-                Effect::ProbeTerminalBg => self.probe_terminal_bg(),
+                Effect::ApplyTmuxTheme => self.apply_theme_change(),
+                Effect::QueryColorScheme => self.query_color_scheme(),
                 Effect::RefreshSessions => self.request_refresh(),
                 Effect::RereadNewSessionEntries => self.request_new_session_listing(),
                 Effect::OpenNewSessionPicker(lane) => self.open_new_session_picker(lane.clone()),

@@ -1,9 +1,19 @@
-//! PTY-backed terminal surface and its child-facing OSC protocol boundary.
+//! PTY-backed terminal surface and its child-facing escape-sequence boundary.
 //!
-//! This module handles OSC emitted by a child attached through the PTY. The
-//! host-terminal OSC 11 probe used for automatic theme selection is a separate
-//! lifecycle concern in `termbg`; it must not be routed through a child
-//! surface.
+//! deck is the *terminal* for whatever runs in a pane, so it answers on its own
+//! behalf: OSC 10/11 (foreground/background) and `CSI ? 996 n` report deck's
+//! active theme, and a child that subscribes with DEC mode 2031 is pushed a
+//! `CSI ? 997` whenever that theme changes. A pane's TUI therefore tracks the
+//! sidebar around it.
+//!
+//! Set `DECK_SEQ_LOG=/tmp/deck.log` to record every sequence recognized here
+//! and the reply deck sent, for finding out what a given child actually asks
+//! for.
+//!
+//! The query deck runs in the other direction (asking the outer terminal what
+//! *it* is showing, `App::query_color_scheme`) is a separate concern: it goes
+//! to stdout and its answer arrives as a crossterm event. It must not be routed
+//! through a child surface.
 
 use std::io::{self, Write};
 
@@ -13,15 +23,18 @@ use ratatui::style::Color;
 use crate::pty::{Pty, PtyEvent};
 use crate::theme::Theme;
 
-/// Maximum bytes retained for an unterminated OSC sequence. A malformed child
+/// Maximum bytes retained for an unterminated sequence. A malformed child
 /// cannot grow the event-loop buffer without bound.
-const MAX_OSC_BYTES: usize = 16 * 1024;
+const MAX_SEQUENCE_BYTES: usize = 16 * 1024;
 
 pub(crate) struct TerminalSurface {
     pty: Pty,
     parser: vt100::Parser,
     alive: bool,
-    osc: OscStream,
+    esc: EscStream,
+    /// Set by `CSI ? 2031 h`: this child wants to be told when the color scheme
+    /// changes instead of re-querying.
+    scheme_notify: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -36,7 +49,18 @@ impl TerminalSurface {
             pty,
             parser: vt100::Parser::new(rows, cols, 0),
             alive: true,
-            osc: OscStream::default(),
+            esc: EscStream::default(),
+            scheme_notify: false,
+        }
+    }
+
+    /// Tell a child that subscribed with DEC mode 2031 that the scheme changed.
+    /// Children that never subscribed get nothing — an unsolicited `CSI ? 997`
+    /// would land in their input as junk (or, for a crossterm 0.29 app, wedge
+    /// its parser outright).
+    pub(crate) fn notify_color_scheme(&mut self, theme: &Theme) {
+        if self.scheme_notify {
+            let _ = self.pty.write(&color_scheme_report(theme));
         }
     }
 
@@ -65,8 +89,14 @@ impl TerminalSurface {
             match event {
                 PtyEvent::Output(data) => {
                     outcome.had_output = true;
-                    for sequence in self.osc.feed(&data) {
-                        if let Some(reply) = handle_osc(&sequence, active, theme, osc52_sink) {
+                    for sequence in self.esc.feed(&data) {
+                        let reply = if sequence.starts_with(b"\x1b[") {
+                            handle_csi(&sequence, theme, &mut self.scheme_notify)
+                        } else {
+                            handle_osc(&sequence, active, theme, osc52_sink)
+                        };
+                        log_sequence(&sequence, reply.as_deref());
+                        if let Some(reply) = reply {
                             let _ = self.pty.write(&reply);
                         }
                     }
@@ -104,60 +134,89 @@ pub(crate) fn pty_size(rows: u16, cols: u16) -> PtySize {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum OscState {
+enum EscState {
     #[default]
     Ground,
     Escape,
-    Sequence,
-    SequenceEscape,
+    Osc,
+    OscEscape,
+    /// Inside `CSI ?…` — a DEC private sequence. Plain CSI is dropped at the
+    /// first byte, so cursor moves and SGR never reach the buffer.
+    Csi,
 }
 
-/// Incremental OSC recognizer. It preserves only a possible introducer or one
-/// in-flight sequence; ordinary terminal output is never buffered here.
+/// Incremental recognizer for the two sequence families deck answers on behalf
+/// of a child: OSC (10/11/52) and DEC private CSI (996/2031). It preserves only
+/// a possible introducer or one in-flight sequence; ordinary terminal output is
+/// never buffered here.
 #[derive(Default)]
-struct OscStream {
-    state: OscState,
+struct EscStream {
+    state: EscState,
     buffer: Vec<u8>,
 }
 
-impl OscStream {
+impl EscStream {
     fn feed(&mut self, data: &[u8]) -> Vec<Vec<u8>> {
         let mut complete = Vec::new();
         for &byte in data {
             match self.state {
-                OscState::Ground => {
+                EscState::Ground => {
                     if byte == 0x1b {
-                        self.state = OscState::Escape;
+                        self.state = EscState::Escape;
                     }
                 }
-                OscState::Escape => match byte {
+                EscState::Escape => match byte {
                     b']' => {
                         self.buffer.clear();
                         self.buffer.extend_from_slice(b"\x1b]");
-                        self.state = OscState::Sequence;
+                        self.state = EscState::Osc;
+                    }
+                    b'[' => {
+                        self.buffer.clear();
+                        self.buffer.extend_from_slice(b"\x1b[");
+                        self.state = EscState::Csi;
                     }
                     0x1b => {}
-                    _ => self.state = OscState::Ground,
+                    _ => self.state = EscState::Ground,
                 },
-                OscState::Sequence => {
+                EscState::Osc => {
                     self.buffer.push(byte);
                     if byte == 0x07 {
                         complete.push(std::mem::take(&mut self.buffer));
-                        self.state = OscState::Ground;
+                        self.state = EscState::Ground;
                     } else if byte == 0x1b {
-                        self.state = OscState::SequenceEscape;
+                        self.state = EscState::OscEscape;
                     } else {
                         self.enforce_bound();
                     }
                 }
-                OscState::SequenceEscape => {
+                EscState::OscEscape => {
                     self.buffer.push(byte);
                     if byte == b'\\' {
                         complete.push(std::mem::take(&mut self.buffer));
-                        self.state = OscState::Ground;
+                        self.state = EscState::Ground;
                     } else if byte != 0x1b {
-                        self.state = OscState::Sequence;
+                        self.state = EscState::Osc;
                         self.enforce_bound();
+                    } else {
+                        self.enforce_bound();
+                    }
+                }
+                EscState::Csi => {
+                    if byte == 0x1b {
+                        // Truncated sequence; the ESC starts a fresh one.
+                        self.buffer.clear();
+                        self.state = EscState::Escape;
+                        continue;
+                    }
+                    self.buffer.push(byte);
+                    if self.buffer.len() == 3 && byte != b'?' {
+                        self.buffer.clear();
+                        self.state = EscState::Ground;
+                    } else if (0x40..=0x7e).contains(&byte) {
+                        // A final byte ends a CSI sequence; there is no ST.
+                        complete.push(std::mem::take(&mut self.buffer));
+                        self.state = EscState::Ground;
                     } else {
                         self.enforce_bound();
                     }
@@ -168,11 +227,60 @@ impl OscStream {
     }
 
     fn enforce_bound(&mut self) {
-        if self.buffer.len() > MAX_OSC_BYTES {
+        if self.buffer.len() > MAX_SEQUENCE_BYTES {
             self.buffer.clear();
-            self.state = OscState::Ground;
+            self.state = EscState::Ground;
         }
     }
+}
+
+/// The terminal side of the color-scheme protocol, for children that speak it.
+/// deck answers for its *own* theme, not the host terminal's, so a pane's TUI
+/// matches the sidebar drawn around it.
+///
+/// Only the bare forms are matched — a child bundling 2031 with other modes
+/// (`CSI ? 1 ; 2031 h`) is not recognized. No terminal or app writes it that
+/// way; split the params here if one ever does.
+fn handle_csi(sequence: &[u8], theme: &Theme, notify: &mut bool) -> Option<Vec<u8>> {
+    match sequence {
+        b"\x1b[?996n" => Some(color_scheme_report(theme)),
+        b"\x1b[?2031h" => {
+            *notify = true;
+            None
+        }
+        b"\x1b[?2031l" => {
+            *notify = false;
+            None
+        }
+        _ => None,
+    }
+}
+
+/// `CSI ? 997 ; 1 n` (dark) or `; 2 n` (light).
+fn color_scheme_report(theme: &Theme) -> Vec<u8> {
+    let scheme = if theme.is_dark() { 1 } else { 2 };
+    format!("\x1b[?997;{scheme}n").into_bytes()
+}
+
+/// Append every recognized sequence, and deck's reply, to the file named by
+/// `DECK_SEQ_LOG` (e.g. `DECK_SEQ_LOG=/tmp/deck.log deck`). Unset = no logging
+/// and no file handle. Debug aid for seeing what a child actually asks for.
+fn log_sequence(sequence: &[u8], reply: Option<&[u8]>) {
+    let Ok(path) = std::env::var("DECK_SEQ_LOG") else {
+        return;
+    };
+    let Ok(mut file) = std::fs::File::options()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+    let show = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace('\x1b', "\\e");
+    let _ = match reply {
+        Some(reply) => writeln!(file, "{} -> {}", show(sequence), show(reply)),
+        None => writeln!(file, "{}", show(sequence)),
+    };
 }
 
 fn handle_osc(
@@ -207,8 +315,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dec_private_sequences_are_recognized_and_plain_csi_is_not() {
+        let mut parser = EscStream::default();
+        // Cursor moves, SGR and the alt-screen toggle are ordinary output; only
+        // the DEC private forms must survive into the buffer.
+        let sequences = parser.feed(b"\x1b[2J\x1b[1;31mred\x1b[?996n\x1b[?2031h\x1b[H");
+        assert_eq!(
+            sequences,
+            vec![b"\x1b[?996n".to_vec(), b"\x1b[?2031h".to_vec()]
+        );
+        assert_eq!(parser.state, EscState::Ground);
+
+        // Split across reads, and a truncated sequence must not eat the next.
+        assert!(parser.feed(b"\x1b[?20").is_empty());
+        assert_eq!(parser.feed(b"31l"), vec![b"\x1b[?2031l".to_vec()]);
+        assert_eq!(
+            parser.feed(b"\x1b[?99\x1b[?996n"),
+            vec![b"\x1b[?996n".to_vec()]
+        );
+    }
+
+    #[test]
+    fn child_color_scheme_queries_are_answered_and_2031_subscribes() {
+        let dark = &crate::theme::THEMES[crate::theme::index_of("Catppuccin Mocha (Dark)")];
+        let light = &crate::theme::THEMES[crate::theme::index_of("Catppuccin Latte (Light)")];
+        let mut notify = false;
+
+        assert_eq!(
+            handle_csi(b"\x1b[?996n", dark, &mut notify),
+            Some(b"\x1b[?997;1n".to_vec())
+        );
+        assert_eq!(
+            handle_csi(b"\x1b[?996n", light, &mut notify),
+            Some(b"\x1b[?997;2n".to_vec())
+        );
+        assert!(!notify, "a query alone does not subscribe");
+
+        assert_eq!(handle_csi(b"\x1b[?2031h", dark, &mut notify), None);
+        assert!(notify);
+        assert_eq!(handle_csi(b"\x1b[?2031l", dark, &mut notify), None);
+        assert!(!notify);
+
+        // Anything else deck passes through untouched.
+        assert_eq!(handle_csi(b"\x1b[?1049h", dark, &mut notify), None);
+        assert!(!notify);
+    }
+
+    #[test]
     fn split_and_multiple_osc_sequences_are_recognized() {
-        let mut parser = OscStream::default();
+        let mut parser = EscStream::default();
         assert!(parser.feed(b"before\x1b]52;c;split").is_empty());
         let sequences = parser.feed(b"-value\x1b\\middle\x1b]10;?\x07\x1b]11;?\x1b\\");
 
@@ -246,11 +401,11 @@ mod tests {
 
     #[test]
     fn unterminated_osc_buffer_is_bounded_and_parser_recovers() {
-        let mut parser = OscStream::default();
+        let mut parser = EscStream::default();
         let mut malformed = b"\x1b]52;c;".to_vec();
-        malformed.resize(MAX_OSC_BYTES + 32, b'x');
+        malformed.resize(MAX_SEQUENCE_BYTES + 32, b'x');
         assert!(parser.feed(&malformed).is_empty());
-        assert!(parser.buffer.len() <= MAX_OSC_BYTES);
+        assert!(parser.buffer.len() <= MAX_SEQUENCE_BYTES);
 
         let complete = parser.feed(b"\x1b]11;?\x07");
         assert_eq!(complete, vec![b"\x1b]11;?\x07".to_vec()]);

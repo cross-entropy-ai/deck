@@ -85,10 +85,10 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         SettingsAction::ToggleThemeAuto => {
             state.prefs.theme_auto = !state.prefs.theme_auto;
             fx.save_config();
-            // Re-probe on the way in: the terminal may have flipped appearance
-            // since startup, and if auto was off at startup we never probed.
+            // Re-ask on the way in: the terminal may have flipped appearance
+            // since startup, and if auto was off we ignored any report so far.
             if state.prefs.theme_auto {
-                fx.push(Effect::ProbeTerminalBg);
+                fx.push(Effect::QueryColorScheme);
             }
             fx.push(Effect::ApplyTmuxTheme);
         }

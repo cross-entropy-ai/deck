@@ -531,7 +531,7 @@ fn theme_submenu_toggles_auto_and_transparent_background() {
     assert!(fx
         .effects()
         .iter()
-        .any(|effect| matches!(effect, crate::effects::Effect::ProbeTerminalBg)));
+        .any(|effect| matches!(effect, crate::effects::Effect::QueryColorScheme)));
 
     state.settings.set_selected(3);
     let before = state.prefs.transparent_bg;

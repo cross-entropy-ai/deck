@@ -19,6 +19,18 @@ pub struct Theme {
     pub error: Color,
 }
 
+impl Theme {
+    /// Whether this theme reads as dark: Rec. 601 luma of its background, split
+    /// at mid-gray. Drives the `CSI ? 997` color-scheme report deck gives the
+    /// children attached to its panes.
+    pub fn is_dark(&self) -> bool {
+        let Color::Rgb(r, g, b) = self.bg else {
+            return true;
+        };
+        0.299 * f64::from(r) + 0.587 * f64::from(g) + 0.114 * f64::from(b) < 128.0
+    }
+}
+
 pub const THEMES: &[Theme] = &[
     Theme {
         name: "Catppuccin Mocha (Dark)",

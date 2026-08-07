@@ -56,7 +56,7 @@ Source is split into five top-level modules under `src/` (plus `main.rs`).
 The rendering path: the `app` loop builds borrowed session slices ->
 `ui::draw_*()` pure functions -> `bridge::render_screen()` for the PTY pane.
 
-`vt100` is pinned to a long-lived `deck` branch on a fork (`Junyi-99/vt100-rust`) via `[patch.crates-io]` in `Cargo.toml`. See `docs/vt100-fork.md` for what's patched and how to add new fixes.
+`vt100` and `crossterm` are each pinned to a long-lived `deck` branch on a fork (`Junyi-99/vt100-rust`, `Junyi-99/crossterm`) via `[patch.crates-io]` in `Cargo.toml`. See `docs/vt100-fork.md` and `docs/crossterm-fork.md` for what's patched and how to add new fixes.
 
 ### Lanes and Systems: don't branch on local vs remote (or on which system)
 

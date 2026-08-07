@@ -38,6 +38,10 @@ use focus_executor::ActivePaneProbeExecutor;
 const POLL_MS: u64 = 16;
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// How often Auto mode re-asks the terminal for its color scheme, for terminals
+/// that answer the query but don't push changes. Just a write; the answer
+/// arrives as an ordinary event.
+const THEME_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 3600);
 
 fn render_min_interval(frame_rate_limit: u16) -> Duration {
@@ -102,10 +106,6 @@ pub struct App {
     /// refresh. Explicit refresh-causing actions still run, and the following
     /// periodic tick resumes normally.
     pub(super) suppress_next_periodic_refresh: bool,
-    /// Set once the host terminal ignores an OSC 11 probe: it won't answer the
-    /// next one either, so stop re-probing it on focus (each attempt costs the
-    /// full probe timeout with terminal input blocked).
-    pub(super) terminal_bg_unanswered: bool,
 }
 
 impl App {
@@ -225,16 +225,12 @@ impl App {
             focus_seq: 0,
             own_session: tmux::own_session(),
             suppress_next_periodic_refresh: false,
-            terminal_bg_unanswered: false,
         };
 
-        // Resolve "follow terminal" before the first frame: the probe reads the
-        // real tty, so it has to happen before the event loop starts consuming
-        // input. Terminals that don't answer keep the assumed dark.
-        if app.state.prefs.theme_auto {
-            app.probe_terminal_bg();
-        }
-        tmux::apply_theme(app.state.active_theme());
+        // "Follow terminal" resolves a frame later: `run` asks on its first
+        // iteration and the answer arrives as an event. Terminals that don't
+        // answer keep the assumed dark.
+        app.apply_theme_change();
         app.request_refresh();
 
         // Send Bootstrap once so the worker establishes ControlMasters and
@@ -254,41 +250,36 @@ impl App {
         Ok(app)
     }
 
-    /// Ask the host terminal whether its background is dark (OSC 11) and store
-    /// the answer for `active_theme`. A terminal that doesn't answer leaves the
-    /// previous value alone, so "follow terminal" degrades to the dark theme
-    /// rather than flipping around.
-    ///
-    /// Only safe to call while nothing else is reading terminal input — at
-    /// startup, or from effect dispatch between event-loop polls.
-    pub(super) fn probe_terminal_bg(&mut self) {
-        match crate::termbg::terminal_is_dark(crate::termbg::PROBE_TIMEOUT) {
-            Some(dark) => self.state.terminal_is_dark = dark,
-            // Remember the silence: every probe against a terminal that doesn't
-            // implement OSC 11 blocks input for the full timeout, so re-probing
-            // it on each focus-gain would be a recurring input stall.
-            None => self.terminal_bg_unanswered = true,
-        }
+    /// Ask the host terminal which color scheme it is showing. Write-only: the
+    /// answer comes back through crossterm as a `ColorScheme` event, so this
+    /// never touches terminal input. Terminals that don't implement the query
+    /// stay silent and "follow terminal" keeps the assumed dark.
+    pub(super) fn query_color_scheme(&self) {
+        let _ = crossterm::execute!(io::stdout(), crossterm::event::QueryColorScheme);
     }
 
-    /// Re-probe when the terminal regains focus, so Auto mode notices a system
-    /// appearance change made while deck sat in the background. Returns whether
-    /// the effective theme moved.
-    ///
-    /// Focus is the trigger because the terminal's own "color scheme changed"
-    /// notification (DEC mode 2031 → `CSI ? 997 ; N n`) never reaches us:
-    /// crossterm's CSI parser handles only `?…u` and `?…c` and drops the rest.
-    pub(super) fn reprobe_terminal_bg_on_focus(&mut self) -> bool {
-        if !self.state.prefs.theme_auto || self.terminal_bg_unanswered {
-            return false;
-        }
+    /// Record the scheme the terminal just reported and re-resolve the theme.
+    /// Returns whether the effective theme moved.
+    pub(super) fn set_terminal_scheme(&mut self, dark: bool) -> bool {
         let before = self.state.active_theme_index();
-        self.probe_terminal_bg();
+        self.state.terminal_is_dark = dark;
         let changed = self.state.active_theme_index() != before;
         if changed {
-            tmux::apply_theme(self.state.active_theme());
+            self.apply_theme_change();
         }
         changed
+    }
+
+    /// Push the theme in force everywhere outside deck's own rendering: tmux's
+    /// palette, and every attached child that subscribed to color-scheme
+    /// notifications (DEC mode 2031). The one place a theme change fans out, so
+    /// a new sink is added here rather than at each of the callers.
+    pub(super) fn apply_theme_change(&mut self) {
+        let theme = self.state.active_theme();
+        tmux::apply_theme(theme);
+        for (_, pane) in self.attachments.panes_mut() {
+            pane.notify_color_scheme(theme);
+        }
     }
 
     /// The terminal pane that owns the main view: local by default, or the

@@ -5,7 +5,6 @@
 use crate::config::Config;
 use crate::keybindings::{self, Keybindings};
 use crate::state::ReloadStatus;
-use crate::tmux;
 
 use super::App;
 
@@ -70,10 +69,10 @@ impl App {
         // used at startup) so reload can't silently miss a field.
         self.state.apply_config(&cfg, new_theme_index, compiled);
 
-        // Auto just came on from the file: nothing has probed the terminal yet
-        // this run, so do it now instead of assuming dark.
+        // Auto just came on from the file: ask now rather than waiting out the
+        // tick. The answer lands as an event and re-resolves the theme then.
         if self.state.prefs.theme_auto && !was_auto {
-            self.probe_terminal_bg();
+            self.query_color_scheme();
         }
         let theme_changed = self.state.active_theme_index() != old_theme_index;
 
@@ -169,7 +168,7 @@ impl App {
 
         self.resize_pty();
         if theme_changed {
-            tmux::apply_theme(self.state.active_theme());
+            self.apply_theme_change();
         }
         self.request_refresh();
     }

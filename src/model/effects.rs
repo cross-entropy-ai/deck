@@ -47,9 +47,10 @@ pub enum Effect {
     SaveConfig,
     SaveSessionOrder(LaneId),
     ApplyTmuxTheme,
-    /// Re-run the OSC 11 probe of the host terminal's background, so
-    /// "follow terminal" theme mode picks the matching dark/light theme.
-    ProbeTerminalBg,
+    /// Ask the host terminal which color scheme it is showing (`CSI ? 996 n`),
+    /// so "follow terminal" theme mode picks the matching dark/light theme. The
+    /// answer arrives asynchronously as a `ColorScheme` event.
+    QueryColorScheme,
     RefreshSessions,
     Quit,
 }

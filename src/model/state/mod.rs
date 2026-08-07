@@ -569,10 +569,10 @@ pub struct AppState {
     /// See [`Prefs`]. Read widely as `state.prefs.<field>`; loaded via
     /// [`AppState::apply_config`], written back via [`Prefs::to_config`].
     pub prefs: Prefs,
-    /// Whether the *host terminal's* background is dark, as answered by the
-    /// OSC 11 probe (`infra::termbg`). Runtime-only, not persisted; drives
-    /// `active_theme` when `prefs.theme_auto` is on. Assumed dark, which is
-    /// what a terminal that never answers the probe gets.
+    /// Whether the *host terminal* is showing a dark color scheme, as the
+    /// terminal itself reported it (`CSI ? 997`). Runtime-only, not persisted;
+    /// drives `active_theme` when `prefs.theme_auto` is on. Assumed dark, which
+    /// is what a terminal that never answers the query gets.
     pub terminal_is_dark: bool,
     /// Settings page navigation + theme picker / keybindings viewer
     /// overlays. See `SettingsState`.

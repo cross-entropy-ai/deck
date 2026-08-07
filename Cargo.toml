@@ -32,3 +32,7 @@ confy = { version = "2.0.0", default-features = false, features = ["yaml_conf"] 
 # carries fixes we depend on. See docs/vt100-fork.md for what's
 # patched and how to maintain it.
 vt100 = { git = "https://github.com/Junyi-99/vt100-rust", branch = "deck" }
+# Same arrangement for crossterm: the `deck` branch adds `Event::ColorScheme`
+# and the DEC 996/2031 commands, and fixes the parser buffer wedging on any
+# unrecognised `CSI ? … <final>`. See docs/crossterm-fork.md.
+crossterm = { git = "https://github.com/Junyi-99/crossterm", branch = "deck" }

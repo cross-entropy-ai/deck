@@ -10,7 +10,7 @@ pub(crate) use infra::guards::{instance_guard, terminal_guard};
 pub(crate) use infra::ssh::model::{add_remote, forwards};
 pub(crate) use infra::tmux::{local as tmux, remote as remote_tmux};
 pub(crate) use infra::{
-    agent, focus, pty, refresh, self_update, shutdown, ssh, summary, termbg, update, worker,
+    agent, focus, pty, refresh, self_update, shutdown, ssh, summary, update, worker,
 };
 pub(crate) use model::{
     config, effects, exclude, geometry, keybindings, lane, menu, new_session, overlay, picker,

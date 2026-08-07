@@ -1,18 +1,18 @@
 use std::io;
 
 use crossterm::event::{
-    DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
-    EnableFocusChange, EnableMouseCapture, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, DisableColorSchemeChange, DisableFocusChange, DisableMouseCapture,
+    EnableBracketedPaste, EnableColorSchemeChange, EnableFocusChange, EnableMouseCapture,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 
 /// Terminal-mode guard for the TUI lifetime.
 ///
-/// Entering the TUI enables mouse capture, bracketed paste, focus events, and
-/// keyboard enhancement flags. Dropping the guard best-effort restores them so
-/// early returns from the app loop don't leave the terminal in deck's
-/// interactive state.
+/// Entering the TUI enables mouse capture, bracketed paste, focus events,
+/// color-scheme change notifications, and keyboard enhancement flags. Dropping
+/// the guard best-effort restores them so early returns from the app loop don't
+/// leave the terminal in deck's interactive state.
 pub struct TerminalGuard;
 
 impl TerminalGuard {
@@ -23,6 +23,7 @@ impl TerminalGuard {
             EnableMouseCapture,
             EnableBracketedPaste,
             EnableFocusChange,
+            EnableColorSchemeChange,
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
         )?;
         Ok(guard)
@@ -36,6 +37,7 @@ impl Drop for TerminalGuard {
             DisableMouseCapture,
             DisableBracketedPaste,
             DisableFocusChange,
+            DisableColorSchemeChange,
             PopKeyboardEnhancementFlags
         );
     }
