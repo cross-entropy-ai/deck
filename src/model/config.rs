@@ -66,10 +66,11 @@ impl<'de> Deserialize<'de> for KeyBindingValue {
 #[serde(default)]
 pub struct Config {
     pub theme: String,
-    /// Follow the host terminal's appearance instead of `theme`: deck probes
-    /// the terminal's background color (OSC 11) and uses `dark_theme` or
-    /// `light_theme`. Terminals that don't answer the probe fall back to
-    /// `dark_theme`.
+    /// Follow the host terminal's color scheme instead of `theme`: deck asks
+    /// the terminal what it is showing (`CSI ? 996 n`, falling back to the
+    /// background color from OSC 11) and uses `dark_theme` or `light_theme`.
+    /// On by default; terminals that answer neither query stay on `dark_theme`,
+    /// which is what a fixed default would have given them anyway.
     pub theme_auto: bool,
     /// The themes `theme_auto` picks between, by name.
     pub dark_theme: String,
@@ -134,7 +135,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             theme: "Catppuccin Mocha (Dark)".to_string(),
-            theme_auto: false,
+            theme_auto: true,
             dark_theme: "Catppuccin Mocha (Dark)".to_string(),
             light_theme: "Catppuccin Latte (Light)".to_string(),
             layout: LayoutMode::Horizontal,
