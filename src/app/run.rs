@@ -25,6 +25,7 @@ use crate::summary_card::SummaryState;
 
 use super::{
     render_min_interval, App, CONFIG_POLL_INTERVAL, POLL_MS, REFRESH_INTERVAL, THEME_POLL_INTERVAL,
+    THEME_RESOLVE_GRACE,
 };
 
 /// Whether a loop iteration needs to repaint, and how urgently. `Soft`
@@ -290,7 +291,16 @@ impl App {
         let mut config_poll = Ticker::new(CONFIG_POLL_INTERVAL);
         // Auto theme watcher: re-ask the host terminal for its color scheme so
         // a light/dark flip lands while deck is running and focused.
-        let mut theme_poll = Ticker::new_due(THEME_POLL_INTERVAL);
+        let mut theme_poll = Ticker::new(THEME_POLL_INTERVAL);
+        // Ask before anything is painted, and hold the first frame until the
+        // answer lands (or the grace expires). Painting first and correcting on
+        // the reply is what the user sees as a flash of the wrong theme. Only
+        // rendering waits — input and workers run normally underneath.
+        let mut first_paint_hold = None;
+        if self.state.prefs.theme_auto {
+            self.query_color_scheme();
+            first_paint_hold = Some(Instant::now() + THEME_RESOLVE_GRACE);
+        }
 
         loop {
             let mut redraw = Redraw::No;
@@ -337,8 +347,17 @@ impl App {
             // Frame-rate gate: render at most once per `render_min_interval`,
             // unless `force_render` bypasses it. Whenever a render actually
             // happens (forced or gated) the gate's clock is reset.
+            if first_paint_hold
+                .is_some_and(|deadline| self.scheme_resolved || Instant::now() >= deadline)
+            {
+                first_paint_hold = None;
+            }
+
             let min_interval = render_min_interval(self.state.prefs.frame_rate_limit);
-            if needs_render && (force_render || render_gate.last.elapsed() >= min_interval) {
+            if needs_render
+                && first_paint_hold.is_none()
+                && (force_render || render_gate.last.elapsed() >= min_interval)
+            {
                 self.render(terminal)?;
                 needs_render = false;
                 force_render = false;

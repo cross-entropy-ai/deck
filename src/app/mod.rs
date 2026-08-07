@@ -42,6 +42,12 @@ const CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// that answer the query but don't push changes. Just a write; the answer
 /// arrives as an ordinary event.
 const THEME_POLL_INTERVAL: Duration = Duration::from_secs(1);
+/// How long the very first frame waits for the terminal to say which scheme it
+/// is showing. Painting before the answer means painting in the wrong theme and
+/// correcting a few milliseconds later, which reads as a flash. Terminals that
+/// answer take about a millisecond; the rest never answer, and pay this once as
+/// startup latency with nothing on screen yet to flicker.
+const THEME_RESOLVE_GRACE: Duration = Duration::from_millis(100);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 3600);
 
 fn render_min_interval(frame_rate_limit: u16) -> Duration {
@@ -111,6 +117,9 @@ pub struct App {
     /// deck stops asking and ignores the OSC 11 fallback. Terminals without the
     /// protocol leave this false and get asked on a tick forever.
     pub(super) scheme_via_protocol: bool,
+    /// Set once the host terminal has reported its scheme by any route. Releases
+    /// the first frame, which is held until then (see `THEME_RESOLVE_GRACE`).
+    pub(super) scheme_resolved: bool,
 }
 
 impl App {
@@ -231,6 +240,7 @@ impl App {
             own_session: tmux::own_session(),
             suppress_next_periodic_refresh: false,
             scheme_via_protocol: false,
+            scheme_resolved: false,
         };
 
         // "Follow terminal" resolves a frame later: `run` asks on its first
@@ -297,6 +307,7 @@ impl App {
     }
 
     fn apply_terminal_scheme(&mut self, dark: bool) -> bool {
+        self.scheme_resolved = true;
         let before = self.state.active_theme_index();
         self.state.terminal_is_dark = dark;
         let changed = self.state.active_theme_index() != before;
