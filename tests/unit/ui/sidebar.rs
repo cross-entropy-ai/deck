@@ -112,6 +112,54 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
 }
 
 #[test]
+fn rename_popup_is_visible_for_vertical_layout() {
+    let theme = &crate::theme::THEMES[0];
+    let backend = TestBackend::new(60, 16);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let input = ratatui_textarea::TextArea::new(vec!["renamed-session".to_string()]);
+
+    terminal
+        .draw(|frame| super::draw_rename_popup(frame, frame.area(), theme, &input))
+        .unwrap();
+
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(text.contains("Rename session"));
+    assert!(text.contains("renamed-session"));
+    assert!(text.contains("Enter confirm / Esc cancel"));
+}
+
+#[test]
+fn collapsed_sidebar_draws_a_clickable_expand_rail() {
+    let theme = &crate::theme::THEMES[0];
+    let backend = TestBackend::new(20, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut hits = HitRegions::default();
+    terminal
+        .draw(|frame| {
+            hits = super::draw_collapsed_sidebar(
+                frame,
+                Rect::new(0, 0, crate::state::SIDEBAR_COLLAPSED_WIDTH, 10),
+                theme,
+                true,
+            );
+        })
+        .unwrap();
+
+    let toggle = hits.sidebar_toggle.expect("expand control");
+    assert_eq!(hits.hit(toggle.x, toggle.y), Some(HitKind::SidebarToggle));
+    assert_eq!(
+        terminal.backend().buffer()[(toggle.x, toggle.y)].symbol(),
+        "›"
+    );
+}
+
+#[test]
 fn idle_summary_without_agents_is_compact_and_disabled() {
     use crate::state::AppState;
 
@@ -262,7 +310,7 @@ fn header_shows_live_counts_and_opens_new_local_session() {
     let first_row: String = (0..50)
         .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
         .collect();
-    assert!(first_row.contains("Projects 1"));
+    assert!(first_row.contains("Sessions 1"));
     assert!(first_row.contains("Agents 1"));
     assert!(first_row.contains("+ New"));
 
@@ -641,6 +689,7 @@ fn captured_rects_stay_within_sidebar_area() {
         rects.extend(hits.banner);
         rects.extend(hits.menu);
         rects.extend(hits.new_session);
+        rects.extend(hits.sidebar_toggle);
         rects.extend(hits.summary.button);
         rects.extend(hits.summary.popup);
         rects.extend(hits.summary.card);

@@ -423,11 +423,15 @@ fn focus_pane_with(
     )
 }
 
-/// Test seam: the active-pane probe over the remote (ssh) transport, the
+/// Test seam: the active-target probe over the remote (ssh) transport, the
 /// twin of [`focus_pane_with`].
 #[cfg(test)]
-fn active_pane_with(runner: &dyn CommandRunner, host: &str, marker_id: u64) -> Option<String> {
-    crate::focus::active_pane_with(
+fn active_target_with(
+    runner: &dyn CommandRunner,
+    host: &str,
+    marker_id: u64,
+) -> Option<crate::focus::ActiveTarget> {
+    crate::focus::active_target_with(
         runner,
         &crate::focus::FocusTransport::Remote {
             host: host.to_string(),

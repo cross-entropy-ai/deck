@@ -16,6 +16,7 @@ const AGENTS_ICON: &str = "\u{f085}";
 pub(super) struct HeaderHits {
     pub tabs: TabRects,
     pub new_session: Option<Rect>,
+    pub sidebar_toggle: Rect,
 }
 
 struct HeaderLayout {
@@ -30,7 +31,8 @@ impl HeaderLayout {
         1 + self.projects.width()
             + self.gap.width()
             + self.agents.width()
-            + self.new_label.map_or(0, |label| 2 + label.width()) // quiet gap + trailing pad
+            + self.new_label.map_or(0, |label| 2 + label.width())
+            + 2 // quiet gap + collapse glyph
     }
 }
 
@@ -40,13 +42,13 @@ impl HeaderLayout {
 fn responsive_layout(width: u16, projects: usize, agents: usize) -> HeaderLayout {
     let candidates = [
         HeaderLayout {
-            projects: format!("{PROJECTS_ICON} Projects {projects}"),
+            projects: format!("{PROJECTS_ICON} Sessions {projects}"),
             agents: format!("{AGENTS_ICON} Agents {agents}"),
             gap: "   ",
             new_label: Some("+ New"),
         },
         HeaderLayout {
-            projects: format!("Projects {projects}"),
+            projects: format!("Sessions {projects}"),
             agents: format!("Agents {agents}"),
             gap: "  ",
             new_label: Some("+"),
@@ -76,7 +78,7 @@ fn responsive_layout(width: u16, projects: usize, agents: usize) -> HeaderLayout
         })
 }
 
-/// Draw the Projects / Agents selector with live counts and a responsive local
+/// Draw the Sessions / Agents selector with live counts and a responsive local
 /// new-session action. The action is right-aligned when it fits, so it stays a
 /// stable primary target while the tab labels consume the left side.
 pub(super) fn draw_header(
@@ -117,9 +119,10 @@ pub(super) fn draw_header(
         Span::styled(layout.agents, tab_style(active == SidebarTab::Agents)),
     ];
 
+    let sidebar_toggle_x = area.right().saturating_sub(2);
     let new_session = layout.new_label.map(|label| {
         let label_w = label.width() as u16;
-        let x = area.right().saturating_sub(label_w + 1);
+        let x = sidebar_toggle_x.saturating_sub(label_w + 1);
         let used = agents_x + agents_w;
         spans.push(Span::styled(
             " ".repeat(x.saturating_sub(used) as usize),
@@ -139,6 +142,19 @@ pub(super) fn draw_header(
             height: 1,
         }
     });
+
+    let used = new_session.map_or(agents_x + agents_w, |rect| rect.right());
+    spans.push(Span::styled(
+        " ".repeat(sidebar_toggle_x.saturating_sub(used) as usize),
+        Style::default().bg(theme.bg),
+    ));
+    spans.push(Span::styled(
+        "‹",
+        Style::default()
+            .fg(theme.accent)
+            .bg(theme.bg)
+            .add_modifier(Modifier::BOLD),
+    ));
 
     frame.render_widget(
         Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.bg)),
@@ -161,6 +177,12 @@ pub(super) fn draw_header(
             },
         },
         new_session,
+        sidebar_toggle: Rect {
+            x: sidebar_toggle_x,
+            y: area.y,
+            width: 1,
+            height: 1,
+        },
     }
 }
 
@@ -171,7 +193,7 @@ mod tests {
     #[test]
     fn normal_width_keeps_counts_and_compact_new_action() {
         let layout = responsive_layout(26, 8, 3);
-        assert_eq!(layout.projects, "Projects 8");
+        assert_eq!(layout.projects, "Sessions 8");
         assert_eq!(layout.agents, "Agents 3");
         assert_eq!(layout.new_label, Some("+"));
     }
@@ -179,7 +201,7 @@ mod tests {
     #[test]
     fn wide_width_uses_icons_and_labelled_new_action() {
         let layout = responsive_layout(48, 8, 3);
-        assert!(layout.projects.contains("Projects 8"));
+        assert!(layout.projects.contains("Sessions 8"));
         assert_eq!(layout.new_label, Some("+ New"));
     }
 
@@ -189,7 +211,7 @@ mod tests {
         assert_eq!(layout.projects, format!("{PROJECTS_ICON} 8"));
         assert_eq!(layout.agents, format!("{AGENTS_ICON} 3"));
         assert_eq!(layout.new_label, Some("+"));
-        assert!(!layout.projects.contains("Projects"));
+        assert!(!layout.projects.contains("Sessions"));
         assert!(!layout.agents.contains("Agents"));
     }
 

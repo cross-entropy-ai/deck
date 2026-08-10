@@ -360,7 +360,7 @@ impl AppState {
 
     /// Move the summary card off `Generating` back to the pre-generation state
     /// (Idle / prior Ready / Error), used on a mid-flight cancel. The App side
-    /// drops the worker (killing the `claude` child); this is the pure state
+    /// drops the worker (killing the selected agent CLI); this is the pure state
     /// half. No-op unless currently generating.
     pub fn cancel_summary(&mut self) {
         if self.summary.state != SummaryState::Generating {

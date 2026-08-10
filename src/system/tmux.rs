@@ -31,6 +31,7 @@ const LOCAL: &str = "local";
 /// forwards) live in `crate::ssh::divider::cmd`.
 mod cmd {
     pub const MENU: &str = "menu";
+    pub const NEW_SESSION: &str = "new-session";
 }
 
 /// The tmux backend. Configured remote definitions are backend-owned behind a
@@ -94,8 +95,15 @@ fn menu_button() -> SectionButton {
     }
 }
 
-/// Build one lane's [`SectionDef`]. The local lane is flush with just the menu
-/// button; a remote lane takes the ssh-registered buttons (the `⇄N` forward
+fn new_session_button() -> SectionButton {
+    SectionButton {
+        glyph: "+".to_string(),
+        action: LaneActionId::from(cmd::NEW_SESSION),
+    }
+}
+
+/// Build one lane's [`SectionDef`]. The local lane is flush with a direct
+/// new-session button; a remote lane takes the ssh-registered buttons (the `⇄N` forward
 /// count + reconnect, from `crate::ssh::divider`), then the menu button. This
 /// fn doesn't know which remote buttons exist — ssh decides.
 fn section_def(remotes: &[RemoteConfig], lane: &LaneId) -> SectionDef {
@@ -103,7 +111,7 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId) -> SectionDef {
         None => SectionDef {
             lane: lane.clone(),
             title: "local".to_string(),
-            buttons: vec![menu_button()],
+            buttons: vec![new_session_button()],
             top_margin: false,
             primary: true,
             session_capabilities: tmux_session_capabilities(),
@@ -357,6 +365,7 @@ impl LaneActionProvider for TmuxSystem {
         match action.as_str() {
             // The generic menu button this system owns.
             cmd::MENU => vec![LaneShellIntent::OpenContextMenu { anchor }],
+            cmd::NEW_SESSION if host.is_none() => vec![LaneShellIntent::OpenNewSession],
             // Everything else on a remote divider is ssh-registered; route it
             // back to ssh, which owns those commands' semantics.
             _ => match host {

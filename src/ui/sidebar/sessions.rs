@@ -158,7 +158,7 @@ pub(super) fn draw_sessions(
     let layout = &props.built.layout;
     if layout.row_count() == 0 && !props.agents_tab {
         frame.render_widget(
-            Paragraph::new("  No projects")
+            Paragraph::new("  No sessions")
                 .style(Style::default().fg(ctx.theme.muted).bg(ctx.theme.bg)),
             area,
         );

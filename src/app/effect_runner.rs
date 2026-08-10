@@ -53,8 +53,12 @@ impl App {
                             self.switch_to_session_if_safe(kill.lane.clone(), alternative);
                         }
                     } else if self.attachments.is_active(&kill.lane) {
-                        self.attachments.activate_primary();
-                        self.needs_full_redraw = true;
+                        if let Some(alternative) = &kill.switch_to {
+                            self.switch_to_attachment(crate::model::session::SessionId::new(
+                                kill.lane.clone(),
+                                alternative,
+                            ));
+                        }
                     }
                     self.submit_session(
                         kill.lane.clone(),
@@ -134,6 +138,9 @@ impl App {
                             }
                             crate::system::LaneShellIntent::OpenPortForwards => {
                                 self.dispatch(Action::Pf(PfAction::Open(lane.clone())));
+                            }
+                            crate::system::LaneShellIntent::OpenNewSession => {
+                                self.open_new_session_picker(lane.clone());
                             }
                             crate::system::LaneShellIntent::OpenContextMenu { anchor } => {
                                 self.dispatch(Action::Menu(MenuAction::OpenLaneDivider {

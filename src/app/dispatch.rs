@@ -488,6 +488,7 @@ impl App {
             })
             .collect();
         let template = self.state.prefs.summary_prompt.clone();
+        let agent = self.state.prefs.summary_agent;
         let model = self.state.prefs.summary_model.clone();
         let language = self.state.prefs.summary_language.clone();
 
@@ -496,16 +497,18 @@ impl App {
         self.state.summary.state = crate::summary_card::SummaryState::Generating;
         self.state.summary.scroll = 0;
         // One-shot worker: dropping it (on cancel/regenerate) flips the
-        // `Cancel` flag, which `run_claude` polls to kill the child (#12).
+        // `Cancel` flag, which the summary runner polls to kill the child (#12).
         self.summary_worker = Some(crate::worker::Worker::spawn_oneshot(
             "deck-summary",
-            move |cancel| crate::summary::generate(&panes, &template, &model, &language, &cancel),
+            move |cancel| {
+                crate::summary::generate(&panes, &template, agent, &model, &language, &cancel)
+            },
         ));
     }
 
     /// Cancel an in-flight summary generation (Esc on the Agents tab, or a
     /// cancel click). Dropping the worker signals its `Cancel` flag so
-    /// `run_claude` kills the `claude` child, and the card is restored to its
+    /// The summary runner kills the child, and the card is restored to its
     /// pre-Generate state. No-op unless a generation is running.
     fn cancel_summary_generation(&mut self) {
         if self.state.summary.state != crate::summary_card::SummaryState::Generating {
@@ -548,14 +551,14 @@ impl App {
         );
     }
 
-    /// Probe the pane Deck's main view shows and steer the Agents-tab row
-    /// highlight onto whatever agent lives there, so it tracks the *real* active
-    /// pane even when panes are switched outside Deck. Resolves the transport
+    /// Probe the session and pane Deck's main view shows and steer both sidebar
+    /// cursors onto that real target, including switches or closes performed
+    /// inside tmux rather than through Deck. Resolves the transport
     /// like `switch_to_agent_pane` (local tty vs remote marker) and queries
     /// off-thread (remote ssh can stall). Single-flighted so a slow probe can't
-    /// pile up behind the periodic tick; only runs on the Agents tab.
+    /// pile up behind the periodic tick.
     pub(super) fn probe_active_pane(&mut self) {
-        if !self.state.agents_tab_active() || self.active_pane_in_flight {
+        if self.active_pane_in_flight {
             return;
         }
         let lane = self.attachments.active_lane().clone();
@@ -579,11 +582,10 @@ impl App {
         self.active_pane_in_flight = spawned;
     }
 
-    /// Apply an active-pane probe result (drained in the event loop): steer the
-    /// highlight onto the agent in the now-active pane, or clear it if that pane
-    /// holds no agent. Dropped when stale — `focus_seq` bumped, displayed host
-    /// changed, or (remote) the connection generation rolled. A probe with no
-    /// pane id, or whose host isn't probed yet, leaves the marker untouched.
+    /// Apply an active-target probe result (drained in the event loop): steer
+    /// the Sessions cursor to the actual lane-qualified session and the Agents
+    /// cursor to the agent in its pane. Dropped when stale — `focus_seq` bumped,
+    /// displayed host changed, or the connection generation rolled.
     pub(super) fn apply_active_pane_outcome(&mut self, outcome: super::ActivePaneOutcome) {
         self.active_pane_in_flight = false;
         if outcome.seq != self.focus_seq {
@@ -598,18 +600,23 @@ impl App {
         {
             return;
         }
-        let pane_id = match outcome.pane_id {
-            Ok(pane_id) => pane_id,
+        let target = match outcome.target {
+            Ok(target) => target,
             Err(error) => {
                 self.state
                     .show_warning(format!("active-pane probe failed: {error}"));
                 return;
             }
         };
-        let Some(pane_id) = pane_id else {
+        let Some(target) = target else {
             return;
         };
-        self.state.steer_marker_to_pane(&outcome.lane, &pane_id);
+        self.state
+            .steer_marker_to_pane(&outcome.lane, &target.pane_id);
+        // The active-target query is more authoritative than an agent record
+        // from an earlier detection round, so it gets the final say on the
+        // Sessions cursor if that record is stale.
+        self.state.steer_session_to(&outcome.lane, &target.session);
     }
 
     /// Apply a focus completion (drained in the event loop), only when still

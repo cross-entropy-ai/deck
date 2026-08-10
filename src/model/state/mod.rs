@@ -23,6 +23,9 @@ mod layout;
 
 pub const SIDEBAR_MIN: u16 = 16;
 pub const SIDEBAR_MAX: u16 = 60;
+/// Width of the horizontal sidebar's collapsed rail. With borders enabled,
+/// this leaves one inner cell for the expand affordance.
+pub const SIDEBAR_COLLAPSED_WIDTH: u16 = 3;
 pub const SIDEBAR_HEIGHT: u16 = 4;
 pub const SIDEBAR_HEIGHT_MIN: u16 = 2;
 pub const SIDEBAR_HEIGHT_MAX: u16 = 4;
@@ -419,6 +422,7 @@ pub struct Prefs {
     pub sidebar_tab: SidebarTab,
     pub sidebar_width: u16,
     pub sidebar_height: u16,
+    pub sidebar_collapsed: bool,
     pub view_mode: ViewMode,
     pub frame_rate_limit: u16,
     pub exclude_patterns: Vec<String>,
@@ -427,6 +431,8 @@ pub struct Prefs {
     /// with the agent panes at generation time. Seeded in `App::new` and
     /// refreshed on config reload.
     pub summary_prompt: String,
+    /// Headless agent CLI used to generate the summary.
+    pub summary_agent: crate::summary_card::SummaryAgent,
     /// Model passed to `claude --model` for the summary (from config); empty
     /// follows the user's Claude Code default.
     pub summary_model: String,
@@ -464,11 +470,13 @@ impl Prefs {
             sidebar_tab: cfg.sidebar_tab,
             sidebar_width: cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX),
             sidebar_height: cfg.sidebar_height,
+            sidebar_collapsed: cfg.sidebar_collapsed,
             view_mode: cfg.view_mode,
             frame_rate_limit: normalize_frame_rate_limit(cfg.frame_rate_limit),
             exclude_patterns: cfg.exclude_patterns.clone(),
             update_check_mode: cfg.update_check,
             summary_prompt: cfg.summary_prompt.clone(),
+            summary_agent: cfg.summary_agent,
             summary_model: cfg.summary_model.clone(),
             summary_height: cfg
                 .summary_height
@@ -502,6 +510,7 @@ impl Prefs {
             sidebar_tab: self.sidebar_tab,
             sidebar_width: self.sidebar_width,
             sidebar_height: self.sidebar_height,
+            sidebar_collapsed: self.sidebar_collapsed,
             view_mode: self.view_mode,
             frame_rate_limit: self.frame_rate_limit,
             exclude_patterns: self.exclude_patterns.clone(),
@@ -512,6 +521,7 @@ impl Prefs {
             collapsed_agent_sections: collapsed_agents,
             summary_prompt: self.summary_prompt.clone(),
             summary_prompt_version: crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION,
+            summary_agent: self.summary_agent,
             summary_model: self.summary_model.clone(),
             summary_height: self.summary_height,
             summary_language: self.summary_language.clone(),
@@ -752,6 +762,11 @@ impl AppState {
         // The single Config→prefs mapping site (its inverse is
         // `Prefs::to_config`). Clamps/normalizations live in `from_config`.
         self.prefs = Prefs::from_config(cfg, theme_index);
+        if self.prefs.sidebar_collapsed {
+            self.focus_mode = FocusMode::Main;
+            self.dragging_separator = false;
+            self.project_drag.cancel();
+        }
         self.keybindings = keybindings;
         // Theme indices may have shifted; keep the picker's cursor valid.
         self.settings.theme_picker_selected = theme_index;
@@ -866,6 +881,14 @@ impl AppState {
             cycle_option(&AGENTS_PROBE_INTERVAL_OPTIONS, cur, direction).0;
     }
 
+    pub fn cycle_summary_agent(&mut self, direction: i32) {
+        self.prefs.summary_agent = cycle_option(
+            &crate::summary_card::SummaryAgent::ALL,
+            self.prefs.summary_agent,
+            direction,
+        );
+    }
+
     /// Whether the Agents tab is the active sidebar view. The tab selector only
     /// exists in Horizontal layout (Vertical is a session tab-bar with no
     /// header), so Agents is gated to Horizontal — Vertical stays Projects even
@@ -874,6 +897,7 @@ impl AppState {
     pub fn agents_tab_active(&self) -> bool {
         self.prefs.sidebar_tab == SidebarTab::Agents
             && self.effective_layout_mode() == LayoutMode::Horizontal
+            && !self.prefs.sidebar_collapsed
     }
 
     /// The active view's cursor: `focused` on Projects, `agent_focused`
@@ -922,6 +946,17 @@ impl AppState {
         self.prefs.sidebar_height.clamp(min_height, max_height)
     }
 
+    /// Width actually reserved for the horizontal sidebar. The user's
+    /// expanded width stays untouched while the rail is collapsed, so
+    /// expanding restores the previous size exactly.
+    pub fn effective_sidebar_width(&self) -> u16 {
+        if self.effective_layout_mode() == LayoutMode::Horizontal && self.prefs.sidebar_collapsed {
+            SIDEBAR_COLLAPSED_WIDTH.min(self.term_width.saturating_sub(1).max(1))
+        } else {
+            self.prefs.sidebar_width
+        }
+    }
+
     fn sidebar_width_bounds(&self) -> (u16, u16) {
         let max_width = SIDEBAR_MAX.min(self.term_width.saturating_sub(MIN_MAIN_WIDTH));
         if max_width < SIDEBAR_MIN {
@@ -966,7 +1001,7 @@ impl AppState {
             LayoutMode::Horizontal => {
                 let cols = self
                     .term_width
-                    .saturating_sub(self.prefs.sidebar_width + 1 + bo)
+                    .saturating_sub(self.effective_sidebar_width() + 1 + bo)
                     .max(1);
                 let rows = self.term_height.saturating_sub(bo).max(1);
                 (rows, cols)
@@ -989,7 +1024,7 @@ impl AppState {
     pub fn sidebar_footer_height(&self) -> u16 {
         let b = self.border_inset() * 2;
         let content_width = match self.effective_layout_mode() {
-            LayoutMode::Horizontal => self.prefs.sidebar_width.saturating_sub(b),
+            LayoutMode::Horizontal => self.effective_sidebar_width().saturating_sub(b),
             LayoutMode::Vertical => self.term_width.saturating_sub(b),
         };
         crate::geometry::sidebar_footer_height(crate::geometry::banner_visible(

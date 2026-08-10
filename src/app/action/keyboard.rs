@@ -229,7 +229,7 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
 
 fn sidebar_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     // Esc cancels an in-flight summary generation (Agents-tab card). Killing
-    // the `claude` child and restoring the prior card is handled in dispatch.
+    // the selected agent CLI and restoring the prior card is handled in dispatch.
     if key.code == KeyCode::Esc
         && state.summary.state == crate::summary_card::SummaryState::Generating
     {

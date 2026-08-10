@@ -188,9 +188,9 @@ pub struct KillRequest {
     pub name: String,
     /// Exact mounted backend lane that owns the session.
     pub lane: LaneId,
-    /// LOCAL session to switch to after the kill (only meaningful when
-    /// killing the currently attached local session). For remote kills,
-    /// dispatch returns to the local view and this is `None`.
+    /// Same-lane session to switch to before killing the displayed target.
+    /// The executor applies this only when that lane is active, so closing a
+    /// session on another host never yanks the current view.
     pub switch_to: Option<String>,
 }
 

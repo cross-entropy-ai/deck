@@ -53,11 +53,11 @@ impl App {
             .iter()
             .map(|section| section.lane.clone())
             .collect();
-        let user_on_primary = self.state.focus_target().is_none_or(|target| {
-            self.state
-                .entry_at(target)
-                .is_none_or(|entry| self.state.is_primary_entry(entry))
-        });
+        // The attachment manager owns what the right pane actually displays.
+        // Using the sidebar cursor here creates a feedback loop when it is
+        // stale: a highlighted remote row can suppress local-current syncing,
+        // or vice versa.
+        let user_on_primary = self.attachments.active_lane() == self.attachments.primary_lane();
         let old_current = self.state.current_session.clone();
         let mut primary_refreshed = false;
 

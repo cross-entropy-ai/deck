@@ -59,6 +59,10 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             state.cycle_agents_probe_interval(direction);
             fx.save_config();
         }
+        SettingsAction::CycleSummaryAgent(direction) => {
+            state.cycle_summary_agent(direction);
+            fx.save_config();
+        }
         SettingsAction::ToggleSummary => {
             state.prefs.summary_enabled = !state.prefs.summary_enabled;
             fx.save_config();

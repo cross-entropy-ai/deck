@@ -113,6 +113,24 @@ fn config_roundtrip_preserves_view_mode() {
 }
 
 #[test]
+fn config_roundtrip_preserves_sidebar_and_summary_agent() {
+    let path = std::env::temp_dir().join("deck-roundtrip-sidebar-summary-agent.yaml");
+    let config = Config {
+        sidebar_collapsed: true,
+        summary_agent: crate::summary_card::SummaryAgent::Codex,
+        ..Config::default()
+    };
+    config.save_to(&path).unwrap();
+    let loaded: Config = confy::load_path(&path).unwrap();
+    assert!(loaded.sidebar_collapsed);
+    assert_eq!(
+        loaded.summary_agent,
+        crate::summary_card::SummaryAgent::Codex
+    );
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
 fn parse_json_with_keybindings_string() {
     let json = r#"{ "keybindings": { "kill_session": "X" } }"#;
     let config = parse(json);

@@ -69,6 +69,19 @@ impl AppState {
         }
     }
 
+    /// Move the Sessions cursor onto the exact session reported by Deck's
+    /// active tmux client. The identity is lane-qualified so equal names on
+    /// different hosts can never cross-highlight.
+    pub fn steer_session_to(&mut self, lane: &LaneId, session: &str) {
+        if let Some(idx) = self
+            .entries
+            .iter()
+            .position(|entry| entry.lane == *lane && entry.name == session && entry.is_attachable())
+        {
+            self.focused = idx;
+        }
+    }
+
     /// Track the active pane on `host` (`None` = local): set `active_agent` to
     /// the agent occupying `pane_id`, or clear it when that pane has no agent —
     /// so active-agent state follows the real active pane even when the user
@@ -257,13 +270,32 @@ impl AppState {
     /// Re-point the Projects cursor at the session `key` (its position before
     /// `entries` was rebuilt), so the highlight keeps tracking the same session
     /// across a refresh that reordered/resized the list instead of sliding onto
-    /// a neighbor. Falls back to clamping when the session is gone. Projects twin
-    /// of `reanchor_agent_focus`; use instead of `clamp_projects_focus` after a
-    /// refresh rebuilds the rows.
+    /// a neighbor. If the session disappeared, stays within its original lane
+    /// (preferring that lane's backend-current row) rather than letting the flat
+    /// index slide into another host. Projects twin of `reanchor_agent_focus`.
     pub fn reanchor_projects_focus(&mut self, key: Option<crate::model::session::SessionId>) {
-        match key.and_then(|id| self.entries.iter().position(|entry| entry.id() == id)) {
-            Some(idx) => self.focused = idx,
-            None => self.clamp_projects_focus(),
+        let Some(id) = key else {
+            self.clamp_projects_focus();
+            return;
+        };
+        if let Some(idx) = self.entries.iter().position(|entry| entry.id() == id) {
+            self.focused = idx;
+            return;
+        }
+        if let Some(idx) = self
+            .entries
+            .iter()
+            .position(|entry| entry.lane == id.lane && entry.is_current())
+            .or_else(|| {
+                self.entries
+                    .iter()
+                    .position(|entry| entry.lane == id.lane && entry.is_attachable())
+            })
+            .or_else(|| self.entries.iter().position(|entry| entry.lane == id.lane))
+        {
+            self.focused = idx;
+        } else {
+            self.clamp_projects_focus();
         }
     }
 

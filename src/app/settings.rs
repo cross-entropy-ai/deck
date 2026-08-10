@@ -102,6 +102,20 @@ const LAYOUT_ROW: SettingRow = SettingRow {
     adjust: || Action::ToggleLayout,
 };
 
+const SIDEBAR_ROW: SettingRow = SettingRow {
+    label: "Sidebar",
+    value: |s| {
+        if s.prefs.sidebar_collapsed {
+            "Collapsed"
+        } else {
+            "Expanded"
+        }
+        .to_string()
+    },
+    help: |_| "Enter collapses or expands the horizontal sidebar".to_string(),
+    adjust: || Action::ToggleSidebar,
+};
+
 const BORDERS_ROW: SettingRow = SettingRow {
     label: "Borders",
     value: |s| if s.prefs.show_borders { "On" } else { "Off" }.to_string(),
@@ -185,6 +199,13 @@ const AGENTS_PROBE_ROW: SettingRow = SettingRow {
     adjust: || Action::Settings(SettingsAction::CycleAgentsProbeInterval(1)),
 };
 
+const SUMMARY_AGENT_ROW: SettingRow = SettingRow {
+    label: "Summary agent",
+    value: |s| s.prefs.summary_agent.label().to_string(),
+    help: |_| "Enter switches the CLI used to generate summaries".to_string(),
+    adjust: || Action::Settings(SettingsAction::CycleSummaryAgent(1)),
+};
+
 const SUMMARY_ROW: SettingRow = SettingRow {
     label: "Summary",
     value: |s| if s.prefs.summary_enabled { "On" } else { "Off" }.to_string(),
@@ -249,13 +270,19 @@ pub fn setting_rows(state: &AppState) -> Vec<&'static SettingRow> {
         SettingsPage::Appearance => vec![
             &THEME_PAGE_ROW,
             &LAYOUT_ROW,
+            &SIDEBAR_ROW,
             &BORDERS_ROW,
             &VIEW_ROW,
             &FRAME_RATE_ROW,
         ],
         SettingsPage::Theme => theme_setting_rows(state),
         SettingsPage::Agents => {
-            vec![&AGENTS_PROBE_ROW, &SUMMARY_ROW, &SUMMARY_LANGUAGE_ROW]
+            vec![
+                &AGENTS_PROBE_ROW,
+                &SUMMARY_ROW,
+                &SUMMARY_AGENT_ROW,
+                &SUMMARY_LANGUAGE_ROW,
+            ]
         }
         SettingsPage::Remote => vec![&REMOTES_ROW, &PORT_FORWARDS_ROW],
     }

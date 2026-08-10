@@ -349,6 +349,27 @@ fn kill_keyboard_allowed_on_remote_session_with_sibling() {
 }
 
 #[test]
+fn confirm_remote_kill_selects_a_sibling_on_the_same_host() {
+    let mut state = make_test_state(1);
+    state.entries.push(remote_row("xtras3", "first"));
+    state.entries.push(remote_row("xtras3", "second"));
+    state.entries.push(remote_row("other", "unrelated"));
+    state.focused = state.local_count();
+    state.overlay.confirm_kill = true;
+
+    let fx = apply_action(&mut state, Action::ConfirmKill);
+    let kill = fx.first_kill_session().unwrap();
+
+    assert_eq!(
+        kill.lane,
+        crate::system::tmux::TmuxSystem::host_lane("xtras3")
+    );
+    assert_eq!(kill.switch_to.as_deref(), Some("second"));
+    assert_eq!(state.entries[state.focused].lane, kill.lane);
+    assert_eq!(state.entries[state.focused].name, "second");
+}
+
+#[test]
 fn confirm_kill_blocked_on_remote_placeholder() {
     // Even a forced/stale confirm can't fire on a placeholder row.
     let mut state = make_test_state(1);
@@ -675,6 +696,25 @@ fn toggle_focus() {
     assert_eq!(state.focus_mode, FocusMode::Sidebar);
     apply_action(&mut state, Action::ToggleFocus);
     assert_eq!(state.focus_mode, FocusMode::Main);
+}
+
+#[test]
+fn toggle_sidebar_collapses_and_focus_shortcut_restores_it() {
+    let mut state = make_test_state(1);
+    state.focus_mode = FocusMode::Sidebar;
+
+    let fx = apply_action(&mut state, Action::ToggleSidebar);
+    assert!(state.prefs.sidebar_collapsed);
+    assert_eq!(state.focus_mode, FocusMode::Main);
+    assert!(fx.has_resize_pty());
+    assert!(fx.has_full_redraw_after_resize());
+    assert!(fx.has_save_config());
+
+    let fx = apply_action(&mut state, Action::ToggleFocus);
+    assert!(!state.prefs.sidebar_collapsed);
+    assert_eq!(state.focus_mode, FocusMode::Sidebar);
+    assert!(fx.has_resize_pty());
+    assert!(fx.has_save_config());
 }
 
 #[test]
@@ -1154,11 +1194,13 @@ fn root_and_appearance_pages_group_rows_as_requested() {
         "Auto theme",
         "Theme",
         "Layout",
+        "Sidebar",
         "Borders",
         "View",
         "Frame rate",
         "Agents probe",
         "Summary",
+        "Summary agent",
         "Summary lang",
         "Remotes",
         "Port forwards",
@@ -1172,7 +1214,14 @@ fn root_and_appearance_pages_group_rows_as_requested() {
             .iter()
             .map(|row| row.label)
             .collect::<Vec<_>>(),
-        vec!["Theme", "Layout", "Borders", "View", "Frame rate"]
+        vec![
+            "Theme",
+            "Layout",
+            "Sidebar",
+            "Borders",
+            "View",
+            "Frame rate"
+        ]
     );
 }
 
@@ -1205,7 +1254,7 @@ fn agents_submenu_contains_and_routes_agent_settings() {
             .iter()
             .map(|row| row.label)
             .collect::<Vec<_>>(),
-        vec!["Agents probe", "Summary", "Summary lang"]
+        vec!["Agents probe", "Summary", "Summary agent", "Summary lang"]
     );
 
     state.prefs.agents_probe_interval_secs = 2;
@@ -1218,6 +1267,17 @@ fn agents_submenu_contains_and_routes_agent_settings() {
     assert_eq!(state.prefs.summary_enabled, !summary_before);
 
     state.settings.set_selected(2);
+    assert_eq!(
+        state.prefs.summary_agent,
+        crate::summary_card::SummaryAgent::Claude
+    );
+    apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    assert_eq!(
+        state.prefs.summary_agent,
+        crate::summary_card::SummaryAgent::Codex
+    );
+
+    state.settings.set_selected(3);
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(state.overlay.summary_lang_input.is_some());
 }
