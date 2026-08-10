@@ -32,6 +32,8 @@ pub enum Action {
     RenameCancel,
 
     ToggleLayout,
+    /// Collapse/expand the whole horizontal sidebar.
+    ToggleSidebar,
     ToggleBorders,
     ToggleTransparentBg,
     /// Switch the sidebar to a specific tab (clicked tab label).
@@ -130,6 +132,8 @@ pub enum SettingsAction {
     CycleFrameRateLimit(i32),
     /// Cycle the Agents-tab probe interval (settings, left/right).
     CycleAgentsProbeInterval(i32),
+    /// Cycle the headless CLI used for generated summaries.
+    CycleSummaryAgent(i32),
     /// Toggle the inline Summary card on/off (settings, left/right/Enter).
     ToggleSummary,
     /// Open the add-remote-host picker (settings "Remotes" row).
@@ -153,7 +157,7 @@ pub enum SummaryAction {
     /// Kick the Agents-tab summary generation (Generate button click).
     Generate,
     /// Cancel an in-flight generation (Esc on the Agents tab while
-    /// `Generating`, or a cancel click): kills the `claude` child and
+    /// `Generating`, or a cancel click): kills the selected agent CLI and
     /// restores the prior card state. No-op when not generating.
     Cancel,
     /// Scroll the Agents-tab summary text by a row delta (wheel over card).

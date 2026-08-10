@@ -1,6 +1,6 @@
 //! Agents-tab "Summary" generation: capture each detected agent's pane
-//! buffer, stitch them into one XML-flavored prompt, run `claude` headlessly
-//! (`claude -p`, prompt on stdin) for a plain-text summary.
+//! buffer, stitch them into one XML-flavored prompt, then run the configured
+//! Claude Code or Codex CLI headlessly for a plain-text summary.
 //!
 //! The prompt is a user-editable template (persisted via `crate::config`)
 //! with `{{SESSIONS}}` where the per-pane `<session>` blocks splice in.
@@ -12,15 +12,16 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::summary_card::SummaryAgent;
 use crate::worker::Cancel;
 
-/// Hard ceiling on a single `claude` summary run, so a hung `claude` can't
+/// Hard ceiling on a single summary run, so a hung agent CLI can't
 /// pin `SummaryState::Generating` forever: past this the child is killed and
 /// an error surfaced (card shows failure, Generate re-enables). Generous
 /// because a multi-pane summary on a slow model legitimately takes a while.
 pub const SUMMARY_TIMEOUT: Duration = Duration::from_secs(90);
 
-/// How often the `claude` wait loop wakes to check the deadline and the
+/// How often the child wait loop wakes to check the deadline and the
 /// cancel flag. Small enough that an Esc/cancel kills the child promptly.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -107,12 +108,13 @@ pub fn language_label(lang: &str) -> &str {
     }
 }
 
-/// Capture every pane, build the prompt from `template`, run `claude` with
-/// `model` (empty = user's Claude Code default). `Err` carries a short,
-/// user-facing reason (no agents, claude missing, non-zero exit) for the card.
+/// Capture every pane, build the prompt from `template`, and run the selected
+/// agent CLI. `model` applies to Claude; Codex follows its configured default.
+/// `Err` carries a short, user-facing reason for the card.
 pub fn generate(
     panes: &[SummaryPane],
     template: &str,
+    agent: SummaryAgent,
     model: &str,
     language: &str,
     cancel: &Cancel,
@@ -167,9 +169,9 @@ pub fn generate(
         prompt.push_str(&format!("\n\nGive me the response in {}.", language.trim()));
     }
     let started = SystemTime::now();
-    let result = run_claude(&prompt, model, cancel);
+    let result = run_agent(agent, &prompt, model, cancel);
     // Best-effort: a logging failure must not fail the generation.
-    write_log(panes, model, &prompt, &result, started);
+    write_log(panes, agent, model, &prompt, &result, started);
     result
 }
 
@@ -201,6 +203,7 @@ const MAX_SUMMARY_LOGS: usize = 20;
 /// capped. Best-effort — all IO failures are swallowed.
 fn write_log(
     panes: &[SummaryPane],
+    agent: SummaryAgent,
     model: &str,
     prompt: &str,
     result: &Result<String, String>,
@@ -229,16 +232,17 @@ fn write_log(
         Ok(text) => ("ok", text.as_str()),
         Err(e) => ("error", e.as_str()),
     };
-    let model = if model.trim().is_empty() {
-        "(claude default)"
-    } else {
-        model.trim()
+    let model = match agent {
+        SummaryAgent::Claude if !model.trim().is_empty() => model.trim(),
+        SummaryAgent::Claude => "(claude default)",
+        SummaryAgent::Codex => "(codex default)",
     };
 
     let body = format!(
         "# deck summary log\n\n\
          - time: {secs} (unix epoch seconds)\n\
          - deck version: {version}\n\
+         - agent: {agent}\n\
          - model: {model}\n\
          - status: {status}\n\
          - duration_ms: {elapsed_ms}\n\
@@ -246,6 +250,7 @@ fn write_log(
          ## input prompt\n\n{prompt}\n\n\
          ## response\n\n{response}\n",
         version = env!("CARGO_PKG_VERSION"),
+        agent = agent.label(),
         count = panes.len(),
     );
 
@@ -366,27 +371,61 @@ fn kill_and_reap(child: &mut Child) {
     let _ = child.wait();
 }
 
-/// Run `claude -p` with `prompt` on stdin, return trimmed stdout. Headless
-/// print mode reads the prompt from stdin, which also avoids `ARG_MAX` limits
-/// a large multi-pane prompt could hit as argv. `model` (e.g. "haiku") via
-/// `--model`; empty falls back to the user's Claude Code default.
+/// Run the selected CLI with `prompt` on stdin and return trimmed stdout.
+/// Stdin avoids the `ARG_MAX` limit a large multi-pane prompt could hit.
 ///
 /// Bounded and cancellable: the child is polled against [`SUMMARY_TIMEOUT`]
 /// and `cancel`, and killed + reaped on either. Every error path (stdin
 /// write/EPIPE, spawn, timeout, cancel) also kills + reaps, so no zombie leaks.
-pub fn run_claude(prompt: &str, model: &str, cancel: &Cancel) -> Result<String, String> {
-    let mut cmd = Command::new("claude");
-    cmd.arg("-p");
-    if !model.trim().is_empty() {
-        cmd.arg("--model").arg(model.trim());
+pub fn run_agent(
+    agent: SummaryAgent,
+    prompt: &str,
+    model: &str,
+    cancel: &Cancel,
+) -> Result<String, String> {
+    let (cmd, program) = summary_command(agent, model);
+    run_command(cmd, program, prompt, cancel)
+}
+
+fn summary_command(agent: SummaryAgent, model: &str) -> (Command, &'static str) {
+    match agent {
+        SummaryAgent::Claude => {
+            let mut cmd = Command::new("claude");
+            cmd.arg("-p");
+            if !model.trim().is_empty() {
+                cmd.arg("--model").arg(model.trim());
+            }
+            (cmd, "claude")
+        }
+        SummaryAgent::Codex => {
+            let mut cmd = Command::new("codex");
+            // Ephemeral avoids adding a summary-only run to session history;
+            // read-only prevents a summarizer from mutating the workspace.
+            // `-` makes stdin the prompt, matching Claude's ARG_MAX-safe path.
+            cmd.args([
+                "exec",
+                "--ephemeral",
+                "--skip-git-repo-check",
+                "--sandbox",
+                "read-only",
+                "--color",
+                "never",
+                "-",
+            ]);
+            (cmd, "codex")
+        }
     }
-    run_command(cmd, prompt, cancel)
 }
 
 /// Drive an already-configured command to completion with `prompt` on stdin,
-/// bounded by [`SUMMARY_TIMEOUT`] and `cancel`. Split out of [`run_claude`] so
+/// bounded by [`SUMMARY_TIMEOUT`] and `cancel`. Split out of [`run_agent`] so
 /// the kill/cancel/timeout paths can be tested against a stub binary.
-fn run_command(mut cmd: Command, prompt: &str, cancel: &Cancel) -> Result<String, String> {
+fn run_command(
+    mut cmd: Command,
+    program: &str,
+    prompt: &str,
+    cancel: &Cancel,
+) -> Result<String, String> {
     // Own process group so a timeout/cancel kill reaches the subprocesses it
     // spawns (MCP servers, tools); `kill_and_reap` signals the whole group.
     #[cfg(unix)]
@@ -399,23 +438,23 @@ fn run_command(mut cmd: Command, prompt: &str, cancel: &Cancel) -> Result<String
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("could not launch claude: {e}"))?;
+        .map_err(|e| format!("could not launch {program}: {e}"))?;
 
-    // Write the prompt, then drop stdin so claude sees EOF and starts.
-    // A write failure (e.g. claude exited early → EPIPE) must still
+    // Write the prompt, then drop stdin so the CLI sees EOF and starts.
+    // A write failure (e.g. the CLI exited early → EPIPE) must still
     // kill + reap the child, or it leaks as a zombie.
     {
         let mut stdin = match child.stdin.take() {
             Some(s) => s,
             None => {
                 kill_and_reap(&mut child);
-                return Err("claude stdin unavailable".to_string());
+                return Err(format!("{program} stdin unavailable"));
             }
         };
         if let Err(e) = stdin.write_all(prompt.as_bytes()) {
             drop(stdin);
             kill_and_reap(&mut child);
-            return Err(format!("writing prompt to claude: {e}"));
+            return Err(format!("writing prompt to {program}: {e}"));
         }
     }
 
@@ -433,7 +472,7 @@ fn run_command(mut cmd: Command, prompt: &str, cancel: &Cancel) -> Result<String
                 if Instant::now() >= deadline {
                     kill_and_reap(&mut child);
                     return Err(format!(
-                        "claude timed out after {}s",
+                        "{program} timed out after {}s",
                         SUMMARY_TIMEOUT.as_secs()
                     ));
                 }
@@ -441,17 +480,17 @@ fn run_command(mut cmd: Command, prompt: &str, cancel: &Cancel) -> Result<String
             }
             Err(e) => {
                 kill_and_reap(&mut child);
-                return Err(format!("waiting on claude: {e}"));
+                return Err(format!("waiting on {program}: {e}"));
             }
         }
     }
 
     let out = child
         .wait_with_output()
-        .map_err(|e| format!("waiting on claude: {e}"))?;
+        .map_err(|e| format!("waiting on {program}: {e}"))?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     if !out.status.success() {
-        // `claude -p` reports failures (auth, invalid model, runtime
+        // Agent CLIs report failures (auth, invalid model, runtime
         // errors) on stdout as often as stderr, so surface whichever
         // carries text — otherwise the card would show a bare exit code.
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -465,9 +504,9 @@ fn run_command(mut cmd: Command, prompt: &str, cancel: &Cancel) -> Result<String
             .map(|c| c.to_string())
             .unwrap_or_else(|| "signal".to_string());
         return Err(if detail.is_empty() {
-            format!("claude exited with code {code} (no output)")
+            format!("{program} exited with code {code} (no output)")
         } else {
-            format!("claude failed (exit {code}): {detail}")
+            format!("{program} failed (exit {code}): {detail}")
         });
     }
     Ok(stdout.trim().to_string())

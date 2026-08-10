@@ -91,9 +91,9 @@ pub struct App {
     active_pane_probe: ActivePaneProbeExecutor,
     /// The in-flight Agents-tab summary generation, if any. A one-shot
     /// [`Worker`](crate::worker::Worker) carrying `Ok(text)` or `Err(reason)`
-    /// (no agents, `claude` missing, non-zero exit, timeout, cancel). Dropping
-    /// it signals the job's `Cancel` flag and detaches — `run_claude` kills the
-    /// child.
+    /// (no agents, selected CLI missing, non-zero exit, timeout, cancel).
+    /// Dropping it signals the job's `Cancel` flag and detaches; the summary
+    /// runner kills the child.
     summary_worker: Option<crate::worker::Worker<(), Result<String, String>>>,
     /// Monotonic id stamped on each focus-affecting action (agent click,
     /// session activation). A queued focus captures it at submission; its

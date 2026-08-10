@@ -272,6 +272,7 @@ impl From<&str> for LaneActionId {
 pub enum LaneShellIntent {
     ReconnectAttachment,
     OpenPortForwards,
+    OpenNewSession,
     OpenContextMenu { anchor: LaneActionAnchor },
 }
 
@@ -588,6 +589,23 @@ mod tests {
         assert!(runtime.focus_transport().is_some());
         assert!(runtime.summary_transport().is_some());
         assert!(runtime.attachment().is_some());
+    }
+
+    #[test]
+    fn local_tmux_divider_is_a_single_direct_new_session_action() {
+        let system = tmux::TmuxSystem::default();
+        system.configure(&Config::default());
+        let lane = tmux::TmuxSystem::local_lane();
+        let section = system.section_for(&lane).expect("local section");
+        assert_eq!(section.buttons.len(), 1);
+        assert_eq!(section.buttons[0].glyph, "+");
+
+        let intents = system.invoke(
+            &lane,
+            &section.buttons[0].action,
+            LaneActionAnchor { x: 4, y: 5 },
+        );
+        assert_eq!(intents, vec![LaneShellIntent::OpenNewSession]);
     }
 
     #[test]

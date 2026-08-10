@@ -7,10 +7,10 @@ use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
-use crate::focus::FocusTransport;
+use crate::focus::{ActiveTarget, FocusTransport};
 pub(crate) struct ActivePaneOutcome {
     pub lane: crate::lane::LaneId,
-    pub pane_id: Result<Option<String>, ActivePaneProbeError>,
+    pub target: Result<Option<ActiveTarget>, ActivePaneProbeError>,
     pub seq: u64,
     pub marker_id: u64,
 }
@@ -53,10 +53,10 @@ impl ActivePaneProbeExecutor {
         thread::Builder::new()
             .name("deck-active-pane".into())
             .spawn(move || {
-                let pane_id = run_probe(|| crate::focus::active_pane(&transport));
+                let target = run_probe(|| crate::focus::active_target(&transport));
                 let _ = tx.send(ActivePaneOutcome {
                     lane,
-                    pane_id,
+                    target,
                     seq,
                     marker_id,
                 });
@@ -69,9 +69,7 @@ impl ActivePaneProbeExecutor {
     }
 }
 
-fn run_probe(
-    probe: impl FnOnce() -> Option<String>,
-) -> Result<Option<String>, ActivePaneProbeError> {
+fn run_probe<T>(probe: impl FnOnce() -> Option<T>) -> Result<Option<T>, ActivePaneProbeError> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(probe))
         .map_err(|_| ActivePaneProbeError::Panicked)
 }
@@ -83,7 +81,7 @@ mod tests {
     #[test]
     fn probe_panic_is_a_typed_failure() {
         assert_eq!(
-            run_probe(|| panic!("injected probe panic")),
+            run_probe::<ActiveTarget>(|| panic!("injected probe panic")),
             Err(ActivePaneProbeError::Panicked)
         );
     }

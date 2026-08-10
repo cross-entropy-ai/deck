@@ -53,6 +53,28 @@ fn language_label_shows_default_for_empty() {
 }
 
 #[test]
+fn summary_commands_match_each_agent_cli() {
+    use crate::summary_card::SummaryAgent;
+
+    let (claude, claude_name) = summary_command(SummaryAgent::Claude, "haiku");
+    assert_eq!(claude_name, "claude");
+    assert_eq!(claude.get_program(), "claude");
+    assert_eq!(
+        claude.get_args().collect::<Vec<_>>(),
+        ["-p", "--model", "haiku"]
+    );
+
+    let (codex, codex_name) = summary_command(SummaryAgent::Codex, "haiku");
+    assert_eq!(codex_name, "codex");
+    assert_eq!(codex.get_program(), "codex");
+    let args = codex.get_args().collect::<Vec<_>>();
+    assert!(args.contains(&std::ffi::OsStr::new("--ephemeral")));
+    assert!(args.contains(&std::ffi::OsStr::new("read-only")));
+    assert_eq!(args.last().copied(), Some(std::ffi::OsStr::new("-")));
+    assert!(!args.contains(&std::ffi::OsStr::new("haiku")));
+}
+
+#[test]
 fn log_dir_is_under_home_cache_not_tmp() {
     // The dump embeds captured pane buffers; it must not live in a shared,
     // world-readable /tmp dir.
@@ -135,7 +157,7 @@ fn run_command_cancel_kills_the_child_and_returns_cancelled() {
     let cancel = Cancel::from_flag(Arc::new(AtomicBool::new(true)));
 
     let start = Instant::now();
-    let result = run_command(cmd, "prompt", &cancel);
+    let result = run_command(cmd, "stub", "prompt", &cancel);
     assert_eq!(
         result,
         Err(CANCELLED_MSG.to_string()),

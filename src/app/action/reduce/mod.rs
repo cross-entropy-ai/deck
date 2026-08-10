@@ -308,12 +308,31 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 fx.refresh_sessions();
             } else {
                 let name = entry.name.clone();
+                let lane_indices: Vec<usize> = state
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, candidate)| {
+                        (candidate.lane == lane && candidate.is_attachable()).then_some(idx)
+                    })
+                    .collect();
+                let lane_pos = lane_indices.iter().position(|idx| *idx == state.focused);
+                let alternative_idx = lane_pos.and_then(|pos| {
+                    lane_indices
+                        .get(pos + 1)
+                        .or_else(|| pos.checked_sub(1).and_then(|prev| lane_indices.get(prev)))
+                        .copied()
+                });
+                let switch_to = alternative_idx
+                    .and_then(|idx| state.entries.get(idx))
+                    .map(|candidate| candidate.name.clone());
+                if let Some(idx) = alternative_idx {
+                    state.focused = idx;
+                }
                 fx.push(Effect::KillSession(KillRequest {
                     name,
                     lane,
-                    // No local switch_to: dispatch returns the
-                    // user to local view after a remote kill.
-                    switch_to: None,
+                    switch_to,
                 }));
                 fx.refresh_sessions();
             }
@@ -404,6 +423,18 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.resize_pty(true);
             fx.save_config();
         }
+        Action::ToggleSidebar => {
+            state.prefs.sidebar_collapsed = !state.prefs.sidebar_collapsed;
+            if state.prefs.sidebar_collapsed {
+                state.focus_mode = FocusMode::Main;
+                state.dragging_separator = false;
+                state.project_drag.cancel();
+            } else if state.prefs.sidebar_tab == SidebarTab::Agents {
+                fx.refresh_sessions();
+            }
+            fx.resize_pty(true);
+            fx.save_config();
+        }
         Action::ToggleBorders => {
             state.prefs.show_borders = !state.prefs.show_borders;
             fx.resize_pty(true);
@@ -462,6 +493,17 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.focus_mode = FocusMode::Main;
         }
         Action::ToggleFocus => {
+            if state.prefs.sidebar_collapsed {
+                state.prefs.sidebar_collapsed = false;
+                state.focus_mode = FocusMode::Sidebar;
+                close_settings_page(state);
+                fx.resize_pty(true);
+                fx.save_config();
+                if state.prefs.sidebar_tab == SidebarTab::Agents {
+                    fx.refresh_sessions();
+                }
+                return fx;
+            }
             state.focus_mode = match state.focus_mode {
                 FocusMode::Main => FocusMode::Sidebar,
                 FocusMode::Sidebar => FocusMode::Main,

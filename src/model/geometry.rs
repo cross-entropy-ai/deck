@@ -495,6 +495,9 @@ pub struct HitRegions {
     pub tabs: Option<TabRects>,
     /// The responsive Header `+ New` / `+` button.
     pub new_session: Option<Rect>,
+    /// The expanded header's collapse button, or the collapsed rail's expand
+    /// button.
+    pub sidebar_toggle: Option<Rect>,
     /// The Summary card's buttons/card/scroll bound.
     pub summary: SummaryHits,
     /// The footer's "menu" button.
@@ -516,6 +519,8 @@ pub enum HitKind {
     Tab(SidebarTab),
     /// The Header's local-session creation button.
     NewLocalSession,
+    /// Collapse or expand the whole horizontal sidebar.
+    SidebarToggle,
     /// The Summary card's "Generate" button.
     SummaryButton,
     /// The Summary card's "popup" (big view) button.
@@ -556,6 +561,9 @@ impl HitRegions {
         }
         if self.new_session.is_some_and(|r| r.contains(pos)) {
             return Some(HitKind::NewLocalSession);
+        }
+        if self.sidebar_toggle.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::SidebarToggle);
         }
         if self.summary.button.is_some_and(|r| r.contains(pos)) {
             return Some(HitKind::SummaryButton);

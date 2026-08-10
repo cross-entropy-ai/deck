@@ -56,7 +56,8 @@ impl App {
         let sidebar_tab = s.prefs.sidebar_tab;
         let layout_mode = s.effective_layout_mode();
         let view_mode = s.prefs.view_mode;
-        let sidebar_width = s.prefs.sidebar_width;
+        let sidebar_width = s.effective_sidebar_width();
+        let sidebar_collapsed = s.prefs.sidebar_collapsed && layout_mode == LayoutMode::Horizontal;
         let sidebar_height = s.effective_sidebar_height();
         let main_view = s.main_view;
         let warning_state = self.warning_state.as_ref();
@@ -152,32 +153,36 @@ impl App {
             let focus_target = self.state.focus_target();
             let project_drag = self.state.project_drag_indicators();
             let summary_card_height = self.state.summary_card_height();
-            captured_hits = ui::draw_sidebar(
-                frame,
-                sidebar_area,
-                ui::SidebarProps {
-                    sessions: &self.state.entries,
-                    built: &layout,
-                    focus_target,
-                    project_drag,
-                    sidebar_active,
-                    theme,
-                    show_help,
-                    confirm_kill: confirm_name.as_deref(),
-                    rename_input,
-                    show_borders,
-                    sidebar_tab,
-                    agent_entries,
-                    summary: &self.state.summary.state,
-                    summary_age: summary_age.as_deref(),
-                    spinner_idx,
-                    summary_scroll: self.state.summary.scroll,
-                    summary_card_height,
-                    tabs_mode: layout_mode == LayoutMode::Vertical,
-                    keybindings: &self.state.keybindings,
-                    update_available,
-                },
-            );
+            captured_hits = if sidebar_collapsed {
+                ui::draw_collapsed_sidebar(frame, sidebar_area, theme, show_borders)
+            } else {
+                ui::draw_sidebar(
+                    frame,
+                    sidebar_area,
+                    ui::SidebarProps {
+                        sessions: &self.state.entries,
+                        built: &layout,
+                        focus_target,
+                        project_drag,
+                        sidebar_active,
+                        theme,
+                        show_help,
+                        confirm_kill: confirm_name.as_deref(),
+                        rename_input,
+                        show_borders,
+                        sidebar_tab,
+                        agent_entries,
+                        summary: &self.state.summary.state,
+                        summary_age: summary_age.as_deref(),
+                        spinner_idx,
+                        summary_scroll: self.state.summary.scroll,
+                        summary_card_height,
+                        tabs_mode: layout_mode == LayoutMode::Vertical,
+                        keybindings: &self.state.keybindings,
+                        update_available,
+                    },
+                )
+            };
 
             if let Some(gap) = gap_area {
                 let (sep_char, sep_fg) = if dragging_sep {
@@ -327,6 +332,16 @@ impl App {
                     menu.disabled(),
                     theme,
                 );
+            }
+
+            // Horizontal layout renders rename inline in the sidebar. The
+            // vertical layout is only a one-row tab bar, so it needs a real
+            // overlay; otherwise the editor is clipped away after toggling
+            // layout and the modal appears frozen.
+            if layout_mode == LayoutMode::Vertical {
+                if let Some(textarea) = rename_input {
+                    ui::draw_rename_popup(frame, full, theme, textarea);
+                }
             }
 
             if let Some(ns) = new_session_overlay {

@@ -8,6 +8,7 @@ use crate::forwards::ForwardSpec;
 use crate::keybindings::migrate_keybindings;
 
 use crate::state::{LayoutMode, SidebarTab, ViewMode, SIDEBAR_HEIGHT};
+use crate::summary_card::SummaryAgent;
 use crate::update::UpdateCheckMode;
 
 /// A remote host whose tmux sessions deck surfaces alongside local ones.
@@ -82,6 +83,8 @@ pub struct Config {
     pub sidebar_tab: SidebarTab,
     pub sidebar_width: u16,
     pub sidebar_height: u16,
+    /// Whether the horizontal sidebar starts in its narrow collapsed rail.
+    pub sidebar_collapsed: bool,
     pub view_mode: ViewMode,
     /// Render cap in FPS. Omitted from the file when it equals the default
     /// (`DEFAULT_FRAME_RATE_LIMIT`); a missing key loads as that default.
@@ -108,6 +111,8 @@ pub struct Config {
     /// never seeded (fresh config or one predating this field); the
     /// migration treats it as stale and refreshes.
     pub summary_prompt_version: u32,
+    /// Headless agent CLI used to generate summaries.
+    pub summary_agent: SummaryAgent,
     /// Model passed to `claude --model` when generating the summary. Empty
     /// follows the user's Claude Code default; defaults to a fast, cheap
     /// model since summarizing buffers doesn't need a strong one.
@@ -143,6 +148,7 @@ impl Default for Config {
             sidebar_tab: SidebarTab::Projects,
             sidebar_width: 28,
             sidebar_height: SIDEBAR_HEIGHT,
+            sidebar_collapsed: false,
             view_mode: ViewMode::Expanded,
             frame_rate_limit: crate::state::DEFAULT_FRAME_RATE_LIMIT,
             exclude_patterns: vec!["_*".to_string()],
@@ -155,6 +161,7 @@ impl Default for Config {
             // stamps the real version and persists the prompt to disk.
             summary_prompt: crate::summary::DEFAULT_SUMMARY_PROMPT.to_string(),
             summary_prompt_version: 0,
+            summary_agent: SummaryAgent::Claude,
             summary_model: crate::summary::DEFAULT_SUMMARY_MODEL.to_string(),
             summary_height: crate::summary_card::DEFAULT_SUMMARY_HEIGHT,
             summary_language: String::new(),

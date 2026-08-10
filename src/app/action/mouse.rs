@@ -31,6 +31,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             Some(HitKind::NewLocalSession) => {
                 return Action::NewSession(NewSessionAction::OpenLocal)
             }
+            Some(HitKind::SidebarToggle) => return Action::ToggleSidebar,
             Some(HitKind::SummaryButton) => return Action::Summary(SummaryAction::Generate),
             Some(HitKind::SummaryPopup) => return Action::Summary(SummaryAction::OpenPopup),
             // The footer "menu" button opens the global context menu, anchored
@@ -44,9 +45,10 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
 
     let (on_separator, in_sidebar) = match state.effective_layout_mode() {
         LayoutMode::Horizontal => {
-            let gap_col = state.prefs.sidebar_width;
+            let sidebar_width = state.effective_sidebar_width();
+            let gap_col = sidebar_width;
             let on_sep = mouse.column >= gap_col && mouse.column <= gap_col + 1;
-            let in_sb = mouse.column < state.prefs.sidebar_width;
+            let in_sb = mouse.column < sidebar_width;
             (on_sep, in_sb)
         }
         LayoutMode::Vertical => {
@@ -79,6 +81,9 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             return Action::Summary(SummaryAction::StopDrag);
         }
         MouseEventKind::Down(MouseButton::Left) if on_separator => {
+            if state.prefs.sidebar_collapsed {
+                return Action::None;
+            }
             return Action::StartDrag;
         }
         MouseEventKind::Drag(MouseButton::Left) if state.dragging_separator => {
@@ -225,7 +230,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         }
         let b = state.border_inset();
         let (col_off, row_off) = match state.effective_layout_mode() {
-            LayoutMode::Horizontal => (state.prefs.sidebar_width + 1 + b, b),
+            LayoutMode::Horizontal => (state.effective_sidebar_width() + 1 + b, b),
             LayoutMode::Vertical => (b, state.effective_sidebar_height() + b),
         };
         let bytes = crate::pty::encode_mouse(mouse, col_off, row_off);

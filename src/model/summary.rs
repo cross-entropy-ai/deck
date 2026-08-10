@@ -2,8 +2,33 @@
 //! fields driving rendering and interaction (scroll, drag, in-popup scroll,
 //! pre-generation state kept for cancel), grouped into one [`SummaryCard`]
 //! unit on `AppState`. Persisted summary settings (`summary_prompt` /
-//! `summary_model` / `summary_height` / `summary_language`) are user prefs
+//! `summary_agent` / `summary_model` / `summary_height` / `summary_language`) are user prefs
 //! in [`crate::state::Prefs`]; only per-run runtime state lives here.
+
+use serde::{Deserialize, Serialize};
+
+/// Headless coding-agent CLI used to generate the Agents-tab summary.
+///
+/// The serialized names are part of `config.yaml`, so keep them stable even
+/// if the labels shown in Settings change later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryAgent {
+    #[default]
+    Claude,
+    Codex,
+}
+
+impl SummaryAgent {
+    pub const ALL: [Self; 2] = [Self::Claude, Self::Codex];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude",
+            Self::Codex => "Codex",
+        }
+    }
+}
 
 /// State of the Agents-tab "Summary" card. `Idle` shows a "Generate Summary"
 /// button; clicking kicks an async job and flips to `Generating` (animated
@@ -19,7 +44,7 @@ pub enum SummaryState {
         /// to drive its "Re-generate" affordance.
         generated_at: u64,
     },
-    /// Generation failed (no agents, `claude` missing, non-zero exit); the
+    /// Generation failed (no agents, selected CLI missing, non-zero exit); the
     /// card shows the reason and the Generate button stays available to retry.
     Error(String),
 }

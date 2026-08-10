@@ -100,33 +100,42 @@ pub(crate) fn run_focus(transport: &FocusTransport, session: &str, pane_id: &str
     run_focus_with(default_runner(), transport, session, pane_id)
 }
 
-/// The `%N` id of the pane Deck's client currently mirrors over `transport`.
-/// Same `$C` resolution as the focus rule (literal tty locally, `cat` of the
-/// marker remotely); `None` when we don't know our client tty or the query
-/// fails. Lets the Agents tab track "you are here" even when the user switches
-/// panes outside Deck.
-pub(crate) fn active_pane_with(
+/// The session and pane Deck's client currently mirrors over `transport`.
+/// Reading both from the same `display-message` keeps the Sessions and Agents
+/// cursors tied to one backend observation, including switches made inside the
+/// embedded tmux client rather than through Deck's sidebar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ActiveTarget {
+    pub session: String,
+    pub pane_id: String,
+}
+
+pub(crate) fn active_target_with(
     runner: &dyn CommandRunner,
     transport: &FocusTransport,
-) -> Option<String> {
-    let out = run_snippet(runner, transport, active_pane_command);
-    // Only a real `%N` id counts; empty stdout means the script bailed
-    // (no client tty), which must not be read as a pane.
-    out.ok().map(|o| o.trim().to_string()).filter(|id| {
-        id.strip_prefix('%')
-            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+) -> Option<ActiveTarget> {
+    let out = run_snippet(runner, transport, active_target_command).ok()?;
+    // Pane ids never contain spaces, while tmux session names may. Split only
+    // once so the remainder is the exact session name.
+    let (pane_id, session) = out.trim_end_matches(['\r', '\n']).split_once(' ')?;
+    let pane_valid = pane_id
+        .strip_prefix('%')
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    (pane_valid && !session.is_empty()).then(|| ActiveTarget {
+        session: session.to_string(),
+        pane_id: pane_id.to_string(),
     })
 }
 
-/// The `$C`-guarded `display-message` that reads our client's active pane.
-fn active_pane_command(set_client_tty: &str) -> String {
+/// The `$C`-guarded `display-message` that reads our client's active target.
+fn active_target_command(set_client_tty: &str) -> String {
     format!(
         "{set_client_tty} ; [ -z \"$C\" ] && exit 0 ; \
-         tmux display-message -t \"$C\" -p '#{{pane_id}}'",
+         tmux display-message -t \"$C\" -p '#{{pane_id}} #{{session_name}}'",
     )
 }
 
-/// [`active_pane_with`] on the production command runner.
-pub(crate) fn active_pane(transport: &FocusTransport) -> Option<String> {
-    active_pane_with(default_runner(), transport)
+/// [`active_target_with`] on the production command runner.
+pub(crate) fn active_target(transport: &FocusTransport) -> Option<ActiveTarget> {
+    active_target_with(default_runner(), transport)
 }

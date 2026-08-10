@@ -80,7 +80,7 @@ commands! {
     ToggleLayout     => "toggle_layout",     "toggle layout",           [key!(l)];
     ToggleViewMode   => "toggle_view_mode",  "toggle compact/expanded", [key!(c)];
     ToggleSection    => "toggle_section",    "collapse/expand group",   [key!(z)];
-    ToggleSidebarTab => "toggle_sidebar_tab","projects/agents tab",     [key!(tab)];
+    ToggleSidebarTab => "toggle_sidebar_tab","sessions/agents tab",     [key!(tab)];
     ToggleHelp       => "toggle_help",       "help",                    [key!(h), key!('?')];
     FocusMain        => "focus_main",        "back to main",            [key!(esc)];
     Quit             => "quit",              "quit",                    [key!(q)];

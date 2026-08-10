@@ -14,7 +14,7 @@ pub use menu::draw_context_menu;
 pub use popups::{draw_add_remote, draw_new_session, draw_summary_popup};
 pub use reload::{draw_reload_bar, reload_row_count};
 pub use settings::{draw_settings_page, draw_theme_picker};
-pub use sidebar::{draw_sidebar, SidebarProps};
+pub use sidebar::{draw_collapsed_sidebar, draw_rename_popup, draw_sidebar, SidebarProps};
 
 pub struct ExcludeEditorView<'a> {
     pub patterns: &'a [String],

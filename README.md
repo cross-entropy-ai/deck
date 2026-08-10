@@ -65,7 +65,9 @@ deck runs two panes. The **sidebar** lists your tmux sessions. The **main pane**
 Configuration lives in `~/.config/deck/config.yaml`. Existing deck or tmux-sidebar JSON configuration is migrated on first load.
 
 > [!TIP]
-> Click a session to switch, drag a project to reorder it, right-click to rename or close it, or drag the edge between panes to resize.
+> Click a session to switch, drag a session to reorder it, right-click to rename or close it, or drag the edge between panes to resize. Use the header chevron to collapse or expand the sidebar.
+
+The Agents tab can generate a cross-session summary with either Claude Code or Codex; choose the CLI under **Settings → Agents → Summary agent**.
 
 ## Develop
 

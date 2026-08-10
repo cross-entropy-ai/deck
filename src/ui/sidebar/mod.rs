@@ -1,6 +1,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Clear, Paragraph};
 use ratatui::Frame;
 
 use crate::geometry::{
@@ -94,6 +95,7 @@ fn clamp_hits(hits: &mut HitRegions, area: Rect) {
     hits.banner = hits.banner.and_then(|r| clamp_rect(r, area));
     hits.menu = hits.menu.and_then(|r| clamp_rect(r, area));
     hits.new_session = hits.new_session.and_then(|r| clamp_rect(r, area));
+    hits.sidebar_toggle = hits.sidebar_toggle.and_then(|r| clamp_rect(r, area));
     if let Some(tabs) = hits.tabs.as_mut() {
         tabs.projects = clamp_rect(tabs.projects, area).unwrap_or(Rect {
             width: 0,
@@ -133,6 +135,57 @@ fn clamp_hits(hits: &mut HitRegions, area: Rect) {
             kill.no = r;
         }
     }
+}
+
+/// Draw the narrow horizontal rail left behind when the sidebar is collapsed.
+/// Keeping a visible, clickable affordance means the sidebar can always be
+/// restored without remembering a shortcut.
+pub fn draw_collapsed_sidebar(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    show_borders: bool,
+) -> HitRegions {
+    let content = draw_sidebar_container(frame, area, theme, false, show_borders);
+    if content.width == 0 || content.height == 0 {
+        return HitRegions::default();
+    }
+    let rect = Rect {
+        x: content.x,
+        y: content.y,
+        width: content.width.min(1),
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "›",
+            Style::default()
+                .fg(theme.accent)
+                .bg(theme.bg)
+                .add_modifier(Modifier::BOLD),
+        ))),
+        rect,
+    );
+    HitRegions {
+        sidebar_toggle: Some(rect),
+        ..HitRegions::default()
+    }
+}
+
+/// Draw the rename editor as a centered overlay for the vertical tab layout,
+/// where the one-row sidebar cannot contain the normal inline editor.
+pub fn draw_rename_popup(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    textarea: &TextArea<'static>,
+) {
+    let width = area.width.clamp(1, 48);
+    let height = area.height.clamp(1, 8);
+    let popup = super::widgets::centered_rect(area, width, height);
+    frame.render_widget(Clear, popup);
+    let content = draw_sidebar_container(frame, popup, theme, true, true);
+    draw_rename_input(frame, content, theme, textarea);
 }
 
 /// Draw the sidebar and return the frame's clickable regions for mouse
@@ -309,6 +362,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
         agents: agent_hits,
         tabs: Some(header_hits.tabs),
         new_session: header_hits.new_session,
+        sidebar_toggle: Some(header_hits.sidebar_toggle),
         summary: summary_hits,
         menu: menu_bounds,
     };

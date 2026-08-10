@@ -415,6 +415,54 @@ fn projects_cursor_reanchors_to_same_session_across_rebuild() {
 }
 
 #[test]
+fn disappeared_session_reanchors_within_the_same_host() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    let remote = crate::system::tmux::TmuxSystem::host_lane("xtras3");
+    state.entries = vec![
+        make_session("local"),
+        SessionEntry {
+            lane: remote.clone(),
+            name: "closed".to_string(),
+            dir: "/tmp/closed".to_string(),
+            kind: SessionEntryKind::Live { is_current: false },
+        },
+        SessionEntry {
+            lane: remote.clone(),
+            name: "remaining".to_string(),
+            dir: "/tmp/remaining".to_string(),
+            kind: SessionEntryKind::Live { is_current: false },
+        },
+    ];
+    state.focused = 1;
+    let closed = state.focused_session_key();
+
+    state.entries.remove(1);
+    state.reanchor_projects_focus(closed);
+
+    assert_eq!(state.focused, 1);
+    assert_eq!(state.entries[state.focused].lane, remote);
+    assert_eq!(state.entries[state.focused].name, "remaining");
+}
+
+#[test]
+fn active_session_probe_steers_to_exact_lane_qualified_row() {
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    let remote = crate::system::tmux::TmuxSystem::host_lane("xtras3");
+    state.entries.push(SessionEntry {
+        lane: remote.clone(),
+        name: "alpha".to_string(),
+        dir: "/remote/alpha".to_string(),
+        kind: SessionEntryKind::Live { is_current: false },
+    });
+    state.focused = 0; // local session with the same name
+
+    state.steer_session_to(&remote, "alpha");
+
+    assert_eq!(state.focused, 2);
+    assert_eq!(state.entries[state.focused].lane, remote);
+}
+
+#[test]
 fn summary_card_height_is_fixed_across_states_when_agents_exist() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.prefs.sidebar_tab = SidebarTab::Agents;
@@ -607,7 +655,7 @@ fn sidebar_layout_adds_local_header_in_expanded() {
 
     // The header is not a row, so the two local sessions are rows 0..2.
     assert_eq!(built.layout.row_count(), 2);
-    // The local section carries the local-divider menu button.
+    // The local section carries one direct new-session button.
     assert_eq!(
         built
             .sections
@@ -796,6 +844,22 @@ fn resize_sidebar_handles_small_terminals() {
     let mut state = make_state(LayoutMode::Horizontal, true, 20, 40);
     assert!(state.resize_sidebar(30));
     assert_eq!(state.prefs.sidebar_width, 10);
+}
+
+#[test]
+fn collapsed_sidebar_restores_space_without_losing_expanded_width() {
+    let mut state = make_state(LayoutMode::Horizontal, true, 120, 40);
+    state.prefs.sidebar_width = 32;
+    let expanded_pty = state.pty_size();
+
+    state.prefs.sidebar_collapsed = true;
+    assert_eq!(state.effective_sidebar_width(), SIDEBAR_COLLAPSED_WIDTH);
+    assert_eq!(state.prefs.sidebar_width, 32, "saved width remains intact");
+    assert!(state.pty_size().1 > expanded_pty.1);
+
+    state.prefs.sidebar_collapsed = false;
+    assert_eq!(state.effective_sidebar_width(), 32);
+    assert_eq!(state.pty_size(), expanded_pty);
 }
 
 #[test]
@@ -1122,6 +1186,7 @@ fn prefs_config_round_trip_is_identity() {
         sidebar_tab: SidebarTab::Agents,
         sidebar_width: 40,
         sidebar_height: 3,
+        sidebar_collapsed: true,
         view_mode: ViewMode::Compact,
         frame_rate_limit: 30,
         exclude_patterns: vec!["foo*".to_string(), "/bar/".to_string()],
@@ -1132,6 +1197,7 @@ fn prefs_config_round_trip_is_identity() {
         collapsed_agent_sections: Vec::new(),
         summary_prompt: "prompt".to_string(),
         summary_prompt_version: crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION,
+        summary_agent: crate::summary_card::SummaryAgent::Codex,
         summary_model: "model".to_string(),
         summary_height: 12,
         summary_language: "English".to_string(),
