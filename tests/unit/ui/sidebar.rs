@@ -152,6 +152,33 @@ fn collapsed_sidebar_draws_a_clickable_expand_rail() {
         .unwrap();
 
     let toggle = hits.sidebar_toggle.expect("expand control");
+    assert_eq!(toggle.x, 1, "expand control is centered between borders");
+    assert_eq!(hits.hit(toggle.x, toggle.y), Some(HitKind::SidebarToggle));
+    assert_eq!(
+        terminal.backend().buffer()[(toggle.x, toggle.y)].symbol(),
+        "›"
+    );
+}
+
+#[test]
+fn collapsed_borderless_sidebar_centers_expand_control() {
+    let theme = &crate::theme::THEMES[0];
+    let backend = TestBackend::new(20, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut hits = HitRegions::default();
+    terminal
+        .draw(|frame| {
+            hits = super::draw_collapsed_sidebar(
+                frame,
+                Rect::new(4, 2, crate::state::SIDEBAR_COLLAPSED_WIDTH, 8),
+                theme,
+                false,
+            );
+        })
+        .unwrap();
+
+    let toggle = hits.sidebar_toggle.expect("expand control");
+    assert_eq!(toggle, Rect::new(5, 2, 1, 1));
     assert_eq!(hits.hit(toggle.x, toggle.y), Some(HitKind::SidebarToggle));
     assert_eq!(
         terminal.backend().buffer()[(toggle.x, toggle.y)].symbol(),

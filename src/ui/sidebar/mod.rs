@@ -151,7 +151,7 @@ pub fn draw_collapsed_sidebar(
         return HitRegions::default();
     }
     let rect = Rect {
-        x: content.x,
+        x: content.x + content.width.saturating_sub(1) / 2,
         y: content.y,
         width: content.width.min(1),
         height: 1,
