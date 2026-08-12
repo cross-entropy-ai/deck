@@ -470,6 +470,7 @@ fn load_self_heals_a_valid_file_without_dropping_user_data() {
     };
     original.remotes.push(RemoteConfig {
         host: "prod-box".to_string(),
+        forward_agent: true,
         forwards: vec![],
     });
     // Force the summary-prompt migration to fire so load takes the
@@ -510,9 +511,38 @@ fn remote_config_without_forwards_field_deserializes() {
 }
 
 #[test]
+fn remote_config_forward_agent_defaults_on_and_default_is_not_emitted() {
+    // Absent from an existing config file -> on.
+    let json = r#"{ "host": "server-1" }"#;
+    let r: RemoteConfig = serde_json::from_str(json).unwrap();
+    assert!(r.forward_agent);
+    // The default is omitted on write, so untouched configs stay clean.
+    let s = serde_json::to_string(&r).unwrap();
+    assert!(
+        !s.contains("forward_agent"),
+        "default forward_agent should be skipped: {}",
+        s
+    );
+}
+
+#[test]
+fn remote_config_forward_agent_off_roundtrips() {
+    let r = RemoteConfig {
+        host: "server-1".into(),
+        forward_agent: false,
+        forwards: vec![],
+    };
+    let s = serde_json::to_string(&r).unwrap();
+    assert!(s.contains("forward_agent"));
+    let parsed: RemoteConfig = serde_json::from_str(&s).unwrap();
+    assert_eq!(parsed, r);
+}
+
+#[test]
 fn remote_config_empty_forwards_not_emitted() {
     let r = RemoteConfig {
         host: "server-1".into(),
+        forward_agent: true,
         forwards: vec![],
     };
     let s = serde_json::to_string(&r).unwrap();
@@ -527,6 +557,7 @@ fn remote_config_empty_forwards_not_emitted() {
 fn remote_config_forwards_roundtrip() {
     let r = RemoteConfig {
         host: "h".into(),
+        forward_agent: true,
         forwards: vec![ForwardSpec {
             mode: ForwardMode::Local,
             bind_addr: None,

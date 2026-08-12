@@ -11,13 +11,19 @@ use std::process::Command;
 
 use crate::forwards::ForwardSpec;
 
-/// The enabled Deck connection options followed by `host`, so this worker and
-/// multiplexed remote connections reach the same master socket per host.
+/// The enabled Deck connection options plus `host`'s ForwardAgent setting,
+/// followed by `host`, so this worker and multiplexed remote connections reach
+/// the same master socket per host.
 pub fn ssh_args_for_host(settings: &crate::ssh::ConnectionSettings, host: &str) -> Vec<String> {
     let mut enabled = settings.clone();
     enabled.enabled = true;
     crate::ssh::connection_opts_for(&enabled)
         .into_iter()
+        .chain(
+            crate::ssh::agent_forward_opts(host)
+                .iter()
+                .map(|opt| (*opt).to_string()),
+        )
         .chain(std::iter::once(host.to_string()))
         .collect()
 }

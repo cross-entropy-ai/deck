@@ -93,11 +93,18 @@ fn ok(stdout: &str) -> Result<Output, CommandError> {
 
 #[test]
 fn base_args_include_multiplexing() {
-    let args = base_ssh_args();
+    let args = base_ssh_args("box");
     let joined = args.join(" ");
     assert!(joined.contains("ControlMaster=auto"));
     assert!(joined.contains("ControlPersist=10m"));
     assert!(joined.contains("BatchMode=yes"));
+}
+
+#[test]
+fn base_args_state_agent_forwarding() {
+    // Default-on: a host never mentioned in config forwards the agent.
+    let args = base_ssh_args("box");
+    assert!(args.join(" ").contains("ForwardAgent=yes"));
 }
 
 #[test]

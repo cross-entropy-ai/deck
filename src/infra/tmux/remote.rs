@@ -25,10 +25,18 @@ const AGENT_PROBE_MARKER: &str = "__DECK_AGENT_PROBE__";
 /// budget because the first call may wait for the SSH master to come up.
 pub const REMOTE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// SSH options we apply on *every* remote call. The builder reads the live
-/// Deck preference immediately before each spawn.
-pub(crate) fn base_ssh_args() -> Vec<String> {
-    crate::ssh::connection_opts()
+/// SSH options we apply on *every* remote call: Deck's connection-reuse block
+/// plus `host`'s ForwardAgent setting. Both read live process-wide state
+/// immediately before each spawn, so a settings or config change applies
+/// without a restart.
+pub(crate) fn base_ssh_args(host: &str) -> Vec<String> {
+    let mut args = crate::ssh::connection_opts();
+    args.extend(
+        crate::ssh::agent_forward_opts(host)
+            .iter()
+            .map(|opt| (*opt).to_string()),
+    );
+    args
 }
 
 /// Path prefix prepended to every remote command. SSH's non-interactive
@@ -45,7 +53,7 @@ pub(crate) fn run_ssh(
     host: &str,
     remote_argv: &[&str],
 ) -> Result<String, CommandError> {
-    let mut args = base_ssh_args();
+    let mut args = base_ssh_args(host);
     args.push(host.to_string());
     args.push(REMOTE_PATH_PREFIX.to_string());
     args.extend(remote_argv.iter().map(|arg| (*arg).to_string()));
@@ -185,7 +193,7 @@ pub(crate) fn capture_panes(host: &str, pane_ids: &[String]) -> HashMap<String, 
         prefix = REMOTE_PATH_PREFIX,
         marker = CAPTURE_MARKER,
     );
-    let mut args = base_ssh_args();
+    let mut args = base_ssh_args(host);
     args.push(host.to_string());
     args.push(script);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();

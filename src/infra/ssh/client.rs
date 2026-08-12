@@ -4,11 +4,11 @@
 //! <host>` prints the *effective* configuration after all `Host`/`Match`
 //! blocks (including `Host *` wildcards) apply.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::{OnceLock, RwLock};
+use std::sync::{LazyLock, OnceLock, RwLock};
 use std::time::Duration;
 
 use crate::infra::command::{default_runner, CommandRunner};
@@ -180,6 +180,48 @@ fn control_path_for_ssh(value: &str) -> String {
 
 pub fn connection_opts() -> Vec<String> {
     connection_opts_for(&connection_settings())
+}
+
+const AGENT_FORWARD_ON: &[&str] = &["-o", "ForwardAgent=yes"];
+const AGENT_FORWARD_OFF: &[&str] = &["-o", "ForwardAgent=no"];
+
+/// Hosts whose config sets `forward_agent: false`. Written whenever the app
+/// config is (re)applied ([`set_agent_forward_disabled`]); read by every ssh
+/// argument-assembly point via [`agent_forward_opts`]. Kept separate from
+/// [`ConnectionSettings`] because it is per-host rather than process-wide, and
+/// because callers pass bare host strings (one-shot tmux calls, the attach PTY,
+/// port-forward builders) that cannot carry config through their signatures.
+static AGENT_FORWARD_DISABLED: LazyLock<RwLock<HashSet<String>>> =
+    LazyLock::new(|| RwLock::new(HashSet::new()));
+
+/// Replace the set of hosts with agent forwarding disabled. Called by the
+/// tmux system's `configure` on startup and config reload.
+pub fn set_agent_forward_disabled(hosts: HashSet<String>) {
+    let mut disabled = AGENT_FORWARD_DISABLED
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *disabled = hosts;
+}
+
+/// The per-host `ForwardAgent` option pair appended to [`connection_opts`] on
+/// every deck ssh invocation. Deck states the option explicitly both ways
+/// (default on, config `forward_agent: false` → off) so the outcome never
+/// depends on ssh_config. Safe to diverge per host even while connection reuse
+/// is on: the mux master is keyed by ControlPath alone, and agent forwarding is
+/// requested per session.
+pub fn agent_forward_opts(host: &str) -> &'static [&'static str] {
+    let disabled = AGENT_FORWARD_DISABLED
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    agent_forward_opts_in(&disabled, host)
+}
+
+fn agent_forward_opts_in(disabled: &HashSet<String>, host: &str) -> &'static [&'static str] {
+    if disabled.contains(host) {
+        AGENT_FORWARD_OFF
+    } else {
+        AGENT_FORWARD_ON
+    }
 }
 
 /// Create the directory holding Deck's ControlMaster sockets (the configured
@@ -371,6 +413,25 @@ mod tests {
         // `parent()` of a bare filename is Some(""), and creating "" is a no-op
         // that then made set_permissions("") fail with ENOENT on every launch.
         assert!(ensure_control_dir("cm-%C").is_ok());
+    }
+
+    #[test]
+    fn agent_forwarding_defaults_on_and_disables_per_host() {
+        // Pure-core test: the global registry is process-wide and tests run
+        // in parallel, so the off-path is asserted without touching it.
+        let disabled: HashSet<String> = ["locked-down".to_string()].into();
+        assert_eq!(
+            agent_forward_opts_in(&disabled, "locked-down"),
+            ["-o", "ForwardAgent=no"]
+        );
+        assert_eq!(
+            agent_forward_opts_in(&disabled, "elsewhere"),
+            ["-o", "ForwardAgent=yes"]
+        );
+        assert_eq!(
+            agent_forward_opts_in(&HashSet::new(), "anyhost"),
+            ["-o", "ForwardAgent=yes"]
+        );
     }
 
     #[test]

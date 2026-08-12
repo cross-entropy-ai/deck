@@ -171,6 +171,16 @@ impl System for TmuxSystem {
     }
 
     fn configure(&self, config: &Config) {
+        // Hand the transport layer the per-host ForwardAgent answer before
+        // any ssh spawns read it (configure runs on startup and reload).
+        crate::ssh::set_agent_forward_disabled(
+            config
+                .remotes
+                .iter()
+                .filter(|remote| !remote.forward_agent)
+                .map(|remote| remote.host.clone())
+                .collect(),
+        );
         let mut remotes = self
             .remotes
             .write()
@@ -291,6 +301,7 @@ impl LaneConfigProvider for TmuxSystem {
         }
         config.remotes.push(RemoteConfig {
             host: host.to_string(),
+            forward_agent: true,
             forwards: vec![],
         });
         LaneConfigAddOutcome::Added(Self::host_lane(host))
