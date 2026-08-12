@@ -6,9 +6,11 @@ use crate::remote_tmux;
 
 use super::{DirListing, SessionControl, SessionControlError, SessionControlResult};
 
-/// Remote control-plane backend for a single host.
+/// Remote control-plane backend for a single remote tmux server.
 pub struct RemoteControl {
-    /// ssh destination for this backend (config alias or hostname).
+    /// Remote id for this backend: an ssh destination (config alias or
+    /// hostname), or `host#container` for a container's inner tmux server
+    /// (opaque here — `remote_tmux` splits it at the transport).
     pub host: String,
     /// This connection's client-tty marker id, used by `switch_to_session` to
     /// target the right client. `0` = unknown, making the switch a no-op.

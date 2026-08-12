@@ -685,12 +685,52 @@ mod tests {
     }
 
     #[test]
+    fn configured_containers_become_their_own_lanes_with_titled_sections() {
+        let system = tmux::TmuxSystem::default();
+        let mut config = Config::default();
+        config.remotes.push(crate::config::RemoteConfig {
+            host: "devbox".into(),
+            forward_agent: true,
+            containers: vec![crate::config::ContainerConfig {
+                name: "dev".into(),
+                engine: "docker".into(),
+                agent_sock: None,
+            }],
+            forwards: vec![],
+        });
+        system.configure(&config);
+
+        let lanes = system.lanes();
+        let container = tmux::TmuxSystem::container_lane("devbox", "dev");
+        assert!(lanes.contains(&tmux::TmuxSystem::host_lane("devbox")));
+        assert!(lanes.contains(&container));
+
+        // The container divider: readable title, reconnect + menu buttons
+        // (no ⇄ badge — container forwards aren't a feature), and the full
+        // managed runtime so it attaches/controls like any remote lane.
+        let section = system.section_for(&container).expect("container section");
+        assert_eq!(section.title, "devbox/dev");
+        let cmds: Vec<&str> = section.buttons.iter().map(|b| b.action.as_str()).collect();
+        assert_eq!(cmds, ["reconnect", "menu"]);
+        assert_eq!(
+            AttachmentProvider::role(&system, &container),
+            Some(AttachmentRole::Managed)
+        );
+
+        assert_eq!(
+            tmux::remote_ids(&config.remotes),
+            vec!["devbox".to_string(), "devbox#dev".to_string()]
+        );
+    }
+
+    #[test]
     fn tmux_lane_config_provider_owns_lane_to_config_translation() {
         let system = tmux::TmuxSystem::default();
         let lane = tmux::TmuxSystem::host_lane("prod");
         let mut config = Config::default();
         config.remotes.push(crate::config::RemoteConfig {
             host: "prod".into(),
+            containers: vec![],
             forward_agent: true,
             forwards: vec![],
         });

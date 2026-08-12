@@ -56,13 +56,25 @@ impl TmuxSystem {
         LaneId::new(TMUX, LOCAL)
     }
 
-    /// A remote host's lane.
+    /// A remote host's lane. `host` is a *remote id*: a bare ssh host, or
+    /// `host#container` for a container lane (see
+    /// [`crate::remote_tmux::parse_remote_id`]).
     pub fn host_lane(host: &str) -> LaneId {
         LaneId::new(TMUX, host)
     }
 
-    /// `None` for the local lane, `Some(host)` for a remote one — the
+    /// The lane for a container on a remote host.
+    pub fn container_lane(host: &str, container: &str) -> LaneId {
+        LaneId::new(
+            TMUX,
+            &crate::remote_tmux::container_remote_id(host, container),
+        )
+    }
+
+    /// `None` for the local lane, `Some(remote id)` for a remote one — the
     /// `Option<&str>` host shape the rest of tmux's plumbing still speaks.
+    /// The id is opaque above the transport: a bare ssh host, or
+    /// `host#container` for a container lane.
     pub fn host_of(lane: &LaneId) -> Option<&str> {
         match lane.lane() {
             LOCAL => None,
@@ -96,6 +108,41 @@ pub fn hosts_from_lanes(lanes: &std::collections::HashSet<LaneId>) -> Vec<Option
         .collect()
 }
 
+/// Every managed remote id a config defines: each host followed by its
+/// containers (`host#container`), in config order. The reload diff
+/// onboards/offboards attachment lanes from these sets.
+pub fn remote_ids(remotes: &[RemoteConfig]) -> Vec<String> {
+    usable_remotes(remotes)
+        .flat_map(|remote| {
+            std::iter::once(remote.host.clone()).chain(usable_containers(remote).map(|container| {
+                crate::remote_tmux::container_remote_id(&remote.host, &container.name)
+            }))
+        })
+        .collect()
+}
+
+/// Config entries this system will actually mount, skipping any whose identity
+/// cannot round-trip through a lane's remote id. `Config::validate` rejects
+/// these on save and on hot-reload, but a hand-edited file reaches startup
+/// unvalidated, and a bad entry there is worse than absent: an empty container
+/// name produced the id `host#`, which reads back as the *host* `"host#"` — a
+/// lane that polled a nonexistent destination every tick, claimed it could host
+/// port forwards, and could never be removed.
+fn usable_remotes(remotes: &[RemoteConfig]) -> impl Iterator<Item = &RemoteConfig> {
+    remotes
+        .iter()
+        .filter(|remote| crate::config::validate_remote_host(&remote.host).is_ok())
+}
+
+fn usable_containers(
+    remote: &RemoteConfig,
+) -> impl Iterator<Item = &crate::config::ContainerConfig> {
+    remote.containers.iter().filter(|container| {
+        crate::config::validate_container_name(&container.name).is_ok()
+            && crate::config::validate_container_engine(&container.engine).is_ok()
+    })
+}
+
 /// The generic `…` divider menu button this system owns (both lanes).
 fn menu_button() -> SectionButton {
     SectionButton {
@@ -126,15 +173,23 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId, ssh_connection_reuse: bo
             session_capabilities: tmux_session_capabilities(),
             lane_capabilities: tmux_lane_capabilities(lane, ssh_connection_reuse),
         },
-        Some(host) => {
+        Some(remote_id) => {
             // ssh registers the remote-only buttons (the ⇄N forward count,
             // reconnect); the menu button is appended last (rightmost), the
-            // order the divider hit-tester zips against.
-            let mut buttons = crate::ssh::divider::divider(remotes, host, ssh_connection_reuse);
+            // order the divider hit-tester zips against. A container id never
+            // matches a RemoteConfig host, so its divider gets no ⇄ badge —
+            // container forwards aren't a feature yet.
+            let mut buttons =
+                crate::ssh::divider::divider(remotes, remote_id, ssh_connection_reuse);
             buttons.push(menu_button());
+            let target = crate::remote_tmux::parse_remote_id(remote_id);
+            let title = match target.container {
+                None => remote_id.to_string(),
+                Some(container) => format!("{}/{}", target.host, container),
+            };
             SectionDef {
                 lane: lane.clone(),
-                title: host.to_string(),
+                title,
                 buttons,
                 top_margin: true,
                 primary: false,
@@ -157,11 +212,20 @@ fn tmux_session_capabilities() -> SessionCapabilities {
 /// ControlMaster via `ssh -O`, so they exist only while connection reuse is on;
 /// the local lane has no ssh connection at all.
 fn tmux_lane_capabilities(lane: &LaneId, ssh_connection_reuse: bool) -> LaneCapabilities {
+    // Only a lane owning its own ssh connection can carry forwards: the local
+    // lane has none, and a container lane rides its *host's* master with no
+    // RemoteConfig of its own, so a rule would have nowhere to live and its
+    // remote id is not a resolvable ssh destination.
+    let owns_connection = TmuxSystem::host_of(lane).is_some_and(|remote_id| {
+        crate::remote_tmux::parse_remote_id(remote_id)
+            .container
+            .is_none()
+    });
     LaneCapabilities {
         create_session: true,
         reorder_sessions: true,
         actions: true,
-        port_forwards: ssh_connection_reuse && TmuxSystem::host_of(lane).is_some(),
+        port_forwards: ssh_connection_reuse && owns_connection,
     }
 }
 
@@ -171,14 +235,30 @@ impl System for TmuxSystem {
     }
 
     fn configure(&self, config: &Config) {
-        // Hand the transport layer the per-host ForwardAgent answer before
-        // any ssh spawns read it (configure runs on startup and reload).
+        // Hand the transport layer the per-host ForwardAgent answer and the
+        // per-container exec settings before any ssh spawns read them
+        // (configure runs on startup and reload).
         crate::ssh::set_agent_forward_disabled(
             config
                 .remotes
                 .iter()
                 .filter(|remote| !remote.forward_agent)
                 .map(|remote| remote.host.clone())
+                .collect(),
+        );
+        crate::remote_tmux::set_container_opts(
+            usable_remotes(&config.remotes)
+                .flat_map(|remote| {
+                    usable_containers(remote).map(|container| {
+                        (
+                            crate::remote_tmux::container_remote_id(&remote.host, &container.name),
+                            crate::remote_tmux::ContainerOpts {
+                                engine: container.engine.clone(),
+                                agent_sock: container.agent_sock.clone(),
+                            },
+                        )
+                    })
+                })
                 .collect(),
         );
         let mut remotes = self
@@ -198,7 +278,12 @@ impl System for TmuxSystem {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         std::iter::once(Self::local_lane())
-            .chain(remotes.iter().map(|remote| Self::host_lane(&remote.host)))
+            .chain(usable_remotes(&remotes).flat_map(|remote| {
+                std::iter::once(Self::host_lane(&remote.host)).chain(
+                    usable_containers(remote)
+                        .map(|container| Self::container_lane(&remote.host, &container.name)),
+                )
+            }))
             .collect()
     }
 
@@ -301,6 +386,7 @@ impl LaneConfigProvider for TmuxSystem {
         }
         config.remotes.push(RemoteConfig {
             host: host.to_string(),
+            containers: vec![],
             forward_agent: true,
             forwards: vec![],
         });

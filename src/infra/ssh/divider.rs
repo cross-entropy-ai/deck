@@ -60,6 +60,7 @@ mod tests {
     fn remote(host: &str, forwards: usize) -> RemoteConfig {
         RemoteConfig {
             host: host.to_string(),
+            containers: vec![],
             forward_agent: true,
             forwards: (0..forwards)
                 .map(|i| ForwardSpec {

@@ -97,13 +97,40 @@ impl App {
                         .map(|provider| provider.remove_lane(lane, &mut config));
                     match outcome {
                         Some(crate::system::LaneConfigOutcome::Removed) => {
+                            // A removed host takes its container lanes with
+                            // it: collect them from the *old* remote list
+                            // (before the new one commits) so their conns and
+                            // executor workers are offboarded too, not leaked.
+                            let container_lanes: Vec<crate::lane::LaneId> =
+                                crate::system::tmux::TmuxSystem::host_of(lane)
+                                    .map(|host| {
+                                        self.state
+                                            .config_remotes
+                                            .iter()
+                                            .filter(|remote| remote.host == host)
+                                            .flat_map(|remote| {
+                                                remote.containers.iter().map(|container| {
+                                                    crate::system::tmux::TmuxSystem::container_lane(
+                                                        &remote.host,
+                                                        &container.name,
+                                                    )
+                                                })
+                                            })
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
                             self.state.config_remotes = config.remotes;
                             crate::app::ssh::port_forward_task::stop_lane(
                                 &self.port_forward_tx,
                                 lane,
                             );
                             self.offboard_remote_host(lane);
-                            self.state.entries.retain(|entry| entry.lane != *lane);
+                            for container_lane in &container_lanes {
+                                self.offboard_remote_host(container_lane);
+                            }
+                            self.state.entries.retain(|entry| {
+                                entry.lane != *lane && !container_lanes.contains(&entry.lane)
+                            });
                             self.state.clamp_projects_focus();
                             self.state.clamp_agent_focus();
                             self.save_config();

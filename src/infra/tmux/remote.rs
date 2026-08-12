@@ -1,9 +1,16 @@
-//! Tmux operations against a remote host over SSH.
+//! Tmux operations against a remote tmux server over SSH.
 //!
 //! Thin sibling of `infra::tmux`: same parsers and `SessionInfo` shape, but
 //! each call shells out to `ssh <host> tmux ...`. Deck's connection options
 //! are applied on every invocation so its Settings preference, rather than
 //! `ssh_config`, controls whether calls reuse an SSH connection.
+//!
+//! Functions here take a *remote id*, not a bare host: either an ssh host,
+//! or `host#container` addressing the tmux server *inside* a container on
+//! that host (see [`parse_remote_id`]). For a container id, [`run_ssh`]
+//! wraps the command in `<engine> exec … sh -c '…'`, so every snippet —
+//! markers, switch/focus, captures — runs against the container's own
+//! filesystem and tmux server; callers stay id-agnostic.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -11,7 +18,8 @@ use std::time::Duration;
 use crate::agent::DetectedAgent;
 use crate::infra::command::{default_runner, CommandError, CommandRunner};
 use crate::infra::parser::tmux::{
-    exact_target, order_set_option_args, parse_sessions, SESSION_LIST_FORMAT_SSH,
+    exact_target, order_set_option_args, parse_sessions, SESSION_LIST_FORMAT_CONTAINER,
+    SESSION_LIST_FORMAT_SSH,
 };
 use crate::model::session::SessionSnapshot;
 
@@ -25,10 +33,94 @@ const AGENT_PROBE_MARKER: &str = "__DECK_AGENT_PROBE__";
 /// budget because the first call may wait for the SSH master to come up.
 pub const REMOTE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Separator between host and container in a *remote id* — the opaque string
+/// the app's host-keyed plumbing (conn manager, markers, executor lanes)
+/// carries for a container lane. `#` can appear in neither an ssh host alias
+/// (ssh_config's comment character) nor a docker/podman container name
+/// (`[a-zA-Z0-9][a-zA-Z0-9_.-]*`), so the parse is unambiguous.
+pub const CONTAINER_SEP: char = '#';
+
+/// The remote id for a container lane: `host#container`.
+pub fn container_remote_id(host: &str, container: &str) -> String {
+    format!("{host}{CONTAINER_SEP}{container}")
+}
+
+/// A parsed remote id: the ssh destination plus, for a container lane, the
+/// container whose *inner* tmux server the id addresses. Everything above the
+/// transport treats the id as opaque; only this module and the attach spawner
+/// split it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteTarget<'a> {
+    /// ssh destination (config alias or hostname).
+    pub host: &'a str,
+    /// Container on `host` to `exec` into, or `None` for the host itself.
+    pub container: Option<&'a str>,
+}
+
+pub fn parse_remote_id(id: &str) -> RemoteTarget<'_> {
+    match id.split_once(CONTAINER_SEP) {
+        Some((host, container)) if !host.is_empty() && !container.is_empty() => RemoteTarget {
+            host,
+            container: Some(container),
+        },
+        _ => RemoteTarget {
+            host: id,
+            container: None,
+        },
+    }
+}
+
+/// Per-container transport settings, keyed by remote id. Written whenever the
+/// app config is (re)applied (`TmuxSystem::configure`); read at the two
+/// argv-assembly points (here and the attach spawner). Same shape as the
+/// ForwardAgent registry in `crate::ssh` — callers pass opaque id strings, so
+/// config can't be threaded through their signatures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerOpts {
+    /// Container engine CLI on the host (`docker`/`podman`).
+    pub engine: String,
+    /// `SSH_AUTH_SOCK` value exported into the container on attach, when the
+    /// user arranged for an agent socket to be reachable inside (bind mount).
+    pub agent_sock: Option<String>,
+}
+
+impl Default for ContainerOpts {
+    fn default() -> Self {
+        Self {
+            engine: crate::config::DEFAULT_CONTAINER_ENGINE.to_string(),
+            agent_sock: None,
+        }
+    }
+}
+
+static CONTAINER_OPTS: std::sync::LazyLock<std::sync::RwLock<HashMap<String, ContainerOpts>>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(HashMap::new()));
+
+/// Replace the container-options table (startup and config reload).
+pub fn set_container_opts(opts: HashMap<String, ContainerOpts>) {
+    let mut table = CONTAINER_OPTS
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *table = opts;
+}
+
+/// Transport settings for a container remote id; defaults (docker, no agent
+/// socket) for ids the config no longer mentions — a stale in-flight call
+/// then fails on docker's own error rather than panicking here.
+pub(crate) fn container_opts(remote_id: &str) -> ContainerOpts {
+    CONTAINER_OPTS
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(remote_id)
+        .cloned()
+        .unwrap_or_default()
+}
+
 /// SSH options we apply on *every* remote call: Deck's connection-reuse block
 /// plus `host`'s ForwardAgent setting. Both read live process-wide state
 /// immediately before each spawn, so a change applies to later *connections*
-/// without a restart.
+/// without a restart. `host` is the ssh destination, never a container id — ssh
+/// options are a property of the connection, not of what runs over it.
 ///
 /// ForwardAgent must stay identical across every invocation for a host, and it
 /// is not retroactive: whichever call opens the ControlMaster decides what the
@@ -56,19 +148,57 @@ pub(crate) fn base_ssh_args(host: &str) -> Vec<String> {
 pub(crate) const REMOTE_PATH_PREFIX: &str =
     "PATH=/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$PATH";
 
+/// Run `remote_argv` on the remote id's tmux server: on the host itself, or —
+/// for a container id — inside the container via [`container_exec_argv`].
 pub(crate) fn run_ssh(
     runner: &dyn CommandRunner,
-    host: &str,
+    remote_id: &str,
     remote_argv: &[&str],
 ) -> Result<String, CommandError> {
-    let mut args = base_ssh_args(host);
-    args.push(host.to_string());
+    let target = parse_remote_id(remote_id);
+    let mut args = base_ssh_args(target.host);
+    args.push(target.host.to_string());
     args.push(REMOTE_PATH_PREFIX.to_string());
-    args.extend(remote_argv.iter().map(|arg| (*arg).to_string()));
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    match target.container {
+        None => args.extend(remote_argv.iter().map(|s| s.to_string())),
+        Some(container) => args.extend(container_exec_argv(
+            &container_opts(remote_id).engine,
+            container,
+            remote_argv,
+        )),
+    }
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     runner
-        .run("ssh", &args, REMOTE_TIMEOUT)
+        .run("ssh", &arg_refs, REMOTE_TIMEOUT)
         .map(|out| out.stdout_trimmed())
+}
+
+/// Wrap a remote command for execution inside a container. The host shell
+/// runs `<engine> exec <name> sh -c '<PATH prefix + command>'`: the inner
+/// command is single-quoted into ONE host-shell word, so the container's
+/// `sh` re-parses exactly the string the host shell would have — same PATH
+/// prefix, same `;`/redirect semantics — and the marker/switch/capture
+/// snippets work unchanged against the container's own filesystem.
+///
+/// Container-bound commands must stay POSIX-sh clean: `sh` in slim images is
+/// dash, which has no `$'…'` ANSI-C quoting — that's why `list_sessions` and
+/// `agent_probe` pick `…_CONTAINER` spellings of their tmux formats.
+fn container_exec_argv(engine: &str, container: &str, remote_argv: &[&str]) -> Vec<String> {
+    let inner = format!("{REMOTE_PATH_PREFIX} {}", remote_argv.join(" "));
+    vec![
+        // Quoted like every other config value that reaches a remote shell (see
+        // CLAUDE.md). Unquoted, `engine: "docker ; id > /tmp/x ; true"` ran on
+        // the host every refresh tick — and it also disagreed with the attach
+        // path, which always quoted, so a multi-word value listed sessions fine
+        // and then could never open a PTY. `validate_container_engine` keeps the
+        // value to one command, so quoting costs nothing legitimate.
+        shell_single_quote(engine),
+        "exec".to_string(),
+        shell_single_quote(container),
+        "sh".to_string(),
+        "-c".to_string(),
+        shell_single_quote(&inner),
+    ]
 }
 
 /// List tmux sessions on `host`.
@@ -95,28 +225,44 @@ fn list_sessions_with(
     host: &str,
 ) -> Result<Vec<SessionSnapshot>, ListSessionsError> {
     // `$'...'` (bash/zsh ANSI-C quoting) makes the remote shell treat `#`
-    // literally (no comment) and `\t` as a splittable tab byte; a
-    // POSIX-only shell would need a different escape. Trailing
+    // literally (no comment) and `\t` as a splittable tab byte; a container
+    // command is re-parsed by POSIX `sh` inside the container instead, so it
+    // takes the single-quoted literal-tab spelling. Trailing
     // `#{@deck_order}` carries deck's persisted display rank (empty when
     // unset). See `persist_session_order`.
-    match run_ssh(
-        runner,
-        host,
-        &["tmux", "list-sessions", "-F", SESSION_LIST_FORMAT_SSH],
-    ) {
+    let format = if parse_remote_id(host).container.is_some() {
+        SESSION_LIST_FORMAT_CONTAINER
+    } else {
+        SESSION_LIST_FORMAT_SSH
+    };
+    match run_ssh(runner, host, &["tmux", "list-sessions", "-F", format]) {
         // No window-activity probe (unlike local): nothing reads remote
         // activity, so the extra `list-windows -a` roundtrip per host per
         // tick would be waste. Rows parse with `activity = 0`.
         Ok(raw) => Ok(parse_sessions(&raw, &HashMap::new())),
         // "no server running" is the *only* failure read as empty: the host
-        // is reachable, just sessionless. Other non-zero exits (tmux
-        // missing, permission, PATH) and ssh failures stay unreachable.
+        // is reachable, just sessionless. A stopped/removed container reads
+        // as unreachable (a placeholder row, not a warning every tick), like
+        // a host that dropped off the network. Other non-zero exits (tmux
+        // missing, permission, PATH) stay backend errors.
         Err(err) if is_no_server_error(&err) => Ok(Vec::new()),
-        Err(err) if is_unreachable_error(&err) => {
+        Err(err) if is_unreachable_error(&err) || is_container_unavailable_error(&err) => {
             Err(ListSessionsError::Unreachable(err.to_string()))
         }
         Err(err) => Err(ListSessionsError::Backend(err.to_string())),
     }
+}
+
+/// Whether a failed container call means the container itself is gone or
+/// stopped — docker/podman phrase it as "… is not running" / "No such
+/// container …" on stderr. Treated like an unreachable host: deck shows the
+/// lane's placeholder row and retries on later ticks.
+fn is_container_unavailable_error(err: &CommandError) -> bool {
+    let CommandError::NonZero { stderr, .. } = err else {
+        return false;
+    };
+    let msg = String::from_utf8_lossy(stderr).to_lowercase();
+    msg.contains("is not running") || msg.contains("no such container")
 }
 
 /// Probe `host` for interactive agents in its tmux panes, in one ssh hop:
@@ -127,13 +273,19 @@ fn list_sessions_with(
 pub fn agent_probe(host: &str) -> Option<Vec<DetectedAgent>> {
     let runner = default_runner();
     // Commands joined by a bare `;` (shell separator, run in sequence).
-    // `$'…'` protects the `#`/tabs in the tmux format; `2>/dev/null`
-    // swallows tmux's "no server" noise so a server-less host still yields
-    // a clean ps. Marker must be shell-safe (see `AGENT_PROBE_MARKER`).
-    let format = format!(
-        "$'{}'",
-        crate::infra::parser::pane::PANE_FORMAT.replace('\t', "\\t")
-    );
+    // `$'…'` protects the `#`/tabs in the tmux format on a host (bash/zsh);
+    // inside a container the parser is POSIX `sh`, so the format is
+    // single-quoted with literal tabs instead. `2>/dev/null` swallows tmux's
+    // "no server" noise so a server-less target still yields a clean ps.
+    // Marker must be shell-safe (see `AGENT_PROBE_MARKER`).
+    let format = if parse_remote_id(host).container.is_some() {
+        format!("'{}'", crate::infra::parser::pane::PANE_FORMAT)
+    } else {
+        format!(
+            "$'{}'",
+            crate::infra::parser::pane::PANE_FORMAT.replace('\t', "\\t")
+        )
+    };
     let raw = run_ssh(
         runner,
         host,
@@ -201,14 +353,13 @@ pub(crate) fn capture_panes(host: &str, pane_ids: &[String]) -> HashMap<String, 
         prefix = REMOTE_PATH_PREFIX,
         marker = CAPTURE_MARKER,
     );
-    let mut args = base_ssh_args(host);
-    args.push(host.to_string());
-    args.push(script);
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let Ok(out) = runner.run("ssh", &args, REMOTE_TIMEOUT) else {
+    // Through `run_ssh` so a container id gets the exec wrapping. Its PATH
+    // prefix lands ahead of the script's own `export` (which a `for` loop
+    // needs internally anyway); the doubled prefix entries are harmless.
+    let Ok(out) = run_ssh(runner, host, &[script.as_str()]) else {
         return HashMap::new();
     };
-    parse_captures(&out.stdout_trimmed())
+    parse_captures(&out)
 }
 
 /// Split batched-capture stdout into `pane_id -> buffer` on the
