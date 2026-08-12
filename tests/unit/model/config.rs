@@ -136,6 +136,29 @@ fn rejects_blank_or_none_control_path() {
 }
 
 #[test]
+fn rejects_control_paths_ssh_or_deck_cannot_use() {
+    // A double quote would terminate the quoting `connection_opts_for` adds.
+    assert!(validate_ssh_control_path("~/.ssh/socks/cm\"-%C").is_err());
+    // Deck creates the socket's directory up front, so it must not vary per
+    // connection; % tokens belong in the filename only.
+    assert!(validate_ssh_control_path("~/.ssh/%h/cm-%C").is_err());
+    assert!(validate_ssh_control_path("/tmp/deck-%r/cm").is_err());
+    // Every home spelling still resolves, and a static directory is fine.
+    for value in [
+        "~/.ssh/socks/cm-%r@%h:%p",
+        "$HOME/.cache/deck/cm-%C",
+        "${HOME}/.cache/deck/cm-%C",
+        "%d/.ssh/socks/cm-%C",
+        "/tmp/deck sockets/cm-%C",
+    ] {
+        assert!(
+            validate_ssh_control_path(value).is_ok(),
+            "should accept {value}"
+        );
+    }
+}
+
+#[test]
 fn unsupported_frame_rate_limit_normalizes_to_default() {
     assert_eq!(crate::state::DEFAULT_FRAME_RATE_LIMIT, 30);
     assert_eq!(crate::state::normalize_frame_rate_limit(15), 30);

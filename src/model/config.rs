@@ -394,10 +394,44 @@ impl Config {
     }
 }
 
-/// Validate the Deck-owned `ControlPath` before it reaches `ssh -o`. Spaces
-/// are legitimate path characters and are safe because the value is passed as
-/// one argv element; empty, `none`, NUL, and line-oriented values are not useful
-/// socket locations.
+/// Home-directory spellings accepted at the *start* of a ControlPath. OpenSSH
+/// expands `~`, `%d`, and `${HOME}` itself; `$HOME` is a shell spelling ssh
+/// would take literally, so Deck normalizes it. Order matters only in that
+/// every entry is tried.
+const CONTROL_PATH_HOME_PREFIXES: [&str; 4] = ["~/", "$HOME/", "${HOME}/", "%d/"];
+const CONTROL_PATH_HOME_EXACT: [&str; 4] = ["~", "$HOME", "${HOME}", "%d"];
+
+/// Resolve a ControlPath's leading home-directory token to a real path, so the
+/// directory holding the socket can be created and inspected. Tokens ssh
+/// expands per-connection (`%r`, `%h`, `%p`, `%C`, …) are left untouched.
+///
+/// Lives beside the validator so one definition of "which home spellings are
+/// accepted" serves both validation and `ssh::ensure_control_dir`.
+pub(crate) fn expand_control_path_home(value: &str) -> PathBuf {
+    let home = home_dir();
+    for prefix in CONTROL_PATH_HOME_PREFIXES {
+        if let Some(rest) = value.strip_prefix(prefix) {
+            return home.join(rest);
+        }
+    }
+    if CONTROL_PATH_HOME_EXACT.contains(&value) {
+        return home;
+    }
+    PathBuf::from(value)
+}
+
+/// Validate the Deck-owned `ControlPath` before it reaches `ssh -o`. Empty,
+/// `none`, NUL, and line-oriented values are not useful socket locations.
+///
+/// Spaces are accepted: `connection_opts_for` quotes the value, so a space is a
+/// legitimate path character (don't drop that quoting — unquoted, ssh rejects
+/// the whole option and every invocation exits 255).
+///
+/// A double quote would terminate that quoting, and a `%` token in the
+/// *directory* portion names a path that varies per connection, which Deck
+/// cannot create ahead of time — ssh would then fail to bind and silently fall
+/// back to unmultiplexed connections. Both are rejected here, at the gate that
+/// decides what can be persisted, rather than warned about after the fact.
 pub fn validate_ssh_control_path(value: &str) -> Result<(), String> {
     let value = value.trim();
     if value.is_empty() {
@@ -408,6 +442,16 @@ pub fn validate_ssh_control_path(value: &str) -> Result<(), String> {
     }
     if value.chars().any(|c| matches!(c, '\0' | '\n' | '\r')) {
         return Err("Control path must be a single line".to_string());
+    }
+    if value.contains('"') {
+        return Err("Control path cannot contain a double quote".to_string());
+    }
+    let expanded = expand_control_path_home(value);
+    let dir = expanded
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    if dir.as_os_str().to_string_lossy().contains('%') {
+        return Err("Only the socket filename may use % tokens".to_string());
     }
     Ok(())
 }

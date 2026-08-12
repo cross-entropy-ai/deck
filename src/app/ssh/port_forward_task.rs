@@ -222,7 +222,18 @@ impl<R: Runner> Worker<R> {
             } => {
                 let old_settings = std::mem::replace(&mut self.settings, settings);
                 let mut out = Vec::new();
-                if old_settings.enabled {
+                // `ssh -O exit` kills the master *and* every session multiplexed
+                // on it, including Deck's live `tmux attach` PTYs — so only close
+                // sockets actually being abandoned, and only re-establish
+                // forwards that lost their master. A ControlPersist-only edit
+                // satisfies neither and is a no-op here: live connections stay
+                // up, and the new idle timeout applies to later masters.
+                let closes_old = old_settings.abandons_socket(&self.settings);
+                let restores = old_settings.rebuilds_forwards(&self.settings);
+                if !closes_old && !restores {
+                    return out;
+                }
+                if closes_old {
                     let mut stopped = HashSet::new();
                     for host in stop_hosts {
                         if stopped.insert(host.clone()) {
@@ -232,7 +243,7 @@ impl<R: Runner> Worker<R> {
                     }
                 }
                 self.masters_up.clear();
-                if self.settings.enabled {
+                if restores {
                     self.bootstrap(forward_hosts, &mut out);
                 }
                 out

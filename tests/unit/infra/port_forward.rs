@@ -24,8 +24,8 @@ fn ssh_args_uses_shared_control_options() {
         joined
     );
     assert!(
-        joined.contains("ControlPath=/tmp/deck/cm-%C"),
-        "missing ControlPath: {}",
+        joined.contains("ControlPath=\"/tmp/deck/cm-%C\""),
+        "missing quoted ControlPath: {}",
         joined
     );
     assert!(

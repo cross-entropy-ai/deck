@@ -58,6 +58,11 @@ impl App {
     /// Deck-owned connection snapshot. The worker retains its old snapshot
     /// long enough to address and close the old sockets; saved forward rules
     /// are restored only when the new snapshot is enabled.
+    ///
+    /// Returns whether the worker is rebuilding the forward set from scratch, so
+    /// a caller that also diffs per-rule forward changes knows to skip them. A
+    /// ControlPersist-only edit returns false: live masters are untouched, so
+    /// per-rule ops still apply to them normally.
     pub(super) fn reconfigure_ssh_if_needed(
         &mut self,
         config: &crate::config::Config,
@@ -68,6 +73,8 @@ impl App {
         if old_settings == new_settings {
             return false;
         }
+        let rebuilds = old_settings.abandons_socket(&new_settings)
+            || old_settings.rebuilds_forwards(&new_settings);
 
         if new_settings.enabled {
             if let Err(e) = crate::ssh::ensure_control_dir(&new_settings.control_path) {
@@ -94,7 +101,7 @@ impl App {
                 stop_hosts,
                 forward_hosts,
             });
-        true
+        rebuilds
     }
 
     pub(super) fn tick_update_check(&mut self) -> bool {

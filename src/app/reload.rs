@@ -105,12 +105,17 @@ impl App {
             .collect();
         stop_hosts.sort();
         stop_hosts.dedup();
-        let ssh_settings_changed = self.reconfigure_ssh_if_needed(&cfg, stop_hosts);
+        // True only when the worker is rebuilding every forward from scratch
+        // (socket replaced, or reuse just came on). A ControlPersist-only edit
+        // leaves the live masters alone, so the per-rule diff below must still
+        // run for it — otherwise a reload that changed the duration *and* added
+        // a forward would silently drop the new rule.
+        let ssh_forwards_rebuilt = self.reconfigure_ssh_if_needed(&cfg, stop_hosts);
 
         // Hosts only in old → stop master + offboard runtime state.
         for old in &old_remotes {
             if !new_remotes.iter().any(|n| n.host == old.host) {
-                if !ssh_settings_changed && cfg.ssh_connection_reuse {
+                if !ssh_forwards_rebuilt && cfg.ssh_connection_reuse {
                     let _ = self.port_forward_tx.send(
                         crate::app::ssh::port_forward_task::Op::StopHost {
                             host: old.host.clone(),
@@ -132,9 +137,9 @@ impl App {
         }
 
         // While reuse is off, forward rules remain persisted but inactive.
-        // A settings change is handled as one Reconfigure op above, so don't
+        // A socket replacement is handled as one Reconfigure op above, so don't
         // race it with per-rule operations against the old socket.
-        if !ssh_settings_changed && cfg.ssh_connection_reuse {
+        if !ssh_forwards_rebuilt && cfg.ssh_connection_reuse {
             for n in &new_remotes {
                 let empty = Vec::new();
                 let old_fwds: &[crate::forwards::ForwardSpec] = old_remotes
