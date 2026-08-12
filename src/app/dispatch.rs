@@ -316,11 +316,12 @@ impl App {
                     if let Some(ns) = self.state.overlay.new_session.as_mut() {
                         match result {
                             Ok(listing) => {
-                                ns.picker.items = listing.entries;
+                                ns.picker.items =
+                                    crate::new_session::with_parent_entry(listing.entries);
                                 ns.picker.error = None;
                             }
                             Err(error) => {
-                                ns.picker.items.clear();
+                                ns.picker.items = crate::new_session::with_parent_entry(vec![]);
                                 ns.picker.error = Some(error.to_string());
                             }
                         }

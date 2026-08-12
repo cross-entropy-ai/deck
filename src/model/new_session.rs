@@ -50,6 +50,9 @@ pub fn filter_entries(entries: &[String], leaf: &str) -> Vec<usize> {
         .iter()
         .enumerate()
         .filter(|(_, name)| {
+            if name.as_str() == ".." {
+                return leaf.is_empty() || name.starts_with(&leaf_lc);
+            }
             if !allow_dot && name.starts_with('.') {
                 return false;
             }
@@ -57,6 +60,37 @@ pub fn filter_entries(entries: &[String], leaf: &str) -> Vec<usize> {
         })
         .map(|(i, _)| i)
         .collect()
+}
+
+/// Prepend the synthetic parent-directory entry to a backend listing.
+pub fn with_parent_entry(mut entries: Vec<String>) -> Vec<String> {
+    entries.retain(|entry| entry != "..");
+    entries.insert(0, "..".to_string());
+    entries
+}
+
+/// Parent of the directory represented by a trailing-slash picker path.
+/// Normal segments collapse (`~/foo/` -> `~/`); walking above `~/` preserves
+/// shell-expandable parent segments (`~/` -> `~/../` -> `~/../../`).
+pub fn parent_directory(path: &str) -> String {
+    if path == "/" {
+        return "/".to_string();
+    }
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return "../".to_string();
+    }
+    if trimmed == "~" {
+        return "~/../".to_string();
+    }
+    if trimmed == ".." || trimmed.ends_with("/..") {
+        return format!("{trimmed}/../");
+    }
+    match trimmed.rfind('/') {
+        Some(0) => "/".to_string(),
+        Some(index) => trimmed[..=index].to_string(),
+        None => String::new(),
+    }
 }
 
 /// Build a single-line `TextArea` pre-filled with `s`, cursor at end.

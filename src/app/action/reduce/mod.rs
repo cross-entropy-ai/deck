@@ -720,7 +720,11 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
             if let Some(&idx) = ns.picker.filtered.get(ns.picker.selected) {
                 let entry = ns.picker.items[idx].clone();
                 let (parent, _leaf) = crate::new_session::split_input(ns.input_str());
-                let new_path = format!("{}{}/", parent, entry);
+                let new_path = if entry == ".." {
+                    crate::new_session::parent_directory(parent)
+                } else {
+                    format!("{}{}/", parent, entry)
+                };
                 ns.set_path(&new_path);
                 fx.reread_new_session_entries();
             }

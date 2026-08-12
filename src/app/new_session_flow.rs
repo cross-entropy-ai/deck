@@ -99,7 +99,7 @@ impl App {
         // `DirListed` populates `entries`. Local listing is fast but routed
         // through the executor anyway, to keep the picker uniform with remote
         // and off the UI thread.
-        let mut picker = FilterPicker::new(vec![]);
+        let mut picker = FilterPicker::new(crate::new_session::with_parent_entry(vec![]));
         picker.input = make_textarea(&input_str);
         let mut ns = NewSessionState {
             name: make_textarea(&name_str),

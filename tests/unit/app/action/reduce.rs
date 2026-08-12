@@ -1657,6 +1657,14 @@ fn new_session_dir_enter_descends_into_selected() {
 }
 
 #[test]
+fn new_session_dir_enter_on_parent_entry_goes_up() {
+    let mut state = picker_state_with("~/foo/", vec!["..".into(), "bar".into()]);
+    let fx = apply_action(&mut state, Action::NewSession(NewSessionAction::DirEnter));
+    assert_eq!(ns_input_str(&state), "~/");
+    assert!(fx.has_reread_new_session_entries());
+}
+
+#[test]
 fn open_host_divider_menu_uses_host_kind() {
     let mut state = make_test_state(1);
     crate::action::apply_action(

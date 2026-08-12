@@ -38,6 +38,23 @@ fn filter_entries_shows_dotfiles_when_leaf_starts_with_dot() {
 }
 
 #[test]
+fn parent_entry_is_first_and_visible_without_filter() {
+    let entries = with_parent_entry(vec!["src".into(), "target".into()]);
+    assert_eq!(entries, vec!["..", "src", "target"]);
+    assert_eq!(filter_entries(&entries, ""), vec![0, 1, 2]);
+    assert_eq!(filter_entries(&entries, "src"), vec![1]);
+}
+
+#[test]
+fn parent_directory_collapses_segments_and_can_walk_above_home() {
+    assert_eq!(parent_directory("~/foo/"), "~/");
+    assert_eq!(parent_directory("~/"), "~/../");
+    assert_eq!(parent_directory("~/../"), "~/../../");
+    assert_eq!(parent_directory("/foo/"), "/");
+    assert_eq!(parent_directory("/"), "/");
+}
+
+#[test]
 fn expand_path_tilde() {
     let home = PathBuf::from("/home/u");
     assert_eq!(expand_path("~", &home), PathBuf::from("/home/u"));
