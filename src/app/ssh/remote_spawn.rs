@@ -176,10 +176,10 @@ impl RemoteSpawner {
 ///
 /// POSIX-sh only, and no token starts with `=`/`-`/`#` (see CLAUDE.md on remote
 /// shells re-parsing argv).
-fn attach_command(host: &str, marker_id: u64) -> String {
+fn attach_command(remote_id: &str, marker_id: u64) -> String {
     let dir = crate::remote_tmux::client_cache_dir_token();
-    let marker_pattern = crate::remote_tmux::client_marker_name_pattern(host);
-    let marker = crate::remote_tmux::client_marker_token(host, marker_id);
+    let marker_pattern = crate::remote_tmux::client_marker_name_pattern(remote_id);
+    let marker = crate::remote_tmux::client_marker_token(remote_id, marker_id);
     let agent = crate::remote_tmux::agent_socket_token();
     format!(
         "mkdir -p {dir} 2>/dev/null ; \
@@ -189,8 +189,67 @@ fn attach_command(host: &str, marker_id: u64) -> String {
          && ln -sf \"$SSH_AUTH_SOCK\" {agent} 2>/dev/null ; then \
          SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK ; \
          {path} tmux set-environment -g SSH_AUTH_SOCK {agent} 2>/dev/null ; \
-         fi ; {path} tmux attach",
+         fi ; {path} tmux attach{detach_others}",
         path = crate::remote_tmux::REMOTE_PATH_PREFIX,
+        // Container path only. sshd SIGHUPs its session when the ssh client
+        // dies, reaping the previous `tmux attach`; a container engine does not
+        // kill an exec'd process when its client goes away, so every reconnect
+        // would leave another attached client alive inside the container —
+        // clamping the window to a stale client's size under
+        // `window-size smallest`. `-d` detaches the others as we attach, at the
+        // cost of also detaching a human's own client of that session.
+        detach_others = if crate::remote_tmux::parse_remote_id(remote_id)
+            .container
+            .is_some()
+        {
+            " -d"
+        } else {
+            ""
+        },
+    )
+}
+
+/// The complete remote-shell command for one attach connection: the prelude
+/// itself on a host id, or — for a container id — the prelude wrapped in
+/// `<engine> exec -it [-e SSH_AUTH_SOCK=…] <name> sh -c '…'`, so the tmux
+/// client, the client-tty marker, and the agent symlink all live inside the
+/// container (the same filesystem the one-shot `run_ssh` calls exec into).
+/// `-it` keeps a TTY through the exec; ssh's `-tt` supplies the outer one.
+fn attach_shell_command(remote_id: &str, marker_id: u64) -> String {
+    attach_shell_command_with(
+        remote_id,
+        marker_id,
+        &crate::remote_tmux::container_opts(remote_id),
+    )
+}
+
+/// Pure core of [`attach_shell_command`]: the opts come in as a value so the
+/// wrapping is testable without the process-wide container-opts registry.
+fn attach_shell_command_with(
+    remote_id: &str,
+    marker_id: u64,
+    opts: &crate::remote_tmux::ContainerOpts,
+) -> String {
+    let prelude = attach_command(remote_id, marker_id);
+    let Some(container) = crate::remote_tmux::parse_remote_id(remote_id).container else {
+        return prelude;
+    };
+    let agent_env = opts
+        .agent_sock
+        .as_deref()
+        .map(|sock| {
+            format!(
+                "-e {} ",
+                crate::remote_tmux::shell_single_quote(&format!("SSH_AUTH_SOCK={sock}"))
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "{path} {engine} exec -it {agent_env}{name} sh -c {script}",
+        path = crate::remote_tmux::REMOTE_PATH_PREFIX,
+        engine = crate::remote_tmux::shell_single_quote(&opts.engine),
+        name = crate::remote_tmux::shell_single_quote(container),
+        script = crate::remote_tmux::shell_single_quote(&prelude),
     )
 }
 
@@ -223,15 +282,16 @@ fn spawn_one(
             // output goes to the file, so nothing dirties the terminal before
             // tmux paints. Best-effort; readiness confirmed out of band below.
             let marker_id = next_marker_id();
-            let remote_cmd = attach_command(&host_for_args, marker_id);
+            let target = crate::remote_tmux::parse_remote_id(&host_for_args);
+            let remote_cmd = attach_shell_command(&host_for_args, marker_id);
             let mut argv = vec!["-tt".to_string()];
             argv.extend(crate::ssh::connection_opts());
             argv.extend(
-                crate::ssh::agent_forward_opts(&host_for_args)
+                crate::ssh::agent_forward_opts(target.host)
                     .iter()
                     .map(|opt| (*opt).to_string()),
             );
-            argv.push(host_for_args.clone());
+            argv.push(target.host.to_string());
             argv.push(remote_cmd);
             let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
             let pane = match Pty::spawn("ssh", &argv, size) {
@@ -281,6 +341,53 @@ mod tests {
         assert!(!command.contains("rm -f \"$HOME\"/.cache/deck/client-"));
         assert!(command.contains("tty > \"$HOME\"/'.cache/deck/client-"));
         assert!(command.ends_with("tmux attach"));
+    }
+
+    #[test]
+    fn container_attach_detaches_orphaned_clients_but_a_host_attach_does_not() {
+        // A container engine does not kill an exec'd process when its client
+        // dies, so without `-d` every reconnect leaves another attached tmux
+        // client alive inside the container. sshd SIGHUPs the host case for us.
+        assert!(attach_command("box#dev", 1).ends_with("tmux attach -d"));
+        assert!(attach_command("box", 1).ends_with("tmux attach"));
+    }
+
+    #[test]
+    fn attach_on_a_host_id_is_the_bare_prelude() {
+        let opts = crate::remote_tmux::ContainerOpts::default();
+        assert_eq!(
+            attach_shell_command_with("web.prod", 17, &opts),
+            attach_command("web.prod", 17),
+        );
+    }
+
+    #[test]
+    fn attach_on_a_container_id_wraps_the_prelude_in_engine_exec() {
+        let opts = crate::remote_tmux::ContainerOpts::default();
+        let command = attach_shell_command_with("web.prod#dev", 17, &opts);
+
+        // Engine resolved on the host via the PATH prefix; TTY through the
+        // exec; the whole prelude as ONE sh -c word.
+        assert!(command.starts_with("PATH="));
+        assert!(command.contains("'docker' exec -it 'dev' sh -c '"));
+        // No exec-time agent env unless the config names a socket path (the
+        // prelude's own symlink block still mentions SSH_AUTH_SOCK).
+        assert!(!command.contains("-e 'SSH_AUTH_SOCK"));
+        // The prelude still writes this connection's marker (quoted through
+        // the wrapping layer).
+        assert!(command.contains("client-"));
+        assert!(command.ends_with("'"));
+    }
+
+    #[test]
+    fn attach_on_a_container_id_exports_a_configured_agent_socket() {
+        let opts = crate::remote_tmux::ContainerOpts {
+            engine: "podman".to_string(),
+            agent_sock: Some("/ssh-agent".to_string()),
+        };
+        let command = attach_shell_command_with("web.prod#dev", 17, &opts);
+
+        assert!(command.contains("'podman' exec -it -e 'SSH_AUTH_SOCK=/ssh-agent' 'dev' sh -c '"));
     }
 
     #[test]

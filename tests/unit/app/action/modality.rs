@@ -308,6 +308,7 @@ fn port_forward_shortcut_can_be_rebound() {
     let mut state = make_state();
     state.config_remotes = vec![crate::config::RemoteConfig {
         host: "prod".into(),
+        containers: vec![],
         forward_agent: true,
         forwards: vec![],
     }];

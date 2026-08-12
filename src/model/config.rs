@@ -39,6 +39,99 @@ pub struct RemoteConfig {
     /// immediately if you reconnect the host from its divider.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub forward_agent: bool,
+    /// Containers on this host surfaced as their own sidebar lanes (tmux
+    /// inside the container, reached by wrapping every call in
+    /// `<engine> exec` over this host's ssh connection).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub containers: Vec<ContainerConfig>,
+}
+
+/// A container on a remote host whose *inner* tmux server deck surfaces as a
+/// sidebar lane. Requires tmux (and a POSIX `sh`) installed in the container.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContainerConfig {
+    /// Container name or id, as `<engine> ps` reports it.
+    pub name: String,
+    /// Container engine CLI on the host: `docker` (default) or `podman`.
+    #[serde(default = "default_engine", skip_serializing_if = "is_default_engine")]
+    pub engine: String,
+    /// Path *inside the container* of an ssh-agent socket, exported as
+    /// `SSH_AUTH_SOCK` when attaching. deck can't mount the forwarded agent
+    /// into a running container; set this when the container was started
+    /// with a socket bind-mounted (e.g. `-v ~/.ssh/deck-agent.sock:/ssh-agent`
+    /// — that host path stays valid across reconnects, see `forward_agent`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_sock: Option<String>,
+}
+
+pub const DEFAULT_CONTAINER_ENGINE: &str = "docker";
+
+/// Validate a container engine before it is interpolated into a remote shell
+/// command. One command name or absolute path, nothing a shell would treat as
+/// more than a word.
+///
+/// Deliberately excludes `sudo docker` / `docker --context foo`: allowing them
+/// means not quoting the value, and unquoted it was a remote command injection
+/// that ran on every refresh tick. Wrap such a setup in a script on the host and
+/// name the script here.
+pub fn validate_container_engine(value: &str) -> Result<(), String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("Container engine cannot be blank".to_string());
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/'))
+    {
+        return Err(
+            "Container engine must be one command name or path (no spaces or arguments)"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Validate a container name. Matches what docker/podman accept
+/// (`[a-zA-Z0-9][a-zA-Z0-9_.-]*`) or a hex id, which also keeps it clear of the
+/// `#` that separates host from container in a lane's remote id — an empty or
+/// `#`-bearing name produced a lane that polled a nonexistent host forever and
+/// could not be removed.
+pub fn validate_container_name(value: &str) -> Result<(), String> {
+    let value = value.trim();
+    let mut chars = value.chars();
+    let starts_ok = chars.next().is_some_and(|c| c.is_ascii_alphanumeric());
+    if !starts_ok || !chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-')) {
+        return Err(
+            "Container name must start alphanumeric and use only letters, digits, _ . -"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Validate a remote host as Deck stores it. `#` is what separates host from
+/// container in a lane's remote id, so a host containing one would silently be
+/// read back as a container lane (`ssh srv` + `docker exec '2'` for `srv#2`).
+pub fn validate_remote_host(value: &str) -> Result<(), String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("Host cannot be blank".to_string());
+    }
+    if value.contains(crate::remote_tmux::CONTAINER_SEP) {
+        return Err(format!(
+            "Host cannot contain '{}'",
+            crate::remote_tmux::CONTAINER_SEP
+        ));
+    }
+    Ok(())
+}
+
+fn default_engine() -> String {
+    DEFAULT_CONTAINER_ENGINE.to_string()
+}
+
+fn is_default_engine(engine: &String) -> bool {
+    engine == DEFAULT_CONTAINER_ENGINE
 }
 
 fn default_true() -> bool {
@@ -382,7 +475,17 @@ impl Config {
 
     fn validate(&self) -> Result<(), String> {
         validate_ssh_control_path(&self.ssh_control_path)?;
-        validate_ssh_control_persist(&self.ssh_control_persist)
+        validate_ssh_control_persist(&self.ssh_control_persist)?;
+        for remote in &self.remotes {
+            validate_remote_host(&remote.host).map_err(|e| format!("{}: {e}", remote.host))?;
+            for container in &remote.containers {
+                validate_container_name(&container.name)
+                    .map_err(|e| format!("{}: {e}", remote.host))?;
+                validate_container_engine(&container.engine)
+                    .map_err(|e| format!("{}/{}: {e}", remote.host, container.name))?;
+            }
+        }
+        Ok(())
     }
 
     fn repair_invalid_ssh_settings(&mut self) -> bool {

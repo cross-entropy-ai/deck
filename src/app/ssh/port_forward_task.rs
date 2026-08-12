@@ -326,8 +326,24 @@ pub fn spawn(results: Sender<OpResult>, settings: crate::ssh::ConnectionSettings
 
 /// Stop SSH forwarding for a lane at the built-in adapter boundary. Generic
 /// effect routing remains lane-keyed and never decodes the lane payload.
+/// The ssh destination that owns this lane's ControlMaster, or `None` for a lane
+/// that owns none (the local lane, and a container lane, which rides its host's).
+///
+/// Handing the worker a raw remote id would make it run `ssh -O … 'host#container'`
+/// with the id as a *hostname*: harmless-looking with the default per-host
+/// ControlPath, but a user-set literal path makes all hosts share one socket, and
+/// then removing a container lane would `-O exit` that shared master and kill
+/// every live deck PTY multiplexed on it.
+fn master_owner(lane: &crate::lane::LaneId) -> Option<&str> {
+    let remote_id = crate::system::tmux::TmuxSystem::host_of(lane)?;
+    crate::remote_tmux::parse_remote_id(remote_id)
+        .container
+        .is_none()
+        .then_some(remote_id)
+}
+
 pub(crate) fn stop_lane(sender: &Sender<Op>, lane: &crate::lane::LaneId) {
-    if let Some(host) = crate::system::tmux::TmuxSystem::host_of(lane) {
+    if let Some(host) = master_owner(lane) {
         let _ = sender.send(Op::StopHost {
             host: host.to_string(),
         });
@@ -335,7 +351,7 @@ pub(crate) fn stop_lane(sender: &Sender<Op>, lane: &crate::lane::LaneId) {
 }
 
 pub(crate) fn add_for_lane(sender: &Sender<Op>, lane: &crate::lane::LaneId, spec: ForwardSpec) {
-    if let Some(host) = crate::system::tmux::TmuxSystem::host_of(lane) {
+    if let Some(host) = master_owner(lane) {
         let _ = sender.send(Op::AddForward {
             host: host.to_string(),
             spec,
@@ -344,7 +360,7 @@ pub(crate) fn add_for_lane(sender: &Sender<Op>, lane: &crate::lane::LaneId, spec
 }
 
 pub(crate) fn cancel_for_lane(sender: &Sender<Op>, lane: &crate::lane::LaneId, spec: ForwardSpec) {
-    if let Some(host) = crate::system::tmux::TmuxSystem::host_of(lane) {
+    if let Some(host) = master_owner(lane) {
         let _ = sender.send(Op::CancelForward {
             host: host.to_string(),
             spec,

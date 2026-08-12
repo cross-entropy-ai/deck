@@ -412,6 +412,7 @@ fn agents_tab_publishes_clickable_agent_entries() {
     state.prefs.sidebar_tab = SidebarTab::Agents;
     state.config_remotes = vec![crate::config::RemoteConfig {
         host: "h1".into(),
+        containers: vec![],
         forward_agent: true,
         forwards: vec![],
     }];
@@ -490,6 +491,7 @@ fn remote_divider_buttons_register_below_their_top_margin() {
     state.prefs.sidebar_tab = SidebarTab::Projects;
     state.config_remotes = vec![crate::config::RemoteConfig {
         host: "h1".into(),
+        containers: vec![],
         forward_agent: true,
         forwards: vec![],
     }];
@@ -575,6 +577,7 @@ fn remote_divider_shows_forward_count() {
     state.prefs.sidebar_width = 40;
     state.config_remotes = vec![RemoteConfig {
         host: "h1".into(),
+        containers: vec![],
         forward_agent: true,
         forwards: vec![f1.clone(), f2.clone()],
     }];

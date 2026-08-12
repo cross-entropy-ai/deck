@@ -108,6 +108,174 @@ fn base_args_state_agent_forwarding() {
 }
 
 #[test]
+fn remote_id_parses_host_and_container_halves() {
+    assert_eq!(
+        parse_remote_id("web.prod"),
+        RemoteTarget {
+            host: "web.prod",
+            container: None
+        }
+    );
+    assert_eq!(
+        parse_remote_id("web.prod#dev"),
+        RemoteTarget {
+            host: "web.prod",
+            container: Some("dev")
+        }
+    );
+    assert_eq!(
+        parse_remote_id(&container_remote_id("h", "c")),
+        RemoteTarget {
+            host: "h",
+            container: Some("c")
+        }
+    );
+    // Degenerate halves stay a plain host id rather than a bogus container.
+    assert_eq!(parse_remote_id("web.prod#").container, None);
+    assert_eq!(parse_remote_id("#dev").container, None);
+}
+
+#[test]
+fn container_run_wraps_command_in_engine_exec_on_the_host() {
+    let runner = FakeRunner::new(ok(""));
+    let _ = list_sessions_with(&runner, "box#dev");
+    let call = &runner.calls()[0];
+
+    // ssh still targets the bare host, with its ForwardAgent answer.
+    assert!(call.contains(" box PATH="), "host arg mangled: {call}");
+    assert!(
+        !call.contains("box#dev PATH="),
+        "container leaked into ssh destination: {call}"
+    );
+    // The command runs inside the container through one sh -c word.
+    assert!(
+        call.contains("'docker' exec 'dev' sh -c '"),
+        "missing exec wrap: {call}"
+    );
+    // The inner command keeps the PATH prefix contract run_ssh promises.
+    assert!(
+        call.contains("sh -c 'PATH="),
+        "inner PATH prefix missing: {call}"
+    );
+}
+
+#[test]
+fn container_list_sessions_uses_posix_quoting_not_ansi_c() {
+    let runner = FakeRunner::new(ok(""));
+    let _ = list_sessions_with(&runner, "box#dev");
+    let call = &runner.calls()[0];
+
+    // dash inside the container has no $'…'; the format rides single quotes
+    // with literal tab bytes instead.
+    assert!(
+        !call.contains("$'"),
+        "ANSI-C quoting reached a container: {call}"
+    );
+    assert!(
+        call.contains("#{session_name}\t#{session_path}\t#{@deck_order}"),
+        "container format missing literal tabs: {call}"
+    );
+}
+
+#[test]
+fn host_list_sessions_keeps_ansi_c_quoting() {
+    let runner = FakeRunner::new(ok("main\t/home/me"));
+    let _ = list_sessions_with(&runner, "box");
+    let call = &runner.calls()[0];
+    assert!(
+        call.contains("$'#{session_name}"),
+        "host format changed: {call}"
+    );
+    assert!(!call.contains(" exec "), "host call must not exec: {call}");
+}
+
+#[test]
+fn container_switch_client_runs_inside_the_container() {
+    let runner = FakeRunner::new(ok(""));
+    let _ = switch_client_with(&runner, "box#dev", 7, "main");
+    let call = &runner.calls()[0];
+
+    assert!(
+        call.contains("'docker' exec 'dev' sh -c '"),
+        "missing exec wrap: {call}"
+    );
+    assert!(call.contains("switch-client"), "missing switch: {call}");
+    // Marker filename sanitizes the id (`#` -> `_`) and stays this
+    // connection's (`-7`).
+    assert!(call.contains("box_dev-7"), "marker not id-scoped: {call}");
+}
+
+#[test]
+fn stopped_or_missing_container_reads_as_unreachable() {
+    for stderr in [
+        "Error response from daemon: container dev is not running",
+        "Error: No such container: dev",
+    ] {
+        let err = CommandError::NonZero {
+            program: "ssh".into(),
+            status: exit_status(1),
+            stderr: stderr.as_bytes().to_vec(),
+        };
+        assert!(
+            is_container_unavailable_error(&err),
+            "not matched: {stderr}"
+        );
+    }
+    // tmux missing inside the container stays a backend error (a warning the
+    // user should see), not a quiet unreachable placeholder.
+    let plain = CommandError::NonZero {
+        program: "ssh".into(),
+        status: exit_status(127),
+        stderr: b"sh: tmux: not found".to_vec(),
+    };
+    assert!(!is_container_unavailable_error(&plain));
+}
+
+#[test]
+fn container_engine_cannot_smuggle_a_second_command_onto_the_host() {
+    // Unquoted, this ran on the remote host on every refresh tick — the exact
+    // shape CLAUDE.md's remote-shell section forbids for config values.
+    let argv = container_exec_argv("docker ; id > /tmp/x ; true", "dev", &["tmux", "ls"]);
+    assert_eq!(argv[0], "'docker ; id > /tmp/x ; true'");
+    // Single-quoted, so the remote shell reads it as ONE word: the `;` is data,
+    // not a command separator. `shell_single_quote` has no escape hatch — a `'`
+    // in the value becomes `'\''`, which cannot end the quoting early.
+    // And config validation refuses it in the first place, both directions.
+    assert!(crate::config::validate_container_engine("docker ; id > /tmp/x").is_err());
+    assert!(crate::config::validate_container_engine("sudo docker").is_err());
+    assert!(crate::config::validate_container_engine("docker").is_ok());
+    assert!(crate::config::validate_container_engine("/usr/local/bin/podman").is_ok());
+}
+
+#[test]
+fn degenerate_container_and_host_names_are_rejected() {
+    // `host#` reads back as the *host* "host#": a lane that polls a nonexistent
+    // destination forever and cannot be removed.
+    assert!(crate::config::validate_container_name("").is_err());
+    assert!(crate::config::validate_container_name("dev#x").is_err());
+    assert!(crate::config::validate_container_name("-dev").is_err());
+    assert!(crate::config::validate_container_name("dev").is_ok());
+    assert!(crate::config::validate_container_name("a1b2c3d4e5f6").is_ok());
+    // The mirror case: a host carrying the separator would silently become a
+    // container lane (`ssh srv` + `docker exec '2'`).
+    assert!(crate::config::validate_remote_host("srv#2").is_err());
+    assert!(crate::config::validate_remote_host("").is_err());
+    assert!(crate::config::validate_remote_host("srv").is_ok());
+}
+
+#[test]
+fn container_exec_argv_respects_the_engine() {
+    let argv = container_exec_argv("podman", "dev", &["tmux", "kill-server"]);
+    assert_eq!(argv[0], "'podman'");
+    assert_eq!(argv[1], "exec");
+    assert_eq!(argv[2], "'dev'");
+    assert_eq!(argv[3], "sh");
+    assert_eq!(argv[4], "-c");
+    assert!(argv[5].starts_with("'PATH="));
+    assert!(argv[5].contains("tmux kill-server"));
+}
+
+#[test]
 fn reachable_host_with_sessions_lists_them() {
     let runner = FakeRunner::new(ok("main\t/home/me"));
     let sessions = list_sessions_with(&runner, "box").expect("reachable host");
