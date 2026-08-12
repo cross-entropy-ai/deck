@@ -8,6 +8,9 @@ use ratatui_textarea::{CursorMove, TextArea};
 
 use crate::picker::FilterPicker;
 
+/// Number of directory rows kept visible in the new-session picker.
+pub const DIRECTORY_VIEW_ROWS: usize = 8;
+
 /// Validate a tmux session name against deck's supported format and the
 /// names already present on the target server. Creation and rename share this
 /// boundary so they cannot disagree about valid or duplicate names.
@@ -112,6 +115,10 @@ pub struct NewSessionState {
     /// directory children (written by dispatch after `read_dir`);
     /// `picker.error` the single error slot, also set by name validation.
     pub picker: FilterPicker,
+    /// First visible selection index in the filtered directory list. Kept as
+    /// state so moving within the current viewport moves only the highlight,
+    /// rather than re-anchoring the whole list on every key press.
+    pub scroll: usize,
     /// Stable lane that owns directory listing and creation operations.
     pub target_lane: Option<crate::lane::LaneId>,
 }
@@ -122,6 +129,7 @@ impl Default for NewSessionState {
             name: make_textarea(""),
             focus: PickerFocus::default(),
             picker: FilterPicker::new(Vec::new()),
+            scroll: 0,
             target_lane: None,
         }
     }
@@ -145,6 +153,26 @@ impl NewSessionState {
     pub fn refilter(&mut self) {
         self.picker
             .refilter(|entries, input| filter_entries(entries, split_input(input).1));
+        self.keep_selection_visible();
+    }
+
+    /// Move the directory highlight with wraparound, scrolling only when the
+    /// new selection would otherwise leave the current viewport.
+    pub fn step_selection(&mut self, direction: i32) {
+        self.picker.step_wrapped(direction);
+        self.keep_selection_visible();
+    }
+
+    /// Clamp the stored viewport and reveal the selection only when needed.
+    pub fn keep_selection_visible(&mut self) {
+        let len = self.picker.filtered.len();
+        let max_scroll = len.saturating_sub(DIRECTORY_VIEW_ROWS);
+        self.scroll = self.scroll.min(max_scroll);
+        if self.picker.selected < self.scroll {
+            self.scroll = self.picker.selected;
+        } else if self.picker.selected >= self.scroll + DIRECTORY_VIEW_ROWS {
+            self.scroll = (self.picker.selected + 1 - DIRECTORY_VIEW_ROWS).min(max_scroll);
+        }
     }
 
     /// Replace the path input with `path`, refilter the listing, and clear
@@ -152,6 +180,8 @@ impl NewSessionState {
     /// delete-segment) all rewrite the whole path this way.
     pub fn set_path(&mut self, path: &str) {
         self.picker.input = make_textarea(path);
+        self.picker.selected = 0;
+        self.scroll = 0;
         self.refilter();
         self.picker.error = None;
     }

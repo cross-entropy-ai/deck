@@ -128,9 +128,9 @@ impl AppState {
 
     /// The highest-priority full-input modal currently open, or `None` when the
     /// sidebar/PTY takes input directly. The order below is the source of truth
-    /// for input routing and **must mirror `keyboard::key_to_action`'s
-    /// early-return chain exactly** — both consult this first, so priority here
-    /// decides which overlay swallows a key/click when several flags are set.
+    /// for rendering and input routing. The modal renderer plus both input
+    /// mappers consult this first, so priority here decides which single overlay
+    /// is visible and swallows a key/click when several backing flags are set.
     ///
     /// The settings sub-modals (KeybindingsView / ExcludeEditor / SummaryLang)
     /// count only while the settings page owns focus (`MainView::Settings` +
@@ -239,6 +239,9 @@ impl AppState {
         let items = menu.items();
         // Same rect the renderer draws into (`ui::menu::draw_context_menu`).
         let r = context_menu_rect(items, menu.x, menu.y, self.term_width, self.term_height);
+        if r.width < 2 || r.height < 2 {
+            return None;
+        }
         // Interior only: clicks on the border select nothing.
         if col > r.x && col < r.x + r.width - 1 && row > r.y && row < r.y + r.height - 1 {
             let idx = (row - r.y - 1) as usize;

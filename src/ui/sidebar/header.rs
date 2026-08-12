@@ -15,7 +15,6 @@ const AGENTS_ICON: &str = "\u{f085}";
 /// Click regions published by the responsive sidebar Header.
 pub(super) struct HeaderHits {
     pub tabs: TabRects,
-    pub new_session: Option<Rect>,
     pub sidebar_toggle: Rect,
 }
 
@@ -23,47 +22,37 @@ struct HeaderLayout {
     projects: String,
     agents: String,
     gap: &'static str,
-    new_label: Option<&'static str>,
 }
 
 impl HeaderLayout {
     fn width(&self) -> usize {
-        1 + self.projects.width()
-            + self.gap.width()
-            + self.agents.width()
-            + self.new_label.map_or(0, |label| 2 + label.width())
-            + 2 // quiet gap + collapse glyph
+        1 + self.projects.width() + self.gap.width() + self.agents.width() + 2 // quiet gap + collapse glyph
     }
 }
 
-/// Choose the richest Header that fits: icons and a labelled action at wide
-/// widths, counts plus a compact `+` at normal widths, then progressively drop
-/// decoration without ever clipping the two tab hit targets.
+/// Choose the richest Header that fits, progressively dropping decoration
+/// without ever clipping the two tab hit targets.
 fn responsive_layout(width: u16, projects: usize, agents: usize) -> HeaderLayout {
     let candidates = [
         HeaderLayout {
             projects: format!("{PROJECTS_ICON} Sessions {projects}"),
             agents: format!("{AGENTS_ICON} Agents {agents}"),
             gap: "   ",
-            new_label: Some("+ New"),
         },
         HeaderLayout {
             projects: format!("Sessions {projects}"),
             agents: format!("Agents {agents}"),
             gap: "  ",
-            new_label: Some("+"),
         },
         HeaderLayout {
             projects: format!("{PROJECTS_ICON} {projects}"),
             agents: format!("{AGENTS_ICON} {agents}"),
             gap: "  ",
-            new_label: Some("+"),
         },
         HeaderLayout {
             projects: PROJECTS_ICON.to_string(),
             agents: AGENTS_ICON.to_string(),
             gap: " ",
-            new_label: None,
         },
     ];
 
@@ -74,13 +63,12 @@ fn responsive_layout(width: u16, projects: usize, agents: usize) -> HeaderLayout
             projects: PROJECTS_ICON.to_string(),
             agents: String::new(),
             gap: "",
-            new_label: None,
         })
 }
 
-/// Draw the Sessions / Agents selector with live counts and a responsive local
-/// new-session action. The action is right-aligned when it fits, so it stays a
-/// stable primary target while the tab labels consume the left side.
+/// Draw the Sessions / Agents selector with live counts. Local-session
+/// creation lives on the local section's `+` button, avoiding a duplicate
+/// action in the top-right header.
 pub(super) fn draw_header(
     frame: &mut Frame,
     area: Rect,
@@ -120,30 +108,7 @@ pub(super) fn draw_header(
     ];
 
     let sidebar_toggle_x = area.right().saturating_sub(2);
-    let new_session = layout.new_label.map(|label| {
-        let label_w = label.width() as u16;
-        let x = sidebar_toggle_x.saturating_sub(label_w + 1);
-        let used = agents_x + agents_w;
-        spans.push(Span::styled(
-            " ".repeat(x.saturating_sub(used) as usize),
-            Style::default().bg(theme.bg),
-        ));
-        spans.push(Span::styled(
-            label,
-            Style::default()
-                .fg(theme.accent)
-                .bg(theme.bg)
-                .add_modifier(Modifier::BOLD),
-        ));
-        Rect {
-            x,
-            y: area.y,
-            width: label_w,
-            height: 1,
-        }
-    });
-
-    let used = new_session.map_or(agents_x + agents_w, |rect| rect.right());
+    let used = agents_x + agents_w;
     spans.push(Span::styled(
         " ".repeat(sidebar_toggle_x.saturating_sub(used) as usize),
         Style::default().bg(theme.bg),
@@ -176,7 +141,6 @@ pub(super) fn draw_header(
                 height: 1,
             },
         },
-        new_session,
         sidebar_toggle: Rect {
             x: sidebar_toggle_x,
             y: area.y,
@@ -191,26 +155,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normal_width_keeps_counts_and_compact_new_action() {
+    fn normal_width_keeps_counts() {
         let layout = responsive_layout(26, 8, 3);
         assert_eq!(layout.projects, "Sessions 8");
         assert_eq!(layout.agents, "Agents 3");
-        assert_eq!(layout.new_label, Some("+"));
     }
 
     #[test]
-    fn wide_width_uses_icons_and_labelled_new_action() {
+    fn wide_width_uses_icons_and_labels() {
         let layout = responsive_layout(48, 8, 3);
         assert!(layout.projects.contains("Sessions 8"));
-        assert_eq!(layout.new_label, Some("+ New"));
     }
 
     #[test]
-    fn narrow_width_uses_icons_counts_and_compact_new_action() {
+    fn narrow_width_uses_icons_and_counts() {
         let layout = responsive_layout(14, 8, 3);
         assert_eq!(layout.projects, format!("{PROJECTS_ICON} 8"));
         assert_eq!(layout.agents, format!("{AGENTS_ICON} 3"));
-        assert_eq!(layout.new_label, Some("+"));
         assert!(!layout.projects.contains("Sessions"));
         assert!(!layout.agents.contains("Agents"));
     }
@@ -220,6 +181,5 @@ mod tests {
         let layout = responsive_layout(6, 128, 64);
         assert_eq!(layout.projects, PROJECTS_ICON);
         assert_eq!(layout.agents, AGENTS_ICON);
-        assert_eq!(layout.new_label, None);
     }
 }

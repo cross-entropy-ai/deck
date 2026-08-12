@@ -8,13 +8,17 @@ mod sidebar;
 mod text;
 pub mod widgets;
 
-use crate::keybindings::Keybindings;
-
 pub use menu::draw_context_menu;
 pub use popups::{draw_add_remote, draw_new_session, draw_summary_popup};
 pub use reload::{draw_reload_bar, reload_row_count};
-pub use settings::{draw_settings_page, draw_theme_picker};
-pub use sidebar::{draw_collapsed_sidebar, draw_rename_popup, draw_sidebar, SidebarProps};
+pub use settings::{
+    draw_exclude_editor, draw_keybindings_view, draw_settings_page, draw_summary_language_editor,
+    draw_theme_picker,
+};
+pub use sidebar::{
+    draw_collapsed_sidebar, draw_confirm_kill_popup, draw_help_popup, draw_rename_popup,
+    draw_sidebar, SidebarProps,
+};
 
 pub struct ExcludeEditorView<'a> {
     pub patterns: &'a [String],
@@ -31,6 +35,7 @@ pub struct NewSessionView<'a> {
     pub entries: &'a [String],
     pub filtered: &'a [usize],
     pub selected: usize,
+    pub scroll: usize,
     pub error: Option<&'a str>,
     /// Optional non-primary lane label shown in the title.
     pub lane_title: Option<&'a str>,
@@ -46,14 +51,8 @@ pub struct SettingRowView {
     pub help: String,
 }
 
-pub struct SettingsView<'a> {
+pub struct SettingsView {
     pub selected: usize,
     pub rows: Vec<SettingRowView>,
     pub page: crate::state::SettingsPage,
-    pub exclude_editor: Option<ExcludeEditorView<'a>>,
-    pub keybindings: &'a Keybindings,
-    pub keybindings_view_open: bool,
-    pub keybindings_view_scroll: u16,
-    /// When `Some`, the language input box is open over the settings page.
-    pub summary_lang_input: Option<&'a ratatui_textarea::TextArea<'static>>,
 }

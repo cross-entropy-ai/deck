@@ -8,8 +8,12 @@ use crate::theme::Theme;
 
 /// Per-row scrollbar glyphs for a `rows`-tall track showing `total` items
 /// scrolled to `scroll`. `None` = no bar (content fits); `Some("█")` = thumb,
-/// `Some("░")` = track. Shared by the inline summary card and the popup.
-fn scrollbar_cells(rows: usize, total: usize, scroll: usize) -> Vec<Option<&'static str>> {
+/// `Some("░")` = track. Shared by scrollable text and picker lists.
+pub(super) fn scrollbar_cells(
+    rows: usize,
+    total: usize,
+    scroll: usize,
+) -> Vec<Option<&'static str>> {
     if total <= rows || rows == 0 {
         return vec![None; rows];
     }

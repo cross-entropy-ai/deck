@@ -9,7 +9,10 @@ use ratatui_textarea::TextArea;
 use crate::forwards::{ForwardMode, ForwardSpec};
 use crate::forwards::{PfAddForm, PfField, PortForwardOverlay};
 use crate::theme::Theme;
-use crate::ui::widgets::{centered_rect, field_row, popup_frame, PopupStyle, TextAreaColors};
+use crate::ui::widgets::{
+    field_row, list_item_line, modal_footer, modal_list_lines, ListViewport, ModalFrame,
+    TextAreaColors,
+};
 
 const OVERLAY_WIDTH: u16 = 64;
 
@@ -32,21 +35,12 @@ pub fn draw_port_forward(
         (forwards.len().max(1) as u16) + 4
     };
     let total_height = body_height + 4;
-    let modal = centered_rect(area, OVERLAY_WIDTH, total_height);
-
     let title = match &overlay.add_form {
         Some(_) => format!("Port Forward — {lane_title}  \u{25b8} add"),
         None => format!("Port Forward — {lane_title}"),
     };
-    let inner = popup_frame(
-        buf,
-        modal,
-        PopupStyle {
-            title: Some(&title),
-            border_fg: theme.text,
-            bg: theme.surface,
-        },
-    );
+    let inner =
+        ModalFrame::centered(OVERLAY_WIDTH, total_height, Some(&title), theme).render(buf, area);
 
     match &overlay.add_form {
         None => draw_list(buf, inner, forwards, overlay, theme),
@@ -69,20 +63,22 @@ fn draw_list(
             Style::default().fg(theme.muted),
         ));
     } else {
-        for (i, f) in forwards.iter().enumerate() {
-            let marker = if i == overlay.selected { ">" } else { " " };
-            let style = if i == overlay.selected {
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(format!("{} {}", marker, format_forward(f)), style),
-            ]));
-        }
+        lines.extend(modal_list_lines(
+            forwards,
+            forwards.len(),
+            ListViewport::FollowSelection(overlay.selected),
+            |i, f| {
+                let selected = i == overlay.selected;
+                let marker = if selected { "▸" } else { " " };
+                list_item_line(
+                    theme,
+                    selected,
+                    format!("  {marker} "),
+                    format_forward(f),
+                    area.width as usize,
+                )
+            },
+        ));
     }
     lines.push(Line::raw(""));
     if let Some(s) = &overlay.status {
@@ -94,12 +90,19 @@ fn draw_list(
         lines.push(Line::raw(""));
     }
     lines.push(Line::raw(""));
-    lines.push(Line::styled(
-        "  [a] add   [d] delete   [esc] close",
-        Style::default().fg(theme.subtle),
-    ));
 
     Paragraph::new(lines).render(area, buf);
+    let footer_area = Rect {
+        y: area.bottom().saturating_sub(1),
+        height: 1,
+        ..area
+    };
+    modal_footer(
+        buf,
+        footer_area,
+        "  [a] add   [d] delete   [esc] close",
+        theme,
+    );
 }
 
 fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str>, theme: &Theme) {
@@ -209,11 +212,12 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
             .wrap(Wrap { trim: true })
             .render(inset, buf);
     }
-    Paragraph::new(Line::styled(
+    modal_footer(
+        buf,
+        rows[10],
         "  [tab] next   [enter] save   [esc] cancel",
-        Style::default().fg(theme.subtle),
-    ))
-    .render(rows[10], buf);
+        theme,
+    );
 }
 
 /// Per-row inputs to `render_field_row`. Grouping these keeps the

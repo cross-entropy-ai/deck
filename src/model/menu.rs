@@ -34,8 +34,6 @@ const LOCAL_DIVIDER_DISABLED: &[MenuItem] = &[MenuItem::PortForward, MenuItem::R
 const GLOBAL_MENU_ITEMS: &[MenuItem] = &[
     MenuItem::NewLocalSession,
     MenuItem::AddRemoteHost,
-    MenuItem::ToggleLayout,
-    MenuItem::ToggleBorders,
     MenuItem::Settings,
     MenuItem::Quit,
 ];
@@ -49,8 +47,6 @@ pub enum MenuItem {
     Rename,
     Close,
     AddRemoteHost,
-    ToggleLayout,
-    ToggleBorders,
     Settings,
     Quit,
     NewLocalSession,
@@ -66,8 +62,6 @@ impl MenuItem {
             MenuItem::Rename => "Rename",
             MenuItem::Close => "Close",
             MenuItem::AddRemoteHost => "Add Remote Host",
-            MenuItem::ToggleLayout => "Toggle layout",
-            MenuItem::ToggleBorders => "Toggle borders",
             MenuItem::Settings => "Settings",
             MenuItem::Quit => "Quit",
             MenuItem::NewLocalSession => "New local session",

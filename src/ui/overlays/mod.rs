@@ -1,7 +1,7 @@
 pub mod port_forward;
 
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 use ratatui::Frame;
@@ -10,7 +10,7 @@ use ratatui_textarea::TextArea;
 use crate::geometry::KillConfirmHits;
 use crate::keybindings::{Command, Keybindings};
 use crate::theme::Theme;
-use crate::ui::widgets::{field_row, TextAreaColors};
+use crate::ui::widgets::{contrasting_foreground, field_row, TextAreaColors};
 
 use super::text::format_keys_for;
 
@@ -19,6 +19,7 @@ pub(super) fn draw_help(
     area: ratatui::layout::Rect,
     theme: &Theme,
     keybindings: &Keybindings,
+    background: Color,
 ) {
     let key_span = |k: String| -> Span<'static> {
         Span::styled(format!("  {k:<10}"), Style::default().fg(theme.accent))
@@ -53,11 +54,11 @@ pub(super) fn draw_help(
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
         "  press any key to close",
-        Style::default().fg(theme.dim),
+        Style::default().fg(theme.muted),
     )));
 
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(theme.bg)),
+        Paragraph::new(lines).style(Style::default().bg(background)),
         area,
     );
 }
@@ -122,6 +123,7 @@ pub(super) fn draw_confirm_kill(
     area: ratatui::layout::Rect,
     theme: &Theme,
     name: &str,
+    background: Color,
 ) -> Option<KillConfirmHits> {
     let lines = vec![
         Line::raw(""),
@@ -137,7 +139,7 @@ pub(super) fn draw_confirm_kill(
         ]),
     ];
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(theme.bg)),
+        Paragraph::new(lines).style(Style::default().bg(background)),
         area,
     );
 
@@ -153,12 +155,17 @@ pub(super) fn draw_confirm_kill(
         return None;
     }
 
+    let secondary_bg = if background == theme.surface {
+        theme.bg
+    } else {
+        theme.surface
+    };
     let no_style = Style::default()
         .fg(theme.text)
-        .bg(theme.surface)
+        .bg(secondary_bg)
         .add_modifier(Modifier::BOLD);
     let yes_style = Style::default()
-        .fg(theme.bg)
+        .fg(contrasting_foreground(theme, theme.yellow))
         .bg(theme.yellow)
         .add_modifier(Modifier::BOLD);
 
@@ -181,7 +188,7 @@ pub(super) fn draw_confirm_kill(
             "  click, or y/n",
             Style::default().fg(theme.muted),
         )))
-        .style(Style::default().bg(theme.bg))
+        .style(Style::default().bg(background))
         .render(hint_rect, frame.buffer_mut());
     }
 
@@ -193,44 +200,57 @@ pub(super) fn draw_rename_input(
     area: Rect,
     theme: &Theme,
     textarea: &TextArea<'static>,
+    background: Color,
+    show_heading: bool,
 ) {
-    let rows = Layout::vertical([
-        Constraint::Length(1), // top pad
-        Constraint::Length(1), // title
-        Constraint::Length(1), // pad
-        Constraint::Length(1), // text field
-        Constraint::Length(1), // pad
-        Constraint::Length(1), // hint
-        Constraint::Min(0),    // tail
-    ])
-    .split(area);
+    let constraints = if show_heading {
+        vec![
+            Constraint::Length(1), // top pad
+            Constraint::Length(1), // heading
+            Constraint::Length(1), // pad
+            Constraint::Length(1), // text field
+            Constraint::Length(1), // pad
+            Constraint::Length(1), // hint
+            Constraint::Min(0),    // tail
+        ]
+    } else {
+        vec![
+            Constraint::Length(1), // top pad
+            Constraint::Length(1), // text field
+            Constraint::Length(1), // pad
+            Constraint::Length(1), // hint
+            Constraint::Min(0),    // tail
+        ]
+    };
+    let rows = Layout::vertical(constraints).split(area);
+    let (field_row_idx, hint_row_idx) = if show_heading { (3, 5) } else { (1, 3) };
 
-    Paragraph::new(Line::from(Span::styled(
-        "  Rename session",
-        Style::default().fg(theme.text),
-    )))
-    .style(Style::default().bg(theme.bg))
-    .render(rows[1], frame.buffer_mut());
+    if show_heading {
+        Paragraph::new(Line::from(Span::styled(
+            "  Rename session",
+            Style::default().fg(theme.text),
+        )))
+        .style(Style::default().bg(background))
+        .render(rows[1], frame.buffer_mut());
+    }
 
-    // Render the textarea into the field row, indented by 2 (an empty
-    // 2-wide label over the sidebar's `theme.bg` fill leaves those cells
-    // unchanged).
+    // Render the textarea into the field row, indented by 2; the empty label
+    // inherits whichever background owns this body (sidebar or modal).
     field_row(
         frame.buffer_mut(),
-        rows[3],
+        rows[field_row_idx],
         "  ",
-        Style::default().bg(theme.bg),
+        Style::default().bg(background),
         textarea,
         true,
-        TextAreaColors::field(theme, theme.accent, theme.bg),
+        TextAreaColors::field(theme, theme.accent, background),
     );
 
-    Paragraph::new(Line::from(Span::styled(
+    Paragraph::new(Span::styled(
         "  Enter confirm / Esc cancel",
-        Style::default().fg(theme.muted),
-    )))
-    .style(Style::default().bg(theme.bg))
-    .render(rows[5], frame.buffer_mut());
+        Style::default().fg(theme.muted).bg(background),
+    ))
+    .render(rows[hint_row_idx], frame.buffer_mut());
 }
 
 #[cfg(test)]

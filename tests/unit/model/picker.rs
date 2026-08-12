@@ -66,3 +66,14 @@ fn step_on_empty_list_is_noop() {
     assert_eq!(p.selected, 0);
     assert_eq!(p.selected_item(), None);
 }
+
+#[test]
+fn wrapped_step_cycles_across_both_ends() {
+    let mut p = FilterPicker::new(items());
+
+    p.step_wrapped(-1);
+    assert_eq!(p.selected_item(), Some("beta"));
+
+    p.step_wrapped(1);
+    assert_eq!(p.selected_item(), Some("alpha"));
+}

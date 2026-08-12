@@ -43,6 +43,7 @@ fn open_modal(state: &mut AppState, modal: Modal) {
                 name: make_textarea(""),
                 focus: PickerFocus::Name,
                 picker,
+                scroll: 0,
                 target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
             });
         }
@@ -121,20 +122,7 @@ fn is_forbidden(a: &Action) -> bool {
 }
 
 fn all_modals() -> [Modal; 12] {
-    [
-        Modal::SummaryPopup,
-        Modal::NewSession,
-        Modal::AddRemote,
-        Modal::Rename,
-        Modal::ContextMenu,
-        Modal::PortForward,
-        Modal::ThemePicker,
-        Modal::KeybindingsView,
-        Modal::ExcludeEditor,
-        Modal::SummaryLang,
-        Modal::Help,
-        Modal::ConfirmKill,
-    ]
+    Modal::ALL
 }
 
 #[test]
@@ -148,6 +136,56 @@ fn active_modal_reports_each_variant() {
             "active_modal must report {modal:?} when its overlay is open"
         );
     }
+}
+
+#[test]
+fn escape_has_one_close_or_cancel_action_for_every_modal() {
+    let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+    for modal in all_modals() {
+        let mut state = make_state();
+        open_modal(&mut state, modal);
+        let action = key_to_action(&esc, &state);
+        assert!(
+            !matches!(action, Action::None),
+            "{modal:?} must map Esc through the shared close policy"
+        );
+    }
+}
+
+#[test]
+fn escape_cancels_nested_modal_edits_before_closing_the_surface() {
+    let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+
+    let mut exclude = make_state();
+    open_modal(&mut exclude, Modal::ExcludeEditor);
+    exclude.overlay.exclude_editor.as_mut().unwrap().adding = true;
+    assert!(matches!(
+        key_to_action(&esc, &exclude),
+        Action::Settings(super::SettingsAction::ExcludeCancelAdd)
+    ));
+
+    let mut forward = make_state();
+    open_modal(&mut forward, Modal::PortForward);
+    forward.overlay.port_forward.as_mut().unwrap().add_form = Some(
+        crate::forwards::PfAddForm::default_for(crate::forwards::ForwardMode::Local),
+    );
+    assert!(matches!(
+        key_to_action(&esc, &forward),
+        Action::Pf(super::PfAction::AddCancel)
+    ));
+}
+
+#[test]
+fn enter_on_new_session_directory_opens_highlighted_directory() {
+    let mut state = make_state();
+    open_modal(&mut state, Modal::NewSession);
+    state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Dir;
+
+    let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+    assert!(matches!(
+        key_to_action(&enter, &state),
+        Action::NewSession(super::NewSessionAction::DirEnter)
+    ));
 }
 
 #[test]

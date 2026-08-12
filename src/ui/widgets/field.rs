@@ -34,8 +34,8 @@ pub fn field_row(
 }
 
 /// Render a `label` + `textarea` row with the filter-picker forms' styling:
-/// label `accent` when focused else `dim`, field background `theme.bg`, accent
-/// block cursor. Used by the filter picker (new-session and add-remote).
+/// label `accent` when focused else `dim`, modal-surface field background,
+/// accent block cursor. Used by the filter picker (new-session and add-remote).
 pub fn labeled_field(
     buf: &mut Buffer,
     area: Rect,
@@ -56,6 +56,6 @@ pub fn labeled_field(
         label_style,
         textarea,
         focused,
-        TextAreaColors::field(theme, theme.text, theme.bg),
+        TextAreaColors::field(theme, theme.text, theme.surface),
     );
 }

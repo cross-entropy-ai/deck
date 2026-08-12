@@ -8,11 +8,11 @@ use crate::forwards::PortForwardOverlay;
 use crate::menu::ContextMenu;
 use crate::new_session::{make_textarea, textarea_line, NewSessionState};
 
-/// The full-input modal overlays, in the one priority order both input
-/// mappers consult. `AppState::active_modal` resolves the highest-priority
-/// active overlay; keyboard and mouse mappers route to it *before* any global
-/// keybinding or button-rect test, so a modal swallows every input behind it
-/// (bug #7). This ordering is the source of truth — don't re-derive it.
+/// The full-input modal overlays, in the one priority order rendering and both
+/// input mappers consult. `AppState::active_modal` resolves the highest-
+/// priority active overlay; the renderer paints only that modal, while keyboard
+/// and mouse mappers route to it before any global keybinding or button-rect
+/// test. One visible modal therefore owns all input behind it (bug #7).
 /// NOTE: not the update-warning popup, which is a selective gate
 /// (`App::warning_state` + `warning_blocks_action`) and stays out of this enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +29,30 @@ pub enum Modal {
     SummaryLang,
     Help,
     ConfirmKill,
+}
+
+impl Modal {
+    /// Every formal modal, in the same priority order as
+    /// [`AppState::active_modal`](crate::state::AppState::active_modal).
+    ///
+    /// Keeping the inventory on the type lets exhaustive tests and shared
+    /// modal infrastructure iterate it without maintaining a second hand-
+    /// written list that can drift when a variant is added.
+    #[cfg(test)]
+    pub const ALL: [Self; 12] = [
+        Self::SummaryPopup,
+        Self::NewSession,
+        Self::AddRemote,
+        Self::Rename,
+        Self::ContextMenu,
+        Self::PortForward,
+        Self::ThemePicker,
+        Self::KeybindingsView,
+        Self::ExcludeEditor,
+        Self::SummaryLang,
+        Self::Help,
+        Self::ConfirmKill,
+    ];
 }
 
 /// UI state for an in-progress rename.

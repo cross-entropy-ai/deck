@@ -92,12 +92,6 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                         }
                     }
                     Some(MenuItem::AddRemoteHost) => fx.push(Effect::OpenAddRemotePicker),
-                    Some(MenuItem::ToggleLayout) => {
-                        fx.merge(apply_action(state, Action::ToggleLayout))
-                    }
-                    Some(MenuItem::ToggleBorders) => {
-                        fx.merge(apply_action(state, Action::ToggleBorders))
-                    }
                     Some(MenuItem::Settings) => {
                         fx.merge(apply_action(state, Action::Settings(SettingsAction::Open)))
                     }

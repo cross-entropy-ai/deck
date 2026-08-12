@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::geometry::{
@@ -15,6 +15,7 @@ use crate::update::UpdateStatus;
 use ratatui_textarea::TextArea;
 
 use super::overlays::{draw_confirm_kill, draw_help, draw_rename_input};
+use super::widgets::ModalFrame;
 
 mod container;
 mod footer;
@@ -94,7 +95,6 @@ fn clamp_rect(rect: Rect, area: Rect) -> Option<Rect> {
 fn clamp_hits(hits: &mut HitRegions, area: Rect) {
     hits.banner = hits.banner.and_then(|r| clamp_rect(r, area));
     hits.menu = hits.menu.and_then(|r| clamp_rect(r, area));
-    hits.new_session = hits.new_session.and_then(|r| clamp_rect(r, area));
     hits.sidebar_toggle = hits.sidebar_toggle.and_then(|r| clamp_rect(r, area));
     if let Some(tabs) = hits.tabs.as_mut() {
         tabs.projects = clamp_rect(tabs.projects, area).unwrap_or(Rect {
@@ -182,10 +182,33 @@ pub fn draw_rename_popup(
 ) {
     let width = area.width.clamp(1, 48);
     let height = area.height.clamp(1, 8);
-    let popup = super::widgets::centered_rect(area, width, height);
-    frame.render_widget(Clear, popup);
-    let content = draw_sidebar_container(frame, popup, theme, true, true);
-    draw_rename_input(frame, content, theme, textarea);
+    let inner = ModalFrame::centered(width, height, Some("Rename session"), theme)
+        .render(frame.buffer_mut(), area);
+    draw_rename_input(frame, inner, theme, textarea, theme.surface, false);
+}
+
+/// Draw sidebar-only help as a centered modal when the vertical one-row tab
+/// bar cannot host it.
+pub fn draw_help_popup(frame: &mut Frame, area: Rect, theme: &Theme, keybindings: &Keybindings) {
+    let height = (crate::keybindings::Command::ALL.len() as u16 + 7)
+        .min(area.height.saturating_sub(2))
+        .max(5);
+    let inner =
+        ModalFrame::centered(64, height, Some("Help"), theme).render(frame.buffer_mut(), area);
+    draw_help(frame, inner, theme, keybindings, theme.surface);
+}
+
+/// Draw the destructive close confirmation as a centered modal in vertical
+/// layout and return its absolute button hit regions.
+pub fn draw_confirm_kill_popup(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    name: &str,
+) -> Option<KillConfirmHits> {
+    let inner = ModalFrame::warning_centered(48, 9, Some("Close session"), theme)
+        .render(frame.buffer_mut(), area);
+    draw_confirm_kill(frame, inner, theme, name, theme.surface)
 }
 
 /// Draw the sidebar and return the frame's clickable regions for mouse
@@ -222,7 +245,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
                 props.sidebar_active,
                 props.show_borders,
             );
-            draw_confirm_kill(frame, content, props.theme, name)
+            draw_confirm_kill(frame, content, props.theme, name, props.theme.bg)
         });
         // Vertical/tabs layout has no sidebar header (no tab labels), no
         // banner, and no session-area hit regions.
@@ -275,13 +298,26 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
     let agents_tab = matches!(props.sidebar_tab, SidebarTab::Agents);
     let mut kill_hits: Option<KillConfirmHits> = None;
     let (divider_hits, agent_hits, summary_hits) = if props.show_help {
-        draw_help(frame, sessions_area, props.theme, props.keybindings);
+        draw_help(
+            frame,
+            sessions_area,
+            props.theme,
+            props.keybindings,
+            props.theme.bg,
+        );
         (Vec::new(), Vec::new(), SummaryHits::default())
     } else if let Some(name) = props.confirm_kill {
-        kill_hits = draw_confirm_kill(frame, sessions_area, props.theme, name);
+        kill_hits = draw_confirm_kill(frame, sessions_area, props.theme, name, props.theme.bg);
         (Vec::new(), Vec::new(), SummaryHits::default())
     } else if let Some(textarea) = props.rename_input {
-        draw_rename_input(frame, sessions_area, props.theme, textarea);
+        draw_rename_input(
+            frame,
+            sessions_area,
+            props.theme,
+            textarea,
+            props.theme.bg,
+            true,
+        );
         (Vec::new(), Vec::new(), SummaryHits::default())
     } else {
         // The Summary card is pinned at the bottom of the Agents tab, between
@@ -361,7 +397,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
         kill: kill_hits,
         agents: agent_hits,
         tabs: Some(header_hits.tabs),
-        new_session: header_hits.new_session,
+        new_session_dirs: Vec::new(),
         sidebar_toggle: Some(header_hits.sidebar_toggle),
         summary: summary_hits,
         menu: menu_bounds,

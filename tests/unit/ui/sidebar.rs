@@ -292,12 +292,13 @@ fn render_hits(width: u16, height: u16, has_update: bool) -> HitRegions {
 }
 
 #[test]
-fn header_shows_live_counts_and_opens_new_local_session() {
+fn header_shows_live_counts_without_duplicate_new_action() {
     use crate::state::{AppState, SessionEntry, SessionEntryKind};
 
     let theme = &crate::theme::THEMES[0];
     let keybindings = Keybindings::default();
     let mut state = AppState::new(50, 20);
+    state.prefs.view_mode = crate::state::ViewMode::Expanded;
     state.entries = vec![
         SessionEntry {
             lane: crate::system::tmux::TmuxSystem::local_lane(),
@@ -312,6 +313,7 @@ fn header_shows_live_counts_and_opens_new_local_session() {
             kind: SessionEntryKind::Unreachable,
         },
     ];
+    mount_tmux_sections(&mut state);
     state.agents.insert(
         crate::system::tmux::lane(None),
         vec![crate::agent::DetectedAgent {
@@ -339,33 +341,22 @@ fn header_shows_live_counts_and_opens_new_local_session() {
         .collect();
     assert!(first_row.contains("Sessions 1"));
     assert!(first_row.contains("Agents 1"));
-    assert!(first_row.contains("+ New"));
+    assert!(!first_row.contains("+ New"));
+    assert!(!first_row.contains(" + "));
+    assert!(captured.tabs.is_some());
 
-    let button = captured
-        .new_session
-        .expect("wide Header publishes its New button");
-    let button_cell = &terminal.backend().buffer()[(button.x, button.y)];
+    let local_new = captured
+        .dividers
+        .iter()
+        .find(|hit| {
+            crate::system::tmux::TmuxSystem::host_of(&hit.lane).is_none()
+                && hit.action.as_str() == "new-session"
+        })
+        .expect("local divider keeps its direct new-session button");
     assert_eq!(
-        button_cell.bg, theme.bg,
-        "New stays a text action without a filled background"
+        terminal.backend().buffer()[(local_new.rect.x + 1, local_new.rect.y)].symbol(),
+        "+"
     );
-    assert_eq!(button_cell.fg, theme.accent);
-    assert_eq!(
-        captured.hit(button.x, button.y),
-        Some(HitKind::NewLocalSession)
-    );
-
-    state.hit_regions = captured;
-    let click = crossterm::event::MouseEvent {
-        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-        column: button.x,
-        row: button.y,
-        modifiers: crossterm::event::KeyModifiers::NONE,
-    };
-    assert!(matches!(
-        crate::action::mouse_to_action(&click, &state),
-        crate::action::Action::NewSession(crate::action::NewSessionAction::OpenLocal)
-    ));
 }
 
 #[test]
@@ -715,7 +706,6 @@ fn captured_rects_stay_within_sidebar_area() {
         let mut rects: Vec<Rect> = Vec::new();
         rects.extend(hits.banner);
         rects.extend(hits.menu);
-        rects.extend(hits.new_session);
         rects.extend(hits.sidebar_toggle);
         rects.extend(hits.summary.button);
         rects.extend(hits.summary.popup);

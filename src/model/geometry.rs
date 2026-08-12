@@ -132,10 +132,16 @@ pub fn context_menu_rect(
     term_w: u16,
     term_h: u16,
 ) -> Rect {
-    let w = context_menu_width(items);
-    let h = items.len() as u16 + 2;
-    let x = menu_x.min(term_w.saturating_sub(w));
-    let y = menu_y.min(term_h.saturating_sub(h));
+    let horizontal_margin = u16::from(term_w > 2);
+    let available_w = term_w.saturating_sub(horizontal_margin * 2);
+    let w = context_menu_width(items).min(available_w);
+    let vertical_margin = u16::from(term_h > 2);
+    let available_h = term_h.saturating_sub(vertical_margin * 2);
+    let h = (items.len() as u16 + 2).min(available_h);
+    let max_x = term_w.saturating_sub(horizontal_margin).saturating_sub(w);
+    let x = menu_x.clamp(horizontal_margin, max_x);
+    let max_y = term_h.saturating_sub(vertical_margin).saturating_sub(h);
+    let y = menu_y.clamp(vertical_margin, max_y);
     Rect::new(x, y, w, h)
 }
 
@@ -475,11 +481,11 @@ pub struct SummaryHits {
     pub max_scroll: usize,
 }
 
-/// Every clickable region the sidebar publishes for one frame; the renderer
-/// captures it whole and `AppState` stores it in one field. `HitRegions::hit`
-/// is the single resolver mouse dispatch consults, so hit-test priority lives
-/// in one place. Rects are clamped to the sidebar content area at capture
-/// time, so a narrow sidebar can't publish a button overlapping the PTY pane.
+/// Every clickable region published for one frame. The sidebar provides the
+/// base set and the active modal can add its own rows; `AppState` stores the
+/// combined registry. `HitRegions::hit` is the single resolver mouse dispatch
+/// consults, so hit-test priority lives in one place. Sidebar rects are
+/// clamped to its content area before modal regions are added.
 #[derive(Debug, Clone, Default)]
 pub struct HitRegions {
     /// The footer banner's clickable "upgrade" span.
@@ -493,8 +499,9 @@ pub struct HitRegions {
     /// The `Projects` / `Agents` header tab labels (`None` in tabs mode,
     /// which has no header).
     pub tabs: Option<TabRects>,
-    /// The responsive Header `+ New` / `+` button.
-    pub new_session: Option<Rect>,
+    /// Visible directory rows in the active new-session picker. Each carries
+    /// its absolute selection index in the filtered list.
+    pub new_session_dirs: Vec<ListItemHit>,
     /// The expanded header's collapse button, or the collapsed rail's expand
     /// button.
     pub sidebar_toggle: Option<Rect>,
@@ -504,9 +511,9 @@ pub struct HitRegions {
     pub menu: Option<Rect>,
 }
 
-/// What a `(col, row)` click resolves to among the sidebar's rect-based
-/// regions. Vec hits are carried by index so the caller reads the matched
-/// `DividerHit` / `AgentHit` from the registry, keeping hit data in one place.
+/// What a `(col, row)` click resolves to among the frame's rect-based regions.
+/// Vec hits are carried by index so the caller reads the matched data from the
+/// registry, keeping hit data in one place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HitKind {
     /// The kill-confirmation `[Yes]` button.
@@ -517,8 +524,8 @@ pub enum HitKind {
     Banner,
     /// A header tab label; carries which tab.
     Tab(SidebarTab),
-    /// The Header's local-session creation button.
-    NewLocalSession,
+    /// A visible directory row in the new-session picker.
+    NewSessionDir(usize),
     /// Collapse or expand the whole horizontal sidebar.
     SidebarToggle,
     /// The Summary card's "Generate" button.
@@ -536,8 +543,8 @@ pub enum HitKind {
 
 impl HitRegions {
     /// Resolve a click at `(col, row)` to the region it lands on. Match
-    /// order encodes priority: kill buttons, banner, tabs, summary buttons,
-    /// then menu, then dividers (on group header rows), then agent rows.
+    /// order encodes priority: active-modal regions first, then banner, tabs,
+    /// summary buttons, menu, dividers, and agent rows.
     pub fn hit(&self, col: u16, row: u16) -> Option<HitKind> {
         let pos = Position::new(col, row);
         if let Some(kill) = self.kill {
@@ -547,6 +554,13 @@ impl HitRegions {
             if kill.no.contains(pos) {
                 return Some(HitKind::KillNo);
             }
+        }
+        if let Some(item) = self
+            .new_session_dirs
+            .iter()
+            .find(|item| item.rect.contains(pos))
+        {
+            return Some(HitKind::NewSessionDir(item.index));
         }
         if self.banner.is_some_and(|r| r.contains(pos)) {
             return Some(HitKind::Banner);
@@ -558,9 +572,6 @@ impl HitRegions {
             if tabs.agents.contains(pos) {
                 return Some(HitKind::Tab(SidebarTab::Agents));
             }
-        }
-        if self.new_session.is_some_and(|r| r.contains(pos)) {
-            return Some(HitKind::NewLocalSession);
         }
         if self.sidebar_toggle.is_some_and(|r| r.contains(pos)) {
             return Some(HitKind::SidebarToggle);
@@ -584,6 +595,15 @@ impl HitRegions {
         }
         None
     }
+}
+
+/// One visible row in a windowed modal list, mapped back to its absolute
+/// selection index so mouse input follows the same filtered list as keyboard
+/// navigation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ListItemHit {
+    pub rect: Rect,
+    pub index: usize,
 }
 
 #[cfg(test)]

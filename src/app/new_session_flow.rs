@@ -105,6 +105,7 @@ impl App {
             name: make_textarea(&name_str),
             focus: PickerFocus::Name,
             picker,
+            scroll: 0,
             target_lane: Some(target.lane),
         };
         ns.refilter();

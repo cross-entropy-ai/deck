@@ -3,17 +3,18 @@
 //! error row, and footer shared by the new-session and add-remote overlays.
 
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::Span;
 use ratatui::widgets::{Paragraph, Widget};
 use ratatui::Frame;
 use ratatui_textarea::TextArea;
 
+use crate::geometry::ListItemHit;
 use crate::theme::Theme;
 
 use super::field::labeled_field;
-use super::list::draw_picker_list;
-use super::popup::{popup_frame, popup_rect, PopupStyle};
+use super::list::{draw_picker_list, PickerViewport};
+use super::popup::{modal_footer, popup_rect, ModalFrame};
 
 /// One labeled input row of a filter-picker popup.
 pub struct PickerField<'a> {
@@ -33,6 +34,10 @@ pub struct FilterPickerView<'a> {
     pub fields: &'a [PickerField<'a>],
     pub filtered: &'a [usize],
     pub selected: usize,
+    /// First visible selection index, already maintained by the caller.
+    pub scroll: usize,
+    /// Whether the candidate list owns focus and should paint its selection.
+    pub list_focused: bool,
     /// Shown in place of the list when `filtered` is empty.
     pub empty_msg: &'a str,
     pub error: Option<&'a str>,
@@ -47,7 +52,7 @@ pub fn draw_filter_picker(
     theme: &Theme,
     picker: FilterPickerView<'_>,
     content: impl FnMut(usize) -> String,
-) {
+) -> Vec<ListItemHit> {
     // Always reserve at least one list row (for the empty-state message).
     let list_rows = picker.filtered.len().min(picker.max_visible).max(1);
     // borders(2) + fields(N) + blank(1) + list + blank(1) + [error] + footer(1)
@@ -60,15 +65,8 @@ pub fn draw_filter_picker(
         + 1;
     let popup = popup_rect(area, picker.width, content_height, picker.min_height);
 
-    let inner = popup_frame(
-        frame.buffer_mut(),
-        popup,
-        PopupStyle {
-            title: Some(picker.title),
-            border_fg: theme.accent,
-            bg: theme.bg,
-        },
-    );
+    let inner =
+        ModalFrame::exact(popup, Some(picker.title), theme).render(frame.buffer_mut(), area);
 
     // fields + blank + list rows (all single-row), then blank/[error]/footer.
     let mut constraints = vec![Constraint::Length(1); picker.fields.len() + 1 + list_rows];
@@ -94,6 +92,18 @@ pub fn draw_filter_picker(
     }
     idx += 1; // blank
 
+    let list_start = picker
+        .scroll
+        .min(picker.filtered.len().saturating_sub(picker.max_visible));
+    let list_end = (list_start + picker.max_visible).min(picker.filtered.len());
+    let item_hits = (list_start..list_end)
+        .zip(rows[idx..].iter().copied())
+        .map(|(selection, rect)| ListItemHit {
+            rect,
+            index: selection,
+        })
+        .collect();
+
     if picker.filtered.is_empty() {
         Paragraph::new(Span::styled(
             picker.empty_msg,
@@ -106,7 +116,11 @@ pub fn draw_filter_picker(
             &rows[idx..],
             theme,
             picker.filtered,
-            picker.selected,
+            PickerViewport {
+                selected: picker.selected,
+                scroll: list_start,
+                focused: picker.list_focused,
+            },
             picker.max_visible,
             content,
         );
@@ -123,9 +137,6 @@ pub fn draw_filter_picker(
         idx += 1;
     }
 
-    Paragraph::new(Span::styled(
-        picker.footer,
-        Style::default().fg(theme.dim).add_modifier(Modifier::DIM),
-    ))
-    .render(rows[idx], frame.buffer_mut());
+    modal_footer(frame.buffer_mut(), rows[idx], picker.footer, theme);
+    item_hits
 }

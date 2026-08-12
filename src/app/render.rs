@@ -8,10 +8,11 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::bridge;
+use crate::overlay::Modal;
 use crate::state::{FocusMode, LayoutMode, MainView};
-use crate::theme::THEMES;
 use crate::ui::{self, SettingRowView, SettingsView};
 
+use super::modal::draw_active_modal;
 use super::settings::setting_rows;
 use super::App;
 
@@ -38,20 +39,16 @@ impl App {
         } else {
             &base_theme
         };
-        let show_help = s.overlay.show_help;
-        let rename_input = s.overlay.renaming.as_ref().map(|r| &r.input);
-        // Overlay state is only *read* inside the draw closure, so borrow
-        // it — cloning TextAreas/entry lists/summary text every frame was
-        // pure allocation churn.
-        let context_menu = s.overlay.context_menu.as_ref();
-        let summary_popup = match (&s.summary.state, s.overlay.summary_popup) {
-            (crate::summary_card::SummaryState::Ready { text, .. }, true) => Some(text.as_str()),
-            _ => None,
+        // This one resolved modal drives both input routing and rendering. Even
+        // if stale backing flags coexist, lower-priority overlays are never
+        // painted over the modal that actually owns the keyboard and mouse.
+        let active_modal = s.active_modal();
+        let show_help = active_modal == Some(Modal::Help);
+        let rename_input = if active_modal == Some(Modal::Rename) {
+            s.overlay.renaming.as_ref().map(|r| &r.input)
+        } else {
+            None
         };
-        let summary_popup_scroll = s.summary.popup_scroll;
-        let new_session_overlay = s.overlay.new_session.as_ref();
-        let add_remote_overlay = s.overlay.add_remote.as_ref();
-        let port_forward_overlay = s.overlay.port_forward.as_ref();
         let show_borders = s.prefs.show_borders;
         let sidebar_tab = s.prefs.sidebar_tab;
         let layout_mode = s.effective_layout_mode();
@@ -86,7 +83,9 @@ impl App {
             (title, detail)
         });
 
-        let confirm_name = s.confirm_kill_name();
+        let confirm_name = (active_modal == Some(Modal::ConfirmKill))
+            .then(|| s.confirm_kill_name())
+            .flatten();
 
         let update_available = s.update_available.as_ref();
         let reload_status = s.reload_status.as_ref();
@@ -279,21 +278,6 @@ impl App {
                 ui::draw_settings_page(frame, main_inner, &self.build_settings_view(), theme);
             }
 
-            // Theme picker — standalone overlay over the main pane whenever
-            // open (atop the settings page, or directly over the terminal when
-            // opened from the sidebar via `t`). Decoupled from the settings
-            // page so it can bypass it entirely.
-            if warning_state.is_none() && s.settings.theme_picker_open {
-                let theme_names: Vec<&str> = THEMES.iter().map(|t| t.name).collect();
-                ui::draw_theme_picker(
-                    frame,
-                    main_inner,
-                    &theme_names,
-                    s.settings.theme_picker_selected,
-                    theme,
-                );
-            }
-
             if let Some(warning_state) = warning_state {
                 let main_style = Style::default().fg(theme.text).add_modifier(Modifier::BOLD);
                 let sub_style = Style::default().fg(theme.dim);
@@ -322,72 +306,11 @@ impl App {
                 frame.render_widget(warning, popup_area);
             }
 
-            if let Some(menu) = context_menu {
-                ui::draw_context_menu(
-                    frame,
-                    menu.x,
-                    menu.y,
-                    menu.selected,
-                    menu.items(),
-                    menu.disabled(),
-                    theme,
-                );
-            }
-
-            // Horizontal layout renders rename inline in the sidebar. The
-            // vertical layout is only a one-row tab bar, so it needs a real
-            // overlay; otherwise the editor is clipped away after toggling
-            // layout and the modal appears frozen.
-            if layout_mode == LayoutMode::Vertical {
-                if let Some(textarea) = rename_input {
-                    ui::draw_rename_popup(frame, full, theme, textarea);
-                }
-            }
-
-            if let Some(ns) = new_session_overlay {
-                let lane_title = ns
-                    .target_lane
-                    .as_ref()
-                    .filter(|lane| !s.is_primary_lane(lane))
-                    .map(|lane| s.section_title(lane));
-                let view = ui::NewSessionView {
-                    name: &ns.name,
-                    focus_name: matches!(ns.focus, crate::new_session::PickerFocus::Name),
-                    input: &ns.picker.input,
-                    entries: &ns.picker.items,
-                    filtered: &ns.picker.filtered,
-                    selected: ns.picker.selected,
-                    error: ns.picker.error.as_deref(),
-                    lane_title: lane_title.as_deref(),
-                };
-                ui::draw_new_session(frame, frame.area(), &view, theme);
-            }
-
-            if let Some(ar) = add_remote_overlay {
-                ui::draw_add_remote(frame, frame.area(), ar, theme);
-            }
-
-            if let Some(overlay) = port_forward_overlay {
-                let pf_area = frame.area();
-                let lane_title = self.state.section_title(&overlay.lane);
-                let forwards = crate::app::ssh::config_adapter::remote_for_lane(
-                    &self.state.config_remotes,
-                    &overlay.lane,
-                )
-                .map_or(&[][..], |remote| remote.forwards.as_slice());
-                crate::ui::overlays::port_forward::draw_port_forward(
-                    frame,
-                    pf_area,
-                    overlay,
-                    &lane_title,
-                    forwards,
-                    theme,
-                );
-            }
-
-            if let Some(text) = summary_popup {
-                captured_summary_popup_max_scroll =
-                    ui::draw_summary_popup(frame, frame.area(), text, summary_popup_scroll, theme);
+            let rendered_modal = draw_active_modal(frame, s, full, main_inner, layout_mode, theme);
+            captured_summary_popup_max_scroll = rendered_modal.summary_popup_max_scroll;
+            captured_hits.new_session_dirs = rendered_modal.new_session_dirs;
+            if rendered_modal.kill_hits.is_some() {
+                captured_hits.kill = rendered_modal.kill_hits;
             }
 
             // Overlay the reload bar last so it sits atop the sidebar footer,
@@ -409,7 +332,7 @@ impl App {
     /// The active page's descriptor rows reduced to display strings. Done here, holding
     /// `&AppState`, so `draw_settings_page` stays a pure `ui` fn over
     /// `Vec<SettingRowView>`.
-    fn build_settings_view(&self) -> SettingsView<'_> {
+    fn build_settings_view(&self) -> SettingsView {
         let s = &self.state;
         let page = s.settings.current_page();
         let source_rows = setting_rows(s);
@@ -425,21 +348,6 @@ impl App {
             selected: s.settings.selected(),
             rows,
             page,
-            exclude_editor: s
-                .overlay
-                .exclude_editor
-                .as_ref()
-                .map(|e| ui::ExcludeEditorView {
-                    patterns: &s.prefs.exclude_patterns,
-                    selected: e.selected,
-                    adding: e.adding,
-                    input: &e.input,
-                    error: e.error.as_deref(),
-                }),
-            keybindings: &s.keybindings,
-            keybindings_view_open: s.settings.keybindings_view_open,
-            keybindings_view_scroll: s.settings.keybindings_view_scroll,
-            summary_lang_input: s.overlay.summary_lang_input.as_ref(),
         }
     }
 }

@@ -60,6 +60,22 @@ impl FilterPicker {
         self.selected = step_clamped(self.selected, self.filtered.len(), direction);
     }
 
+    /// Move the selection by one row, wrapping across either end. This is
+    /// used by directory browsing, where repeated navigation should keep
+    /// cycling through the available children. A no-op when the list is
+    /// empty.
+    pub fn step_wrapped(&mut self, direction: i32) {
+        let len = self.filtered.len();
+        if len == 0 || direction == 0 {
+            return;
+        }
+        self.selected = if direction > 0 {
+            (self.selected + 1) % len
+        } else {
+            (self.selected + len - 1) % len
+        };
+    }
+
     /// The currently highlighted item, if any.
     pub fn selected_item(&self) -> Option<&str> {
         let idx = *self.filtered.get(self.selected)?;

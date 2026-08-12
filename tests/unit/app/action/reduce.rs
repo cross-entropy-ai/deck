@@ -1507,6 +1507,7 @@ fn picker_state_with(input: &str, entries: Vec<String>) -> AppState {
         name: make_textarea(""),
         focus: PickerFocus::Dir,
         picker,
+        scroll: 0,
         target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
     };
     ns.refilter();
@@ -1559,13 +1560,34 @@ fn new_session_input_crossing_slash_sets_reread() {
 }
 
 #[test]
-fn new_session_next_clamped_to_filtered_len() {
+fn new_session_selection_wraps_at_filtered_boundaries() {
     let mut state = picker_state_with("~/", vec!["a".into(), "b".into()]);
-    apply_action(&mut state, Action::NewSession(NewSessionAction::Next));
+    apply_action(&mut state, Action::NewSession(NewSessionAction::Prev));
+    assert_eq!(
+        state.overlay.new_session.as_ref().unwrap().picker.selected,
+        1
+    );
     apply_action(&mut state, Action::NewSession(NewSessionAction::Next));
     apply_action(&mut state, Action::NewSession(NewSessionAction::Next));
     let ns = state.overlay.new_session.as_ref().unwrap();
     assert_eq!(ns.picker.selected, 1);
+}
+
+#[test]
+fn new_session_moving_up_from_bottom_keeps_current_viewport() {
+    let entries = (0..10).map(|i| format!("dir-{i}")).collect();
+    let mut state = picker_state_with("~/", entries);
+    {
+        let ns = state.overlay.new_session.as_mut().unwrap();
+        ns.picker.selected = 9;
+        ns.scroll = 2; // rows 2..=9 are visible, selection is on the bottom.
+    }
+
+    apply_action(&mut state, Action::NewSession(NewSessionAction::Prev));
+
+    let ns = state.overlay.new_session.as_ref().unwrap();
+    assert_eq!(ns.picker.selected, 8, "highlight moves up one row");
+    assert_eq!(ns.scroll, 2, "the visible window stays fixed");
 }
 
 #[test]

@@ -181,9 +181,13 @@ fn open_port_forwards_action(state: &AppState) -> Action {
 /// Route a key to the per-modal handler for the active modal. Every modal
 /// captures all keys, so a global keybinding can't leak through behind one.
 fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action {
+    if matches!(nav_key(key), Some(Nav::Close)) {
+        return crate::app::modal::close_action(modal, state);
+    }
+
     match modal {
         Modal::SummaryPopup => Action::Summary(match (nav_key(key), key.code) {
-            (Some(Nav::Close), _) | (_, KeyCode::Char('q')) => SummaryAction::ClosePopup,
+            (_, KeyCode::Char('q')) => SummaryAction::ClosePopup,
             (Some(Nav::Down), _) => SummaryAction::ScrollPopup(1),
             (Some(Nav::Up), _) => SummaryAction::ScrollPopup(-1),
             (_, KeyCode::PageDown | KeyCode::Char(' ')) => SummaryAction::ScrollPopup(10),
@@ -194,7 +198,6 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
         Modal::AddRemote => add_remote_key_to_action(key),
         Modal::Rename => match key.code {
             KeyCode::Enter => Action::RenameConfirm,
-            KeyCode::Esc => Action::RenameCancel,
             _ => Action::RenameInputKey(*key),
         },
         Modal::ContextMenu => Action::Menu(match nav_key(key) {
@@ -213,7 +216,6 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
         Modal::ExcludeEditor => exclude_editor_key_to_action(key, state),
         Modal::SummaryLang => match key.code {
             KeyCode::Enter => Action::Summary(SummaryAction::LanguageConfirm),
-            KeyCode::Esc => Action::Summary(SummaryAction::LanguageCancel),
             _ => Action::Summary(SummaryAction::LanguageInputKey(*key)),
         },
         Modal::Help => Action::DismissHelp,
@@ -267,14 +269,12 @@ fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 
     if adding {
         return match key.code {
-            KeyCode::Esc => Action::Settings(SettingsAction::ExcludeCancelAdd),
             KeyCode::Enter => Action::Settings(SettingsAction::ExcludeConfirm),
             _ => Action::Settings(SettingsAction::ExcludeInputKey(*key)),
         };
     }
 
     Action::Settings(match (nav_key(key), key.code) {
-        (Some(Nav::Close), _) => SettingsAction::ExcludeClose,
         (Some(Nav::Down), _) => SettingsAction::ExcludeNext,
         (Some(Nav::Up), _) => SettingsAction::ExcludePrev,
         (_, KeyCode::Char('a')) => SettingsAction::ExcludeStartAdd,
@@ -285,7 +285,6 @@ fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 
 fn keybindings_view_key_to_action(key: &KeyEvent) -> Action {
     Action::Settings(match nav_key(key) {
-        Some(Nav::Close) => SettingsAction::CloseKeybindingsView,
         Some(Nav::Down) => SettingsAction::KeybindingsScrollDown,
         Some(Nav::Up) => SettingsAction::KeybindingsScrollUp,
         _ => return Action::None,
@@ -294,7 +293,6 @@ fn keybindings_view_key_to_action(key: &KeyEvent) -> Action {
 
 fn theme_picker_key_to_action(key: &KeyEvent) -> Action {
     Action::Settings(match (nav_key(key), key.code) {
-        (Some(Nav::Close), _) => SettingsAction::CloseThemePicker,
         (Some(Nav::Down | Nav::Right), _) => SettingsAction::ThemePickerNext,
         (Some(Nav::Up | Nav::Left), _) => SettingsAction::ThemePickerPrev,
         (Some(Nav::Confirm), _) | (_, KeyCode::Char(' ')) => SettingsAction::ConfirmThemePicker,
@@ -306,7 +304,6 @@ fn pf_key(key: &KeyEvent, overlay: &PortForwardOverlay) -> Action {
     use KeyCode::*;
     if let Some(form) = overlay.add_form.as_ref() {
         match key.code {
-            Esc => Action::Pf(PfAction::AddCancel),
             Enter => Action::Pf(PfAction::AddSubmit),
             Tab | Down => Action::Pf(PfAction::AddFieldNext),
             BackTab | Up => Action::Pf(PfAction::AddFieldPrev),
@@ -324,7 +321,6 @@ fn pf_key(key: &KeyEvent, overlay: &PortForwardOverlay) -> Action {
         }
     } else {
         match key.code {
-            Esc => Action::Pf(PfAction::Close),
             Char('a') => Action::Pf(PfAction::AddOpen),
             Char('d') => Action::Pf(PfAction::Delete),
             Up | Char('k') => Action::Pf(PfAction::FocusUp),
@@ -336,7 +332,6 @@ fn pf_key(key: &KeyEvent, overlay: &PortForwardOverlay) -> Action {
 
 fn add_remote_key_to_action(key: &KeyEvent) -> Action {
     match key.code {
-        KeyCode::Esc => Action::AddRemote(AddRemoteAction::Close),
         KeyCode::Enter => Action::AddRemote(AddRemoteAction::Confirm),
         KeyCode::Up => Action::AddRemote(AddRemoteAction::Prev),
         KeyCode::Down => Action::AddRemote(AddRemoteAction::Next),
@@ -360,7 +355,6 @@ fn new_session_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 
 fn name_field_key_to_action(key: &KeyEvent) -> Action {
     match key.code {
-        KeyCode::Esc => Action::NewSession(NewSessionAction::Close),
         KeyCode::Enter => Action::NewSession(NewSessionAction::Confirm),
         KeyCode::Tab => Action::NewSession(NewSessionAction::SwitchFocus),
         _ => Action::NewSession(NewSessionAction::InputKey(*key)),
@@ -370,8 +364,7 @@ fn name_field_key_to_action(key: &KeyEvent) -> Action {
 fn dir_field_key_to_action(key: &KeyEvent) -> Action {
     use crossterm::event::KeyModifiers;
     match key.code {
-        KeyCode::Esc => Action::NewSession(NewSessionAction::Close),
-        KeyCode::Enter => Action::NewSession(NewSessionAction::Confirm),
+        KeyCode::Enter => Action::NewSession(NewSessionAction::DirEnter),
         KeyCode::Tab => Action::NewSession(NewSessionAction::SwitchFocus),
         KeyCode::Up => Action::NewSession(NewSessionAction::Prev),
         KeyCode::Down => Action::NewSession(NewSessionAction::Next),

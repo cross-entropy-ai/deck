@@ -1,4 +1,4 @@
-use super::{context_menu_width, tab_bar_layout, tab_label, MENU_LABEL};
+use super::{context_menu_rect, context_menu_width, tab_bar_layout, tab_label, MENU_LABEL};
 use crate::menu::MenuItem;
 use unicode_width::UnicodeWidthStr;
 
@@ -82,4 +82,17 @@ fn context_menu_width_uses_display_width() {
     // "Remove from list" is the widest stock label at 16 columns; +4 chrome.
     let items = [MenuItem::RemoveFromList];
     assert_eq!(context_menu_width(&items), 16 + 4);
+}
+
+#[test]
+fn context_menu_keeps_one_cell_screen_margin() {
+    let items = [MenuItem::Rename, MenuItem::Close];
+
+    let left = context_menu_rect(&items, 0, 0, 40, 12);
+    assert_eq!(left.x, 1);
+    assert_eq!(left.y, 1);
+
+    let right = context_menu_rect(&items, 39, 11, 40, 12);
+    assert_eq!(right.right(), 39);
+    assert_eq!(right.bottom(), 11);
 }

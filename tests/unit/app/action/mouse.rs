@@ -1,5 +1,5 @@
-use super::{mouse_to_action, Action, SummaryAction};
-use crate::geometry::{AgentHit, AgentTarget};
+use super::{mouse_to_action, Action, NewSessionAction, SummaryAction};
+use crate::geometry::{AgentHit, AgentTarget, ListItemHit};
 use crate::state::{AppState, FocusTarget, LayoutMode, SessionEntry, SessionEntryKind};
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -52,6 +52,29 @@ fn state_with_projects() -> AppState {
     state
 }
 
+fn state_with_new_session_dirs() -> AppState {
+    use crate::new_session::{make_textarea, NewSessionState, PickerFocus};
+    use crate::picker::FilterPicker;
+
+    let mut state = AppState::new(120, 40);
+    let mut picker = FilterPicker::new(vec!["alpha".into(), "beta".into(), "gamma".into()]);
+    picker.input = make_textarea("~/");
+    state.overlay.new_session = Some(NewSessionState {
+        name: make_textarea("session-0"),
+        focus: PickerFocus::Name,
+        picker,
+        scroll: 0,
+        target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
+    });
+    state.hit_regions.new_session_dirs = (0..3)
+        .map(|index| ListItemHit {
+            rect: Rect::new(20, 10 + index as u16, 24, 1),
+            index,
+        })
+        .collect();
+    state
+}
+
 fn screen_row_for(state: &AppState, target: usize) -> u16 {
     (0..state.term_height)
         .find(|&row| state.focus_at_row(row) == Some(FocusTarget(target)))
@@ -90,6 +113,50 @@ fn left_click_over_agent_row_inside_card_still_selects_agent() {
         Action::SwitchToAgentPane(t) => assert_eq!(t.session, "a"),
         other => panic!("left-click on an agent row must select it, got {other:?}"),
     }
+}
+
+#[test]
+fn directory_click_selects_then_second_click_enters() {
+    let mut state = state_with_new_session_dirs();
+    let beta = ev(MouseEventKind::Down(MouseButton::Left), 22, 11);
+
+    let first = mouse_to_action(&beta, &state);
+    assert!(matches!(
+        first,
+        Action::NewSession(NewSessionAction::Select(1))
+    ));
+    crate::action::apply_action(&mut state, first);
+    let ns = state.overlay.new_session.as_ref().unwrap();
+    assert_eq!(ns.focus, crate::new_session::PickerFocus::Dir);
+    assert_eq!(ns.picker.selected, 1);
+
+    let second = mouse_to_action(&beta, &state);
+    assert!(matches!(
+        second,
+        Action::NewSession(NewSessionAction::DirEnter)
+    ));
+    let fx = crate::action::apply_action(&mut state, second);
+    assert_eq!(
+        state.overlay.new_session.as_ref().unwrap().input_str(),
+        "~/beta/"
+    );
+    assert!(fx.has_reread_new_session_entries());
+}
+
+#[test]
+fn wheel_over_directory_list_uses_wrapped_navigation() {
+    let mut state = state_with_new_session_dirs();
+    let ns = state.overlay.new_session.as_mut().unwrap();
+    ns.focus = crate::new_session::PickerFocus::Dir;
+    ns.picker.selected = 2;
+
+    let action = mouse_to_action(&ev(MouseEventKind::ScrollDown, 22, 12), &state);
+    assert!(matches!(action, Action::NewSession(NewSessionAction::Next)));
+    crate::action::apply_action(&mut state, action);
+    assert_eq!(
+        state.overlay.new_session.as_ref().unwrap().picker.selected,
+        0
+    );
 }
 
 #[test]

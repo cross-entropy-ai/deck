@@ -6,6 +6,7 @@ mod dispatch;
 mod effect_runner;
 mod focus_executor;
 mod lifecycle;
+mod modal;
 mod new_session_flow;
 mod pty;
 mod refresh;

@@ -4,7 +4,10 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Widget};
+use ratatui::text::Span;
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget};
+
+use crate::theme::Theme;
 
 /// Center a `width` x `height` rect inside `area`, clamping each
 /// dimension to `area` so the popup never overflows its bounds.
@@ -34,17 +37,159 @@ pub fn popup_rect(area: Rect, width: u16, content_height: u16, min_height: u16) 
     centered_rect(area, width, height)
 }
 
-/// Visual options for a rounded popup frame.
-pub struct PopupStyle<'a> {
-    pub title: Option<&'a str>,
-    pub border_fg: Color,
-    pub bg: Color,
+/// Resolved visual options for a rounded modal frame. Kept private so modal
+/// callers choose a semantic frame variant instead of independently selecting
+/// background and border colors.
+#[derive(Clone, Copy)]
+struct ModalStyle<'a> {
+    title: Option<&'a str>,
+    border_fg: Color,
+    bg: Color,
 }
 
-/// Clear `area`, draw a rounded bordered block over it, and return the
-/// inner content rect. Unifies the "Clear + bordered Block + inner"
-/// pattern every popup repeats (and makes all popup corners rounded).
-pub fn popup_frame(buf: &mut Buffer, area: Rect, style: PopupStyle<'_>) -> Rect {
+impl<'a> ModalStyle<'a> {
+    fn standard(theme: &Theme, title: Option<&'a str>) -> Self {
+        Self {
+            title,
+            border_fg: theme.accent,
+            bg: theme.surface,
+        }
+    }
+
+    fn subtle(theme: &Theme, title: Option<&'a str>) -> Self {
+        Self {
+            title,
+            border_fg: theme.dim,
+            bg: theme.surface,
+        }
+    }
+
+    fn warning(theme: &Theme, title: Option<&'a str>) -> Self {
+        Self {
+            title,
+            border_fg: theme.yellow,
+            bg: theme.surface,
+        }
+    }
+}
+
+/// Placement for a modal surface. Most modals are centered; anchored popovers
+/// such as the context menu supply their already-clamped rectangle directly.
+#[derive(Clone, Copy)]
+enum ModalPlacement {
+    Centered { width: u16, height: u16 },
+    Exact(Rect),
+}
+
+/// Shared visual shell for every framed modal: placement, clearing, rounded
+/// border, title, and background. Modal bodies only decide their content and
+/// desired dimensions.
+#[derive(Clone, Copy)]
+pub struct ModalFrame<'a> {
+    placement: ModalPlacement,
+    style: ModalStyle<'a>,
+}
+
+impl<'a> ModalFrame<'a> {
+    /// Standard modal surface: accent border over the theme's opaque surface.
+    pub fn centered(width: u16, height: u16, title: Option<&'a str>, theme: &Theme) -> Self {
+        Self {
+            placement: ModalPlacement::Centered { width, height },
+            style: ModalStyle::standard(theme, title),
+        }
+    }
+
+    /// Standard modal with caller-supplied placement (pickers and popovers).
+    pub fn exact(area: Rect, title: Option<&'a str>, theme: &Theme) -> Self {
+        Self {
+            placement: ModalPlacement::Exact(area),
+            style: ModalStyle::standard(theme, title),
+        }
+    }
+
+    /// Visually quieter anchored surface used by the context menu.
+    pub fn subtle_exact(area: Rect, title: Option<&'a str>, theme: &Theme) -> Self {
+        Self {
+            placement: ModalPlacement::Exact(area),
+            style: ModalStyle::subtle(theme, title),
+        }
+    }
+
+    /// Warning surface: standard modal background with a semantic warning border.
+    pub fn warning_centered(
+        width: u16,
+        height: u16,
+        title: Option<&'a str>,
+        theme: &Theme,
+    ) -> Self {
+        Self {
+            placement: ModalPlacement::Centered { width, height },
+            style: ModalStyle::warning(theme, title),
+        }
+    }
+
+    /// Resolve the modal's outer rectangle inside `bounds`.
+    pub fn area(self, bounds: Rect) -> Rect {
+        match self.placement {
+            ModalPlacement::Centered { width, height } => {
+                let safe_bounds = modal_bounds(bounds);
+                centered_rect(safe_bounds, width, height)
+            }
+            ModalPlacement::Exact(area) => area.intersection(bounds),
+        }
+    }
+
+    /// Draw the modal shell inside `bounds` and return its content rectangle.
+    pub fn render(self, buf: &mut Buffer, bounds: Rect) -> Rect {
+        let area = self.area(bounds);
+        clear_horizontal_margin(buf, area, bounds, self.style.bg);
+        popup_frame(buf, area, self.style)
+    }
+}
+
+/// Reserve one real terminal cell around centered modals whenever the pane is
+/// large enough. The horizontal clearing halo additionally protects the border
+/// from adjacent wide glyphs.
+fn modal_bounds(bounds: Rect) -> Rect {
+    let horizontal = u16::from(bounds.width > 2);
+    let vertical = u16::from(bounds.height > 2);
+    Rect::new(
+        bounds.x.saturating_add(horizontal),
+        bounds.y.saturating_add(vertical),
+        bounds.width.saturating_sub(horizontal * 2),
+        bounds.height.saturating_sub(vertical * 2),
+    )
+}
+
+/// Draw a modal's one-line command hint with the standard muted surface style.
+pub fn modal_footer(buf: &mut Buffer, area: Rect, text: &str, theme: &Theme) {
+    Paragraph::new(Span::styled(
+        text,
+        Style::default().fg(theme.muted).bg(theme.surface),
+    ))
+    .render(area, buf);
+}
+
+/// Clear one cell immediately outside each vertical edge of the modal.
+///
+/// A double-width glyph that starts beside a modal can otherwise occupy the
+/// border's cell in the terminal, making the border look interrupted. Keeping
+/// this margin in the shared frame makes the protection apply to every modal,
+/// including anchored ones, without changing their requested dimensions.
+fn clear_horizontal_margin(buf: &mut Buffer, area: Rect, bounds: Rect, bg: Color) {
+    let left = area.x.saturating_sub(1).max(bounds.x);
+    let right = area.right().saturating_add(1).min(bounds.right());
+    let margin = Rect::new(left, area.y, right.saturating_sub(left), area.height);
+
+    Clear.render(margin, buf);
+    Block::default()
+        .style(Style::default().bg(bg))
+        .render(margin, buf);
+}
+
+/// Clear `area`, draw a rounded bordered block over it, and return the inner
+/// content rect. Kept private so every framed overlay goes through `ModalFrame`.
+fn popup_frame(buf: &mut Buffer, area: Rect, style: ModalStyle<'_>) -> Rect {
     Clear.render(area, buf);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -52,10 +197,63 @@ pub fn popup_frame(buf: &mut Buffer, area: Rect, style: PopupStyle<'_>) -> Rect 
         .border_style(Style::default().fg(style.border_fg))
         .style(Style::default().bg(style.bg));
     let block = match style.title {
-        Some(title) => block.title(title),
+        Some(title) => block.title(format!(" {title} ")),
         None => block,
     };
     let inner = block.inner(area);
     block.render(area, buf);
     inner
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn modal_frame_clears_one_cell_beside_both_vertical_edges() {
+        let bounds = Rect::new(0, 0, 12, 5);
+        let mut buf = Buffer::empty(bounds);
+
+        // The wide glyph starts in the future left margin and occupies the
+        // future border cell. Rendering the modal must clear both cells before
+        // painting the border.
+        Paragraph::new("  界").render(Rect::new(0, 2, bounds.width, 1), &mut buf);
+
+        let theme = &crate::theme::THEMES[0];
+        ModalFrame::centered(6, 3, None, theme).render(&mut buf, bounds);
+
+        // Centered width 6 in width 12 occupies x=3..9, so x=2 and x=9
+        // are the shared one-cell horizontal margins.
+        assert_eq!(buf[(2, 2)].symbol(), " ");
+        assert_eq!(buf[(2, 2)].bg, theme.surface);
+        assert_eq!(buf[(3, 2)].symbol(), "│");
+        assert_eq!(buf[(9, 2)].symbol(), " ");
+        assert_eq!(buf[(9, 2)].bg, theme.surface);
+    }
+
+    #[test]
+    fn modal_frame_clamps_horizontal_margin_to_bounds() {
+        let bounds = Rect::new(4, 2, 6, 5);
+        let mut buf = Buffer::empty(bounds);
+
+        let inner =
+            ModalFrame::centered(20, 3, None, &crate::theme::THEMES[0]).render(&mut buf, bounds);
+
+        assert_eq!(inner, Rect::new(6, 4, 2, 1));
+        assert_eq!(buf[(4, 3)].symbol(), " ");
+        assert_eq!(buf[(9, 3)].symbol(), " ");
+    }
+
+    #[test]
+    fn modal_frame_normalizes_title_padding_and_surface_color() {
+        let bounds = Rect::new(0, 0, 16, 5);
+        let mut buf = Buffer::empty(bounds);
+        let theme = &crate::theme::THEMES[0];
+
+        ModalFrame::centered(12, 3, Some("Title"), theme).render(&mut buf, bounds);
+
+        let top: String = (2..14).map(|x| buf[(x, 1)].symbol()).collect();
+        assert!(top.contains(" Title "));
+        assert_eq!(buf[(3, 2)].bg, theme.surface);
+    }
 }

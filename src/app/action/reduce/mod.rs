@@ -728,8 +728,16 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
         NewSessionAction::Confirm => {
             // Handled at dispatch (needs fs::metadata).
         }
-        NewSessionAction::Prev => ns.picker.step(-1),
-        NewSessionAction::Next => ns.picker.step(1),
+        NewSessionAction::Prev => ns.step_selection(-1),
+        NewSessionAction::Next => ns.step_selection(1),
+        NewSessionAction::Select(index) => {
+            if index < ns.picker.filtered.len() {
+                ns.picker.selected = index;
+                ns.focus = crate::new_session::PickerFocus::Dir;
+                ns.picker.error = None;
+                ns.keep_selection_visible();
+            }
+        }
         NewSessionAction::Clear => {
             ns.set_path("");
             fx.reread_new_session_entries();

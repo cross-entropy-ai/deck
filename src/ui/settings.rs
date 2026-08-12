@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph, Widget};
+use ratatui::widgets::{Block, Paragraph, Widget};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
@@ -9,8 +9,9 @@ use crate::keybindings::{Command, Keybindings};
 use crate::state::SettingsPage;
 use crate::theme::Theme;
 use crate::ui::widgets::{
-    centered_rect, clamp_popup_height, field_row, full_width_row, list_item_line, popup_frame,
-    scroll_window, style_textarea, PopupStyle, TextAreaColors,
+    clamp_popup_height, field_row, full_width_row, list_item_line, modal_footer, modal_list_lines,
+    modal_selection_foreground, scroll_window, style_textarea, ListViewport, ModalFrame,
+    TextAreaColors,
 };
 
 use super::text::format_keys_for;
@@ -146,27 +147,9 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
     // The theme picker is drawn by the render loop, not here: it's a standalone
     // overlay openable from the sidebar (`t`) without entering this page, so it
     // renders over whatever main view is active. See `App::render`.
-
-    if let Some(ref editor) = settings.exclude_editor {
-        draw_exclude_editor(frame, area, editor, theme);
-    }
-
-    if let Some(input) = settings.summary_lang_input {
-        draw_summary_language_editor(frame, area, input, theme);
-    }
-
-    if settings.keybindings_view_open {
-        draw_keybindings_view(
-            frame,
-            area,
-            settings.keybindings,
-            settings.keybindings_view_scroll,
-            theme,
-        );
-    }
 }
 
-fn draw_keybindings_view(
+pub fn draw_keybindings_view(
     frame: &mut Frame,
     area: Rect,
     keybindings: &Keybindings,
@@ -188,67 +171,70 @@ fn draw_keybindings_view(
         .min(area.width.saturating_sub(4))
         .max(30);
     let popup_height = clamp_popup_height(area, rows.len() as u16 + 6, 7);
-    let popup_area = centered_rect(area, popup_width, popup_height);
-
-    let inner = popup_frame(
-        frame.buffer_mut(),
-        popup_area,
-        PopupStyle {
-            title: Some(" Keybindings "),
-            border_fg: theme.accent,
-            bg: theme.bg,
-        },
-    );
+    let inner = ModalFrame::centered(popup_width, popup_height, Some("Keybindings"), theme)
+        .render(frame.buffer_mut(), area);
 
     let list_rows = inner.height.saturating_sub(3) as usize;
     let total = rows.len();
     let max_scroll = total.saturating_sub(list_rows) as u16;
     let scroll = scroll.min(max_scroll) as usize;
-    let end = (scroll + list_rows).min(total);
 
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    for (name, keys, is_global) in &rows[scroll..end] {
-        let display_keys = if keys.is_empty() {
-            "<unbound>".to_string()
-        } else {
-            keys.clone()
-        };
-        let key_style = if keys.is_empty() {
-            Style::default().fg(theme.dim)
-        } else {
-            Style::default().fg(theme.accent)
-        };
-        let name_cell = format!("  {:<width$}  ", name, width = name_width);
-        let keys_cell = format!("{:<width$}", display_keys, width = keys_width);
-        let mut spans = vec![
-            Span::styled(name_cell, Style::default().fg(theme.secondary)),
-            Span::styled(keys_cell, key_style),
-        ];
-        if *is_global {
-            spans.push(Span::styled(
-                "  (global)".to_string(),
-                Style::default().fg(theme.dim),
-            ));
-        }
-        lines.push(Line::from(spans));
-    }
+    let mut lines: Vec<Line<'static>> = modal_list_lines(
+        &rows,
+        list_rows,
+        ListViewport::Offset(scroll),
+        |_, (name, keys, is_global)| {
+            let display_keys = if keys.is_empty() {
+                "<unbound>".to_string()
+            } else {
+                keys.clone()
+            };
+            let key_style = if keys.is_empty() {
+                Style::default().fg(theme.dim)
+            } else {
+                Style::default().fg(theme.accent)
+            };
+            let name_cell = format!("  {:<width$}  ", name, width = name_width);
+            let keys_cell = format!("{:<width$}", display_keys, width = keys_width);
+            let mut spans = vec![
+                Span::styled(name_cell, Style::default().fg(theme.secondary)),
+                Span::styled(keys_cell, key_style),
+            ];
+            if *is_global {
+                spans.push(Span::styled(
+                    "  (global)".to_string(),
+                    Style::default().fg(theme.dim),
+                ));
+            }
+            Line::from(spans)
+        },
+    );
 
     while lines.len() < list_rows {
         lines.push(Line::raw(""));
     }
     lines.push(Line::raw(""));
-    lines.push(Line::from(Span::styled(
-        "  Esc close  j/k scroll",
-        Style::default().fg(theme.muted),
-    )));
-    lines.push(Line::from(Span::styled(
-        "  edit ~/.config/deck/config.yaml to change",
-        Style::default().fg(theme.dim),
-    )));
-
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(theme.bg)),
+        Paragraph::new(lines).style(Style::default().bg(theme.surface)),
         inner,
+    );
+    let footer_rows = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+    modal_footer(
+        frame.buffer_mut(),
+        footer_rows[1],
+        "  Esc close  j/k scroll",
+        theme,
+    );
+    modal_footer(
+        frame.buffer_mut(),
+        footer_rows[2],
+        "  edit ~/.config/deck/config.yaml to change",
+        theme,
     );
 }
 
@@ -272,76 +258,45 @@ pub fn draw_theme_picker(
         + 6;
     let popup_width = (width as u16).min(area.width.saturating_sub(2)).max(12);
     let popup_height = clamp_popup_height(area, theme_names.len() as u16 + 2, 3);
-    let popup_area = centered_rect(area, popup_width, popup_height);
-
-    // Pad the popup background one cell left and right (not top/bottom) so the
-    // overlay floats with horizontal breathing room instead of sitting flush.
-    // Clamped to `area` so padding never spills past the pane it's drawn in.
-    let left = popup_area.x.saturating_sub(1).max(area.x);
-    let right = (popup_area.right() + 1).min(area.right());
-    let halo = Rect {
-        x: left,
-        y: popup_area.y,
-        width: right - left,
-        height: popup_area.height,
-    };
-    Clear.render(halo, frame.buffer_mut());
-    Block::default()
-        .style(Style::default().bg(theme.surface))
-        .render(halo, frame.buffer_mut());
-
-    let inner = popup_frame(
-        frame.buffer_mut(),
-        popup_area,
-        PopupStyle {
-            title: Some(" Theme "),
-            border_fg: theme.accent,
-            bg: theme.surface,
-        },
-    );
+    let inner = ModalFrame::centered(popup_width, popup_height, Some("Theme"), theme)
+        .render(frame.buffer_mut(), area);
 
     // Window the list around the selection like the keybindings view, so
     // the highlight can't walk off-screen when the theme count exceeds the
     // visible height (#15).
     let inner_w = inner.width as usize;
     let visible = (inner.height as usize).max(1);
-    let start = scroll_window(selected_idx, theme_names.len(), visible);
-    let end = (start + visible).min(theme_names.len());
-    let lines: Vec<Line> = theme_names[start..end]
-        .iter()
-        .enumerate()
-        .map(|(offset, name)| {
-            let style = if start + offset == selected_idx {
-                Style::default().fg(theme.bg).bg(theme.accent)
+    let lines: Vec<Line> = modal_list_lines(
+        theme_names,
+        visible,
+        ListViewport::FollowSelection(selected_idx),
+        |idx, name| {
+            let style = if idx == selected_idx {
+                Style::default()
+                    .fg(modal_selection_foreground(theme))
+                    .bg(theme.accent)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme.text).bg(theme.surface)
             };
             full_width_row(name, inner_w, style)
-        })
-        .collect();
+        },
+    );
 
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// A small centered popup with a single free-text field for the generated
 /// summary's language. Empty = the model's default.
-fn draw_summary_language_editor(
+pub fn draw_summary_language_editor(
     frame: &mut Frame,
     area: Rect,
     input: &ratatui_textarea::TextArea<'static>,
     theme: &Theme,
 ) {
     let width = 44u16.min(area.width.saturating_sub(4));
-    let popup_area = centered_rect(area, width, 6);
-    let inner = popup_frame(
-        frame.buffer_mut(),
-        popup_area,
-        PopupStyle {
-            title: Some(" Summary Language "),
-            border_fg: theme.accent,
-            bg: theme.bg,
-        },
-    );
+    let inner = ModalFrame::centered(width, 6, Some("Summary Language"), theme)
+        .render(frame.buffer_mut(), area);
 
     let rows = Layout::vertical([
         Constraint::Length(1), // field
@@ -351,26 +306,32 @@ fn draw_summary_language_editor(
     ])
     .split(inner);
 
-    // A 1-wide empty label over the popup's `theme.bg` fill leaves that
+    // A 1-wide empty label over the modal surface leaves that
     // leading cell unchanged while indenting the field by one column.
     field_row(
         frame.buffer_mut(),
         rows[0],
         " ",
-        Style::default().bg(theme.bg),
+        Style::default().bg(theme.surface),
         input,
         true,
-        TextAreaColors::field(theme, theme.accent, theme.bg),
+        TextAreaColors::field(theme, theme.accent, theme.surface),
     );
 
-    Paragraph::new(Line::from(Span::styled(
+    modal_footer(
+        frame.buffer_mut(),
+        rows[2],
         " e.g. English, 中文 — blank for default · Enter save / Esc cancel",
-        Style::default().fg(theme.muted),
-    )))
-    .render(rows[2], frame.buffer_mut());
+        theme,
+    );
 }
 
-fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView, theme: &Theme) {
+pub fn draw_exclude_editor(
+    frame: &mut Frame,
+    area: Rect,
+    editor: &ExcludeEditorView,
+    theme: &Theme,
+) {
     let pattern_count = editor.patterns.len();
     let max_pattern_width = max_width(editor.patterns.iter().map(String::as_str), 20);
 
@@ -381,17 +342,8 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
     let width = (max_pattern_width as u16 + 8)
         .max(30)
         .min(area.width.saturating_sub(4));
-    let popup_area = centered_rect(area, width, height);
-
-    let inner = popup_frame(
-        frame.buffer_mut(),
-        popup_area,
-        PopupStyle {
-            title: Some(" Exclude Patterns "),
-            border_fg: theme.accent,
-            bg: theme.bg,
-        },
-    );
+    let inner = ModalFrame::centered(width, height, Some("Exclude Patterns"), theme)
+        .render(frame.buffer_mut(), area);
 
     // Build row constraints: one per content line + blank + help.
     let mut constraints: Vec<Constraint> = Vec::new();
@@ -423,25 +375,33 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
         row_idx += 1;
     }
 
-    for (i, pattern) in editor.patterns.iter().enumerate() {
-        let selected = !editor.adding && i == editor.selected;
-        let marker = if selected { "▌" } else { " " };
-        Paragraph::new(list_item_line(
-            theme,
-            selected,
-            marker,
-            format!(" {} ", pattern),
-        ))
-        .render(rows[row_idx], frame.buffer_mut());
+    let pattern_lines = modal_list_lines(
+        editor.patterns,
+        editor.patterns.len(),
+        ListViewport::FollowSelection(editor.selected),
+        |i, pattern| {
+            let selected = !editor.adding && i == editor.selected;
+            let marker = if selected { "▸" } else { " " };
+            list_item_line(
+                theme,
+                selected,
+                format!("  {marker} "),
+                pattern.as_str(),
+                inner.width as usize,
+            )
+        },
+    );
+    for line in pattern_lines {
+        Paragraph::new(line).render(rows[row_idx], frame.buffer_mut());
         row_idx += 1;
     }
 
     if editor.adding {
-        // Split the row: marker (1 char) + textarea.
+        // Split the row: standard list indent/marker + textarea.
         let ta_row = rows[row_idx];
-        let cols = Layout::horizontal([Constraint::Length(1), Constraint::Min(0)]).split(ta_row);
+        let cols = Layout::horizontal([Constraint::Length(4), Constraint::Min(0)]).split(ta_row);
         Paragraph::new(Span::styled(
-            "▌",
+            "  ▸ ",
             Style::default().fg(theme.green).bg(theme.surface),
         ))
         .render(cols[0], frame.buffer_mut());
@@ -473,14 +433,12 @@ fn draw_exclude_editor(frame: &mut Frame, area: Rect, editor: &ExcludeEditorView
     } else {
         "  a: add  d: delete  Esc: close"
     };
-    Paragraph::new(Span::styled(help, Style::default().fg(theme.muted)))
-        .render(rows[row_idx], frame.buffer_mut());
+    modal_footer(frame.buffer_mut(), rows[row_idx], help, theme);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keybindings::Keybindings;
     use ratatui::{backend::TestBackend, Terminal};
 
     fn sample_rows() -> Vec<super::super::SettingRowView> {
@@ -515,7 +473,6 @@ mod tests {
     #[test]
     fn short_terminal_keeps_selected_setting_in_view() {
         let theme = &crate::theme::THEMES[0];
-        let keybindings = Keybindings::default();
         let rows = sample_rows();
         let last = rows.len() - 1;
         let last_label = rows[last].label;
@@ -529,11 +486,6 @@ mod tests {
                     selected: last,
                     rows,
                     page: SettingsPage::Root,
-                    exclude_editor: None,
-                    keybindings: &keybindings,
-                    keybindings_view_open: false,
-                    keybindings_view_scroll: 0,
-                    summary_lang_input: None,
                 };
                 super::draw_settings_page(frame, area, &view, theme);
             })

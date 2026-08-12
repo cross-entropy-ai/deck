@@ -28,9 +28,6 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         // modal up, so a modal hides them (bug #7).
         match hit {
             Some(HitKind::Tab(tab)) => return Action::SelectTab(tab),
-            Some(HitKind::NewLocalSession) => {
-                return Action::NewSession(NewSessionAction::OpenLocal)
-            }
             Some(HitKind::SidebarToggle) => return Action::ToggleSidebar,
             Some(HitKind::SummaryButton) => return Action::Summary(SummaryAction::Generate),
             Some(HitKind::SummaryPopup) => return Action::Summary(SummaryAction::OpenPopup),
@@ -247,9 +244,10 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     Action::None
 }
 
-/// Mouse handling for the active modal. ConfirmKill, SummaryPopup and
-/// ContextMenu keep their own click semantics; every other overlay swallows
-/// all mouse so clicks/wheel can't punch through to the sidebar (bug #7).
+/// Mouse handling for the active modal. ConfirmKill, SummaryPopup,
+/// ContextMenu, and NewSession keep their own click semantics; every other
+/// overlay swallows all mouse so clicks/wheel can't punch through to the
+/// sidebar (bug #7).
 fn modal_mouse_to_action(
     modal: Modal,
     mouse: &MouseEvent,
@@ -305,10 +303,32 @@ fn modal_mouse_to_action(
                 _ => Action::None,
             }
         }
+        Modal::NewSession => {
+            let Some(ns) = state.overlay.new_session.as_ref() else {
+                return Action::None;
+            };
+            match (mouse.kind, hit) {
+                (MouseEventKind::ScrollUp, Some(HitKind::NewSessionDir(_))) => {
+                    Action::NewSession(NewSessionAction::Prev)
+                }
+                (MouseEventKind::ScrollDown, Some(HitKind::NewSessionDir(_))) => {
+                    Action::NewSession(NewSessionAction::Next)
+                }
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::NewSessionDir(index)))
+                    if ns.focus == crate::new_session::PickerFocus::Dir
+                        && ns.picker.selected == index =>
+                {
+                    Action::NewSession(NewSessionAction::DirEnter)
+                }
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::NewSessionDir(index))) => {
+                    Action::NewSession(NewSessionAction::Select(index))
+                }
+                _ => Action::None,
+            }
+        }
         // Every other overlay is keyboard-driven; swallow mouse so clicks
         // don't fire phantom session switches or context menus behind it.
-        Modal::NewSession
-        | Modal::AddRemote
+        Modal::AddRemote
         | Modal::Rename
         | Modal::PortForward
         | Modal::ThemePicker

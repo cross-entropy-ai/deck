@@ -186,13 +186,15 @@ pub enum SummaryAction {
 
 #[derive(Debug)]
 pub enum NewSessionAction {
-    /// Open the local new-session picker (Header button / `n` shortcut).
+    /// Open the local new-session picker (local divider / `n` shortcut).
     OpenLocal,
     Close,
     InputKey(crossterm::event::KeyEvent),
     Confirm,
     Prev,
     Next,
+    /// Highlight an absolute index in the filtered directory list.
+    Select(usize),
     Clear,
     DeleteSegment,
     SwitchFocus,
