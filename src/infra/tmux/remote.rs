@@ -230,7 +230,8 @@ fn list_sessions_with(
     // takes the single-quoted literal-tab spelling. Trailing
     // `#{@deck_order}` carries deck's persisted display rank (empty when
     // unset). See `persist_session_order`.
-    let format = if parse_remote_id(host).container.is_some() {
+    let is_container = parse_remote_id(host).container.is_some();
+    let format = if is_container {
         SESSION_LIST_FORMAT_CONTAINER
     } else {
         SESSION_LIST_FORMAT_SSH
@@ -246,23 +247,47 @@ fn list_sessions_with(
         // a host that dropped off the network. Other non-zero exits (tmux
         // missing, permission, PATH) stay backend errors.
         Err(err) if is_no_server_error(&err) => Ok(Vec::new()),
-        Err(err) if is_unreachable_error(&err) || is_container_unavailable_error(&err) => {
+        Err(err)
+            if is_unreachable_error(&err)
+                || (is_container && is_container_unavailable_error(&err)) =>
+        {
             Err(ListSessionsError::Unreachable(err.to_string()))
         }
         Err(err) => Err(ListSessionsError::Backend(err.to_string())),
     }
 }
 
-/// Whether a failed container call means the container itself is gone or
-/// stopped — docker/podman phrase it as "… is not running" / "No such
-/// container …" on stderr. Treated like an unreachable host: deck shows the
-/// lane's placeholder row and retries on later ticks.
+/// Whether a failed *container* call means the container itself is gone,
+/// stopped, or paused, rather than something inside it failing. Treated like an
+/// unreachable host: deck shows the lane's placeholder row and retries on later
+/// ticks instead of warning every tick.
+///
+/// Only ever consulted for a container id (see `list_sessions_with`): on a plain
+/// host these phrases could come from unrelated rc-file noise on stderr, and
+/// downgrading a real backend failure to "unreachable" would hide it behind a
+/// permanent "(connecting…)" row.
+///
+/// Engines word this differently and none of the phrasings are contractual, so
+/// match the several known spellings rather than one:
+/// - docker stopped: `Container <id> is not running`
+/// - docker paused: `Container <id> is paused, unpause the container before exec`
+/// - docker/podman missing: `No such container` / `no such container`
+/// - podman stopped: `can only create exec sessions on running containers:
+///   container state improper`
 fn is_container_unavailable_error(err: &CommandError) -> bool {
     let CommandError::NonZero { stderr, .. } = err else {
         return false;
     };
     let msg = String::from_utf8_lossy(stderr).to_lowercase();
-    msg.contains("is not running") || msg.contains("no such container")
+    [
+        "is not running",
+        "no such container",
+        "is paused",
+        "on running containers",
+        "container state improper",
+    ]
+    .iter()
+    .any(|phrase| msg.contains(phrase))
 }
 
 /// Probe `host` for interactive agents in its tmux panes, in one ssh hop:
@@ -271,7 +296,10 @@ fn is_container_unavailable_error(err: &CommandError) -> bool {
 /// ssh). `None` if unreachable (section stays "probing"); `Some(empty)`
 /// for a reachable host with no agents.
 pub fn agent_probe(host: &str) -> Option<Vec<DetectedAgent>> {
-    let runner = default_runner();
+    agent_probe_with(default_runner(), host)
+}
+
+fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<DetectedAgent>> {
     // Commands joined by a bare `;` (shell separator, run in sequence).
     // `$'…'` protects the `#`/tabs in the tmux format on a host (bash/zsh);
     // inside a container the parser is POSIX `sh`, so the format is
@@ -300,9 +328,26 @@ pub fn agent_probe(host: &str) -> Option<Vec<DetectedAgent>> {
             "echo",
             AGENT_PROBE_MARKER,
             ";",
+            // The compound's exit status is this last command's, and a
+            // container image may ship no procps `ps` at all (debian-slim) or a
+            // busybox one that rejects `-axo` — which would fail the whole
+            // probe, so `run_ssh` errors and the lane's Agents section stays
+            // stuck on "probing…" forever even though the pane list above
+            // succeeded. Try the portable `-o` spelling next, then `true` so the
+            // panes still parse and agents merely go undetected. No bare `ps`
+            // fallback: its columns aren't `pid ppid args`, so it would feed the
+            // detector garbage rather than nothing.
             "ps",
             "-axo",
             "pid=,ppid=,args=",
+            "2>/dev/null",
+            "||",
+            "ps",
+            "-o",
+            "pid=,ppid=,args=",
+            "2>/dev/null",
+            "||",
+            "true",
         ],
     )
     .ok()?;

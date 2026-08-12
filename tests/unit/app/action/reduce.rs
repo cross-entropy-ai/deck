@@ -2093,6 +2093,50 @@ fn host_divider_menu_greys_port_forward_when_reuse_is_off() {
 }
 
 #[test]
+fn divider_menu_greys_port_forward_for_a_lane_without_its_own_connection() {
+    use crate::menu::MenuItem;
+    // The reducer must consult the lane's capability, not just the reuse pref:
+    // a container lane rides its host's socket, so submitting a forward for it
+    // would send an unresolvable `host#container` to ssh.
+    let mut state = make_test_state(1);
+    state.prefs.ssh_connection_reuse = true;
+    let container = crate::system::tmux::TmuxSystem::container_lane("devbox", "dev");
+    state.system_sections.push(crate::system::SectionDef {
+        lane: container.clone(),
+        title: "devbox/dev".into(),
+        buttons: vec![],
+        top_margin: true,
+        primary: false,
+        session_capabilities: crate::system::SessionCapabilities {
+            activate: true,
+            rename: true,
+            kill: true,
+        },
+        lane_capabilities: crate::system::LaneCapabilities {
+            create_session: true,
+            reorder_sessions: true,
+            actions: true,
+            port_forwards: false,
+        },
+    });
+
+    apply_action(
+        &mut state,
+        Action::Menu(MenuAction::OpenLaneDivider {
+            lane: container.clone(),
+            x: 3,
+            y: 4,
+        }),
+    );
+    let menu = state.overlay.context_menu.as_ref().expect("menu open");
+    assert!(menu.kind.disabled().contains(&MenuItem::PortForward));
+
+    // Opening the overlay directly is refused for the same reason.
+    apply_action(&mut state, Action::Pf(PfAction::Open(container)));
+    assert!(state.overlay.port_forward.is_none());
+}
+
+#[test]
 fn global_menu_starts_with_new_local_session() {
     use crate::menu::{MenuItem, MenuKind};
     assert_eq!(

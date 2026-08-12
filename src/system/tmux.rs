@@ -394,11 +394,34 @@ impl LaneConfigProvider for TmuxSystem {
     }
 
     fn remove_lane(&self, lane: &LaneId, config: &mut Config) -> LaneConfigOutcome {
-        let Some(host) = Self::host_of(lane) else {
+        let Some(remote_id) = Self::host_of(lane) else {
             return LaneConfigOutcome::Unsupported;
         };
+        // A container id names an entry *inside* its host's `containers` list,
+        // not a `remotes` entry — matching it against `remote.host` would never
+        // hit, leaving the divider's "Remove from list" permanently broken for
+        // container lanes.
+        let target = crate::remote_tmux::parse_remote_id(remote_id);
+        if let Some(container) = target.container {
+            let Some(remote) = config
+                .remotes
+                .iter_mut()
+                .find(|remote| remote.host == target.host)
+            else {
+                return LaneConfigOutcome::Unsupported;
+            };
+            let before = remote.containers.len();
+            remote
+                .containers
+                .retain(|configured| configured.name != container);
+            return if remote.containers.len() == before {
+                LaneConfigOutcome::Unsupported
+            } else {
+                LaneConfigOutcome::Removed
+            };
+        }
         let before = config.remotes.len();
-        config.remotes.retain(|remote| remote.host != host);
+        config.remotes.retain(|remote| remote.host != target.host);
         if config.remotes.len() == before {
             LaneConfigOutcome::Unsupported
         } else {
