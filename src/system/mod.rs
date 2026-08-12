@@ -691,6 +691,7 @@ mod tests {
         let mut config = Config::default();
         config.remotes.push(crate::config::RemoteConfig {
             host: "prod".into(),
+            forward_agent: true,
             forwards: vec![],
         });
 

@@ -150,6 +150,17 @@ impl RemoteSpawner {
 
 /// Remote-shell prelude for a tmux attach connection. Kept as one pure builder
 /// so quoting-sensitive behavior is unit-tested without opening SSH.
+///
+/// The agent block pins the forwarded ssh-agent behind a stable path: sshd
+/// mints a fresh `$SSH_AUTH_SOCK` (`/tmp/ssh-*/agent.N`) per connection, so
+/// any pane that captured an older path holds a dead socket after a
+/// reconnect. Re-pointing `~/.ssh/deck-agent.sock` at the live socket on
+/// every attach — and handing tmux the symlink, not the raw path — keeps one
+/// forever-valid address: tmux's default `update-environment` propagates it
+/// into the attached session for new panes, and `set-environment -g` covers
+/// sessions created later without an attach. Guarded by `-S` so a host with
+/// forwarding disabled skips the whole block. POSIX-sh only, and no token
+/// starts with `=`/`-`/`#` (see CLAUDE.md on remote shells re-parsing argv).
 fn attach_command(host: &str, marker_id: u64) -> String {
     let dir = crate::remote_tmux::client_cache_dir_token();
     let marker_pattern = crate::remote_tmux::client_marker_name_pattern(host);
@@ -157,7 +168,12 @@ fn attach_command(host: &str, marker_id: u64) -> String {
     format!(
         "mkdir -p {dir} 2>/dev/null ; \
          find {dir} -type f -name '{marker_pattern}' -exec rm -f -- {{}} + 2>/dev/null ; \
-         tty > {marker} 2>/dev/null ; {path} tmux attach",
+         tty > {marker} 2>/dev/null ; \
+         if [ -S \"$SSH_AUTH_SOCK\" ]; then \
+         ln -sf \"$SSH_AUTH_SOCK\" \"$HOME/.ssh/deck-agent.sock\" ; \
+         SSH_AUTH_SOCK=\"$HOME/.ssh/deck-agent.sock\" ; export SSH_AUTH_SOCK ; \
+         {path} tmux set-environment -g SSH_AUTH_SOCK \"$HOME/.ssh/deck-agent.sock\" 2>/dev/null ; \
+         fi ; {path} tmux attach",
         path = crate::remote_tmux::REMOTE_PATH_PREFIX,
     )
 }
@@ -194,6 +210,11 @@ fn spawn_one(
             let remote_cmd = attach_command(&host_for_args, marker_id);
             let mut argv = vec!["-tt".to_string()];
             argv.extend(crate::ssh::connection_opts());
+            argv.extend(
+                crate::ssh::agent_forward_opts(&host_for_args)
+                    .iter()
+                    .map(|opt| (*opt).to_string()),
+            );
             argv.push(host_for_args.clone());
             argv.push(remote_cmd);
             let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
@@ -244,5 +265,25 @@ mod tests {
         assert!(!command.contains("rm -f \"$HOME\"/.cache/deck/client-"));
         assert!(command.contains("tty > \"$HOME\"/'.cache/deck/client-"));
         assert!(command.ends_with("tmux attach"));
+    }
+
+    #[test]
+    fn attach_pins_forwarded_agent_behind_stable_symlink() {
+        let command = attach_command("web.prod", 17);
+
+        // Guarded: hosts without a forwarded agent skip the block entirely.
+        assert!(command.contains("if [ -S \"$SSH_AUTH_SOCK\" ]; then"));
+        assert!(command.contains("ln -sf \"$SSH_AUTH_SOCK\" \"$HOME/.ssh/deck-agent.sock\""));
+        // Both the attach client env and the tmux global env carry the
+        // symlink, never the per-connection socket path.
+        assert!(
+            command.contains("SSH_AUTH_SOCK=\"$HOME/.ssh/deck-agent.sock\" ; export SSH_AUTH_SOCK")
+        );
+        assert!(command
+            .contains("tmux set-environment -g SSH_AUTH_SOCK \"$HOME/.ssh/deck-agent.sock\""));
+        // set-environment must run before the attach that consumes it.
+        let setenv = command.find("set-environment").unwrap();
+        let attach = command.rfind("tmux attach").unwrap();
+        assert!(setenv < attach);
     }
 }

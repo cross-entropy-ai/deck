@@ -25,6 +25,23 @@ pub struct RemoteConfig {
     /// against the host's ControlMaster.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub forwards: Vec<ForwardSpec>,
+    /// Forward the local ssh-agent to this host (`-o ForwardAgent=yes` on
+    /// every deck ssh invocation), so shells and agents inside its tmux
+    /// sessions can use local keys. On by default and omitted from the file;
+    /// `forward_agent: false` forces it off. Either value overrides
+    /// ssh_config. Forwarding exposes the agent to root on the remote host —
+    /// turn it off for hosts you don't fully trust.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub forward_agent: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // signature dictated by serde
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 /// User-configurable binding value for a single command.
