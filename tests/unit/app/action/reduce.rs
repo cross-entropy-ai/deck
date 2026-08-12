@@ -1333,10 +1333,12 @@ fn port_forwards_row_aggregates_across_hosts_and_targets_a_host() {
     state.config_remotes = vec![
         RemoteConfig {
             host: "a".into(),
+            forward_agent: true,
             forwards: vec![],
         },
         RemoteConfig {
             host: "b".into(),
+            forward_agent: true,
             forwards: vec![spec(8080), spec(9090)],
         },
     ];
@@ -1400,6 +1402,7 @@ fn disabling_ssh_connection_reuse_keeps_rules_but_locks_port_forwards() {
     let mut state = make_test_state(1);
     state.config_remotes.push(RemoteConfig {
         host: "prod".into(),
+        forward_agent: true,
         forwards: vec![ForwardSpec {
             mode: ForwardMode::Local,
             bind_addr: None,
@@ -1499,6 +1502,7 @@ fn removing_a_lane_defers_config_mutation_to_runtime() {
     let mut state = make_test_state(1);
     state.config_remotes.push(RemoteConfig {
         host: "prod".into(),
+        forward_agent: true,
         forwards: vec![ForwardSpec {
             mode: ForwardMode::Local,
             bind_addr: None,
@@ -1856,6 +1860,7 @@ fn pf_task_result_persists_forward_when_overlay_closed() {
     // No overlay open: the result must still persist to config_remotes.
     state.config_remotes = vec![crate::config::RemoteConfig {
         host: "h1".into(),
+        forward_agent: true,
         forwards: vec![],
     }];
 
@@ -2031,10 +2036,12 @@ fn remove_lane_emits_one_runtime_owned_mutation() {
     state.config_remotes = vec![
         crate::config::RemoteConfig {
             host: "h1".into(),
+            forward_agent: true,
             forwards: vec![],
         },
         crate::config::RemoteConfig {
             host: "h2".into(),
+            forward_agent: true,
             forwards: vec![],
         },
     ];

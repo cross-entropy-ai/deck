@@ -229,6 +229,7 @@ pub(crate) fn run_remote_add(host: &str) -> i32 {
 
     config.remotes.push(RemoteConfig {
         host: host.to_string(),
+        forward_agent: true,
         forwards: vec![],
     });
     finish_remote_change(

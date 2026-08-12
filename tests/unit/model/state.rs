@@ -802,10 +802,12 @@ fn remote_divider_shows_forward_count() {
     state.config_remotes = vec![
         RemoteConfig {
             host: "h1".into(),
+            forward_agent: true,
             forwards: vec![spec(8001), spec(8002)],
         },
         RemoteConfig {
             host: "nofwd".into(),
+            forward_agent: true,
             forwards: vec![],
         },
     ];
