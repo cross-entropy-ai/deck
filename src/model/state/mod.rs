@@ -848,6 +848,7 @@ impl AppState {
                     create_session: true,
                     reorder_sessions: true,
                     actions: true,
+                    port_forwards: true,
                 },
                 |section| section.lane_capabilities,
             )

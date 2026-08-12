@@ -124,7 +124,7 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId, ssh_connection_reuse: bo
             top_margin: false,
             primary: true,
             session_capabilities: tmux_session_capabilities(),
-            lane_capabilities: tmux_lane_capabilities(),
+            lane_capabilities: tmux_lane_capabilities(lane, ssh_connection_reuse),
         },
         Some(host) => {
             // ssh registers the remote-only buttons (the ⇄N forward count,
@@ -139,7 +139,7 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId, ssh_connection_reuse: bo
                 top_margin: true,
                 primary: false,
                 session_capabilities: tmux_session_capabilities(),
-                lane_capabilities: tmux_lane_capabilities(),
+                lane_capabilities: tmux_lane_capabilities(lane, ssh_connection_reuse),
             }
         }
     }
@@ -153,11 +153,15 @@ fn tmux_session_capabilities() -> SessionCapabilities {
     }
 }
 
-fn tmux_lane_capabilities() -> LaneCapabilities {
+/// Lane capabilities for one tmux lane. Port forwards ride Deck's shared
+/// ControlMaster via `ssh -O`, so they exist only while connection reuse is on;
+/// the local lane has no ssh connection at all.
+fn tmux_lane_capabilities(lane: &LaneId, ssh_connection_reuse: bool) -> LaneCapabilities {
     LaneCapabilities {
         create_session: true,
         reorder_sessions: true,
         actions: true,
+        port_forwards: ssh_connection_reuse && TmuxSystem::host_of(lane).is_some(),
     }
 }
 
@@ -214,7 +218,14 @@ impl System for TmuxSystem {
                 .with_focus_transport(self)
                 .with_summary_transport(self)
                 .with_attachment(self)
-                .with_capabilities(tmux_session_capabilities(), tmux_lane_capabilities())
+                .with_capabilities(
+                    tmux_session_capabilities(),
+                    tmux_lane_capabilities(
+                        lane,
+                        self.ssh_connection_reuse
+                            .load(std::sync::atomic::Ordering::Relaxed),
+                    ),
+                )
         })
     }
 }

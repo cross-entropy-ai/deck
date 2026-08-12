@@ -136,6 +136,52 @@ fn rejects_blank_or_none_control_path() {
 }
 
 #[test]
+fn rejects_control_paths_that_ssh_and_deck_would_read_differently() {
+    // A backslash: ssh reads `\"` as an escaped quote ("invalid quotes", exit
+    // 255 on every invocation) and collapses `\\` to `\` inside the value,
+    // which expand_control_path_home does not undo.
+    assert!(validate_ssh_control_path("/tmp/deck-socks\\").is_err());
+    assert!(validate_ssh_control_path("~/.ssh/so\\\\cks/cm-%C").is_err());
+    // `~user/` is expanded by ssh to *that* user's home, but Deck would create
+    // a literal `./~user/` directory and ssh would then fail to bind.
+    assert!(validate_ssh_control_path("~alice/socks/cm-%C").is_err());
+    assert!(validate_ssh_control_path("~root/cm-%C").is_err());
+    // Our own `~` stays fine, including bare.
+    assert!(validate_ssh_control_path("~/.ssh/socks/cm-%C").is_ok());
+    assert!(validate_ssh_control_path("~").is_ok());
+}
+
+#[test]
+fn control_persist_accepts_the_boolean_spellings_ssh_accepts() {
+    // ssh resolves these through its generic boolean parser: verified against
+    // OpenSSH 10.3, `-o ControlPersist=true` reports `controlpersist yes`.
+    for value in ["yes", "no", "true", "false", "TRUE", "False"] {
+        assert!(
+            validate_ssh_control_persist(value).is_ok(),
+            "should accept {value}"
+        );
+    }
+}
+
+#[test]
+fn load_reporting_parse_failure_flags_a_broken_file_so_callers_do_not_save_over_it() {
+    let path = std::env::temp_dir().join("deck-parse-failure-flag.yaml");
+    // `yes` is the natural hand-edit for a bool key, and YAML 1.2 does not read
+    // it as one — the case that used to let the startup backfill overwrite the
+    // user's real remotes with defaults.
+    fs::write(&path, "ssh_connection_reuse: yes\ntheme: Nord\n").unwrap();
+    assert!(Config::try_load_from(&path).is_err());
+    let raw_before = fs::read_to_string(&path).unwrap();
+    let _ = Config::load_from(&path);
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        raw_before,
+        "an unparseable file must be left untouched"
+    );
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
 fn rejects_control_paths_ssh_or_deck_cannot_use() {
     // A double quote would terminate the quoting `connection_opts_for` adds.
     assert!(validate_ssh_control_path("~/.ssh/socks/cm\"-%C").is_err());

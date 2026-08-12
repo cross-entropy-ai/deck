@@ -55,6 +55,34 @@ impl ConnectionSettings {
         self.enabled && (!next.enabled || self.control_path != next.control_path)
     }
 
+    /// Create the socket directory this snapshot needs, downgrading to no reuse
+    /// when that is impossible. Returns the snapshot to actually apply plus a
+    /// user-facing explanation when it had to be downgraded.
+    ///
+    /// ssh does not degrade on an unusable ControlPath — `muxserver_listen()`
+    /// only tolerates EINVAL/EADDRINUSE, and anything else (a missing parent, an
+    /// unwritable one, e.g. a root-owned `socks/` left by a `sudo deck` run)
+    /// authenticates and then `cleanup_exit(255)`s. Keeping `enabled` in that
+    /// state makes every remote host permanently unreachable behind one
+    /// already-expired warning, so trade multiplexing for working remotes.
+    pub fn with_usable_control_dir(self) -> (Self, Option<String>) {
+        if !self.enabled {
+            return (self, None);
+        }
+        match ensure_control_dir(&self.control_path) {
+            Ok(_) => (self, None),
+            Err(error) => (
+                Self {
+                    enabled: false,
+                    ..self
+                },
+                Some(format!(
+                    "SSH connection reuse is off for this session: cannot create the control socket directory ({error})"
+                )),
+            ),
+        }
+    }
+
     /// Whether moving from `self` to `next` makes Deck re-establish every saved
     /// forward from scratch: either the old socket is gone, or reuse was off and
     /// no Deck-owned master existed to carry them. Callers that also diff
@@ -161,7 +189,14 @@ pub fn connection_opts() -> Vec<String> {
 /// by OpenSSH.
 pub fn ensure_control_dir(control_path: &str) -> io::Result<PathBuf> {
     let expanded = crate::config::expand_control_path_home(control_path);
-    let dir = expanded.parent().unwrap_or_else(|| Path::new("."));
+    // `parent()` of a bare filename is `Some("")`, not `None`, and creating ""
+    // is a no-op that then makes `set_permissions("")` fail with ENOENT — a
+    // permanent bogus "cannot create SSH control socket directory" on every
+    // launch for a value ssh binds happily in the current directory.
+    let dir = match expanded.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
     // Defense in depth: `validate_ssh_control_path` already rejects these, so
     // neither a saved config nor the Settings editor can reach this arm.
     if dir.as_os_str().to_string_lossy().contains('%') {
@@ -302,6 +337,40 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn an_uncreatable_control_dir_downgrades_to_no_reuse() {
+        // ssh does not degrade here — it authenticates then exits 255 — so
+        // keeping `enabled` would take every remote host down.
+        let blocked = std::env::temp_dir().join(format!("deck-blocked-{}", std::process::id()));
+        std::fs::write(&blocked, "not a directory").unwrap();
+        let settings = ConnectionSettings {
+            control_path: blocked.join("socks").join("cm-%C").display().to_string(),
+            ..ConnectionSettings::default()
+        };
+
+        let (applied, warning) = settings.with_usable_control_dir();
+        assert!(!applied.enabled);
+        assert!(warning.is_some_and(|w| w.contains("connection reuse is off")));
+        // A disabled snapshot is passed through untouched: nothing to create.
+        let off = ConnectionSettings {
+            enabled: false,
+            control_path: "/nonexistent/deck/cm".to_string(),
+            ..ConnectionSettings::default()
+        };
+        let (passthrough, warning) = off.clone().with_usable_control_dir();
+        assert_eq!(passthrough, off);
+        assert!(warning.is_none());
+
+        let _ = std::fs::remove_file(&blocked);
+    }
+
+    #[test]
+    fn a_bare_socket_filename_does_not_report_a_bogus_directory_failure() {
+        // `parent()` of a bare filename is Some(""), and creating "" is a no-op
+        // that then made set_permissions("") fail with ENOENT on every launch.
+        assert!(ensure_control_dir("cm-%C").is_ok());
     }
 
     #[test]

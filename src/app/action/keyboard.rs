@@ -164,15 +164,15 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
 
 fn open_port_forwards_action(state: &AppState) -> Action {
     // Port-forward is a per-host/session action — Projects tab only.
-    if state.prefs.ssh_connection_reuse && !state.agents_tab_active() {
+    if !state.agents_tab_active() {
+        // `PfAction::Open` refuses a lane whose system says it cannot carry
+        // forwards, so no local/remote or reuse test belongs here.
         if let Some(lane) = state
             .focus_target()
             .and_then(|target| state.entry_at(target))
             .map(|entry| entry.lane.clone())
         {
-            if !state.is_primary_lane(&lane) {
-                return Action::Pf(PfAction::Open(lane));
-            }
+            return Action::Pf(PfAction::Open(lane));
         }
     }
     Action::None

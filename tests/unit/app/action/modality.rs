@@ -341,13 +341,17 @@ fn port_forward_shortcut_can_be_rebound() {
             if lane == crate::system::tmux::TmuxSystem::host_lane("prod")
     ));
 
+    // Whether the lane can actually host a forward is the owning system's
+    // answer, enforced once in the `PfAction::Open` reducer — key routing stays
+    // policy-free, so turning reuse off does not change this mapping. See
+    // `disabling_ssh_connection_reuse_keeps_rules_but_locks_port_forwards`.
     state.prefs.ssh_connection_reuse = false;
     assert!(matches!(
         key_to_action(
             &KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
             &state
         ),
-        Action::None
+        Action::Pf(crate::action::PfAction::Open(_))
     ));
 }
 
