@@ -756,6 +756,156 @@ mod tests {
     }
 
     #[test]
+    fn removing_a_container_lane_edits_its_host_entry() {
+        let system = tmux::TmuxSystem::default();
+        let mut config = Config::default();
+        config.remotes.push(crate::config::RemoteConfig {
+            host: "devbox".into(),
+            forward_agent: true,
+            containers: vec![
+                crate::config::ContainerConfig {
+                    name: "dev".into(),
+                    engine: "docker".into(),
+                    agent_sock: None,
+                },
+                crate::config::ContainerConfig {
+                    name: "build".into(),
+                    engine: "docker".into(),
+                    agent_sock: None,
+                },
+            ],
+            forwards: vec![],
+        });
+
+        // A container id names an entry inside its host's list, so removal must
+        // reach that list and leave the host (and its other containers) alone.
+        assert_eq!(
+            LaneConfigProvider::remove_lane(
+                &system,
+                &tmux::TmuxSystem::container_lane("devbox", "dev"),
+                &mut config,
+            ),
+            LaneConfigOutcome::Removed
+        );
+        assert_eq!(config.remotes.len(), 1);
+        assert_eq!(config.remotes[0].containers.len(), 1);
+        assert_eq!(config.remotes[0].containers[0].name, "build");
+
+        // Unknown container, and a container under an unknown host.
+        assert_eq!(
+            LaneConfigProvider::remove_lane(
+                &system,
+                &tmux::TmuxSystem::container_lane("devbox", "dev"),
+                &mut config,
+            ),
+            LaneConfigOutcome::Unsupported
+        );
+        assert_eq!(
+            LaneConfigProvider::remove_lane(
+                &system,
+                &tmux::TmuxSystem::container_lane("nope", "dev"),
+                &mut config,
+            ),
+            LaneConfigOutcome::Unsupported
+        );
+
+        // Removing the host still takes the whole entry, containers included.
+        assert_eq!(
+            LaneConfigProvider::remove_lane(
+                &system,
+                &tmux::TmuxSystem::host_lane("devbox"),
+                &mut config,
+            ),
+            LaneConfigOutcome::Removed
+        );
+        assert!(config.remotes.is_empty());
+    }
+
+    #[test]
+    fn only_lanes_owning_a_connection_advertise_port_forwards() {
+        let system = tmux::TmuxSystem::default();
+        let mut config = Config::default();
+        config.remotes.push(crate::config::RemoteConfig {
+            host: "devbox".into(),
+            forward_agent: true,
+            containers: vec![crate::config::ContainerConfig {
+                name: "dev".into(),
+                engine: "docker".into(),
+                agent_sock: None,
+            }],
+            forwards: vec![],
+        });
+        system.configure(&config);
+
+        let caps = |lane: &LaneId| {
+            system
+                .runtime(lane)
+                .expect("runtime")
+                .lane_capabilities
+                .port_forwards
+        };
+        // The local lane has no ssh connection at all.
+        assert!(!caps(&tmux::TmuxSystem::local_lane()));
+        assert!(caps(&tmux::TmuxSystem::host_lane("devbox")));
+        // A container rides its host's master and owns no RemoteConfig, so it
+        // has nowhere to put a forward rule and its id is not an ssh
+        // destination — the shell greys the affordance out from this flag.
+        assert!(!caps(&tmux::TmuxSystem::container_lane("devbox", "dev")));
+
+        // Reuse off takes the capability away everywhere: the forward commands
+        // are `ssh -O` against the socket it provides.
+        config.ssh_connection_reuse = false;
+        system.configure(&config);
+        assert!(!caps(&tmux::TmuxSystem::host_lane("devbox")));
+    }
+
+    #[test]
+    fn config_entries_that_cannot_round_trip_through_a_lane_id_are_not_mounted() {
+        let system = tmux::TmuxSystem::default();
+        let mut config = Config::default();
+        config.remotes.push(crate::config::RemoteConfig {
+            // `host#` would read back as the host `"devbox#"`, and a `#` in the
+            // host would read back as a container lane.
+            host: "devbox".into(),
+            forward_agent: true,
+            containers: vec![
+                crate::config::ContainerConfig {
+                    name: String::new(),
+                    engine: "docker".into(),
+                    agent_sock: None,
+                },
+                crate::config::ContainerConfig {
+                    name: "dev".into(),
+                    engine: "sudo docker".into(),
+                    agent_sock: None,
+                },
+                crate::config::ContainerConfig {
+                    name: "good".into(),
+                    engine: "podman".into(),
+                    agent_sock: None,
+                },
+            ],
+            forwards: vec![],
+        });
+        config.remotes.push(crate::config::RemoteConfig {
+            host: "srv#2".into(),
+            forward_agent: true,
+            containers: vec![],
+            forwards: vec![],
+        });
+        system.configure(&config);
+
+        let lanes = system.lanes();
+        assert!(lanes.contains(&tmux::TmuxSystem::host_lane("devbox")));
+        assert!(lanes.contains(&tmux::TmuxSystem::container_lane("devbox", "good")));
+        assert_eq!(lanes.len(), 3, "local + devbox + devbox/good: {lanes:?}");
+        assert_eq!(
+            tmux::remote_ids(&config.remotes),
+            vec!["devbox".to_string(), "devbox#good".to_string()]
+        );
+    }
+
+    #[test]
     fn tmux_transport_providers_build_backend_specific_targets() {
         let system = tmux::TmuxSystem::default();
         let local = tmux::TmuxSystem::local_lane();
