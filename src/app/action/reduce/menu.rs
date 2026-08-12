@@ -45,6 +45,7 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
             state,
             MenuKind::LaneDivider {
                 primary: state.is_primary_lane(&lane),
+                port_forward_enabled: state.prefs.ssh_connection_reuse,
                 lane,
             },
             x,
@@ -98,7 +99,7 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                     Some(MenuItem::Quit) => fx.push(Effect::Quit),
                     _ => {}
                 },
-                MenuKind::LaneDivider { lane, primary } => match selected_item {
+                MenuKind::LaneDivider { lane, primary, .. } => match selected_item {
                     Some(MenuItem::NewSession) => {
                         fx.push(Effect::OpenNewSessionPicker(lane.clone()))
                     }

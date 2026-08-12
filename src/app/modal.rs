@@ -59,6 +59,7 @@ pub(super) fn close_action(modal: Modal, state: &AppState) -> Action {
             };
             Action::Settings(action)
         }
+        Modal::SshSetting => Action::Settings(SettingsAction::SshSettingCancel),
         Modal::SummaryLang => Action::Summary(SummaryAction::LanguageCancel),
         Modal::Help => Action::DismissHelp,
         Modal::ConfirmKill => Action::CancelKill,
@@ -182,6 +183,20 @@ pub(super) fn draw_active_modal(
                         patterns: &state.prefs.exclude_patterns,
                         selected: editor.selected,
                         adding: editor.adding,
+                        input: &editor.input,
+                        error: editor.error.as_deref(),
+                    },
+                    theme,
+                );
+            }
+        }
+        Modal::SshSetting => {
+            if let Some(editor) = state.overlay.ssh_setting_editor.as_ref() {
+                ui::draw_ssh_setting_editor(
+                    frame,
+                    main,
+                    &ui::SshSettingEditorView {
+                        field: editor.field,
                         input: &editor.input,
                         error: editor.error.as_deref(),
                     },

@@ -172,13 +172,13 @@ fn spawn_one(
         .name(format!("deck-pty-spawn-{host}"))
         .spawn(move || {
             let host_for_args = host.clone();
-            // Auth is the user's responsibility (deck remote add nudges
-            // toward ControlMaster + keys). `BatchMode=yes` (in CONTROL_OPTS)
+            // Auth is the user's responsibility. `BatchMode=yes` (in Deck's
+            // shared connection options)
             // stops ssh blocking on a hidden password prompt we'd never see
             // from this thread and that would deadlock the PTY. `-tt` forces
             // TTY allocation for the remote tmux client; the multiplexing
-            // flags from `crate::ssh::CONTROL_OPTS` land this PTY on the same
-            // ControlMaster as the one-shot `remote_tmux` calls. The `PATH=`
+            // connection-reuse flags land this PTY on the same ControlMaster
+            // as the one-shot `remote_tmux` calls. The `PATH=`
             // prefix makes tmux discoverable when it's off the default
             // non-interactive PATH (e.g. Homebrew on macOS).
             //
@@ -192,10 +192,11 @@ fn spawn_one(
             // tmux paints. Best-effort; readiness confirmed out of band below.
             let marker_id = next_marker_id();
             let remote_cmd = attach_command(&host_for_args, marker_id);
-            let mut argv: Vec<&str> = vec!["-tt"];
-            argv.extend_from_slice(crate::ssh::CONTROL_OPTS);
-            argv.push(host_for_args.as_str());
-            argv.push(remote_cmd.as_str());
+            let mut argv = vec!["-tt".to_string()];
+            argv.extend(crate::ssh::connection_opts());
+            argv.push(host_for_args.clone());
+            argv.push(remote_cmd);
+            let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
             let pane = match Pty::spawn("ssh", &argv, size) {
                 Ok(pty) => Box::new(TerminalSurface::new(pty, size.rows, size.cols)),
                 Err(error) => {

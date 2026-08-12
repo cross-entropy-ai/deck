@@ -748,6 +748,7 @@ fn local_divider_menu_greys_remote_only_items() {
         kind: MenuKind::LaneDivider {
             lane: crate::system::tmux::TmuxSystem::local_lane(),
             primary: true,
+            port_forward_enabled: true,
         },
         x: 0,
         y: 0,
@@ -1192,6 +1193,9 @@ fn prefs_config_round_trip_is_identity() {
         exclude_patterns: vec!["foo*".to_string(), "/bar/".to_string()],
         keybindings: std::collections::BTreeMap::new(),
         update_check: crate::update::UpdateCheckMode::Disabled,
+        ssh_connection_reuse: false,
+        ssh_control_path: "/tmp/deck/cm-%C".to_string(),
+        ssh_control_persist: "1h30m".to_string(),
         remotes: Vec::new(),
         collapsed_sections: Vec::new(),
         collapsed_agent_sections: Vec::new(),

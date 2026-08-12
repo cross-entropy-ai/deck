@@ -715,6 +715,14 @@ impl App {
     /// status "applying...". **Lazy persist:** config is NOT modified here; the
     /// `PfTaskResult` reducer writes it on worker success.
     fn pf_add_submit(&mut self) {
+        if !self.state.prefs.ssh_connection_reuse {
+            if let Some(overlay) = self.state.overlay.port_forward.as_mut() {
+                overlay.status = Some(
+                    "Enable SSH connection reuse in Settings before adding a port forward.".into(),
+                );
+            }
+            return;
+        }
         let Some(overlay) = self.state.overlay.port_forward.as_mut() else {
             return;
         };

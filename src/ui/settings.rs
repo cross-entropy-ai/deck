@@ -15,7 +15,7 @@ use crate::ui::widgets::{
 };
 
 use super::text::format_keys_for;
-use super::{ExcludeEditorView, SettingsView};
+use super::{ExcludeEditorView, SettingsView, SshSettingEditorView};
 
 /// Widest display width in `it`, never below `floor`.
 fn max_width<'a>(it: impl Iterator<Item = &'a str>, floor: usize) -> usize {
@@ -324,6 +324,61 @@ pub fn draw_summary_language_editor(
         " e.g. English, 中文 — blank for default · Enter save / Esc cancel",
         theme,
     );
+}
+
+pub fn draw_ssh_setting_editor(
+    frame: &mut Frame,
+    area: Rect,
+    editor: &SshSettingEditorView<'_>,
+    theme: &Theme,
+) {
+    let (title, hint, desired_width) = match editor.field {
+        crate::overlay::SshSettingField::ControlPath => (
+            "SSH Control Path",
+            " e.g. ~/.ssh/socks/cm-%r@%h:%p · Enter save / Esc cancel",
+            72,
+        ),
+        crate::overlay::SshSettingField::ControlPersist => (
+            "SSH Reuse Duration",
+            " ControlPersist idle time: 10m, 1h30m, yes, or no · Enter save / Esc cancel",
+            82,
+        ),
+    };
+    let height = if editor.error.is_some() { 7 } else { 6 };
+    let width = desired_width.min(area.width.saturating_sub(4));
+    let inner =
+        ModalFrame::centered(width, height, Some(title), theme).render(frame.buffer_mut(), area);
+
+    let rows = Layout::vertical([
+        Constraint::Length(1), // field
+        Constraint::Length(1), // pad
+        Constraint::Length(1), // hint
+        Constraint::Length(u16::from(editor.error.is_some())),
+        Constraint::Min(0),
+    ])
+    .split(inner);
+
+    // A 1-wide empty label over the modal surface leaves that leading cell
+    // unchanged while indenting the field by one column.
+    field_row(
+        frame.buffer_mut(),
+        rows[0],
+        " ",
+        Style::default().bg(theme.surface),
+        editor.input,
+        true,
+        TextAreaColors::field(theme, theme.accent, theme.surface),
+    );
+
+    modal_footer(frame.buffer_mut(), rows[2], hint, theme);
+
+    if let Some(error) = editor.error {
+        Paragraph::new(Line::from(Span::styled(
+            format!(" {error}"),
+            Style::default().fg(theme.error).bg(theme.surface),
+        )))
+        .render(rows[3], frame.buffer_mut());
+    }
 }
 
 pub fn draw_exclude_editor(

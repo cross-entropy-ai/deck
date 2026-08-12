@@ -26,13 +26,15 @@ fn forward_count(remotes: &[RemoteConfig], host: &str) -> Option<usize> {
 /// forward button (a count of configured forwards; only when the host has
 /// any), then reconnect. The count is the only forward feedback on the
 /// divider — deck doesn't probe per-forward liveness.
-pub fn divider(remotes: &[RemoteConfig], host: &str) -> Vec<SectionButton> {
+pub fn divider(remotes: &[RemoteConfig], host: &str, connection_reuse: bool) -> Vec<SectionButton> {
     let mut buttons = Vec::with_capacity(2);
-    if let Some(n) = forward_count(remotes, host) {
-        buttons.push(SectionButton {
-            glyph: format!("⇄{}", n),
-            action: LaneActionId::from(cmd::FORWARDS),
-        });
+    if connection_reuse {
+        if let Some(n) = forward_count(remotes, host) {
+            buttons.push(SectionButton {
+                glyph: format!("⇄{}", n),
+                action: LaneActionId::from(cmd::FORWARDS),
+            });
+        }
     }
     buttons.push(SectionButton {
         glyph: "⟳".to_string(),
@@ -73,7 +75,7 @@ mod tests {
     #[test]
     fn forwards_present_yields_count_button_then_reconnect() {
         let remotes = vec![remote("h", 2)];
-        let buttons = divider(&remotes, "h");
+        let buttons = divider(&remotes, "h", true);
         let cmds: Vec<&str> = buttons.iter().map(|b| b.action.as_str()).collect();
         assert_eq!(cmds, [cmd::FORWARDS, cmd::RECONNECT]);
         // The forward button is the count of configured forwards.
@@ -83,7 +85,15 @@ mod tests {
     #[test]
     fn no_forwards_yields_only_reconnect() {
         let remotes = vec![remote("h", 0)];
-        let buttons = divider(&remotes, "h");
+        let buttons = divider(&remotes, "h", true);
+        let cmds: Vec<&str> = buttons.iter().map(|b| b.action.as_str()).collect();
+        assert_eq!(cmds, [cmd::RECONNECT]);
+    }
+
+    #[test]
+    fn disabled_reuse_hides_saved_forward_button() {
+        let remotes = vec![remote("h", 2)];
+        let buttons = divider(&remotes, "h", false);
         let cmds: Vec<&str> = buttons.iter().map(|b| b.action.as_str()).collect();
         assert_eq!(cmds, [cmd::RECONNECT]);
     }

@@ -334,6 +334,7 @@ fn modal_mouse_to_action(
         | Modal::ThemePicker
         | Modal::KeybindingsView
         | Modal::ExcludeEditor
+        | Modal::SshSetting
         | Modal::SummaryLang
         | Modal::Help => Action::None,
     }

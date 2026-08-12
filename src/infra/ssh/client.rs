@@ -5,33 +5,48 @@
 //! blocks (including `Host *` wildcards) apply.
 
 use std::collections::HashMap;
-use std::fs::OpenOptions;
-use std::io::{self, Write};
+use std::io;
+use std::path::Path;
 use std::path::PathBuf;
+use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
 
 use crate::infra::command::{default_runner, CommandRunner};
 
-/// SSH options applied on *every* deck-initiated ssh invocation so all code
-/// paths (one-shot tmux calls, attach PTY, port-forward control commands)
-/// multiplex onto one ControlMaster socket per host, even when `ssh_config`
-/// doesn't enable it. `BatchMode=yes` keeps ssh from blocking on an
-/// interactive prompt in a background worker (a misconfigured host fails fast).
-///
-/// Sockets live under `~/.ssh/socks/` (see [`ensure_control_dir`]) rather
-/// than loose in `~/.ssh/`. ssh never creates a missing ControlPath
-/// directory — a master would fail with "cannot bind" — so startup creates
-/// it before any ssh spawns.
-///
-/// Single source of truth: every code path MUST pass this exact block, or
-/// diverging options open separate masters and break connection sharing.
-pub const CONTROL_OPTS: &[&str] = &[
-    "-o",
-    "ControlMaster=auto",
-    "-o",
-    "ControlPath=~/.ssh/socks/cm-%r@%h:%p",
-    "-o",
-    "ControlPersist=10m",
+/// The three Deck-owned connection-reuse settings. Ordinary SSH workers read
+/// the process-wide snapshot immediately before spawning; the port-forward
+/// worker carries its own snapshot so it can still close an old socket after a
+/// path change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionSettings {
+    pub enabled: bool,
+    pub control_path: String,
+    pub control_persist: String,
+}
+
+impl Default for ConnectionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            control_path: crate::config::DEFAULT_SSH_CONTROL_PATH.to_string(),
+            control_persist: crate::config::DEFAULT_SSH_CONTROL_PERSIST.to_string(),
+        }
+    }
+}
+
+impl ConnectionSettings {
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        Self {
+            enabled: config.ssh_connection_reuse,
+            control_path: config.ssh_control_path.clone(),
+            control_persist: config.ssh_control_persist.clone(),
+        }
+    }
+}
+
+static CONNECTION_SETTINGS: OnceLock<RwLock<ConnectionSettings>> = OnceLock::new();
+
+const COMMON_OPTS: &[&str] = &[
     "-o",
     "ConnectTimeout=5",
     "-o",
@@ -40,18 +55,116 @@ pub const CONTROL_OPTS: &[&str] = &[
     "BatchMode=yes",
 ];
 
-/// Create the directory holding deck's ControlMaster sockets (the parent of
-/// `CONTROL_OPTS`' ControlPath), with `~/.ssh`-style 0700 permissions.
-/// Called once at startup; sockets themselves are managed by ssh.
-pub fn ensure_control_dir() -> io::Result<PathBuf> {
-    let dir = crate::config::home_dir().join(".ssh").join("socks");
+fn settings_lock() -> &'static RwLock<ConnectionSettings> {
+    CONNECTION_SETTINGS.get_or_init(|| RwLock::new(ConnectionSettings::default()))
+}
+
+/// Replace the process-wide Deck SSH policy. Remote workers build argv just
+/// before each spawn, so later settings/reload changes apply without restart.
+pub fn configure_connection(settings: ConnectionSettings) {
+    *settings_lock()
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = settings;
+}
+
+pub fn connection_settings() -> ConnectionSettings {
+    settings_lock()
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// SSH options applied on every Deck-initiated SSH invocation. Both branches
+/// explicitly override the three multiplexing options; common timeout,
+/// keepalive, and non-interactive behavior remains unchanged.
+pub fn connection_opts_for(settings: &ConnectionSettings) -> Vec<String> {
+    let mut opts = if settings.enabled {
+        vec![
+            "-o".to_string(),
+            "ControlMaster=auto".to_string(),
+            "-o".to_string(),
+            format!(
+                "ControlPath={}",
+                control_path_for_ssh(&settings.control_path)
+            ),
+            "-o".to_string(),
+            format!("ControlPersist={}", settings.control_persist),
+        ]
+    } else {
+        vec![
+            "-o".to_string(),
+            "ControlMaster=no".to_string(),
+            "-o".to_string(),
+            "ControlPath=none".to_string(),
+            "-o".to_string(),
+            "ControlPersist=no".to_string(),
+        ]
+    };
+    opts.extend(COMMON_OPTS.iter().map(|value| (*value).to_string()));
+    opts
+}
+
+/// OpenSSH expands `~`, `%d`, and `${HOME}` in ControlPath, but not the shell
+/// spelling `$HOME`. Normalize the latter so the two common home spellings are
+/// equivalent in Deck's setting. Keep every other token for OpenSSH itself.
+fn control_path_for_ssh(value: &str) -> String {
+    for prefix in ["$HOME/", "${HOME}/"] {
+        if let Some(rest) = value.strip_prefix(prefix) {
+            return crate::config::home_dir()
+                .join(rest)
+                .to_string_lossy()
+                .into_owned();
+        }
+    }
+    if matches!(value, "$HOME" | "${HOME}") {
+        return crate::config::home_dir().to_string_lossy().into_owned();
+    }
+    value.to_string()
+}
+
+pub fn connection_opts() -> Vec<String> {
+    connection_opts_for(&connection_settings())
+}
+
+/// Create the directory holding Deck's ControlMaster sockets (the configured
+/// ControlPath parent). OpenSSH never creates a missing parent itself. A newly
+/// created directory gets `~/.ssh`-style 0700 permissions; an existing custom
+/// directory is not chmodded out from under the user. Sockets remain managed
+/// by OpenSSH.
+pub fn ensure_control_dir(control_path: &str) -> io::Result<PathBuf> {
+    let expanded = expand_home_prefix(control_path);
+    let dir = expanded.parent().unwrap_or_else(|| Path::new("."));
+    if dir.as_os_str().to_string_lossy().contains('%') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ControlPath directory contains host-dependent % tokens",
+        ));
+    }
+    let dir = dir.to_path_buf();
+    let existed = dir.exists();
     std::fs::create_dir_all(&dir)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+        let default_dir = crate::config::home_dir().join(".ssh").join("socks");
+        if !existed || dir == default_dir {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+        }
     }
     Ok(dir)
+}
+
+fn expand_home_prefix(value: &str) -> PathBuf {
+    let home = crate::config::home_dir();
+    for prefix in ["~/", "$HOME/", "${HOME}/", "%d/"] {
+        if let Some(rest) = value.strip_prefix(prefix) {
+            return home.join(rest);
+        }
+    }
+    if matches!(value, "~" | "$HOME" | "${HOME}" | "%d") {
+        return home;
+    }
+    PathBuf::from(value)
 }
 
 /// Result of querying `ssh -G <host>`. Keys are lowercased option names.
@@ -79,49 +192,6 @@ fn effective_config_with(
         }
     }
     Ok(map)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MultiplexStatus {
-    pub control_master: Option<String>,
-    pub control_path: Option<String>,
-    pub control_persist: Option<String>,
-}
-
-impl MultiplexStatus {
-    pub fn from_config(cfg: &SshEffectiveConfig) -> Self {
-        MultiplexStatus {
-            control_master: cfg.get("controlmaster").cloned(),
-            control_path: cfg.get("controlpath").cloned(),
-            control_persist: cfg.get("controlpersist").cloned(),
-        }
-    }
-
-    /// True iff all three options are set in a way that actually enables
-    /// connection sharing.
-    pub fn is_enabled(&self) -> bool {
-        let cm_ok = matches!(
-            self.control_master.as_deref(),
-            Some("auto" | "yes" | "ask" | "autoask")
-        );
-        let cp_ok = self
-            .control_path
-            .as_deref()
-            .is_some_and(|s| !s.is_empty() && !s.eq_ignore_ascii_case("none"));
-        let persist_ok = self
-            .control_persist
-            .as_deref()
-            .is_some_and(|s| !matches!(s, "" | "no" | "0"));
-        cm_ok && cp_ok && persist_ok
-    }
-}
-
-/// Suggested ssh_config snippet to enable multiplexing for `host`.
-pub fn suggested_snippet(host: &str) -> String {
-    format!(
-        "\nHost {host}\n    ControlMaster auto\n    ControlPath ~/.ssh/socks/cm-%r@%h:%p\n    ControlPersist 10m\n",
-        host = host
-    )
 }
 
 fn ssh_config_path() -> PathBuf {
@@ -167,17 +237,6 @@ fn parse_config_hosts(content: &str) -> Vec<String> {
     hosts
 }
 
-/// Append the snippet to `~/.ssh/config`, creating the file if needed.
-pub fn append_to_ssh_config(snippet: &str) -> io::Result<PathBuf> {
-    let path = ssh_config_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
-    f.write_all(snippet.as_bytes())?;
-    Ok(path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,21 +259,13 @@ mod tests {
         }
     }
 
-    fn cfg(pairs: &[(&str, &str)]) -> SshEffectiveConfig {
-        pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect()
-    }
-
     #[test]
-    fn multiplex_enabled_when_all_three_set() {
-        let c = cfg(&[
-            ("controlmaster", "auto"),
-            ("controlpath", "~/.ssh/socks/cm-%r@%h:%p"),
-            ("controlpersist", "600"),
-        ]);
-        assert!(MultiplexStatus::from_config(&c).is_enabled());
+    fn enabled_opts_force_deck_control_socket() {
+        let opts = connection_opts_for(&ConnectionSettings::default()).join(" ");
+        assert!(opts.contains("ControlMaster=auto"));
+        assert!(opts.contains("ControlPath=~/.ssh/socks/cm-%r@%h:%p"));
+        assert!(opts.contains("ControlPersist=10m"));
+        assert!(opts.contains("BatchMode=yes"));
     }
 
     #[test]
@@ -231,40 +282,53 @@ mod tests {
     }
 
     #[test]
-    fn multiplex_disabled_when_persist_zero() {
-        let c = cfg(&[
-            ("controlmaster", "auto"),
-            ("controlpath", "~/.ssh/cm"),
-            ("controlpersist", "0"),
-        ]);
-        assert!(!MultiplexStatus::from_config(&c).is_enabled());
+    fn disabled_opts_override_ssh_config() {
+        let opts = connection_opts_for(&ConnectionSettings {
+            enabled: false,
+            ..ConnectionSettings::default()
+        })
+        .join(" ");
+        assert!(opts.contains("ControlMaster=no"));
+        assert!(opts.contains("ControlPath=none"));
+        assert!(opts.contains("ControlPersist=no"));
+        assert!(opts.contains("BatchMode=yes"));
     }
 
     #[test]
-    fn multiplex_disabled_when_path_none() {
-        let c = cfg(&[
-            ("controlmaster", "auto"),
-            ("controlpath", "none"),
-            ("controlpersist", "10m"),
-        ]);
-        assert!(!MultiplexStatus::from_config(&c).is_enabled());
+    fn expands_supported_home_prefixes_for_control_directory_creation() {
+        let home = crate::config::home_dir();
+        assert_eq!(expand_home_prefix("~/deck/cm-%C"), home.join("deck/cm-%C"));
+        assert_eq!(
+            expand_home_prefix("$HOME/deck/cm-%C"),
+            home.join("deck/cm-%C")
+        );
+        assert_eq!(
+            expand_home_prefix("${HOME}/deck/cm-%C"),
+            home.join("deck/cm-%C")
+        );
+        assert_eq!(expand_home_prefix("%d/deck/cm-%C"), home.join("deck/cm-%C"));
     }
 
     #[test]
-    fn multiplex_disabled_when_master_no() {
-        let c = cfg(&[
-            ("controlmaster", "no"),
-            ("controlpath", "~/.ssh/cm"),
-            ("controlpersist", "10m"),
-        ]);
-        assert!(!MultiplexStatus::from_config(&c).is_enabled());
+    fn bare_home_variable_is_normalized_before_invoking_ssh() {
+        let settings = ConnectionSettings {
+            control_path: "$HOME/.cache/deck/cm-%C".to_string(),
+            ..ConnectionSettings::default()
+        };
+        let opts = connection_opts_for(&settings);
+        let expected = format!(
+            "ControlPath={}",
+            crate::config::home_dir()
+                .join(".cache/deck/cm-%C")
+                .display()
+        );
+        assert!(opts.contains(&expected));
     }
 
     #[test]
-    fn suggested_snippet_contains_host() {
-        let s = suggested_snippet("myhost");
-        assert!(s.contains("Host myhost"));
-        assert!(s.contains("ControlMaster auto"));
+    fn rejects_host_dependent_tokens_in_control_path_directory() {
+        let error = ensure_control_dir("/tmp/deck-%h/cm-%C").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test]

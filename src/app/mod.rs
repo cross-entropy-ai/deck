@@ -130,6 +130,16 @@ impl App {
         attach_override: Option<String>,
     ) -> io::Result<Self> {
         let mut cfg = Config::load();
+        let ssh_settings = crate::ssh::ConnectionSettings::from_config(&cfg);
+        crate::ssh::configure_connection(ssh_settings.clone());
+        // ssh never creates a missing ControlPath directory. Keep this
+        // best-effort so a local-only run still starts with an unwritable
+        // ~/.ssh; actual remote failures remain visible through ssh.
+        let ssh_setup_error = if ssh_settings.enabled {
+            crate::ssh::ensure_control_dir(&ssh_settings.control_path).err()
+        } else {
+            None
+        };
 
         // Backfill defaults for any commands the user hasn't listed and
         // persist once if that added anything, so the file stays
@@ -164,6 +174,9 @@ impl App {
         }
         if let Some(e) = startup_save_error {
             state.show_warning(format!("config save failed: {e}"));
+        }
+        if let Some(e) = ssh_setup_error {
+            state.show_warning(format!("cannot create SSH control socket directory: {e}"));
         }
 
         let (update_checker, last_update_request) = if cfg.update_check == UpdateCheckMode::Enabled
@@ -217,7 +230,15 @@ impl App {
             .collect();
 
         let (pf_result_tx, pf_result_rx) = std::sync::mpsc::channel();
-        let port_forward_tx = crate::app::ssh::port_forward_task::spawn(pf_result_tx);
+        // Even when reuse starts disabled, seed this worker with the configured
+        // socket once so it can close a persistent master/forward left by a
+        // previous Deck process. Its first Reconfigure below then moves it into
+        // the disabled state. Ordinary SSH spawns already use the disabled
+        // process-wide snapshot above.
+        let mut port_forward_worker_settings = ssh_settings.clone();
+        port_forward_worker_settings.enabled = true;
+        let port_forward_tx =
+            crate::app::ssh::port_forward_task::spawn(pf_result_tx, port_forward_worker_settings);
 
         let mut app = App {
             state,
@@ -250,18 +271,34 @@ impl App {
         app.apply_theme_change();
         app.request_refresh();
 
-        // Send Bootstrap once so the worker establishes ControlMasters and
-        // launches configured forwards eagerly at startup.
-        let hosts: Vec<(String, Vec<crate::forwards::ForwardSpec>)> = cfg
-            .remotes
-            .iter()
-            .filter(|r| !r.forwards.is_empty())
-            .map(|r| (r.host.clone(), r.forwards.clone()))
-            .collect();
-        if !hosts.is_empty() {
+        if ssh_settings.enabled {
+            // Establish ControlMasters and launch configured forwards eagerly.
+            let hosts: Vec<(String, Vec<crate::forwards::ForwardSpec>)> = cfg
+                .remotes
+                .iter()
+                .filter(|r| !r.forwards.is_empty())
+                .map(|r| (r.host.clone(), r.forwards.clone()))
+                .collect();
+            if !hosts.is_empty() {
+                let _ = app
+                    .port_forward_tx
+                    .send(crate::app::ssh::port_forward_task::Op::Bootstrap { hosts });
+            }
+        } else {
+            // Idempotently close any Deck-owned persistent sockets left by an
+            // earlier run, then lock the worker in its disabled state.
+            let stop_hosts = cfg
+                .remotes
+                .iter()
+                .map(|remote| remote.host.clone())
+                .collect();
             let _ = app
                 .port_forward_tx
-                .send(crate::app::ssh::port_forward_task::Op::Bootstrap { hosts });
+                .send(crate::app::ssh::port_forward_task::Op::Reconfigure {
+                    settings: ssh_settings,
+                    stop_hosts,
+                    forward_hosts: Vec::new(),
+                });
         }
 
         Ok(app)

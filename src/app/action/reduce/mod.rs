@@ -25,6 +25,7 @@ fn close_settings_page(state: &mut AppState) {
     state.settings.keybindings_view_open = false;
     state.overlay.exclude_editor = None;
     state.overlay.summary_lang_input = None;
+    state.overlay.ssh_setting_editor = None;
 }
 
 /// Activate the focused live session through one lane-qualified identity.

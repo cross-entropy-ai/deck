@@ -67,14 +67,6 @@ fn main() -> io::Result<()> {
         std::process::exit(1);
     }
 
-    // ssh won't create a missing ControlPath directory; without it every
-    // master spawn fails with "cannot bind". Best-effort: remote-less runs
-    // shouldn't die over an unwritable ~/.ssh, and ssh itself will surface
-    // the failure loudly if remotes are actually used.
-    if let Err(err) = ssh::ensure_control_dir() {
-        eprintln!("deck: cannot create ~/.ssh/socks for ssh control sockets: {err}");
-    }
-
     ratatui::run(|terminal| {
         let _terminal_guard = TerminalGuard::enter()?;
         let size = terminal.size()?;

@@ -11,7 +11,12 @@ fn args_of(cmd: &std::process::Command) -> Vec<String> {
 
 #[test]
 fn ssh_args_uses_shared_control_options() {
-    let args = ssh_args_for_host("server-1");
+    let settings = crate::ssh::ConnectionSettings {
+        enabled: true,
+        control_path: "/tmp/deck/cm-%C".into(),
+        control_persist: "1h30m".into(),
+    };
+    let args = ssh_args_for_host(&settings, "server-1");
     let joined = args.join(" ");
     assert!(
         joined.contains("ControlMaster=auto"),
@@ -19,12 +24,12 @@ fn ssh_args_uses_shared_control_options() {
         joined
     );
     assert!(
-        joined.contains("ControlPath="),
+        joined.contains("ControlPath=/tmp/deck/cm-%C"),
         "missing ControlPath: {}",
         joined
     );
     assert!(
-        joined.contains("ControlPersist="),
+        joined.contains("ControlPersist=1h30m"),
         "missing ControlPersist: {}",
         joined
     );
@@ -36,7 +41,7 @@ fn ssh_args_uses_shared_control_options() {
 
 #[test]
 fn master_cmd_uses_fn_and_no_forwards() {
-    let cmd = build_master_cmd("server-1");
+    let cmd = build_master_cmd(&crate::ssh::ConnectionSettings::default(), "server-1");
     let args = args_of(&cmd);
     let joined = args.join(" ");
     assert!(joined.contains("-f"), "expected -f: {}", joined);
@@ -55,7 +60,7 @@ fn forward_cmd_local() {
         target_host: Some("localhost".into()),
         target_port: Some(80),
     };
-    let cmd = build_forward_cmd("h", &spec);
+    let cmd = build_forward_cmd(&crate::ssh::ConnectionSettings::default(), "h", &spec);
     let args = args_of(&cmd);
     assert!(args.iter().any(|a| a == "-O"), "missing -O");
     let oi = args.iter().position(|a| a == "-O").unwrap();
@@ -73,7 +78,7 @@ fn cancel_cmd_uses_o_cancel() {
         target_host: None,
         target_port: None,
     };
-    let cmd = build_cancel_cmd("h", &spec);
+    let cmd = build_cancel_cmd(&crate::ssh::ConnectionSettings::default(), "h", &spec);
     let args = args_of(&cmd);
     let oi = args.iter().position(|a| a == "-O").unwrap();
     assert_eq!(args[oi + 1], "cancel");
@@ -83,7 +88,7 @@ fn cancel_cmd_uses_o_cancel() {
 
 #[test]
 fn exit_cmd_uses_o_exit() {
-    let cmd = build_exit_cmd("h");
+    let cmd = build_exit_cmd(&crate::ssh::ConnectionSettings::default(), "h");
     let args = args_of(&cmd);
     let oi = args.iter().position(|a| a == "-O").unwrap();
     assert_eq!(args[oi + 1], "exit");

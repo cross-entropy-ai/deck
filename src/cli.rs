@@ -3,8 +3,6 @@
 //! The `///` lines on argh structs are required — argh renders them as
 //! `--help` text.
 
-use std::io::{self, Write};
-
 use argh::FromArgs;
 
 use crate::config::{Config, RemoteConfig};
@@ -95,7 +93,7 @@ enum RemoteSubcommand {
     Remove(RemoteRemoveCmd),
 }
 
-/// register an SSH host (resolved via `ssh -G`) and offer to enable multiplexing
+/// register an SSH host resolved via `ssh -G`
 #[derive(FromArgs)]
 #[argh(subcommand, name = "add")]
 struct RemoteAddCmd {
@@ -183,20 +181,6 @@ pub(crate) fn parse_args<I: IntoIterator<Item = String>>(
     Ok(Some(command))
 }
 
-/// Prompt the user with `question` and return true on yes. Defaults to no
-/// when stdin isn't a TTY or on read errors.
-fn prompt_yes_no(question: &str) -> bool {
-    print!("{question} (y/N) ");
-    if io::stdout().flush().is_err() {
-        return false;
-    }
-    let mut line = String::new();
-    if io::stdin().read_line(&mut line).is_err() {
-        return false;
-    }
-    matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
-}
-
 fn finish_remote_change(
     config: &Config,
     success_message: &str,
@@ -241,34 +225,6 @@ pub(crate) fn run_remote_add(host: &str) -> i32 {
     // deck will actually connect to.
     if let Some(hostname) = cfg.get("hostname") {
         println!("deck: resolved '{host}' -> {hostname}");
-    }
-
-    let status = ssh::MultiplexStatus::from_config(&cfg);
-    if !status.is_enabled() {
-        println!();
-        println!("Connection multiplexing is NOT enabled for '{host}'.");
-        println!("deck will run several ssh commands (list sessions, attach, refresh);");
-        println!("without multiplexing every call re-authenticates, which is slow and");
-        println!("may trigger repeated password / 2FA prompts.");
-        println!();
-        println!("Suggested ~/.ssh/config snippet:");
-        let snippet = ssh::suggested_snippet(host);
-        for line in snippet.lines() {
-            println!("  {line}");
-        }
-        if prompt_yes_no("Append this to ~/.ssh/config?") {
-            match ssh::append_to_ssh_config(&snippet) {
-                Ok(path) => println!("deck: appended snippet to {}", path.display()),
-                Err(e) => {
-                    eprintln!("deck: failed to write ~/.ssh/config: {e}");
-                    return 1;
-                }
-            }
-        } else {
-            println!("deck: skipped; you can add the snippet later by hand.");
-        }
-    } else {
-        println!("deck: ssh multiplexing already enabled for '{host}'.");
     }
 
     config.remotes.push(RemoteConfig {

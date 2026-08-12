@@ -26,6 +26,7 @@ pub enum Modal {
     ThemePicker,
     KeybindingsView,
     ExcludeEditor,
+    SshSetting,
     SummaryLang,
     Help,
     ConfirmKill,
@@ -39,7 +40,7 @@ impl Modal {
     /// modal infrastructure iterate it without maintaining a second hand-
     /// written list that can drift when a variant is added.
     #[cfg(test)]
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::SummaryPopup,
         Self::NewSession,
         Self::AddRemote,
@@ -49,6 +50,7 @@ impl Modal {
         Self::ThemePicker,
         Self::KeybindingsView,
         Self::ExcludeEditor,
+        Self::SshSetting,
         Self::SummaryLang,
         Self::Help,
         Self::ConfirmKill,
@@ -108,6 +110,34 @@ impl ExcludeEditorState {
     }
 }
 
+/// Which Deck-owned OpenSSH value a Settings text editor is changing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SshSettingField {
+    ControlPath,
+    ControlPersist,
+}
+
+#[derive(Debug, Clone)]
+pub struct SshSettingEditorState {
+    pub field: SshSettingField,
+    pub input: TextArea<'static>,
+    pub error: Option<String>,
+}
+
+impl SshSettingEditorState {
+    pub fn new(field: SshSettingField, value: &str) -> Self {
+        Self {
+            field,
+            input: make_textarea(value),
+            error: None,
+        }
+    }
+
+    pub fn input_str(&self) -> &str {
+        textarea_line(&self.input)
+    }
+}
+
 /// Modal warning banner over the main pane, used by the self-update flow
 /// ("can't self-update from here" / "unsupported platform"). Lives on `App`
 /// (`warning_state: Option<WarningState>`), not `OverlayState`, because the
@@ -137,4 +167,6 @@ pub struct OverlayState {
     pub summary_popup: bool,
     /// Settings input box for the generated-summary language (free text).
     pub summary_lang_input: Option<TextArea<'static>>,
+    /// Settings input box for Deck's ControlPath or ControlPersist value.
+    pub ssh_setting_editor: Option<SshSettingEditorState>,
 }

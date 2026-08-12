@@ -1202,6 +1202,9 @@ fn root_and_appearance_pages_group_rows_as_requested() {
         "Summary",
         "Summary agent",
         "Summary lang",
+        "SSH connection reuse",
+        "Control path",
+        "Reuse duration",
         "Remotes",
         "Port forwards",
     ] {
@@ -1295,8 +1298,15 @@ fn settings_remotes_row_opens_the_add_remote_picker() {
             .iter()
             .map(|row| row.label)
             .collect::<Vec<_>>(),
-        vec!["Remotes", "Port forwards"]
+        vec![
+            "SSH connection reuse",
+            "Control path",
+            "Reuse duration",
+            "Remotes",
+            "Port forwards"
+        ]
     );
+    select_settings_row(&mut state, "Remotes");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(fx
         .effects()
@@ -1337,7 +1347,7 @@ fn port_forwards_row_aggregates_across_hosts_and_targets_a_host() {
         .unwrap();
     assert_eq!((row.value)(&state), "2 forwards");
 
-    state.settings.set_selected(1);
+    select_settings_row(&mut state, "Port forwards");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     // Selection is resolved at the SSH/config adapter boundary, not here.
     assert!(matches!(
@@ -1358,12 +1368,115 @@ fn port_forwards_row_defers_empty_config_handling_to_adapter() {
         .unwrap();
     assert_eq!((row.value)(&state), "none");
 
-    state.settings.set_selected(1);
+    select_settings_row(&mut state, "Port forwards");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     assert!(matches!(
         fx.effects(),
         [crate::effects::Effect::OpenConfiguredPortForwards]
     ));
+}
+
+#[test]
+fn ssh_connection_reuse_setting_toggles_and_saves() {
+    let mut state = make_test_state(1);
+    open_settings_page(&mut state, SettingsPage::Remote);
+    select_settings_row(&mut state, "SSH connection reuse");
+    assert!(state.prefs.ssh_connection_reuse);
+
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+
+    assert!(!state.prefs.ssh_connection_reuse);
+    assert!(fx.has_save_config());
+}
+
+#[test]
+fn disabling_ssh_connection_reuse_keeps_rules_but_locks_port_forwards() {
+    use crate::config::RemoteConfig;
+    use crate::forwards::{ForwardMode, ForwardSpec};
+
+    let mut state = make_test_state(1);
+    state.config_remotes.push(RemoteConfig {
+        host: "prod".into(),
+        forwards: vec![ForwardSpec {
+            mode: ForwardMode::Local,
+            bind_addr: None,
+            listen_port: 8080,
+            target_host: Some("localhost".into()),
+            target_port: Some(80),
+        }],
+    });
+    open_settings_page(&mut state, SettingsPage::Remote);
+    state.overlay.port_forward = Some(crate::forwards::PortForwardOverlay {
+        lane: crate::system::tmux::TmuxSystem::host_lane("prod"),
+        selected: 0,
+        add_form: None,
+        status: None,
+    });
+    select_settings_row(&mut state, "SSH connection reuse");
+
+    let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+
+    assert!(!state.prefs.ssh_connection_reuse);
+    assert!(fx.has_save_config());
+    assert_eq!(state.config_remotes[0].forwards.len(), 1);
+    assert!(state.overlay.port_forward.is_none());
+
+    let rows = crate::app::settings::setting_rows(&state);
+    let port_forwards = rows
+        .iter()
+        .find(|row| row.label == "Port forwards")
+        .unwrap();
+    assert_eq!((port_forwards.value)(&state), "Off");
+    select_settings_row(&mut state, "Port forwards");
+    let locked = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    assert!(locked.effects().is_empty());
+}
+
+#[test]
+fn ssh_control_path_and_duration_are_editable_and_validated() {
+    let mut state = make_test_state(1);
+    open_settings_page(&mut state, SettingsPage::Remote);
+
+    select_settings_row(&mut state, "Control path");
+    apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    let editor = state.overlay.ssh_setting_editor.as_mut().unwrap();
+    editor.input = crate::new_session::make_textarea("$HOME/.cache/deck/cm-%C");
+    let fx = apply_action(
+        &mut state,
+        Action::Settings(SettingsAction::SshSettingConfirm),
+    );
+    assert_eq!(state.prefs.ssh_control_path, "$HOME/.cache/deck/cm-%C");
+    assert!(state.overlay.ssh_setting_editor.is_none());
+    assert!(fx.has_save_config());
+
+    select_settings_row(&mut state, "Reuse duration");
+    apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    state.overlay.ssh_setting_editor.as_mut().unwrap().input =
+        crate::new_session::make_textarea("1h30m");
+    let fx = apply_action(
+        &mut state,
+        Action::Settings(SettingsAction::SshSettingConfirm),
+    );
+    assert_eq!(state.prefs.ssh_control_persist, "1h30m");
+    assert!(fx.has_save_config());
+
+    select_settings_row(&mut state, "Reuse duration");
+    apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
+    state.overlay.ssh_setting_editor.as_mut().unwrap().input =
+        crate::new_session::make_textarea("tomorrow");
+    let fx = apply_action(
+        &mut state,
+        Action::Settings(SettingsAction::SshSettingConfirm),
+    );
+    assert!(!fx.has_save_config());
+    assert!(state
+        .overlay
+        .ssh_setting_editor
+        .as_ref()
+        .unwrap()
+        .error
+        .is_some());
+    assert_eq!(state.prefs.ssh_control_persist, "1h30m");
 }
 
 #[test]
@@ -1696,6 +1809,15 @@ fn open_port_forward_clears_menu_and_opens_overlay() {
 }
 
 #[test]
+fn open_port_forward_is_a_noop_when_reuse_is_off() {
+    let mut state = make_test_state(1);
+    state.prefs.ssh_connection_reuse = false;
+    let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
+    crate::action::apply_action(&mut state, Action::Pf(PfAction::Open(lane)));
+    assert!(state.overlay.port_forward.is_none());
+}
+
+#[test]
 fn pf_add_open_creates_default_form() {
     let mut state = make_test_state(1);
     state.overlay.port_forward = Some(crate::forwards::PortForwardOverlay {
@@ -1917,12 +2039,26 @@ fn host_divider_menu_has_new_session_first_and_remove_last() {
     let items = MenuKind::LaneDivider {
         lane: crate::system::tmux::TmuxSystem::host_lane("h"),
         primary: false,
+        port_forward_enabled: true,
     }
     .items();
     assert_eq!(items.first().copied(), Some(MenuItem::NewSession));
     assert!(items.contains(&MenuItem::PortForward));
     // "Remove from list" is destructive — keep it last.
     assert_eq!(items.last().copied(), Some(MenuItem::RemoveFromList));
+}
+
+#[test]
+fn host_divider_menu_greys_port_forward_when_reuse_is_off() {
+    use crate::menu::{MenuItem, MenuKind};
+    let menu = MenuKind::LaneDivider {
+        lane: crate::system::tmux::TmuxSystem::host_lane("h"),
+        primary: false,
+        port_forward_enabled: false,
+    };
+    assert!(menu.disabled().contains(&MenuItem::PortForward));
+    assert!(!menu.disabled().contains(&MenuItem::NewSession));
+    assert!(!menu.disabled().contains(&MenuItem::RemoveFromList));
 }
 
 #[test]

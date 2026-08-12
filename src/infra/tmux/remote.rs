@@ -1,9 +1,9 @@
 //! Tmux operations against a remote host over SSH.
 //!
 //! Thin sibling of `infra::tmux`: same parsers and `SessionInfo` shape, but
-//! each call shells out to `ssh <host> tmux ...`. Multiplexing options are
-//! applied on every invocation so calls reuse one SSH connection even
-//! without a `ControlMaster` block in `~/.ssh/config`.
+//! each call shells out to `ssh <host> tmux ...`. Deck's connection options
+//! are applied on every invocation so its Settings preference, rather than
+//! `ssh_config`, controls whether calls reuse an SSH connection.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -25,11 +25,10 @@ const AGENT_PROBE_MARKER: &str = "__DECK_AGENT_PROBE__";
 /// budget because the first call may wait for the SSH master to come up.
 pub const REMOTE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// SSH options we apply on *every* remote call. See
-/// [`crate::ssh::CONTROL_OPTS`] for why these must be identical across
-/// every ssh code path.
-pub(crate) fn base_ssh_args() -> Vec<&'static str> {
-    crate::ssh::CONTROL_OPTS.to_vec()
+/// SSH options we apply on *every* remote call. The builder reads the live
+/// Deck preference immediately before each spawn.
+pub(crate) fn base_ssh_args() -> Vec<String> {
+    crate::ssh::connection_opts()
 }
 
 /// Path prefix prepended to every remote command. SSH's non-interactive
@@ -47,9 +46,10 @@ pub(crate) fn run_ssh(
     remote_argv: &[&str],
 ) -> Result<String, CommandError> {
     let mut args = base_ssh_args();
-    args.push(host);
-    args.push(REMOTE_PATH_PREFIX);
-    args.extend_from_slice(remote_argv);
+    args.push(host.to_string());
+    args.push(REMOTE_PATH_PREFIX.to_string());
+    args.extend(remote_argv.iter().map(|arg| (*arg).to_string()));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
     runner
         .run("ssh", &args, REMOTE_TIMEOUT)
         .map(|out| out.stdout_trimmed())
@@ -186,8 +186,9 @@ pub(crate) fn capture_panes(host: &str, pane_ids: &[String]) -> HashMap<String, 
         marker = CAPTURE_MARKER,
     );
     let mut args = base_ssh_args();
-    args.push(host);
-    args.push(&script);
+    args.push(host.to_string());
+    args.push(script);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let Ok(out) = runner.run("ssh", &args, REMOTE_TIMEOUT) else {
         return HashMap::new();
     };

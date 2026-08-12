@@ -36,9 +36,18 @@ mod cmd {
 
 /// The tmux backend. Configured remote definitions are backend-owned behind a
 /// lock so the injected registry can be shared by the UI and refresh worker.
-#[derive(Default)]
 pub struct TmuxSystem {
     remotes: std::sync::RwLock<Vec<RemoteConfig>>,
+    ssh_connection_reuse: std::sync::atomic::AtomicBool,
+}
+
+impl Default for TmuxSystem {
+    fn default() -> Self {
+        Self {
+            remotes: std::sync::RwLock::new(Vec::new()),
+            ssh_connection_reuse: std::sync::atomic::AtomicBool::new(true),
+        }
+    }
 }
 
 impl TmuxSystem {
@@ -106,7 +115,7 @@ fn new_session_button() -> SectionButton {
 /// new-session button; a remote lane takes the ssh-registered buttons (the `⇄N` forward
 /// count + reconnect, from `crate::ssh::divider`), then the menu button. This
 /// fn doesn't know which remote buttons exist — ssh decides.
-fn section_def(remotes: &[RemoteConfig], lane: &LaneId) -> SectionDef {
+fn section_def(remotes: &[RemoteConfig], lane: &LaneId, ssh_connection_reuse: bool) -> SectionDef {
     match TmuxSystem::host_of(lane) {
         None => SectionDef {
             lane: lane.clone(),
@@ -121,7 +130,7 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId) -> SectionDef {
             // ssh registers the remote-only buttons (the ⇄N forward count,
             // reconnect); the menu button is appended last (rightmost), the
             // order the divider hit-tester zips against.
-            let mut buttons = crate::ssh::divider::divider(remotes, host);
+            let mut buttons = crate::ssh::divider::divider(remotes, host, ssh_connection_reuse);
             buttons.push(menu_button());
             SectionDef {
                 lane: lane.clone(),
@@ -163,6 +172,10 @@ impl System for TmuxSystem {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         remotes.clone_from(&config.remotes);
+        self.ssh_connection_reuse.store(
+            config.ssh_connection_reuse,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     fn lanes(&self) -> Vec<LaneId> {
@@ -183,7 +196,12 @@ impl System for TmuxSystem {
             .remotes
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        Some(section_def(&remotes, lane))
+        Some(section_def(
+            &remotes,
+            lane,
+            self.ssh_connection_reuse
+                .load(std::sync::atomic::Ordering::Relaxed),
+        ))
     }
 
     fn runtime(&self, lane: &LaneId) -> Option<LaneRuntime<'_>> {

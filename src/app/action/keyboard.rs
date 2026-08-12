@@ -164,7 +164,7 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
 
 fn open_port_forwards_action(state: &AppState) -> Action {
     // Port-forward is a per-host/session action — Projects tab only.
-    if !state.agents_tab_active() {
+    if state.prefs.ssh_connection_reuse && !state.agents_tab_active() {
         if let Some(lane) = state
             .focus_target()
             .and_then(|target| state.entry_at(target))
@@ -214,6 +214,11 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
         Modal::ThemePicker => theme_picker_key_to_action(key),
         Modal::KeybindingsView => keybindings_view_key_to_action(key),
         Modal::ExcludeEditor => exclude_editor_key_to_action(key, state),
+        Modal::SshSetting => match key.code {
+            KeyCode::Enter => Action::Settings(SettingsAction::SshSettingConfirm),
+            KeyCode::Esc => Action::Settings(SettingsAction::SshSettingCancel),
+            _ => Action::Settings(SettingsAction::SshSettingInputKey(*key)),
+        },
         Modal::SummaryLang => match key.code {
             KeyCode::Enter => Action::Summary(SummaryAction::LanguageConfirm),
             _ => Action::Summary(SummaryAction::LanguageInputKey(*key)),
