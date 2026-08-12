@@ -18,13 +18,18 @@ use crate::infra::command::{default_runner, CommandRunner};
 /// doesn't enable it. `BatchMode=yes` keeps ssh from blocking on an
 /// interactive prompt in a background worker (a misconfigured host fails fast).
 ///
+/// Sockets live under `~/.ssh/socks/` (see [`ensure_control_dir`]) rather
+/// than loose in `~/.ssh/`. ssh never creates a missing ControlPath
+/// directory — a master would fail with "cannot bind" — so startup creates
+/// it before any ssh spawns.
+///
 /// Single source of truth: every code path MUST pass this exact block, or
 /// diverging options open separate masters and break connection sharing.
 pub const CONTROL_OPTS: &[&str] = &[
     "-o",
     "ControlMaster=auto",
     "-o",
-    "ControlPath=~/.ssh/cm-%r@%h:%p",
+    "ControlPath=~/.ssh/socks/cm-%r@%h:%p",
     "-o",
     "ControlPersist=10m",
     "-o",
@@ -34,6 +39,20 @@ pub const CONTROL_OPTS: &[&str] = &[
     "-o",
     "BatchMode=yes",
 ];
+
+/// Create the directory holding deck's ControlMaster sockets (the parent of
+/// `CONTROL_OPTS`' ControlPath), with `~/.ssh`-style 0700 permissions.
+/// Called once at startup; sockets themselves are managed by ssh.
+pub fn ensure_control_dir() -> io::Result<PathBuf> {
+    let dir = crate::config::home_dir().join(".ssh").join("socks");
+    std::fs::create_dir_all(&dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(dir)
+}
 
 /// Result of querying `ssh -G <host>`. Keys are lowercased option names.
 pub type SshEffectiveConfig = HashMap<String, String>;
@@ -100,7 +119,7 @@ impl MultiplexStatus {
 /// Suggested ssh_config snippet to enable multiplexing for `host`.
 pub fn suggested_snippet(host: &str) -> String {
     format!(
-        "\nHost {host}\n    ControlMaster auto\n    ControlPath ~/.ssh/cm-%r@%h:%p\n    ControlPersist 10m\n",
+        "\nHost {host}\n    ControlMaster auto\n    ControlPath ~/.ssh/socks/cm-%r@%h:%p\n    ControlPersist 10m\n",
         host = host
     )
 }
@@ -192,7 +211,7 @@ mod tests {
     fn multiplex_enabled_when_all_three_set() {
         let c = cfg(&[
             ("controlmaster", "auto"),
-            ("controlpath", "~/.ssh/cm-%r@%h:%p"),
+            ("controlpath", "~/.ssh/socks/cm-%r@%h:%p"),
             ("controlpersist", "600"),
         ]);
         assert!(MultiplexStatus::from_config(&c).is_enabled());
