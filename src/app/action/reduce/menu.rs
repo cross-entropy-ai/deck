@@ -45,7 +45,7 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
             state,
             MenuKind::LaneDivider {
                 primary: state.is_primary_lane(&lane),
-                port_forward_enabled: state.prefs.ssh_connection_reuse,
+                port_forward_enabled: state.lane_capabilities(&lane).port_forwards,
                 lane,
             },
             x,

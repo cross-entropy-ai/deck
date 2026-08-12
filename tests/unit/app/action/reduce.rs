@@ -43,6 +43,7 @@ fn make_test_state(n: usize) -> AppState {
             create_session: true,
             reorder_sessions: true,
             actions: true,
+            port_forwards: true,
         },
     );
     state.clamp_projects_focus();
@@ -89,6 +90,7 @@ fn mount_remote_lane(state: &mut AppState, host: &str) {
             create_session: true,
             reorder_sessions: true,
             actions: true,
+            port_forwards: true,
         },
     });
 }
@@ -159,6 +161,7 @@ fn unsupported_session_mutations_are_disabled_and_reducer_guarded() {
             create_session: false,
             reorder_sessions: true,
             actions: false,
+            port_forwards: false,
         },
     );
     apply_action(
@@ -1427,9 +1430,18 @@ fn disabling_ssh_connection_reuse_keeps_rules_but_locks_port_forwards() {
         .find(|row| row.label == "Port forwards")
         .unwrap();
     assert_eq!((port_forwards.value)(&state), "Off");
-    select_settings_row(&mut state, "Port forwards");
-    let locked = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert!(locked.effects().is_empty());
+
+    // The refusal now lives in one place: the lane's `port_forwards` capability,
+    // which the tmux system derives from this pref. Mirror what
+    // `systems.configure` + `sections()` would republish, then confirm the
+    // overlay stays shut for a lane that previously accepted it.
+    mount_remote_lane(&mut state, "prod");
+    for section in &mut state.system_sections {
+        section.lane_capabilities.port_forwards = false;
+    }
+    let lane = crate::system::tmux::TmuxSystem::host_lane("prod");
+    apply_action(&mut state, Action::Pf(PfAction::Open(lane)));
+    assert!(state.overlay.port_forward.is_none());
 }
 
 #[test]
@@ -1809,10 +1821,15 @@ fn open_port_forward_clears_menu_and_opens_overlay() {
 }
 
 #[test]
-fn open_port_forward_is_a_noop_when_reuse_is_off() {
+fn open_port_forward_is_refused_when_the_lane_cannot_host_one() {
+    // Reuse off, a container lane, the local lane — the reducer does not care
+    // which, only what the owning system advertises.
     let mut state = make_test_state(1);
-    state.prefs.ssh_connection_reuse = false;
     let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
+    mount_remote_lane(&mut state, "h1");
+    for section in &mut state.system_sections {
+        section.lane_capabilities.port_forwards = false;
+    }
     crate::action::apply_action(&mut state, Action::Pf(PfAction::Open(lane)));
     assert!(state.overlay.port_forward.is_none());
 }

@@ -129,22 +129,24 @@ impl App {
         term_height: u16,
         attach_override: Option<String>,
     ) -> io::Result<Self> {
-        let mut cfg = Config::load();
-        let ssh_settings = crate::ssh::ConnectionSettings::from_config(&cfg);
+        let (mut cfg, config_unreadable) = Config::load_reporting_parse_failure();
+        // ssh never creates a missing ControlPath directory, and it does not
+        // degrade when it cannot bind the socket either: it authenticates and
+        // then exits 255, which would take out every remote host. So an
+        // uncreatable directory drops reuse for this session instead — remotes
+        // keep working, unmultiplexed, and the warning says why.
+        let (ssh_settings, ssh_setup_error) =
+            crate::ssh::ConnectionSettings::from_config(&cfg).with_usable_control_dir();
         crate::ssh::configure_connection(ssh_settings.clone());
-        // ssh never creates a missing ControlPath directory. Keep this
-        // best-effort so a local-only run still starts with an unwritable
-        // ~/.ssh; actual remote failures remain visible through ssh.
-        let ssh_setup_error = if ssh_settings.enabled {
-            crate::ssh::ensure_control_dir(&ssh_settings.control_path).err()
-        } else {
-            None
-        };
 
         // Backfill defaults for any commands the user hasn't listed and
         // persist once if that added anything, so the file stays
-        // self-documenting.
-        let startup_save_error = if crate::keybindings::ensure_complete(&mut cfg.keybindings) {
+        // self-documenting. Skipped entirely when the file did not parse: `cfg`
+        // is then all defaults, and saving it would overwrite the user's real
+        // remotes, forwards and keybindings with them.
+        let startup_save_error = if config_unreadable {
+            None
+        } else if crate::keybindings::ensure_complete(&mut cfg.keybindings) {
             cfg.save().err()
         } else {
             None
@@ -175,8 +177,13 @@ impl App {
         if let Some(e) = startup_save_error {
             state.show_warning(format!("config save failed: {e}"));
         }
-        if let Some(e) = ssh_setup_error {
-            state.show_warning(format!("cannot create SSH control socket directory: {e}"));
+        if let Some(warning) = ssh_setup_error {
+            state.show_warning(warning);
+        }
+        if config_unreadable {
+            state.show_warning(
+                "config.yaml did not parse — running on defaults and NOT saving; fix the file and reload".to_string(),
+            );
         }
 
         let (update_checker, last_update_request) = if cfg.update_check == UpdateCheckMode::Enabled

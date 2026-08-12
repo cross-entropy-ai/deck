@@ -33,18 +33,23 @@ impl App {
         // `config_remotes` (UI-managed `forwards` here; CLI changes flow in via
         // hot-reload); `collapsed_sections` (runtime state, not a pref).
         let config = self.config_snapshot();
-        let stop_hosts = config
-            .remotes
-            .iter()
-            .map(|remote| remote.host.clone())
-            .collect();
-        self.reconfigure_ssh_if_needed(&config, stop_hosts);
-        // Keep the injected backends and the model's materialized section
-        // definitions aligned with an in-app remote/forward edit before the
-        // next refresh or render.
-        self.systems.configure(&config);
-        self.state.system_sections = self.systems.sections();
+        // Persist BEFORE applying: `save` is what validates, so applying first
+        // could publish a value to ssh and the port-forward worker that we then
+        // turn around and tell the user we rejected.
         let result = config.save().map(|()| crate::config::config_mtime());
+        if result.is_ok() {
+            let stop_hosts = config
+                .remotes
+                .iter()
+                .map(|remote| remote.host.clone())
+                .collect();
+            self.reconfigure_ssh_if_needed(&config, stop_hosts);
+            // Keep the injected backends and the model's materialized section
+            // definitions aligned with an in-app remote/forward edit before the
+            // next refresh or render.
+            self.systems.configure(&config);
+            self.state.system_sections = self.systems.sections();
+        }
         // Adopt the new mtime so the config watcher in `run` doesn't see our
         // own save as an external edit and self-reload (which would close the
         // exclude editor mid-edit and flash the reload toast on every
@@ -69,19 +74,20 @@ impl App {
         stop_hosts: Vec<String>,
     ) -> bool {
         let old_settings = crate::ssh::connection_settings();
-        let new_settings = crate::ssh::ConnectionSettings::from_config(config);
+        // Downgrade to no reuse rather than publish a ControlPath ssh cannot
+        // bind — see `with_usable_control_dir`. The comparison uses the
+        // downgraded value so a repeated save doesn't re-warn every time.
+        let (new_settings, setup_error) =
+            crate::ssh::ConnectionSettings::from_config(config).with_usable_control_dir();
         if old_settings == new_settings {
             return false;
+        }
+        if let Some(warning) = setup_error {
+            self.state.show_warning(warning);
         }
         let rebuilds = old_settings.abandons_socket(&new_settings)
             || old_settings.rebuilds_forwards(&new_settings);
 
-        if new_settings.enabled {
-            if let Err(e) = crate::ssh::ensure_control_dir(&new_settings.control_path) {
-                self.state
-                    .show_warning(format!("cannot create SSH control socket directory: {e}"));
-            }
-        }
         crate::ssh::configure_connection(new_settings.clone());
 
         let forward_hosts = if new_settings.enabled {

@@ -288,6 +288,12 @@ pub struct LaneCapabilities {
     pub create_session: bool,
     pub reorder_sessions: bool,
     pub actions: bool,
+    /// Whether this lane can carry port forwards right now. The owning system
+    /// decides — for tmux that means the lane has a connection of its own AND
+    /// Deck's connection reuse is on, since the forward commands are `ssh -O`
+    /// against that shared socket. The shell greys its forward affordances out
+    /// from this flag instead of re-deriving a backend's answer.
+    pub port_forwards: bool,
 }
 
 #[derive(Clone)]
@@ -528,6 +534,7 @@ mod tests {
                         create_session: false,
                         reorder_sessions: false,
                         actions: true,
+                        port_forwards: false,
                     },
                 )
             } else {

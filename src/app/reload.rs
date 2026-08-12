@@ -93,6 +93,16 @@ impl App {
         } else {
             self.state.show_warning(kb_warnings.join("; "));
         }
+        // Hand the new config to the mounted systems FIRST. Onboarding below
+        // spawns attach PTYs on worker threads that read backend-owned
+        // per-host state `configure` publishes; doing it afterwards let a
+        // brand-new host's connection come up against the previous config —
+        // e.g. reading a stale "agent forwarding disabled" set and forwarding
+        // the agent to the host the user just marked untrusted, for the whole
+        // life of that PTY. The startup and in-app-add paths already order it
+        // this way.
+        self.systems.configure(&cfg);
+
         // Diff old vs new remote forwards and send ops to the worker.
         // (`config_remotes` is deliberately outside `apply_config`: the
         // diff below needs the old list before the new one is committed.)
@@ -169,8 +179,8 @@ impl App {
         // Commit the new config; `build_refresh_request` reads
         // hosts straight from `state.config_remotes`, so the refresh
         // triggered below automatically picks up the diff.
+        // (`configure` already ran above, before anything spawned.)
         self.state.config_remotes = new_remotes;
-        self.systems.configure(&cfg);
         self.state.system_sections = self.systems.sections();
 
         // Evict sidebar rows for hosts that just disappeared so they

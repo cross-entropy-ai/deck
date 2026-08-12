@@ -125,11 +125,7 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         // One aggregate row for every host — it opens the first host
         // that has forwards (else the first host); per-host editing stays on
         // each `@host` divider's `[⇄N]` badge button.
-        SettingsAction::OpenPortForwards => {
-            if state.prefs.ssh_connection_reuse {
-                fx.push(Effect::OpenConfiguredPortForwards);
-            }
-        }
+        SettingsAction::OpenPortForwards => fx.push(Effect::OpenConfiguredPortForwards),
         SettingsAction::OpenThemePicker(slot) => {
             // Opens as a standalone overlay over the current view: from the
             // sidebar (`t`) it doesn't enter the settings page, from settings

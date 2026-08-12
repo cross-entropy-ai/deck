@@ -137,9 +137,7 @@ impl App {
                                 self.request_refresh();
                             }
                             crate::system::LaneShellIntent::OpenPortForwards => {
-                                if self.state.prefs.ssh_connection_reuse {
-                                    self.dispatch(Action::Pf(PfAction::Open(lane.clone())));
-                                }
+                                self.dispatch(Action::Pf(PfAction::Open(lane.clone())));
                             }
                             crate::system::LaneShellIntent::OpenNewSession => {
                                 self.open_new_session_picker(lane.clone());
@@ -155,17 +153,13 @@ impl App {
                     }
                 }
                 Effect::OpenPortForwardOverlay(lane) => {
-                    if self.state.prefs.ssh_connection_reuse {
-                        self.dispatch(Action::Pf(PfAction::Open(lane.clone())));
-                    }
+                    self.dispatch(Action::Pf(PfAction::Open(lane.clone())));
                 }
                 Effect::OpenConfiguredPortForwards => {
-                    if self.state.prefs.ssh_connection_reuse {
-                        if let Some(lane) = crate::app::ssh::config_adapter::preferred_forward_lane(
-                            &self.state.config_remotes,
-                        ) {
-                            self.dispatch(Action::Pf(PfAction::Open(lane)));
-                        }
+                    if let Some(lane) = crate::app::ssh::config_adapter::preferred_forward_lane(
+                        &self.state.config_remotes,
+                    ) {
+                        self.dispatch(Action::Pf(PfAction::Open(lane)));
                     }
                 }
                 Effect::ApplyTmuxTheme => self.apply_theme_change(),

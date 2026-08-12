@@ -245,15 +245,26 @@ fn load_legacy_json() -> Option<Config> {
 }
 
 impl Config {
-    pub fn load() -> Self {
-        Self::load_from(&config_path())
-    }
-
     /// Load the config at `path`, self-healing migrations back to disk when
     /// the file parses (or is absent). A present-but-UNPARSEABLE file is
     /// **never** overwritten (one typo would wipe remotes/keybindings
     /// to defaults): keep defaults in memory only, leave the file untouched.
     /// `try_load` surfaces the parse error to the user separately.
+    /// The loaded config plus whether the on-disk file failed to parse, so a
+    /// caller that would otherwise write it back can decline.
+    ///
+    /// The distinction matters because loading yields defaults for both "no file
+    /// yet" and "file is broken", and those need opposite treatment. The startup
+    /// keybinding backfill saves unconditionally, so for a broken file it wrote
+    /// defaults over the user's real remotes, forwards and keybindings — easy to
+    /// trigger now that a bool key invites `ssh_connection_reuse: yes`, which
+    /// YAML 1.2 does not read as a bool.
+    pub fn load_reporting_parse_failure() -> (Self, bool) {
+        let path = config_path();
+        let unreadable = path.exists() && confy::load_path::<Config>(&path).is_err();
+        (Self::load_from(&path), unreadable)
+    }
+
     fn load_from(path: &std::path::Path) -> Self {
         if path.exists() {
             // NOT `unwrap_or_default()`: that turns a parse error into
@@ -427,11 +438,20 @@ pub(crate) fn expand_control_path_home(value: &str) -> PathBuf {
 /// legitimate path character (don't drop that quoting — unquoted, ssh rejects
 /// the whole option and every invocation exits 255).
 ///
-/// A double quote would terminate that quoting, and a `%` token in the
-/// *directory* portion names a path that varies per connection, which Deck
-/// cannot create ahead of time — ssh would then fail to bind and silently fall
-/// back to unmultiplexed connections. Both are rejected here, at the gate that
-/// decides what can be persisted, rather than warned about after the fact.
+/// Everything else here is rejected because ssh and Deck would disagree about
+/// what the value means, and every such disagreement ends the same way: ssh
+/// authenticates, fails to bind the socket, and `cleanup_exit(255)`s — so *all*
+/// remote hosts go unreachable with nothing pointing at the setting that did it.
+///
+/// - `"` would terminate the quoting `connection_opts_for` adds.
+/// - `\` is worse than useless: ssh reads `\"` as an escaped quote ("invalid
+///   quotes", exit 255) and collapses `\\` to `\` inside the value, which Deck
+///   does not undo — so it would create `so\\cks` while ssh binds under `so\cks`.
+/// - `~user/` is expanded by ssh (to *that* user's home) but not by
+///   [`expand_control_path_home`], so Deck would create a literal `./~user/`
+///   directory while ssh binds somewhere that does not exist.
+/// - A `%` token in the *directory* portion names a path that varies per
+///   connection, which Deck cannot create ahead of time.
 pub fn validate_ssh_control_path(value: &str) -> Result<(), String> {
     let value = value.trim();
     if value.is_empty() {
@@ -445,6 +465,13 @@ pub fn validate_ssh_control_path(value: &str) -> Result<(), String> {
     }
     if value.contains('"') {
         return Err("Control path cannot contain a double quote".to_string());
+    }
+    if value.contains('\\') {
+        return Err("Control path cannot contain a backslash".to_string());
+    }
+    // `~/` is handled by expand_control_path_home; `~anything/` is not.
+    if value.starts_with('~') && !value.starts_with("~/") && value != "~" {
+        return Err("Only your own ~ is supported, not ~user".to_string());
     }
     let expanded = expand_control_path_home(value);
     let dir = expanded
@@ -461,7 +488,14 @@ pub fn validate_ssh_control_path(value: &str) -> Result<(), String> {
 /// accepts `yes`/`no`, and treats any zero-valued duration as `yes` (forever).
 pub fn validate_ssh_control_persist(value: &str) -> Result<(), String> {
     let value = value.trim();
-    if value.eq_ignore_ascii_case("yes") || value.eq_ignore_ascii_case("no") {
+    // ssh's yes/no parser is its generic boolean one, so `true`/`false` resolve
+    // to `yes`/`no` as well (verified against OpenSSH 10.3: `-o
+    // ControlPersist=true` reports `controlpersist yes`). Rejecting them made a
+    // hand-edited config fail the whole hot-reload.
+    if ["yes", "no", "true", "false"]
+        .iter()
+        .any(|accepted| value.eq_ignore_ascii_case(accepted))
+    {
         return Ok(());
     }
     if value.is_empty() {
