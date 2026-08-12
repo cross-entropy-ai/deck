@@ -448,6 +448,31 @@ fn shell_quote_remote_path_keeps_home_expandable() {
 }
 
 #[test]
+fn new_session_never_bakes_this_calls_own_agent_socket_into_the_session() {
+    // tmux copies the creating client's env into the session, and a one-shot ssh
+    // takes its /tmp/ssh-*/agent.N with it when it exits — so the new session's
+    // first pane would hold a dead agent that also shadows the global symlink.
+    let runner = FakeRunner::new(ok(""));
+    let _ = new_session_with(&runner, "box", "work", "~/proj");
+    let call = &runner.calls()[0];
+    let agent = agent_socket_token();
+
+    assert!(
+        call.contains(&format!("if [ -S {agent} ]; then SSH_AUTH_SOCK={agent}")),
+        "call: {call}"
+    );
+    // Either the stable symlink or nothing at all.
+    assert!(
+        call.contains("else unset SSH_AUTH_SOCK ; fi"),
+        "call: {call}"
+    );
+    assert!(
+        call.contains("tmux new-session -d -s 'work'"),
+        "call: {call}"
+    );
+}
+
+#[test]
 fn new_session_reports_success_and_failure() {
     let okrunner = OneShot::new(ok(""));
     assert!(new_session_with(&okrunner, "box", "work", "~/proj").is_ok());

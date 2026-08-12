@@ -27,8 +27,16 @@ pub const REMOTE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// SSH options we apply on *every* remote call: Deck's connection-reuse block
 /// plus `host`'s ForwardAgent setting. Both read live process-wide state
-/// immediately before each spawn, so a settings or config change applies
+/// immediately before each spawn, so a change applies to later *connections*
 /// without a restart.
+///
+/// ForwardAgent must stay identical across every invocation for a host, and it
+/// is not retroactive: whichever call opens the ControlMaster decides what the
+/// multiplexed sessions get, because "the display and agent forwarded will be
+/// the one belonging to the master connection" (ssh_config(5)). Deck's first
+/// call to a host is normally a one-shot listing, not the attach — so dropping
+/// ForwardAgent from the one-shots to narrow the exposure would create the
+/// master without it and the feature would silently never work.
 pub(crate) fn base_ssh_args(host: &str) -> Vec<String> {
     let mut args = crate::ssh::connection_opts();
     args.extend(
@@ -352,6 +360,37 @@ pub(crate) fn client_cache_dir_token() -> String {
     shell_quote_remote_path("~/.cache/deck")
 }
 
+/// Quoted remote path of the stable symlink this deck process points at its
+/// forwarded ssh-agent socket. Written by the attach prelude, read by every pane
+/// through `SSH_AUTH_SOCK`.
+///
+/// Scoped to this process rather than a single fixed name, because the remote
+/// home may be *shared*: with one name, two people decking into `deploy@host`
+/// would take turns re-pointing the symlink, so a pane of Alice's would reach
+/// Bob's forwarded agent and sign with his keys. A process-unique name also
+/// means one deck exiting can only leave a *dangling* link behind, never one
+/// aimed at a stranger's live agent.
+///
+/// Process-scoped is the right lifetime: reconnects reuse it (that is the whole
+/// point — a pane keeps working across them), while a deck restart mints a new
+/// one, and panes from the previous run had a dead agent the moment that
+/// process's ssh connection went away regardless.
+pub(crate) fn agent_socket_token() -> String {
+    static NAME: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        // Two processes could share a pid across two machines reaching the same
+        // account, so mix in a clock reading. Sanitized by construction: digits
+        // and hex only.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.subsec_nanos());
+        format!(
+            "~/.ssh/deck-agent-{pid}-{nanos:08x}.sock",
+            pid = std::process::id(),
+        )
+    });
+    shell_quote_remote_path(&NAME)
+}
+
 /// Confirm out of band (not via the PTY stream) that this connection's
 /// client-tty marker got written, so switch/focus commit only once their
 /// `-c` target exists. Returns `true` iff the marker file is present and
@@ -529,20 +568,21 @@ fn new_session_with(
 ) -> Result<(), CommandError> {
     let name = shell_single_quote(name);
     let dir = shell_quote_remote_path(dir);
-    run_ssh(
-        runner,
-        host,
-        &[
-            "tmux",
-            "new-session",
-            "-d",
-            "-s",
-            name.as_str(),
-            "-c",
-            dir.as_str(),
-        ],
-    )
-    .map(|_| ())
+    // Hand the new session the stable agent symlink, or no agent at all — never
+    // this call's own `$SSH_AUTH_SOCK`. tmux copies the creating client's
+    // environment into the session (`update-environment`), and a one-shot ssh
+    // exits within milliseconds, taking its `/tmp/ssh-*/agent.N` with it. That
+    // value also *shadows* the global one the attach prelude set, so the first
+    // pane of a session created from deck — the one the user is looking at — was
+    // left with a dead agent forever. A later attach repairs the session entry
+    // but not an already-spawned pane.
+    let agent = agent_socket_token();
+    let script = format!(
+        "if [ -S {agent} ]; then SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK ; \
+         else unset SSH_AUTH_SOCK ; fi ; \
+         tmux new-session -d -s {name} -c {dir}"
+    );
+    run_ssh(runner, host, &[script.as_str()]).map(|_| ())
 }
 
 /// List subdirectories under `path` on `host` for the new-session
