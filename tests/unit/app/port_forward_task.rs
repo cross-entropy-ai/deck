@@ -198,7 +198,29 @@ fn disabling_exits_old_masters_and_does_not_restore_forwards() {
 }
 
 #[test]
-fn path_or_duration_change_closes_old_socket_then_restores_on_new_one() {
+fn duration_only_change_leaves_live_masters_and_forwards_untouched() {
+    // `ssh -O exit` would kill the multiplexed `tmux attach` PTYs riding on the
+    // master, and the socket location hasn't moved — so this must be a no-op.
+    let runner = MockRunner::default();
+    let old = enabled_settings("/tmp/deck-old/cm-%C", "10m");
+    let mut w = Worker::new(runner.clone(), old.clone());
+
+    let results = w.handle(Op::Reconfigure {
+        settings: enabled_settings("/tmp/deck-old/cm-%C", "1h30m"),
+        stop_hosts: vec!["h1".into(), "h2".into()],
+        forward_hosts: vec![("h1".into(), vec![spec(8080)])],
+    });
+
+    assert!(results.is_empty());
+    assert!(
+        runner.log.lock().unwrap().is_empty(),
+        "no ssh command should run: {:?}",
+        runner.log.lock().unwrap()
+    );
+}
+
+#[test]
+fn path_change_closes_old_socket_then_restores_on_new_one() {
     let runner = MockRunner::default();
     let old = enabled_settings("/tmp/deck-old/cm-%C", "10m");
     let new = enabled_settings("/tmp/deck-new/cm-%C", "1h30m");

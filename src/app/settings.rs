@@ -241,7 +241,7 @@ const SSH_CONNECTION_REUSE_ROW: SettingRow = SettingRow {
         if s.prefs.ssh_connection_reuse {
             "Deck reuses one SSH connection per host; required for port forwards"
         } else {
-            "New SSH connection per remote operation; port forwards are off"
+            "Every remote call re-authenticates (breaks 2FA hosts); forwards off"
         }
         .to_string()
     },

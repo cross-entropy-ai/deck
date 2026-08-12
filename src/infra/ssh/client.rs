@@ -42,6 +42,27 @@ impl ConnectionSettings {
             control_persist: config.ssh_control_persist.clone(),
         }
     }
+
+    /// Whether moving from `self` to `next` abandons the socket `self` names,
+    /// so masters at the old path must be closed (addressed with the *old*
+    /// snapshot) and saved forwards re-established against the new one.
+    ///
+    /// False for a ControlPersist-only edit: the same master stays addressable,
+    /// and `ssh -O exit` would kill the multiplexed `tmux attach` PTYs riding on
+    /// it for nothing. Such an edit therefore applies to masters opened later,
+    /// leaving live ones on their original idle timeout.
+    pub fn abandons_socket(&self, next: &Self) -> bool {
+        self.enabled && (!next.enabled || self.control_path != next.control_path)
+    }
+
+    /// Whether moving from `self` to `next` makes Deck re-establish every saved
+    /// forward from scratch: either the old socket is gone, or reuse was off and
+    /// no Deck-owned master existed to carry them. Callers that also diff
+    /// per-rule forward changes must skip that diff exactly when this is true,
+    /// or the two paths race each other over the same socket.
+    pub fn rebuilds_forwards(&self, next: &Self) -> bool {
+        next.enabled && (self.abandons_socket(next) || !self.enabled)
+    }
 }
 
 static CONNECTION_SETTINGS: OnceLock<RwLock<ConnectionSettings>> = OnceLock::new();
@@ -77,6 +98,13 @@ pub fn connection_settings() -> ConnectionSettings {
 /// SSH options applied on every Deck-initiated SSH invocation. Both branches
 /// explicitly override the three multiplexing options; common timeout,
 /// keepalive, and non-interactive behavior remains unchanged.
+///
+/// The ControlPath value is wrapped in double quotes because OpenSSH tokenizes
+/// a `-o` string the same way it tokenizes a config line: an unquoted space
+/// ends the value and ssh dies with "keyword controlpath extra arguments at end
+/// of line" (exit 255) on *every* invocation. Quoting is transparent to the
+/// `~`, `%d`, and `%r@%h:%p` expansions ssh performs on the value, so it is
+/// applied unconditionally rather than only for paths that look risky.
 pub fn connection_opts_for(settings: &ConnectionSettings) -> Vec<String> {
     let mut opts = if settings.enabled {
         vec![
@@ -84,7 +112,7 @@ pub fn connection_opts_for(settings: &ConnectionSettings) -> Vec<String> {
             "ControlMaster=auto".to_string(),
             "-o".to_string(),
             format!(
-                "ControlPath={}",
+                "ControlPath=\"{}\"",
                 control_path_for_ssh(&settings.control_path)
             ),
             "-o".to_string(),
@@ -132,8 +160,10 @@ pub fn connection_opts() -> Vec<String> {
 /// directory is not chmodded out from under the user. Sockets remain managed
 /// by OpenSSH.
 pub fn ensure_control_dir(control_path: &str) -> io::Result<PathBuf> {
-    let expanded = expand_home_prefix(control_path);
+    let expanded = crate::config::expand_control_path_home(control_path);
     let dir = expanded.parent().unwrap_or_else(|| Path::new("."));
+    // Defense in depth: `validate_ssh_control_path` already rejects these, so
+    // neither a saved config nor the Settings editor can reach this arm.
     if dir.as_os_str().to_string_lossy().contains('%') {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -152,19 +182,6 @@ pub fn ensure_control_dir(control_path: &str) -> io::Result<PathBuf> {
         }
     }
     Ok(dir)
-}
-
-fn expand_home_prefix(value: &str) -> PathBuf {
-    let home = crate::config::home_dir();
-    for prefix in ["~/", "$HOME/", "${HOME}/", "%d/"] {
-        if let Some(rest) = value.strip_prefix(prefix) {
-            return home.join(rest);
-        }
-    }
-    if matches!(value, "~" | "$HOME" | "${HOME}" | "%d") {
-        return home;
-    }
-    PathBuf::from(value)
 }
 
 /// Result of querying `ssh -G <host>`. Keys are lowercased option names.
@@ -263,9 +280,58 @@ mod tests {
     fn enabled_opts_force_deck_control_socket() {
         let opts = connection_opts_for(&ConnectionSettings::default()).join(" ");
         assert!(opts.contains("ControlMaster=auto"));
-        assert!(opts.contains("ControlPath=~/.ssh/socks/cm-%r@%h:%p"));
+        assert!(opts.contains("ControlPath=\"~/.ssh/socks/cm-%r@%h:%p\""));
         assert!(opts.contains("ControlPersist=10m"));
         assert!(opts.contains("BatchMode=yes"));
+    }
+
+    #[test]
+    fn control_path_value_is_quoted_so_a_space_cannot_split_the_option() {
+        // ssh tokenizes a `-o` string like a config line: unquoted, a space
+        // makes it reject the option and exit 255 on every invocation.
+        let settings = ConnectionSettings {
+            control_path: "/tmp/deck sockets/cm-%C".to_string(),
+            ..ConnectionSettings::default()
+        };
+        let opts = connection_opts_for(&settings);
+        assert!(opts.contains(&"ControlPath=\"/tmp/deck sockets/cm-%C\"".to_string()));
+        // One argv element, quotes included — never split across two.
+        assert_eq!(
+            opts.iter()
+                .filter(|opt| opt.contains("deck sockets"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn socket_transitions_distinguish_persist_edits_from_path_changes() {
+        let on = ConnectionSettings::default();
+        let off = ConnectionSettings {
+            enabled: false,
+            ..on.clone()
+        };
+        let other_path = ConnectionSettings {
+            control_path: "~/.ssh/other/cm-%C".to_string(),
+            ..on.clone()
+        };
+        let longer_persist = ConnectionSettings {
+            control_persist: "1h".to_string(),
+            ..on.clone()
+        };
+
+        // Persist-only: the same master stays addressable, so nothing is torn
+        // down and no forward is re-established.
+        assert!(!on.abandons_socket(&longer_persist));
+        assert!(!on.rebuilds_forwards(&longer_persist));
+        // Path change and turning reuse off both abandon the old socket.
+        assert!(on.abandons_socket(&other_path));
+        assert!(on.rebuilds_forwards(&other_path));
+        assert!(on.abandons_socket(&off));
+        assert!(!on.rebuilds_forwards(&off));
+        // Turning reuse on owns no old socket but must restore the forwards.
+        assert!(!off.abandons_socket(&on));
+        assert!(off.rebuilds_forwards(&on));
     }
 
     #[test]
@@ -296,17 +362,12 @@ mod tests {
 
     #[test]
     fn expands_supported_home_prefixes_for_control_directory_creation() {
+        use crate::config::expand_control_path_home as expand;
         let home = crate::config::home_dir();
-        assert_eq!(expand_home_prefix("~/deck/cm-%C"), home.join("deck/cm-%C"));
-        assert_eq!(
-            expand_home_prefix("$HOME/deck/cm-%C"),
-            home.join("deck/cm-%C")
-        );
-        assert_eq!(
-            expand_home_prefix("${HOME}/deck/cm-%C"),
-            home.join("deck/cm-%C")
-        );
-        assert_eq!(expand_home_prefix("%d/deck/cm-%C"), home.join("deck/cm-%C"));
+        assert_eq!(expand("~/deck/cm-%C"), home.join("deck/cm-%C"));
+        assert_eq!(expand("$HOME/deck/cm-%C"), home.join("deck/cm-%C"));
+        assert_eq!(expand("${HOME}/deck/cm-%C"), home.join("deck/cm-%C"));
+        assert_eq!(expand("%d/deck/cm-%C"), home.join("deck/cm-%C"));
     }
 
     #[test]
@@ -317,7 +378,7 @@ mod tests {
         };
         let opts = connection_opts_for(&settings);
         let expected = format!(
-            "ControlPath={}",
+            "ControlPath=\"{}\"",
             crate::config::home_dir()
                 .join(".cache/deck/cm-%C")
                 .display()
