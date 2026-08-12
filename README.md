@@ -69,6 +69,19 @@ Configuration lives in `~/.config/deck/config.yaml`. Existing deck or tmux-sideb
 
 The Agents tab can generate a cross-session summary with either Claude Code or Codex; choose the CLI under **Settings → Agents → Summary agent**.
 
+### Remote hosts
+
+Add hosts with `deck remote add <host>` (resolved through `~/.ssh/config`), and they appear as their own sidebar sections. Deck reuses one SSH connection per host and owns those options itself — tune them under **Settings → Remote**, where you can also turn reuse off; saved port forwards stay configured but inactive while it is off, since they run as `ssh -O` commands against that shared socket.
+
+> [!IMPORTANT]
+> Deck **forwards your ssh-agent** to every configured remote by default, so shells and coding agents in a remote session can use your local keys without copying a private key there. Anyone with root on that host can use every loaded key for as long as the connection is open. Turn it off per host in `~/.config/deck/config.yaml`:
+>
+> ```yaml
+> remotes:
+>   - host: shared-box
+>     forward_agent: false
+> ```
+
 ## Develop
 
 ```bash

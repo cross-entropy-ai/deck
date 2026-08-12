@@ -31,6 +31,12 @@ pub struct RemoteConfig {
     /// `forward_agent: false` forces it off. Either value overrides
     /// ssh_config. Forwarding exposes the agent to root on the remote host —
     /// turn it off for hosts you don't fully trust.
+    ///
+    /// Applies to connections opened after the change. With reuse on, the agent
+    /// a multiplexed session gets is the *master's* ("it is not possible to
+    /// forward multiple displays or agents" — ssh_config(5)), so flipping this
+    /// for a host with a live master takes effect when that master expires, or
+    /// immediately if you reconnect the host from its divider.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub forward_agent: bool,
 }
