@@ -207,9 +207,13 @@ fn container_switch_client_runs_inside_the_container() {
 
 #[test]
 fn stopped_or_missing_container_reads_as_unreachable() {
+    // Every engine words this differently; docker's phrasing alone is not
+    // enough (CLAUDE.md: verify these probes against more than one variant).
     for stderr in [
         "Error response from daemon: container dev is not running",
         "Error: No such container: dev",
+        "Error response from daemon: Container dev is paused, unpause the container before exec",
+        "Error: can only create exec sessions on running containers: container state improper",
     ] {
         let err = CommandError::NonZero {
             program: "ssh".into(),
@@ -261,6 +265,37 @@ fn degenerate_container_and_host_names_are_rejected() {
     assert!(crate::config::validate_remote_host("srv#2").is_err());
     assert!(crate::config::validate_remote_host("").is_err());
     assert!(crate::config::validate_remote_host("srv").is_ok());
+}
+
+#[test]
+fn container_phrasing_on_a_plain_host_stays_a_backend_error() {
+    // An rc file printing "docker daemon is not running" to stderr must not
+    // downgrade a real host failure to Unreachable, which would hide it behind
+    // a permanent "(connecting…)" row instead of warning.
+    let noisy = Err(CommandError::NonZero {
+        program: "ssh".into(),
+        status: exit_status(127),
+        stderr: b"docker daemon is not running\nsh: tmux: command not found".to_vec(),
+    });
+    let runner = FakeRunner::new(noisy);
+    assert!(matches!(
+        list_sessions_with(&runner, "box"),
+        Err(ListSessionsError::Backend(_))
+    ));
+}
+
+#[test]
+fn container_agent_probe_survives_an_image_without_procps() {
+    // The probe's exit status is its trailing `ps`; without a fallback a slim
+    // image would fail the whole call and leave Agents stuck on "probing…".
+    let runner = FakeRunner::new(ok(""));
+    let _ = agent_probe_with(&runner, "box#dev");
+    let call = &runner.calls()[0];
+    assert!(call.contains("ps -axo pid=,ppid=,args= 2>/dev/null ||"));
+    assert!(call.contains("|| ps -o pid=,ppid=,args= 2>/dev/null ||"));
+    assert!(call.trim_end().ends_with("|| true'"), "call: {call}");
+    // A bare `ps` would feed the detector non-pid/ppid/args columns.
+    assert!(!call.contains("|| ps ||"));
 }
 
 #[test]
