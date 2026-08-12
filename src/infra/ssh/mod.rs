@@ -2,7 +2,7 @@
 //! port-forward command builders ([`port_forward`]), and SSH-specific model
 //! types ([`model`]).
 //!
-//! `client`'s public API is re-exported here so `crate::ssh::CONTROL_OPTS`,
+//! `client`'s public API is re-exported here so Deck's connection options,
 //! `crate::ssh::config_hosts`, etc. resolve directly off the module.
 
 pub mod client;

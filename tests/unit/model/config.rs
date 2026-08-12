@@ -34,6 +34,105 @@ fn parse_json_without_optional_fields_uses_defaults() {
         crate::state::DEFAULT_FRAME_RATE_LIMIT
     );
     assert_eq!(config.exclude_patterns, vec!["_*"]);
+    assert!(config.ssh_connection_reuse);
+    assert_eq!(config.ssh_control_path, DEFAULT_SSH_CONTROL_PATH);
+    assert_eq!(config.ssh_control_persist, DEFAULT_SSH_CONTROL_PERSIST);
+}
+
+#[test]
+fn parse_json_can_disable_ssh_connection_reuse() {
+    let config = parse(r#"{ "ssh_connection_reuse": false }"#);
+    assert!(!config.ssh_connection_reuse);
+}
+
+#[test]
+fn disabled_reuse_preserves_saved_port_forward_rules() {
+    let path = std::env::temp_dir().join("deck-disabled-reuse-keeps-forwards.yaml");
+    fs::write(
+        &path,
+        "ssh_connection_reuse: false\nremotes:\n  - host: server-1\n    forwards:\n      - mode: local\n        listen_port: 8080\n        target_host: localhost\n        target_port: 80\n",
+    )
+    .unwrap();
+
+    let config = Config::try_load_from(&path).unwrap();
+    assert!(!config.ssh_connection_reuse);
+    assert_eq!(config.remotes[0].forwards.len(), 1);
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn custom_ssh_reuse_settings_roundtrip() {
+    let path = std::env::temp_dir().join("deck-ssh-reuse-settings.yaml");
+    let config = Config {
+        ssh_control_path: "$HOME/.cache/deck/cm-%C".into(),
+        ssh_control_persist: "1h30m".into(),
+        ..Config::default()
+    };
+    config.save_to(&path).unwrap();
+    let loaded = Config::try_load_from(&path).unwrap();
+    assert_eq!(loaded.ssh_control_path, "$HOME/.cache/deck/cm-%C");
+    assert_eq!(loaded.ssh_control_persist, "1h30m");
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn validates_openssh_control_persist_syntax() {
+    for valid in ["600", "10m", "1h30m", "1M30S", "0", "yes", "no"] {
+        assert!(
+            validate_ssh_control_persist(valid).is_ok(),
+            "{valid} should be valid"
+        );
+    }
+    for invalid in [
+        "",
+        "forever",
+        "-1",
+        "1x",
+        "m10",
+        "1h 30m",
+        "2147483648",
+        "999999999999999999999",
+    ] {
+        assert!(
+            validate_ssh_control_persist(invalid).is_err(),
+            "{invalid:?} should be invalid"
+        );
+    }
+}
+
+#[test]
+fn load_self_heals_new_ssh_reuse_fields_into_existing_config() {
+    let path = std::env::temp_dir().join("deck-load-adds-ssh-reuse-fields.yaml");
+    fs::write(
+        &path,
+        format!(
+            "theme: Nord\nsummary_prompt_version: {}\nsummary_prompt: custom\n",
+            crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION
+        ),
+    )
+    .unwrap();
+
+    let loaded = Config::load_from(&path);
+    assert!(loaded.ssh_connection_reuse);
+    let raw = fs::read_to_string(&path).unwrap();
+    assert!(raw
+        .lines()
+        .any(|line| line.starts_with("ssh_connection_reuse:")));
+    assert!(raw
+        .lines()
+        .any(|line| line.starts_with("ssh_control_path:")));
+    assert!(raw
+        .lines()
+        .any(|line| line.starts_with("ssh_control_persist:")));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn rejects_blank_or_none_control_path() {
+    assert!(validate_ssh_control_path("").is_err());
+    assert!(validate_ssh_control_path("  ").is_err());
+    assert!(validate_ssh_control_path("none").is_err());
+    assert!(validate_ssh_control_path("~/.ssh/socks/cm-%C").is_ok());
 }
 
 #[test]
@@ -270,6 +369,27 @@ remotes:
         "a malformed config must never be rewritten by load()"
     );
     let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn load_repairs_only_invalid_ssh_fields_without_dropping_user_data() {
+    let path = std::env::temp_dir().join("deck-load-repairs-invalid-ssh-fields.yaml");
+    fs::write(
+        &path,
+        "theme: Nord\nssh_control_path: none\nssh_control_persist: tomorrow\nremotes:\n  - host: prod-box\n",
+    )
+    .unwrap();
+
+    let loaded = Config::load_from(&path);
+    assert_eq!(loaded.theme, "Nord");
+    assert_eq!(loaded.remotes[0].host, "prod-box");
+    assert_eq!(loaded.ssh_control_path, DEFAULT_SSH_CONTROL_PATH);
+    assert_eq!(loaded.ssh_control_persist, DEFAULT_SSH_CONTROL_PERSIST);
+
+    let reloaded = Config::try_load_from(&path).unwrap();
+    assert_eq!(reloaded.theme, "Nord");
+    assert_eq!(reloaded.remotes[0].host, "prod-box");
+    let _ = fs::remove_file(path);
 }
 
 #[test]

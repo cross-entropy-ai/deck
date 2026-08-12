@@ -18,12 +18,14 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             state.settings.reset_pages();
             state.settings.theme_picker_open = false;
             state.settings.theme_picker_selected = state.prefs.theme_index;
+            state.overlay.ssh_setting_editor = None;
         }
         SettingsAction::Close => {
             state.main_view = MainView::Terminal;
             state.focus_mode = FocusMode::Main;
             state.settings.reset_pages();
             state.settings.theme_picker_open = false;
+            state.overlay.ssh_setting_editor = None;
         }
         SettingsAction::OpenPage(page) => {
             state.settings.push_page(page);
@@ -67,12 +69,66 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             state.prefs.summary_enabled = !state.prefs.summary_enabled;
             fx.save_config();
         }
+        SettingsAction::ToggleSshConnectionReuse => {
+            state.prefs.ssh_connection_reuse = !state.prefs.ssh_connection_reuse;
+            if !state.prefs.ssh_connection_reuse {
+                state.overlay.port_forward = None;
+            }
+            fx.save_config();
+        }
+        SettingsAction::OpenSshSettingEditor(field) => {
+            let value = match field {
+                crate::overlay::SshSettingField::ControlPath => &state.prefs.ssh_control_path,
+                crate::overlay::SshSettingField::ControlPersist => &state.prefs.ssh_control_persist,
+            };
+            state.overlay.ssh_setting_editor =
+                Some(crate::overlay::SshSettingEditorState::new(field, value));
+        }
+        SettingsAction::SshSettingInputKey(key) => {
+            if let Some(editor) = state.overlay.ssh_setting_editor.as_mut() {
+                editor.input.input(key);
+                editor.error = None;
+            }
+        }
+        SettingsAction::SshSettingConfirm => {
+            let Some(mut editor) = state.overlay.ssh_setting_editor.take() else {
+                return fx;
+            };
+            let value = editor.input_str().trim().to_string();
+            let validation = match editor.field {
+                crate::overlay::SshSettingField::ControlPath => {
+                    crate::config::validate_ssh_control_path(&value)
+                }
+                crate::overlay::SshSettingField::ControlPersist => {
+                    crate::config::validate_ssh_control_persist(&value)
+                }
+            };
+            if let Err(error) = validation {
+                editor.error = Some(error);
+                state.overlay.ssh_setting_editor = Some(editor);
+            } else {
+                match editor.field {
+                    crate::overlay::SshSettingField::ControlPath => {
+                        state.prefs.ssh_control_path = value
+                    }
+                    crate::overlay::SshSettingField::ControlPersist => {
+                        state.prefs.ssh_control_persist = value
+                    }
+                }
+                fx.save_config();
+            }
+        }
+        SettingsAction::SshSettingCancel => {
+            state.overlay.ssh_setting_editor = None;
+        }
         SettingsAction::OpenAddRemotePicker => fx.push(Effect::OpenAddRemotePicker),
         // One aggregate row for every host — it opens the first host
         // that has forwards (else the first host); per-host editing stays on
         // each `@host` divider's `[⇄N]` badge button.
         SettingsAction::OpenPortForwards => {
-            fx.push(Effect::OpenConfiguredPortForwards);
+            if state.prefs.ssh_connection_reuse {
+                fx.push(Effect::OpenConfiguredPortForwards);
+            }
         }
         SettingsAction::OpenThemePicker(slot) => {
             // Opens as a standalone overlay over the current view: from the

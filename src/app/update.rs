@@ -33,6 +33,12 @@ impl App {
         // `config_remotes` (UI-managed `forwards` here; CLI changes flow in via
         // hot-reload); `collapsed_sections` (runtime state, not a pref).
         let config = self.config_snapshot();
+        let stop_hosts = config
+            .remotes
+            .iter()
+            .map(|remote| remote.host.clone())
+            .collect();
+        self.reconfigure_ssh_if_needed(&config, stop_hosts);
         // Keep the injected backends and the model's materialized section
         // definitions aligned with an in-app remote/forward edit before the
         // next refresh or render.
@@ -46,6 +52,49 @@ impl App {
         // still notices a later external repair, and surface the write error in
         // the existing reload/warning strip.
         apply_config_save_result(&mut self.state, &mut self.config_mtime_seen, result);
+    }
+
+    /// Move both ordinary SSH spawns and the port-forward worker to a new
+    /// Deck-owned connection snapshot. The worker retains its old snapshot
+    /// long enough to address and close the old sockets; saved forward rules
+    /// are restored only when the new snapshot is enabled.
+    pub(super) fn reconfigure_ssh_if_needed(
+        &mut self,
+        config: &crate::config::Config,
+        stop_hosts: Vec<String>,
+    ) -> bool {
+        let old_settings = crate::ssh::connection_settings();
+        let new_settings = crate::ssh::ConnectionSettings::from_config(config);
+        if old_settings == new_settings {
+            return false;
+        }
+
+        if new_settings.enabled {
+            if let Err(e) = crate::ssh::ensure_control_dir(&new_settings.control_path) {
+                self.state
+                    .show_warning(format!("cannot create SSH control socket directory: {e}"));
+            }
+        }
+        crate::ssh::configure_connection(new_settings.clone());
+
+        let forward_hosts = if new_settings.enabled {
+            config
+                .remotes
+                .iter()
+                .filter(|remote| !remote.forwards.is_empty())
+                .map(|remote| (remote.host.clone(), remote.forwards.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let _ = self
+            .port_forward_tx
+            .send(crate::app::ssh::port_forward_task::Op::Reconfigure {
+                settings: new_settings,
+                stop_hosts,
+                forward_hosts,
+            });
+        true
     }
 
     pub(super) fn tick_update_check(&mut self) -> bool {

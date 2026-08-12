@@ -13,6 +13,10 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
     let mut fx = SideEffect::default();
     match action {
         PfAction::Open(lane) => {
+            if !state.prefs.ssh_connection_reuse {
+                state.overlay.port_forward = None;
+                return fx;
+            }
             state.overlay.context_menu = None;
             state.overlay.port_forward = Some(PortForwardOverlay {
                 lane,

@@ -132,7 +132,8 @@ impl AppState {
     /// mappers consult this first, so priority here decides which single overlay
     /// is visible and swallows a key/click when several backing flags are set.
     ///
-    /// The settings sub-modals (KeybindingsView / ExcludeEditor / SummaryLang)
+    /// The settings sub-modals (KeybindingsView / ExcludeEditor / SshSetting /
+    /// SummaryLang)
     /// count only while the settings page owns focus (`MainView::Settings` +
     /// `FocusMode::Main`); elsewhere their backing fields are stale and must not
     /// gate input. Everything above them is a standalone overlay openable from
@@ -165,6 +166,9 @@ impl AppState {
             }
             if self.overlay.exclude_editor.is_some() {
                 return Some(Modal::ExcludeEditor);
+            }
+            if self.overlay.ssh_setting_editor.is_some() {
+                return Some(Modal::SshSetting);
             }
             if self.overlay.summary_lang_input.is_some() {
                 return Some(Modal::SummaryLang);

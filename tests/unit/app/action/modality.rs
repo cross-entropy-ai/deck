@@ -8,7 +8,9 @@
 use super::{key_to_action, mouse_to_action, paste_to_action, Action, MenuAction};
 use crate::config::KeyBindingValue;
 use crate::menu::{ContextMenu, MenuKind};
-use crate::overlay::{ExcludeEditorState, Modal, RenameState};
+use crate::overlay::{
+    ExcludeEditorState, Modal, RenameState, SshSettingEditorState, SshSettingField,
+};
 use crate::state::{AppState, FocusMode, MainView, SessionEntry, SessionEntryKind};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::time::{Duration, Instant};
@@ -87,6 +89,14 @@ fn open_modal(state: &mut AppState, modal: Modal) {
             state.focus_mode = FocusMode::Main;
             state.overlay.exclude_editor = Some(ExcludeEditorState::new());
         }
+        Modal::SshSetting => {
+            state.main_view = MainView::Settings;
+            state.focus_mode = FocusMode::Main;
+            state.overlay.ssh_setting_editor = Some(SshSettingEditorState::new(
+                SshSettingField::ControlPath,
+                crate::config::DEFAULT_SSH_CONTROL_PATH,
+            ));
+        }
         Modal::SummaryLang => {
             use ratatui_textarea::TextArea;
             state.main_view = MainView::Settings;
@@ -121,7 +131,7 @@ fn is_forbidden(a: &Action) -> bool {
     )
 }
 
-fn all_modals() -> [Modal; 12] {
+fn all_modals() -> [Modal; 13] {
     Modal::ALL
 }
 
@@ -329,6 +339,15 @@ fn port_forward_shortcut_can_be_rebound() {
         ),
         Action::Pf(crate::action::PfAction::Open(lane))
             if lane == crate::system::tmux::TmuxSystem::host_lane("prod")
+    ));
+
+    state.prefs.ssh_connection_reuse = false;
+    assert!(matches!(
+        key_to_action(
+            &KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
+            &state
+        ),
+        Action::None
     ));
 }
 

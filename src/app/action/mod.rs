@@ -129,6 +129,13 @@ pub enum SettingsAction {
     KeybindingsScrollDown,
 
     ToggleUpdateCheck,
+    /// Toggle Deck-owned SSH ControlMaster reuse for remote operations.
+    ToggleSshConnectionReuse,
+    /// Edit one of Deck's text-valued SSH connection-reuse settings.
+    OpenSshSettingEditor(crate::overlay::SshSettingField),
+    SshSettingInputKey(crossterm::event::KeyEvent),
+    SshSettingConfirm,
+    SshSettingCancel,
     CycleFrameRateLimit(i32),
     /// Cycle the Agents-tab probe interval (settings, left/right).
     CycleAgentsProbeInterval(i32),

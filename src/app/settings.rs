@@ -227,18 +227,73 @@ const REMOTES_ROW: SettingRow = SettingRow {
     adjust: || Action::Settings(SettingsAction::OpenAddRemotePicker),
 };
 
+const SSH_CONNECTION_REUSE_ROW: SettingRow = SettingRow {
+    label: "SSH connection reuse",
+    value: |s| {
+        if s.prefs.ssh_connection_reuse {
+            "On"
+        } else {
+            "Off"
+        }
+        .to_string()
+    },
+    help: |s| {
+        if s.prefs.ssh_connection_reuse {
+            "Deck reuses one SSH connection per host; required for port forwards"
+        } else {
+            "New SSH connection per remote operation; port forwards are off"
+        }
+        .to_string()
+    },
+    adjust: || Action::Settings(SettingsAction::ToggleSshConnectionReuse),
+};
+
+const SSH_CONTROL_PATH_ROW: SettingRow = SettingRow {
+    label: "Control path",
+    value: |s| s.prefs.ssh_control_path.clone(),
+    help: |_| "Deck-owned OpenSSH ControlPath; Enter edits the socket location".to_string(),
+    adjust: || {
+        Action::Settings(SettingsAction::OpenSshSettingEditor(
+            crate::overlay::SshSettingField::ControlPath,
+        ))
+    },
+};
+
+const SSH_CONTROL_PERSIST_ROW: SettingRow = SettingRow {
+    label: "Reuse duration",
+    value: |s| s.prefs.ssh_control_persist.clone(),
+    help: |_| "OpenSSH ControlPersist idle time, e.g. 10m, 1h30m, or yes; Enter edits".to_string(),
+    adjust: || {
+        Action::Settings(SettingsAction::OpenSshSettingEditor(
+            crate::overlay::SshSettingField::ControlPersist,
+        ))
+    },
+};
+
 const PORT_FORWARDS_ROW: SettingRow = SettingRow {
     label: "Port forwards",
-    value: |s| match s
-        .config_remotes
-        .iter()
-        .map(|r| r.forwards.len())
-        .sum::<usize>()
-    {
-        0 => "none".to_string(),
-        n => format!("{n} forwards"),
+    value: |s| {
+        if !s.prefs.ssh_connection_reuse {
+            return "Off".to_string();
+        }
+        match s
+            .config_remotes
+            .iter()
+            .map(|r| r.forwards.len())
+            .sum::<usize>()
+        {
+            0 => "none".to_string(),
+            n => format!("{n} forwards"),
+        }
     },
-    help: |_| "Enter opens a configured host's port forwards".to_string(),
+    help: |s| {
+        if s.prefs.ssh_connection_reuse {
+            "Enter opens a configured host's port forwards"
+        } else {
+            "Unavailable while SSH connection reuse is off"
+        }
+        .to_string()
+    },
     adjust: || Action::Settings(SettingsAction::OpenPortForwards),
 };
 
@@ -284,6 +339,12 @@ pub fn setting_rows(state: &AppState) -> Vec<&'static SettingRow> {
                 &SUMMARY_LANGUAGE_ROW,
             ]
         }
-        SettingsPage::Remote => vec![&REMOTES_ROW, &PORT_FORWARDS_ROW],
+        SettingsPage::Remote => vec![
+            &SSH_CONNECTION_REUSE_ROW,
+            &SSH_CONTROL_PATH_ROW,
+            &SSH_CONTROL_PERSIST_ROW,
+            &REMOTES_ROW,
+            &PORT_FORWARDS_ROW,
+        ],
     }
 }

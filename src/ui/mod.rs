@@ -12,8 +12,8 @@ pub use menu::draw_context_menu;
 pub use popups::{draw_add_remote, draw_new_session, draw_summary_popup};
 pub use reload::{draw_reload_bar, reload_row_count};
 pub use settings::{
-    draw_exclude_editor, draw_keybindings_view, draw_settings_page, draw_summary_language_editor,
-    draw_theme_picker,
+    draw_exclude_editor, draw_keybindings_view, draw_settings_page, draw_ssh_setting_editor,
+    draw_summary_language_editor, draw_theme_picker,
 };
 pub use sidebar::{
     draw_collapsed_sidebar, draw_confirm_kill_popup, draw_help_popup, draw_rename_popup,
@@ -49,6 +49,14 @@ pub struct SettingRowView {
     pub label: &'static str,
     pub value: String,
     pub help: String,
+}
+
+/// One of Deck's text-valued SSH settings being edited. Drawn as a formal modal
+/// by `app::modal`, like every other settings sub-editor.
+pub struct SshSettingEditorView<'a> {
+    pub field: crate::overlay::SshSettingField,
+    pub input: &'a ratatui_textarea::TextArea<'static>,
+    pub error: Option<&'a str>,
 }
 
 pub struct SettingsView {

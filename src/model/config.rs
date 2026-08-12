@@ -11,6 +11,9 @@ use crate::state::{LayoutMode, SidebarTab, ViewMode, SIDEBAR_HEIGHT};
 use crate::summary_card::SummaryAgent;
 use crate::update::UpdateCheckMode;
 
+pub const DEFAULT_SSH_CONTROL_PATH: &str = "~/.ssh/socks/cm-%r@%h:%p";
+pub const DEFAULT_SSH_CONTROL_PERSIST: &str = "10m";
+
 /// A remote host whose tmux sessions deck surfaces alongside local ones.
 /// `host` must resolve via `~/.ssh/config` or as a hostname; deck shells
 /// out to `ssh <host> ...`.
@@ -93,6 +96,17 @@ pub struct Config {
     pub exclude_patterns: Vec<String>,
     pub keybindings: BTreeMap<String, KeyBindingValue>,
     pub update_check: UpdateCheckMode,
+    /// Reuse one Deck-owned SSH ControlMaster per remote host. On by default;
+    /// either value explicitly overrides the matching `ssh_config` options.
+    /// Saved port-forward rules are active and editable only while this is on,
+    /// because they use `ssh -O` commands against the same socket.
+    pub ssh_connection_reuse: bool,
+    /// Deck-owned OpenSSH `ControlPath`. This explicitly overrides the user's
+    /// matching ssh_config value whenever connection reuse is enabled.
+    pub ssh_control_path: String,
+    /// Deck-owned OpenSSH `ControlPersist` value (for example `10m` or
+    /// `1h30m`). This explicitly overrides ssh_config as well.
+    pub ssh_control_persist: String,
     pub remotes: Vec<RemoteConfig>,
     /// Sidebar groups collapsed (Expanded view only). `null` = `@local`,
     /// a string = remote `@host`. Serializes as `[null, "host1"]`. Empty by default.
@@ -154,6 +168,9 @@ impl Default for Config {
             exclude_patterns: vec!["_*".to_string()],
             keybindings: BTreeMap::new(),
             update_check: UpdateCheckMode::Enabled,
+            ssh_connection_reuse: true,
+            ssh_control_path: DEFAULT_SSH_CONTROL_PATH.to_string(),
+            ssh_control_persist: DEFAULT_SSH_CONTROL_PERSIST.to_string(),
             remotes: Vec::new(),
             collapsed_sections: Vec::new(),
             collapsed_agent_sections: Vec::new(),
@@ -174,6 +191,13 @@ impl Default for Config {
 
 fn is_default_frame_rate(fps: &u16) -> bool {
     *fps == crate::state::DEFAULT_FRAME_RATE_LIMIT
+}
+
+fn has_top_level_key(raw: &str, key: &str) -> bool {
+    raw.lines().any(|line| {
+        line.strip_prefix(key)
+            .is_some_and(|rest| rest.starts_with(':'))
+    })
 }
 
 /// `$HOME`, falling back to `.` when unset — deck's one home-dir
@@ -241,13 +265,33 @@ impl Config {
             };
             // Migrate keybindings and seed/refresh the summary prompt, then
             // rewrite once so the file self-heals.
-            let mut changed = migrate_keybindings(&mut config.keybindings);
+            // A syntactically valid file with one invalid SSH value must not
+            // collapse to Config::default (the startup keybinding backfill could
+            // then overwrite and wipe unrelated remotes). Repair only those
+            // fields while preserving every other parsed value.
+            let mut changed = config.repair_invalid_ssh_settings();
+            changed |= migrate_keybindings(&mut config.keybindings);
             changed |= config.migrate_summary_prompt();
+            let raw = fs::read_to_string(path).ok();
+            // Persist newly introduced Deck-owned SSH policy fields into an
+            // existing valid config instead of leaving their effective defaults
+            // implicit forever.
+            if raw.as_deref().is_some_and(|raw| {
+                [
+                    "ssh_connection_reuse",
+                    "ssh_control_path",
+                    "ssh_control_persist",
+                ]
+                .iter()
+                .any(|key| !has_top_level_key(raw, key))
+            }) {
+                changed = true;
+            }
             // Drop a persisted frame_rate_limit that now equals the default.
             // One-shot: once the key is gone the `contains` check is false, so
             // we don't rewrite on every launch.
             if is_default_frame_rate(&config.frame_rate_limit)
-                && fs::read_to_string(path).is_ok_and(|raw| raw.contains("frame_rate_limit"))
+                && raw.is_some_and(|raw| has_top_level_key(&raw, "frame_rate_limit"))
             {
                 changed = true;
             }
@@ -259,6 +303,7 @@ impl Config {
 
         // First launch on the YAML format: migrate a legacy JSON config.
         if let Some(mut config) = load_legacy_json() {
+            config.repair_invalid_ssh_settings();
             migrate_keybindings(&mut config.keybindings);
             config.migrate_summary_prompt();
             let _ = config.save_to(path);
@@ -289,6 +334,7 @@ impl Config {
         // the useful line/column info and omits the path.
         match confy::load_path::<Config>(path) {
             Ok(mut config) => {
+                config.validate()?;
                 // Clean unknown keybindings and resolve the summary prompt
                 // in memory only (no save — reload is non-destructive); the
                 // file self-heals on the next launch via `load`.
@@ -298,6 +344,24 @@ impl Config {
             }
             Err(e) => Err(format!("parse: {}", e)),
         }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        validate_ssh_control_path(&self.ssh_control_path)?;
+        validate_ssh_control_persist(&self.ssh_control_persist)
+    }
+
+    fn repair_invalid_ssh_settings(&mut self) -> bool {
+        let mut changed = false;
+        if validate_ssh_control_path(&self.ssh_control_path).is_err() {
+            self.ssh_control_path = DEFAULT_SSH_CONTROL_PATH.to_string();
+            changed = true;
+        }
+        if validate_ssh_control_persist(&self.ssh_control_persist).is_err() {
+            self.ssh_control_persist = DEFAULT_SSH_CONTROL_PERSIST.to_string();
+            changed = true;
+        }
+        changed
     }
 
     /// Seed/refresh `summary_prompt` from the bundled default when its
@@ -321,12 +385,83 @@ impl Config {
     }
 
     fn save_to(&self, path: &std::path::Path) -> Result<(), String> {
+        self.validate()?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
         }
         confy::store_path(path, self).map_err(|e| format!("cannot write {}: {e}", path.display()))
     }
+}
+
+/// Validate the Deck-owned `ControlPath` before it reaches `ssh -o`. Spaces
+/// are legitimate path characters and are safe because the value is passed as
+/// one argv element; empty, `none`, NUL, and line-oriented values are not useful
+/// socket locations.
+pub fn validate_ssh_control_path(value: &str) -> Result<(), String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("Control path cannot be blank".to_string());
+    }
+    if value.eq_ignore_ascii_case("none") {
+        return Err("Control path must name a socket, not 'none'".to_string());
+    }
+    if value.chars().any(|c| matches!(c, '\0' | '\n' | '\r')) {
+        return Err("Control path must be a single line".to_string());
+    }
+    Ok(())
+}
+
+/// OpenSSH time syntax is a sequence of positive integer segments with an
+/// optional `s/m/h/d/w` qualifier (`600`, `10m`, `1h30m`). ControlPersist also
+/// accepts `yes`/`no`, and treats any zero-valued duration as `yes` (forever).
+pub fn validate_ssh_control_persist(value: &str) -> Result<(), String> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("yes") || value.eq_ignore_ascii_case("no") {
+        return Ok(());
+    }
+    if value.is_empty() {
+        return Err("Reuse duration cannot be blank".to_string());
+    }
+
+    let bytes = value.as_bytes();
+    let mut cursor = 0;
+    let mut total_seconds = 0u64;
+    while cursor < bytes.len() {
+        let digits_start = cursor;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
+            cursor += 1;
+        }
+        if cursor == digits_start {
+            return Err("Use an OpenSSH duration such as 10m, 1h30m, or yes".to_string());
+        }
+        let amount = value[digits_start..cursor]
+            .parse::<u64>()
+            .map_err(|_| "Reuse duration is too large".to_string())?;
+        let mut multiplier = 1u64;
+        if cursor < bytes.len() && bytes[cursor].is_ascii_alphabetic() {
+            multiplier = match bytes[cursor].to_ascii_lowercase() {
+                b's' => 1,
+                b'm' => 60,
+                b'h' => 60 * 60,
+                b'd' => 24 * 60 * 60,
+                b'w' => 7 * 24 * 60 * 60,
+                _ => return Err("Duration units must be s, m, h, d, or w".to_string()),
+            };
+            cursor += 1;
+        }
+        total_seconds = total_seconds
+            .checked_add(
+                amount
+                    .checked_mul(multiplier)
+                    .ok_or_else(|| "Reuse duration is too large".to_string())?,
+            )
+            .ok_or_else(|| "Reuse duration is too large".to_string())?;
+        if total_seconds > i32::MAX as u64 {
+            return Err("Reuse duration is too large for OpenSSH".to_string());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

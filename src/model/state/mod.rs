@@ -427,6 +427,13 @@ pub struct Prefs {
     pub frame_rate_limit: u16,
     pub exclude_patterns: Vec<String>,
     pub update_check_mode: UpdateCheckMode,
+    /// Whether new remote SSH connections use Deck's shared ControlMaster.
+    /// When off, saved port-forward rules remain configured but inactive.
+    pub ssh_connection_reuse: bool,
+    /// Deck-owned OpenSSH `ControlPath` used while reuse is enabled.
+    pub ssh_control_path: String,
+    /// Deck-owned OpenSSH `ControlPersist` value used while reuse is enabled.
+    pub ssh_control_persist: String,
     /// The summary prompt template (from config), `{{SESSIONS}}` filled
     /// with the agent panes at generation time. Seeded in `App::new` and
     /// refreshed on config reload.
@@ -475,6 +482,9 @@ impl Prefs {
             frame_rate_limit: normalize_frame_rate_limit(cfg.frame_rate_limit),
             exclude_patterns: cfg.exclude_patterns.clone(),
             update_check_mode: cfg.update_check,
+            ssh_connection_reuse: cfg.ssh_connection_reuse,
+            ssh_control_path: cfg.ssh_control_path.clone(),
+            ssh_control_persist: cfg.ssh_control_persist.clone(),
             summary_prompt: cfg.summary_prompt.clone(),
             summary_agent: cfg.summary_agent,
             summary_model: cfg.summary_model.clone(),
@@ -516,6 +526,9 @@ impl Prefs {
             exclude_patterns: self.exclude_patterns.clone(),
             keybindings,
             update_check: self.update_check_mode,
+            ssh_connection_reuse: self.ssh_connection_reuse,
+            ssh_control_path: self.ssh_control_path.clone(),
+            ssh_control_persist: self.ssh_control_persist.clone(),
             remotes,
             collapsed_sections: collapsed,
             collapsed_agent_sections: collapsed_agents,

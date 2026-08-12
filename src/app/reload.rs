@@ -78,6 +78,11 @@ impl App {
 
         // Reset sub-UIs whose indices may no longer be valid.
         self.state.overlay.exclude_editor = None;
+        self.state.overlay.ssh_setting_editor = None;
+        if !cfg.ssh_connection_reuse {
+            self.state.overlay.port_forward = None;
+            self.state.overlay.context_menu = None;
+        }
 
         self.raw_keybindings = cfg.keybindings.clone();
         // Surface any keybinding warnings in the strip rather than masking
@@ -88,21 +93,30 @@ impl App {
         } else {
             self.state.show_warning(kb_warnings.join("; "));
         }
-
         // Diff old vs new remote forwards and send ops to the worker.
         // (`config_remotes` is deliberately outside `apply_config`: the
         // diff below needs the old list before the new one is committed.)
         let old_remotes = std::mem::take(&mut self.state.config_remotes);
         let new_remotes = cfg.remotes.clone();
+        let mut stop_hosts: Vec<String> = old_remotes
+            .iter()
+            .chain(new_remotes.iter())
+            .map(|remote| remote.host.clone())
+            .collect();
+        stop_hosts.sort();
+        stop_hosts.dedup();
+        let ssh_settings_changed = self.reconfigure_ssh_if_needed(&cfg, stop_hosts);
 
         // Hosts only in old → stop master + offboard runtime state.
         for old in &old_remotes {
             if !new_remotes.iter().any(|n| n.host == old.host) {
-                let _ =
-                    self.port_forward_tx
-                        .send(crate::app::ssh::port_forward_task::Op::StopHost {
+                if !ssh_settings_changed && cfg.ssh_connection_reuse {
+                    let _ = self.port_forward_tx.send(
+                        crate::app::ssh::port_forward_task::Op::StopHost {
                             host: old.host.clone(),
-                        });
+                        },
+                    );
+                }
                 let lane = crate::system::tmux::TmuxSystem::host_lane(&old.host);
                 self.offboard_remote_host(&lane);
             }
@@ -117,30 +131,34 @@ impl App {
             }
         }
 
-        // Per-host diff for hosts present in either.
-        for n in &new_remotes {
-            let empty = Vec::new();
-            let old_fwds: &[crate::forwards::ForwardSpec] = old_remotes
-                .iter()
-                .find(|o| o.host == n.host)
-                .map(|o| o.forwards.as_slice())
-                .unwrap_or(&empty);
-            for op in crate::forwards::diff_forwards(old_fwds, &n.forwards) {
-                let msg = match op {
-                    crate::forwards::ForwardOp::Add(spec) => {
-                        crate::app::ssh::port_forward_task::Op::AddForward {
-                            host: n.host.clone(),
-                            spec,
+        // While reuse is off, forward rules remain persisted but inactive.
+        // A settings change is handled as one Reconfigure op above, so don't
+        // race it with per-rule operations against the old socket.
+        if !ssh_settings_changed && cfg.ssh_connection_reuse {
+            for n in &new_remotes {
+                let empty = Vec::new();
+                let old_fwds: &[crate::forwards::ForwardSpec] = old_remotes
+                    .iter()
+                    .find(|o| o.host == n.host)
+                    .map(|o| o.forwards.as_slice())
+                    .unwrap_or(&empty);
+                for op in crate::forwards::diff_forwards(old_fwds, &n.forwards) {
+                    let msg = match op {
+                        crate::forwards::ForwardOp::Add(spec) => {
+                            crate::app::ssh::port_forward_task::Op::AddForward {
+                                host: n.host.clone(),
+                                spec,
+                            }
                         }
-                    }
-                    crate::forwards::ForwardOp::Cancel(spec) => {
-                        crate::app::ssh::port_forward_task::Op::CancelForward {
-                            host: n.host.clone(),
-                            spec,
+                        crate::forwards::ForwardOp::Cancel(spec) => {
+                            crate::app::ssh::port_forward_task::Op::CancelForward {
+                                host: n.host.clone(),
+                                spec,
+                            }
                         }
-                    }
-                };
-                let _ = self.port_forward_tx.send(msg);
+                    };
+                    let _ = self.port_forward_tx.send(msg);
+                }
             }
         }
         // Commit the new config; `build_refresh_request` reads

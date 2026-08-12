@@ -27,6 +27,14 @@ pub enum Op {
         host: String,
         spec: ForwardSpec,
     },
+    /// Atomically move the worker from one Deck-owned ControlPath/Persist
+    /// snapshot to another. Old masters are addressed with the old snapshot;
+    /// saved forwards are then restored only when the new snapshot is enabled.
+    Reconfigure {
+        settings: crate::ssh::ConnectionSettings,
+        stop_hosts: Vec<String>,
+        forward_hosts: Vec<(String, Vec<ForwardSpec>)>,
+    },
     /// Tear down the host's master entirely (used when a host is removed
     /// from config via hot-reload).
     StopHost {
@@ -86,30 +94,63 @@ impl OpResult {
 /// Indirection over actually shelling out — lets tests verify ordering
 /// without spawning ssh.
 pub trait Runner: Send + 'static {
-    fn run_master(&self, host: &str) -> Result<(), String>;
-    fn run_forward(&self, host: &str, spec: &ForwardSpec) -> Result<(), String>;
-    fn run_cancel(&self, host: &str, spec: &ForwardSpec) -> Result<(), String>;
-    fn run_exit(&self, host: &str) -> Result<(), String>;
+    fn run_master(
+        &self,
+        settings: &crate::ssh::ConnectionSettings,
+        host: &str,
+    ) -> Result<(), String>;
+    fn run_forward(
+        &self,
+        settings: &crate::ssh::ConnectionSettings,
+        host: &str,
+        spec: &ForwardSpec,
+    ) -> Result<(), String>;
+    fn run_cancel(
+        &self,
+        settings: &crate::ssh::ConnectionSettings,
+        host: &str,
+        spec: &ForwardSpec,
+    ) -> Result<(), String>;
+    fn run_exit(&self, settings: &crate::ssh::ConnectionSettings, host: &str)
+        -> Result<(), String>;
 }
 
 /// The default Runner — actually shells out via `infra::ssh::port_forward`.
 pub struct SshRunner;
 
 impl Runner for SshRunner {
-    fn run_master(&self, host: &str) -> Result<(), String> {
-        let mut cmd = crate::infra::ssh::port_forward::build_master_cmd(host);
+    fn run_master(
+        &self,
+        settings: &crate::ssh::ConnectionSettings,
+        host: &str,
+    ) -> Result<(), String> {
+        let mut cmd = crate::infra::ssh::port_forward::build_master_cmd(settings, host);
         run_bounded(&mut cmd)
     }
-    fn run_forward(&self, host: &str, spec: &ForwardSpec) -> Result<(), String> {
-        let mut cmd = crate::infra::ssh::port_forward::build_forward_cmd(host, spec);
+    fn run_forward(
+        &self,
+        settings: &crate::ssh::ConnectionSettings,
+        host: &str,
+        spec: &ForwardSpec,
+    ) -> Result<(), String> {
+        let mut cmd = crate::infra::ssh::port_forward::build_forward_cmd(settings, host, spec);
         run_bounded(&mut cmd)
     }
-    fn run_cancel(&self, host: &str, spec: &ForwardSpec) -> Result<(), String> {
-        let mut cmd = crate::infra::ssh::port_forward::build_cancel_cmd(host, spec);
+    fn run_cancel(
+        &self,
+        settings: &crate::ssh::ConnectionSettings,
+        host: &str,
+        spec: &ForwardSpec,
+    ) -> Result<(), String> {
+        let mut cmd = crate::infra::ssh::port_forward::build_cancel_cmd(settings, host, spec);
         run_bounded(&mut cmd)
     }
-    fn run_exit(&self, host: &str) -> Result<(), String> {
-        let mut cmd = crate::infra::ssh::port_forward::build_exit_cmd(host);
+    fn run_exit(
+        &self,
+        settings: &crate::ssh::ConnectionSettings,
+        host: &str,
+    ) -> Result<(), String> {
+        let mut cmd = crate::infra::ssh::port_forward::build_exit_cmd(settings, host);
         run_bounded(&mut cmd)
     }
 }
@@ -133,13 +174,15 @@ fn run_bounded(cmd: &mut std::process::Command) -> Result<(), String> {
 /// to an mpsc channel and a thread.
 pub struct Worker<R: Runner> {
     runner: R,
+    settings: crate::ssh::ConnectionSettings,
     masters_up: HashSet<String>,
 }
 
 impl<R: Runner> Worker<R> {
-    pub fn new(runner: R) -> Self {
+    pub fn new(runner: R, settings: crate::ssh::ConnectionSettings) -> Self {
         Self {
             runner,
+            settings,
             masters_up: HashSet::new(),
         }
     }
@@ -148,35 +191,72 @@ impl<R: Runner> Worker<R> {
         match op {
             Op::Bootstrap { hosts } => {
                 let mut out = Vec::new();
-                for (host, specs) in hosts {
-                    let master_ok = self.ensure_master(&host, &mut out);
-                    if !master_ok {
-                        continue;
-                    }
-                    for spec in specs {
-                        let r = self.runner.run_forward(&host, &spec);
-                        out.push(result_from(OpKind::Forward(host.clone(), spec), r));
-                    }
+                if self.settings.enabled {
+                    self.bootstrap(hosts, &mut out);
                 }
                 out
             }
             Op::AddForward { host, spec } => {
                 let mut out = Vec::new();
+                if !self.settings.enabled {
+                    return out;
+                }
                 if !self.ensure_master(&host, &mut out) {
                     return out;
                 }
-                let r = self.runner.run_forward(&host, &spec);
+                let r = self.runner.run_forward(&self.settings, &host, &spec);
                 out.push(result_from(OpKind::Forward(host, spec), r));
                 out
             }
             Op::CancelForward { host, spec } => {
-                let r = self.runner.run_cancel(&host, &spec);
+                if !self.settings.enabled {
+                    return Vec::new();
+                }
+                let r = self.runner.run_cancel(&self.settings, &host, &spec);
                 vec![result_from(OpKind::Cancel(host), r)]
             }
+            Op::Reconfigure {
+                settings,
+                stop_hosts,
+                forward_hosts,
+            } => {
+                let old_settings = std::mem::replace(&mut self.settings, settings);
+                let mut out = Vec::new();
+                if old_settings.enabled {
+                    let mut stopped = HashSet::new();
+                    for host in stop_hosts {
+                        if stopped.insert(host.clone()) {
+                            let r = self.runner.run_exit(&old_settings, &host);
+                            out.push(result_from(OpKind::Exit(host), r));
+                        }
+                    }
+                }
+                self.masters_up.clear();
+                if self.settings.enabled {
+                    self.bootstrap(forward_hosts, &mut out);
+                }
+                out
+            }
             Op::StopHost { host } => {
-                let r = self.runner.run_exit(&host);
                 self.masters_up.remove(&host);
-                vec![result_from(OpKind::Exit(host), r)]
+                if self.settings.enabled {
+                    let r = self.runner.run_exit(&self.settings, &host);
+                    vec![result_from(OpKind::Exit(host), r)]
+                } else {
+                    Vec::new()
+                }
+            }
+        }
+    }
+
+    fn bootstrap(&mut self, hosts: Vec<(String, Vec<ForwardSpec>)>, out: &mut Vec<OpResult>) {
+        for (host, specs) in hosts {
+            if !self.ensure_master(&host, out) {
+                continue;
+            }
+            for spec in specs {
+                let r = self.runner.run_forward(&self.settings, &host, &spec);
+                out.push(result_from(OpKind::Forward(host.clone(), spec), r));
             }
         }
     }
@@ -187,7 +267,7 @@ impl<R: Runner> Worker<R> {
         if self.masters_up.contains(host) {
             return true;
         }
-        let r = self.runner.run_master(host);
+        let r = self.runner.run_master(&self.settings, host);
         let ok = r.is_ok();
         out.push(result_from(OpKind::Master(host.to_string()), r));
         if ok {
@@ -215,12 +295,12 @@ fn result_from(kind: OpKind, r: Result<(), String>) -> OpResult {
 /// Spawn a worker thread that reads `Op`s and forwards `OpResult`s.
 /// Returns the channel sender. The thread runs until the sender is
 /// dropped.
-pub fn spawn(results: Sender<OpResult>) -> Sender<Op> {
+pub fn spawn(results: Sender<OpResult>, settings: crate::ssh::ConnectionSettings) -> Sender<Op> {
     let (op_tx, op_rx): (Sender<Op>, Receiver<Op>) = std::sync::mpsc::channel();
     thread::Builder::new()
         .name("deck-port-forward".into())
         .spawn(move || {
-            let mut worker = Worker::new(SshRunner);
+            let mut worker = Worker::new(SshRunner, settings);
             for op in op_rx {
                 for r in worker.handle(op) {
                     if results.send(r).is_err() {

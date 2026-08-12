@@ -28,6 +28,7 @@ const HOST_DIVIDER_MENU_ITEMS: &[MenuItem] = &[
 // but PortForward and RemoveFromList are remote-only: they're greyed out,
 // leaving just NewSession (creates a local session).
 const LOCAL_DIVIDER_DISABLED: &[MenuItem] = &[MenuItem::PortForward, MenuItem::RemoveFromList];
+const PORT_FORWARD_DISABLED: &[MenuItem] = &[MenuItem::PortForward];
 // Right-click on blank sidebar space / the persistent footer button. Put the
 // primary creation action first; the explicit "local" label distinguishes it
 // from the per-host divider's NewSession action.
@@ -86,6 +87,7 @@ pub enum MenuKind {
     LaneDivider {
         lane: crate::lane::LaneId,
         primary: bool,
+        port_forward_enabled: bool,
     },
 }
 
@@ -105,6 +107,10 @@ impl MenuKind {
         match self {
             MenuKind::Session { disabled, .. } => disabled,
             MenuKind::LaneDivider { primary: true, .. } => LOCAL_DIVIDER_DISABLED,
+            MenuKind::LaneDivider {
+                port_forward_enabled: false,
+                ..
+            } => PORT_FORWARD_DISABLED,
             MenuKind::Global | MenuKind::LaneDivider { .. } => &[],
         }
     }
