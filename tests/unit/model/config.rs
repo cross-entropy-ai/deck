@@ -470,6 +470,7 @@ fn load_self_heals_a_valid_file_without_dropping_user_data() {
     };
     original.remotes.push(RemoteConfig {
         host: "prod-box".to_string(),
+        containers: vec![],
         forward_agent: true,
         forwards: vec![],
     });
@@ -526,9 +527,54 @@ fn remote_config_forward_agent_defaults_on_and_default_is_not_emitted() {
 }
 
 #[test]
+fn remote_config_containers_default_empty_and_are_not_emitted() {
+    let json = r#"{ "host": "server-1" }"#;
+    let r: RemoteConfig = serde_json::from_str(json).unwrap();
+    assert!(r.containers.is_empty());
+    let s = serde_json::to_string(&r).unwrap();
+    assert!(
+        !s.contains("containers"),
+        "empty containers should be skipped: {}",
+        s
+    );
+}
+
+#[test]
+fn container_config_defaults_engine_and_omits_it() {
+    // Minimal YAML-ish shape: just a name.
+    let c: ContainerConfig = serde_json::from_str(r#"{ "name": "dev" }"#).unwrap();
+    assert_eq!(c.engine, "docker");
+    assert_eq!(c.agent_sock, None);
+    let s = serde_json::to_string(&c).unwrap();
+    assert!(
+        !s.contains("engine") && !s.contains("agent_sock"),
+        "defaults should be skipped: {}",
+        s
+    );
+}
+
+#[test]
+fn container_config_roundtrips_engine_and_agent_sock() {
+    let r = RemoteConfig {
+        host: "devbox".into(),
+        forward_agent: true,
+        containers: vec![ContainerConfig {
+            name: "dev".into(),
+            engine: "podman".into(),
+            agent_sock: Some("/ssh-agent".into()),
+        }],
+        forwards: vec![],
+    };
+    let s = serde_json::to_string(&r).unwrap();
+    let parsed: RemoteConfig = serde_json::from_str(&s).unwrap();
+    assert_eq!(parsed, r);
+}
+
+#[test]
 fn remote_config_forward_agent_off_roundtrips() {
     let r = RemoteConfig {
         host: "server-1".into(),
+        containers: vec![],
         forward_agent: false,
         forwards: vec![],
     };
@@ -542,6 +588,7 @@ fn remote_config_forward_agent_off_roundtrips() {
 fn remote_config_empty_forwards_not_emitted() {
     let r = RemoteConfig {
         host: "server-1".into(),
+        containers: vec![],
         forward_agent: true,
         forwards: vec![],
     };
@@ -557,6 +604,7 @@ fn remote_config_empty_forwards_not_emitted() {
 fn remote_config_forwards_roundtrip() {
     let r = RemoteConfig {
         host: "h".into(),
+        containers: vec![],
         forward_agent: true,
         forwards: vec![ForwardSpec {
             mode: ForwardMode::Local,

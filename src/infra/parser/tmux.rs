@@ -63,10 +63,16 @@ pub(crate) fn order_set_option_args(
 
 /// `list-sessions -F` format. The `_SSH` variant wraps the same fields in
 /// bash/zsh ANSI-C `$'...'` quoting (so the remote shell treats `#` literally
-/// and turns `\t` into a tab); quoting is the only difference.
+/// and turns `\t` into a tab). The `_CONTAINER` variant is the same fields
+/// single-quoted with *literal* tab bytes: a container command is re-parsed
+/// by `sh` inside the container — often dash, which has no `$'...'` — and
+/// single quotes keep `#`/tabs literal in any POSIX shell. Quoting is the
+/// only difference between the three.
 pub(crate) const SESSION_LIST_FORMAT: &str = "#{session_name}\t#{session_path}\t#{@deck_order}";
 pub(crate) const SESSION_LIST_FORMAT_SSH: &str =
     "$'#{session_name}\\t#{session_path}\\t#{@deck_order}'";
+pub(crate) const SESSION_LIST_FORMAT_CONTAINER: &str =
+    "'#{session_name}\t#{session_path}\t#{@deck_order}'";
 
 /// `list-windows -a -F` format for per-session activity. Local-only (it
 /// drives the most-recently-active attach pick): the remote path skips the

@@ -122,27 +122,40 @@ impl App {
         // a forward would silently drop the new rule.
         let ssh_forwards_rebuilt = self.reconfigure_ssh_if_needed(&cfg, stop_hosts);
 
-        // Hosts only in old → stop master + offboard runtime state.
+        // Hosts only in old → stop the ControlMaster deck opened for them.
+        // Iterating the host list (not remote ids) keeps the `host#container`
+        // encoding inside the tmux system: container lanes ride their host's
+        // master, so they never own one to stop.
         for old in &old_remotes {
-            if !new_remotes.iter().any(|n| n.host == old.host) {
-                if !ssh_forwards_rebuilt && cfg.ssh_connection_reuse {
-                    let _ = self.port_forward_tx.send(
-                        crate::app::ssh::port_forward_task::Op::StopHost {
+            if !new_remotes.iter().any(|n| n.host == old.host)
+                && !ssh_forwards_rebuilt
+                && cfg.ssh_connection_reuse
+            {
+                let _ =
+                    self.port_forward_tx
+                        .send(crate::app::ssh::port_forward_task::Op::StopHost {
                             host: old.host.clone(),
-                        },
-                    );
-                }
-                let lane = crate::system::tmux::TmuxSystem::host_lane(&old.host);
+                        });
+            }
+        }
+
+        // Remote ids (each host plus its containers) only in old → offboard
+        // that lane's runtime state.
+        let old_ids = crate::system::tmux::remote_ids(&old_remotes);
+        let new_ids = crate::system::tmux::remote_ids(&new_remotes);
+        for old in &old_ids {
+            if !new_ids.contains(old) {
+                let lane = crate::system::tmux::TmuxSystem::host_lane(old);
                 self.offboard_remote_host(&lane);
             }
         }
 
-        // Hosts only in new → seed runtime state + spawn the PTY so
+        // Remote ids only in new → seed runtime state + spawn the PTY so
         // selecting the new section actually connects without a deck
         // restart.
-        for n in &new_remotes {
-            if !old_remotes.iter().any(|o| o.host == n.host) {
-                self.onboard_lane(&crate::system::tmux::TmuxSystem::host_lane(&n.host));
+        for new in &new_ids {
+            if !old_ids.contains(new) {
+                self.onboard_lane(&crate::system::tmux::TmuxSystem::host_lane(new));
             }
         }
 
