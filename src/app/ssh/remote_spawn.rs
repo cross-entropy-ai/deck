@@ -151,28 +151,44 @@ impl RemoteSpawner {
 /// Remote-shell prelude for a tmux attach connection. Kept as one pure builder
 /// so quoting-sensitive behavior is unit-tested without opening SSH.
 ///
-/// The agent block pins the forwarded ssh-agent behind a stable path: sshd
-/// mints a fresh `$SSH_AUTH_SOCK` (`/tmp/ssh-*/agent.N`) per connection, so
-/// any pane that captured an older path holds a dead socket after a
-/// reconnect. Re-pointing `~/.ssh/deck-agent.sock` at the live socket on
+/// The agent block pins the forwarded ssh-agent behind a stable path: sshd mints
+/// a fresh `$SSH_AUTH_SOCK` (`/tmp/ssh-*/agent.N`) per connection, so any pane
+/// that captured an older path holds a dead socket after a reconnect.
+/// Re-pointing [`crate::remote_tmux::agent_socket_token`] at the live socket on
 /// every attach — and handing tmux the symlink, not the raw path — keeps one
-/// forever-valid address: tmux's default `update-environment` propagates it
-/// into the attached session for new panes, and `set-environment -g` covers
-/// sessions created later without an attach. Guarded by `-S` so a host with
-/// forwarding disabled skips the whole block. POSIX-sh only, and no token
-/// starts with `=`/`-`/`#` (see CLAUDE.md on remote shells re-parsing argv).
+/// address that stays valid for as long as this deck process lives: tmux's
+/// default `update-environment` propagates it into the attached session for new
+/// panes, and `set-environment -g` gives detached sessions a fallback.
+///
+/// Three details are load-bearing, each a bug that was here before:
+/// - `${SSH_AUTH_SOCK-}`, not `$SSH_AUTH_SOCK`. sshd sets nothing when the host
+///   has forwarding off, and zsh sources `~/.zshenv` even for `zsh -c`, so a
+///   `setopt nounset` there aborted the whole command string and the attach
+///   never ran.
+/// - The export and `set-environment` are gated on the symlink actually being
+///   created. Otherwise a remote account with no writable `~/.ssh` published a
+///   path that cannot work — globally, and persisting in the tmux server after
+///   deck exits — in place of a `$SSH_AUTH_SOCK` that did.
+/// - The name is per-deck-process. A single fixed name in a *shared* remote
+///   account is last-attach-wins: two people decking into `deploy@host` would
+///   silently re-point each other's panes, so one could sign with the other's
+///   forwarded keys. See [`crate::remote_tmux::agent_socket_token`].
+///
+/// POSIX-sh only, and no token starts with `=`/`-`/`#` (see CLAUDE.md on remote
+/// shells re-parsing argv).
 fn attach_command(host: &str, marker_id: u64) -> String {
     let dir = crate::remote_tmux::client_cache_dir_token();
     let marker_pattern = crate::remote_tmux::client_marker_name_pattern(host);
     let marker = crate::remote_tmux::client_marker_token(host, marker_id);
+    let agent = crate::remote_tmux::agent_socket_token();
     format!(
         "mkdir -p {dir} 2>/dev/null ; \
          find {dir} -type f -name '{marker_pattern}' -exec rm -f -- {{}} + 2>/dev/null ; \
          tty > {marker} 2>/dev/null ; \
-         if [ -S \"$SSH_AUTH_SOCK\" ]; then \
-         ln -sf \"$SSH_AUTH_SOCK\" \"$HOME/.ssh/deck-agent.sock\" ; \
-         SSH_AUTH_SOCK=\"$HOME/.ssh/deck-agent.sock\" ; export SSH_AUTH_SOCK ; \
-         {path} tmux set-environment -g SSH_AUTH_SOCK \"$HOME/.ssh/deck-agent.sock\" 2>/dev/null ; \
+         if [ -S \"${{SSH_AUTH_SOCK-}}\" ] && (umask 077 && mkdir -p \"$HOME/.ssh\") 2>/dev/null \
+         && ln -sf \"$SSH_AUTH_SOCK\" {agent} 2>/dev/null ; then \
+         SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK ; \
+         {path} tmux set-environment -g SSH_AUTH_SOCK {agent} 2>/dev/null ; \
          fi ; {path} tmux attach",
         path = crate::remote_tmux::REMOTE_PATH_PREFIX,
     )
@@ -270,17 +286,25 @@ mod tests {
     #[test]
     fn attach_pins_forwarded_agent_behind_stable_symlink() {
         let command = attach_command("web.prod", 17);
+        let agent = crate::remote_tmux::agent_socket_token();
 
-        // Guarded: hosts without a forwarded agent skip the block entirely.
-        assert!(command.contains("if [ -S \"$SSH_AUTH_SOCK\" ]; then"));
-        assert!(command.contains("ln -sf \"$SSH_AUTH_SOCK\" \"$HOME/.ssh/deck-agent.sock\""));
+        // `${SSH_AUTH_SOCK-}`, so a `nounset` remote shell (zsh sources
+        // ~/.zshenv even for `zsh -c`) does not abort before `tmux attach`.
+        assert!(command.contains("if [ -S \"${SSH_AUTH_SOCK-}\" ]"));
+        assert!(!command.contains("[ -S \"$SSH_AUTH_SOCK\" ]"));
+        // ~/.ssh may not exist on the remote account, and neither the export nor
+        // the global env may happen unless the symlink was really created.
+        assert!(command.contains("(umask 077 && mkdir -p \"$HOME/.ssh\")"));
+        assert!(command.contains(&format!(
+            "&& ln -sf \"$SSH_AUTH_SOCK\" {agent} 2>/dev/null ; then"
+        )));
         // Both the attach client env and the tmux global env carry the
         // symlink, never the per-connection socket path.
-        assert!(
-            command.contains("SSH_AUTH_SOCK=\"$HOME/.ssh/deck-agent.sock\" ; export SSH_AUTH_SOCK")
-        );
-        assert!(command
-            .contains("tmux set-environment -g SSH_AUTH_SOCK \"$HOME/.ssh/deck-agent.sock\""));
+        assert!(command.contains(&format!("SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK")));
+        assert!(command.contains(&format!("tmux set-environment -g SSH_AUTH_SOCK {agent}")));
+        // Process-scoped: a shared remote account must not let two decks
+        // re-point each other's agent.
+        assert!(agent.contains(&std::process::id().to_string()));
         // set-environment must run before the attach that consumes it.
         let setenv = command.find("set-environment").unwrap();
         let attach = command.rfind("tmux attach").unwrap();
