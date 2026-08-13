@@ -720,31 +720,27 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
             }
         }
         NewSessionAction::DirEnter => {
-            if let Some(&idx) = ns.picker.filtered.get(ns.picker.selected) {
-                let entry = ns.picker.items[idx].clone();
-                let (parent, _leaf) = crate::new_session::split_input(ns.input_str());
-                let new_path = if entry == ".." {
-                    crate::new_session::parent_directory(parent)
-                } else {
-                    format!("{}{}/", parent, entry)
-                };
-                ns.set_path(&new_path);
+            if let Some(path) = ns.path_after_entering(ns.picker.selected) {
+                ns.set_path(&path);
                 fx.reread_new_session_entries();
             }
         }
-        NewSessionAction::Confirm => {
+        NewSessionAction::DirOpen(index) => {
+            // A click opens the row it landed on: one click descends, instead
+            // of highlighting and waiting for a second. Nothing needs the
+            // highlight to move there first, because `set_path` re-anchors the
+            // list on the directory just entered.
+            if let Some(path) = ns.path_after_entering(index) {
+                ns.focus = crate::new_session::PickerFocus::Dir;
+                ns.set_path(&path);
+                fx.reread_new_session_entries();
+            }
+        }
+        NewSessionAction::Confirm | NewSessionAction::CreateIn(_) => {
             // Handled at dispatch (needs fs::metadata).
         }
         NewSessionAction::Prev => ns.step_selection(-1),
         NewSessionAction::Next => ns.step_selection(1),
-        NewSessionAction::Select(index) => {
-            if index < ns.picker.filtered.len() {
-                ns.picker.selected = index;
-                ns.focus = crate::new_session::PickerFocus::Dir;
-                ns.picker.error = None;
-                ns.keep_selection_visible();
-            }
-        }
         NewSessionAction::Clear => {
             ns.set_path("");
             fx.reread_new_session_entries();

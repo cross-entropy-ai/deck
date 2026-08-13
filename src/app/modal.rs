@@ -20,6 +20,7 @@ pub(super) struct RenderedModal {
     pub summary_popup_max_scroll: usize,
     pub kill_hits: Option<KillConfirmHits>,
     pub new_session_dirs: Vec<crate::geometry::ListItemHit>,
+    pub new_session_create: Option<Rect>,
 }
 
 /// One close/cancel policy for every formal modal. Keyboard routing handles
@@ -96,7 +97,7 @@ pub(super) fn draw_active_modal(
                     .as_ref()
                     .filter(|lane| !state.is_primary_lane(lane))
                     .map(|lane| state.section_title(lane));
-                rendered.new_session_dirs = ui::draw_new_session(
+                let hits = ui::draw_new_session(
                     frame,
                     full,
                     &ui::NewSessionView {
@@ -112,6 +113,8 @@ pub(super) fn draw_active_modal(
                     },
                     theme,
                 );
+                rendered.new_session_dirs = hits.dirs;
+                rendered.new_session_create = Some(hits.create);
             }
         }
         Modal::AddRemote => {
@@ -305,6 +308,16 @@ mod tests {
         );
         assert_eq!(rendered.new_session_dirs.len(), 1);
         assert_eq!(rendered.new_session_dirs[0].index, 0);
+
+        // The published confirm button must sit on the footer hint it stands
+        // for, so reordering the footer text can't leave a click target
+        // pointing at blank space.
+        let create = rendered.new_session_create.expect("create hint published");
+        let buffer = terminal.backend().buffer();
+        let painted: String = (create.x..create.right())
+            .map(|x| buffer[(x, create.y)].symbol())
+            .collect();
+        assert_eq!(painted, "⏎ create");
     }
 
     #[test]

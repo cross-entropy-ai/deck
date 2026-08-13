@@ -201,13 +201,17 @@ pub enum NewSessionAction {
     Confirm,
     Prev,
     Next,
-    /// Highlight an absolute index in the filtered directory list.
-    Select(usize),
     Clear,
     DeleteSegment,
     SwitchFocus,
     DirUp,
     DirEnter,
+    /// Open the directory at an absolute index in the filtered list: a click
+    /// acts on the row it landed on, so it needs no prior highlight.
+    DirOpen(usize),
+    /// Create the session in the directory at an absolute index in the
+    /// filtered list, without stopping inside it first.
+    CreateIn(usize),
 }
 
 #[derive(Debug)]

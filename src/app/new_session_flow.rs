@@ -118,6 +118,38 @@ impl App {
         self.open_new_session_picker_for(target);
     }
 
+    /// Create the session the picker currently describes, if it validates.
+    /// Both confirm paths — the keyboard's `⏎`/footer button and a right-click
+    /// straight onto a folder — funnel through here so they agree on
+    /// validation, the create effect, and the follow-up refresh.
+    pub(super) fn create_session_from_picker(&mut self) {
+        if let Some(req) = self.confirm_new_session() {
+            let mut fx = crate::effects::SideEffect::default();
+            fx.push(crate::effects::Effect::CreateSession(req));
+            fx.refresh_sessions();
+            self.execute_side_effects(&fx);
+        }
+    }
+
+    /// Point the path input at filtered row `index` without re-listing it:
+    /// the caller creates a session there immediately, so the picker closes
+    /// before any listing could be shown. Returns whether the row existed.
+    pub(super) fn aim_new_session_at(&mut self, index: usize) -> bool {
+        let Some(path) = self
+            .state
+            .overlay
+            .new_session
+            .as_ref()
+            .and_then(|ns| ns.path_after_entering(index))
+        else {
+            return false;
+        };
+        if let Some(ns) = self.state.overlay.new_session.as_mut() {
+            ns.set_path(&path);
+        }
+        true
+    }
+
     pub(super) fn confirm_new_session(&mut self) -> Option<crate::effects::CreateSessionRequest> {
         let (name, lane) = {
             let ns = self.state.overlay.new_session.as_ref()?;

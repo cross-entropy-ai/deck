@@ -108,3 +108,71 @@ fn auto_session_name_skips_non_session_collisions_too() {
     let names = vec!["foo", "bar", "session-3"];
     assert_eq!(auto_session_name(&names, 3), "session-4");
 }
+
+/// A picker over `~/` listing `entries`, with the synthetic parent row.
+fn picker_at_home(entries: Vec<String>) -> NewSessionState {
+    let mut ns = NewSessionState {
+        picker: crate::picker::FilterPicker::new(with_parent_entry(entries)),
+        ..NewSessionState::default()
+    };
+    ns.picker.input = make_textarea("~/");
+    ns.refilter();
+    ns
+}
+
+#[test]
+fn fresh_listing_highlights_the_first_child_not_the_parent_row() {
+    let ns = picker_at_home(vec!["src".into(), "target".into()]);
+    assert_eq!(ns.picker.selected, 1);
+    assert_eq!(ns.entry_at(ns.picker.selected), Some("src"));
+}
+
+#[test]
+fn stepping_skips_the_parent_row_in_both_directions() {
+    let mut ns = picker_at_home(vec!["src".into(), "target".into()]);
+
+    // Down from the last child wraps past `..` onto the first child.
+    ns.step_selection(1);
+    assert_eq!(ns.entry_at(ns.picker.selected), Some("target"));
+    ns.step_selection(1);
+    assert_eq!(ns.entry_at(ns.picker.selected), Some("src"));
+
+    // Up from the first child wraps past `..` onto the last child.
+    ns.step_selection(-1);
+    assert_eq!(ns.entry_at(ns.picker.selected), Some("target"));
+}
+
+#[test]
+fn parent_row_holds_the_highlight_when_it_is_the_only_row() {
+    // An empty directory: there is no child to move to, so the highlight
+    // stays put rather than spinning.
+    let mut ns = picker_at_home(vec![]);
+    assert!(ns.is_parent_row(ns.picker.selected));
+    ns.step_selection(1);
+    assert!(ns.is_parent_row(ns.picker.selected));
+    ns.step_selection(-1);
+    assert!(ns.is_parent_row(ns.picker.selected));
+}
+
+#[test]
+fn path_after_entering_appends_children_and_walks_up_for_the_parent_row() {
+    let ns = picker_at_home(vec!["src".into()]);
+    assert_eq!(ns.path_after_entering(1).as_deref(), Some("~/src/"));
+    assert_eq!(ns.path_after_entering(0).as_deref(), Some("~/../"));
+    assert_eq!(ns.path_after_entering(9), None);
+}
+
+#[test]
+fn path_after_entering_keeps_a_partially_typed_leaf_out_of_the_result() {
+    // Typing narrows the list; opening a match must replace the leaf, not
+    // append to it.
+    let mut ns = picker_at_home(vec!["src".into(), "target".into()]);
+    ns.picker.input = make_textarea("~/ta");
+    ns.refilter();
+    let selected = ns.picker.selected;
+    assert_eq!(ns.entry_at(selected), Some("target"));
+    assert_eq!(
+        ns.path_after_entering(selected).as_deref(),
+        Some("~/target/")
+    );
+}

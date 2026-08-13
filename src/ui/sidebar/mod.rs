@@ -398,6 +398,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
         agents: agent_hits,
         tabs: Some(header_hits.tabs),
         new_session_dirs: Vec::new(),
+        new_session_create: None,
         sidebar_toggle: Some(header_hits.sidebar_toggle),
         summary: summary_hits,
         menu: menu_bounds,
