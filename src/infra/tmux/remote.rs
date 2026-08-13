@@ -577,10 +577,19 @@ fn new_session_with(
     // left with a dead agent forever. A later attach repairs the session entry
     // but not an already-spawned pane.
     let agent = agent_socket_token();
+    // Leads with `export {prefix}` rather than the `if`: `run_ssh` prepends
+    // `PATH=…:$PATH` as an argv prefix, and a variable-assignment prefix only
+    // attaches to a SIMPLE command. Ahead of a reserved word the remote shell
+    // reads `if` as the command name and dies with "syntax error near
+    // unexpected token `then'", so the session is never created. Same reason
+    // `capture_panes` exports the prefix before its `for` loop; the resulting
+    // duplicate PATH entries are harmless.
     let script = format!(
-        "if [ -S {agent} ]; then SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK ; \
+        "export {prefix} ; \
+         if [ -S {agent} ]; then SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK ; \
          else unset SSH_AUTH_SOCK ; fi ; \
-         tmux new-session -d -s {name} -c {dir}"
+         tmux new-session -d -s {name} -c {dir}",
+        prefix = REMOTE_PATH_PREFIX,
     );
     run_ssh(runner, host, &[script.as_str()]).map(|_| ())
 }
