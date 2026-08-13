@@ -472,6 +472,85 @@ fn new_session_never_bakes_this_calls_own_agent_socket_into_the_session() {
     );
 }
 
+/// The remote command `run_ssh` assembled, as the remote login shell will see it
+/// (ssh re-joins argv into one string). Reconstructed from the recorded call by
+/// cutting at the PATH prefix `run_ssh` always emits first.
+fn remote_command_of(call: &str) -> String {
+    let (_, rest) = call
+        .split_once(REMOTE_PATH_PREFIX)
+        .expect("run_ssh always emits the PATH prefix");
+    format!("{REMOTE_PATH_PREFIX}{rest}")
+}
+
+#[test]
+fn every_assembled_remote_command_is_valid_shell() {
+    // Guards a whole class rather than one call site. `run_ssh` prepends
+    // `PATH=…:$PATH` as an argv prefix, and a variable-assignment prefix only
+    // attaches to a SIMPLE command — put a compound statement (`if`, `for`,
+    // `while`, `{ }`) first and the remote shell reads the reserved word as a
+    // command name and dies with a syntax error. That shipped once, in
+    // `new_session`, and only showed up against a real host.
+    type Invoke = Box<dyn Fn(&FakeRunner)>;
+    let cases: Vec<(&str, Invoke)> = vec![
+        (
+            "list_sessions",
+            Box::new(|r: &FakeRunner| {
+                let _ = list_sessions_with(r, "box");
+            }),
+        ),
+        (
+            "new_session",
+            Box::new(|r: &FakeRunner| {
+                let _ = new_session_with(r, "box", "work", "~/proj");
+            }),
+        ),
+        (
+            "switch_client",
+            Box::new(|r: &FakeRunner| {
+                let _ = switch_client_with(r, "box", 7, "work");
+            }),
+        ),
+        (
+            "persist_session_order",
+            Box::new(|r: &FakeRunner| {
+                let _ = persist_session_order_with(r, "box", &["a".to_string()]);
+            }),
+        ),
+        (
+            "list_dir",
+            Box::new(|r: &FakeRunner| {
+                let _ = list_dir_with(r, "box", "~/proj");
+            }),
+        ),
+        (
+            "wait_for_client_marker",
+            Box::new(|r: &FakeRunner| {
+                let _ = wait_for_client_marker_with(r, "box", 7);
+            }),
+        ),
+    ];
+
+    for (name, run) in cases {
+        let runner = FakeRunner::new(ok(""));
+        run(&runner);
+        let command = remote_command_of(&runner.calls()[0]);
+        // `-n` parses without executing. bash is the common remote login shell;
+        // sh covers the stricter POSIX reading (and is what a container gets).
+        for shell in ["bash", "sh"] {
+            let status = std::process::Command::new(shell)
+                .arg("-n")
+                .arg("-c")
+                .arg(&command)
+                .status()
+                .expect("spawn shell");
+            assert!(
+                status.success(),
+                "{name} produced a command {shell} cannot parse:\n{command}"
+            );
+        }
+    }
+}
+
 #[test]
 fn new_session_reports_success_and_failure() {
     let okrunner = OneShot::new(ok(""));
