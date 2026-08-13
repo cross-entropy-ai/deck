@@ -191,10 +191,21 @@ fn enter_on_new_session_directory_opens_highlighted_directory() {
     open_modal(&mut state, Modal::NewSession);
     state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Dir;
 
+    // Enter finishes the job from either field; descending is `→`.
     let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
     assert!(matches!(
         key_to_action(&enter, &state),
+        Action::NewSession(super::NewSessionAction::Confirm)
+    ));
+    let right = KeyEvent::new(KeyCode::Right, KeyModifiers::NONE);
+    assert!(matches!(
+        key_to_action(&right, &state),
         Action::NewSession(super::NewSessionAction::DirEnter)
+    ));
+    let left = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
+    assert!(matches!(
+        key_to_action(&left, &state),
+        Action::NewSession(super::NewSessionAction::DirUp)
     ));
 }
 

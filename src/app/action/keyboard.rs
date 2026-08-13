@@ -369,7 +369,11 @@ fn name_field_key_to_action(key: &KeyEvent) -> Action {
 fn dir_field_key_to_action(key: &KeyEvent) -> Action {
     use crossterm::event::KeyModifiers;
     match key.code {
-        KeyCode::Enter => Action::NewSession(NewSessionAction::DirEnter),
+        // Enter creates the session, from either field — browsing is what the
+        // arrows are for. Overloading Enter onto "descend, or go up when `../`
+        // is highlighted" left no key that finished the job, so the picker
+        // could only be escaped, never confirmed, without tabbing back.
+        KeyCode::Enter => Action::NewSession(NewSessionAction::Confirm),
         KeyCode::Tab => Action::NewSession(NewSessionAction::SwitchFocus),
         KeyCode::Up => Action::NewSession(NewSessionAction::Prev),
         KeyCode::Down => Action::NewSession(NewSessionAction::Next),

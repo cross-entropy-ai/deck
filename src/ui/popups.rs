@@ -30,7 +30,7 @@ pub fn draw_new_session(
     let footer = if view.focus_name {
         "  ⏎ create   ⇥ switch   ←→ cursor   ⎋ cancel"
     } else {
-        "  ⏎/→ open   ← parent   ↑↓ select   ⇥ switch   ⎋"
+        "  ⏎ create   → open   ← parent   ↑↓ select   ⇥ switch   ⎋"
     };
 
     draw_filter_picker(
