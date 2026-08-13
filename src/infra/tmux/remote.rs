@@ -139,14 +139,27 @@ pub(crate) fn base_ssh_args(host: &str) -> Vec<String> {
     args
 }
 
-/// Path prefix prepended to every remote command. SSH's non-interactive
-/// shell skips `~/.zshrc` / `~/.profile`, so non-default installs
-/// (Homebrew, linuxbrew, per-user) are invisible. Prepending these paths
-/// via `PATH=... cmd ...` makes deck work without editing remote startup
-/// files. The trailing `$PATH` (expanded by the remote shell) keeps the
-/// user's existing path intact.
-pub(crate) const REMOTE_PATH_PREFIX: &str =
-    "PATH=/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$PATH";
+/// Path prefix prepended to every remote command. SSH's non-interactive shell
+/// skips `~/.zshrc` / `~/.profile`, so non-default installs (Homebrew, linuxbrew,
+/// per-user) are invisible. Prepending these paths via `PATH=... cmd ...` makes
+/// deck work without editing remote startup files. The trailing `$PATH`
+/// (expanded by the remote shell) keeps the user's existing path intact.
+///
+/// `$HOME/.local/bin` leads because it is the most specific: a user who put tmux
+/// there meant that one. It matters most inside a container, where `sh -c` reads
+/// no startup file and the image's `PATH` is only system directories — a tmux in
+/// `~/.local/bin` was simply invisible and the lane failed with
+/// `tmux: not found`. Fixing it here rather than by running a login shell keeps
+/// the promise this constant exists to make: Deck does not depend on the remote's
+/// startup files, which may not exist, may not be zsh, and may print banners into
+/// output Deck parses.
+pub(crate) const REMOTE_PATH_PREFIX: &str = concat!(
+    "PATH=$HOME/.local/bin",
+    ":/opt/homebrew/bin",
+    ":/usr/local/bin",
+    ":/home/linuxbrew/.linuxbrew/bin",
+    ":$PATH"
+);
 
 /// Run `remote_argv` on the remote id's tmux server: on the host itself, or —
 /// for a container id — inside the container via [`container_exec_argv`].

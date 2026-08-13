@@ -136,6 +136,24 @@ fn remote_id_parses_host_and_container_halves() {
 }
 
 #[test]
+fn the_path_prefix_covers_per_user_installs() {
+    // A container's `sh -c` reads no startup file and the image's PATH is only
+    // system directories, so a tmux in ~/.local/bin was invisible and the lane
+    // failed with `tmux: not found`. Verified against a real container.
+    assert!(REMOTE_PATH_PREFIX.starts_with("PATH=$HOME/.local/bin:"));
+    // $PATH stays last so the target's own entries survive.
+    assert!(REMOTE_PATH_PREFIX.ends_with(":$PATH"));
+    // It has to reach the container path too, not just the host one.
+    let runner = FakeRunner::new(ok(""));
+    let _ = list_sessions_with(&runner, "box#dev");
+    assert!(
+        runner.calls()[0].contains("sh -c 'PATH=$HOME/.local/bin:"),
+        "call: {}",
+        runner.calls()[0]
+    );
+}
+
+#[test]
 fn container_run_wraps_command_in_engine_exec_on_the_host() {
     let runner = FakeRunner::new(ok(""));
     let _ = list_sessions_with(&runner, "box#dev");
