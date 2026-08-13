@@ -44,16 +44,21 @@ pub struct FilterPickerView<'a> {
     /// Shown in place of the list when `filtered` is empty.
     pub empty_msg: &'a str,
     pub error: Option<&'a str>,
-    pub footer: &'a str,
+    /// Footer hint lines, one screen row each. Splitting across rows keeps
+    /// each row short: these hints are dense in arrow and symbol glyphs, which
+    /// are East Asian *ambiguous* width — `unicode-width` measures them as one
+    /// column while a CJK-configured terminal paints them as two, so a row
+    /// measured to fit exactly can still be clipped on the way out.
+    pub footer: &'a [&'a str],
 }
 
 /// The click targets one drawn filter-picker published for this frame.
 pub struct PickerHits {
     /// Visible candidate rows, each carrying its filtered index.
     pub rows: Vec<ListItemHit>,
-    /// The footer line. Callers that put a clickable hint in their footer
-    /// carve its rect out of this one, so the hint's text and its hit region
-    /// are derived from the same layout.
+    /// The footer block, one row per hint line. Callers that put a clickable
+    /// hint in their footer carve its rect out of this one, so the hint's text
+    /// and its hit region are derived from the same layout.
     pub footer: Rect,
 }
 
@@ -68,14 +73,14 @@ pub fn draw_filter_picker(
 ) -> PickerHits {
     // Always reserve at least one list row (for the empty-state message).
     let list_rows = picker.filtered.len().min(picker.max_visible).max(1);
-    // borders(2) + fields(N) + blank(1) + list + blank(1) + [error] + footer(1)
+    // borders(2) + fields(N) + blank(1) + list + blank(1) + [error] + footer(N)
     let content_height = 2
         + picker.fields.len() as u16
         + 1
         + list_rows as u16
         + 1
         + picker.error.is_some() as u16
-        + 1;
+        + picker.footer.len() as u16;
     let popup = popup_rect(area, picker.width, content_height, picker.min_height);
 
     let inner =
@@ -87,7 +92,10 @@ pub fn draw_filter_picker(
     if picker.error.is_some() {
         constraints.push(Constraint::Length(1));
     }
-    constraints.push(Constraint::Length(1)); // footer
+    constraints.extend(std::iter::repeat_n(
+        Constraint::Length(1),
+        picker.footer.len(),
+    ));
     constraints.push(Constraint::Min(0)); // tail
     let rows = Layout::vertical(constraints).split(inner);
 
@@ -162,9 +170,16 @@ pub fn draw_filter_picker(
         idx += 1;
     }
 
-    modal_footer(frame.buffer_mut(), rows[idx], picker.footer, theme);
+    let footer_top = rows[idx];
+    for line in picker.footer {
+        modal_footer(frame.buffer_mut(), rows[idx], line, theme);
+        idx += 1;
+    }
     PickerHits {
         rows: rows_hits,
-        footer: rows[idx],
+        footer: Rect {
+            height: picker.footer.len() as u16,
+            ..footer_top
+        },
     }
 }

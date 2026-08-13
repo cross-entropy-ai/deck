@@ -404,14 +404,19 @@ mod tests {
             "the scrollbar thumb belongs at the bottom of the scrolling part: {last_row:?}"
         );
 
-        // The footer is tight enough to hold every hint at this popup width.
-        // `modal_footer` clips silently, so without this a longer hint list
-        // would quietly lose its tail.
+        // Both footer rows must fit at this popup width, `⎋ cancel` included.
+        // `modal_footer` clips silently, so without this the tail of a row can
+        // disappear with nothing to show that it did.
         let text = buffer_text(buffer);
-        assert!(
-            text.contains("⏎ create · →← folder · ↑↓ move · right-click create · ⎋"),
-            "the whole footer must fit unclipped: {text:?}"
-        );
+        for row in [
+            "⏎ create · →← folder · ↑↓ move · ⎋ cancel",
+            "click open · right-click create here",
+        ] {
+            assert!(
+                text.contains(row),
+                "footer row must fit unclipped: {row:?} missing from {text:?}"
+            );
+        }
     }
 
     #[test]
