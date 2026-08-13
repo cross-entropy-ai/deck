@@ -419,6 +419,72 @@ mod tests {
         }
     }
 
+    /// The footer is centered as a block, and `⏎ create` — the one hint that
+    /// is also a click target — must hold its column when ⇥ swaps focus. The
+    /// two keys-row variants are not the same length, so only padding them to a
+    /// common width keeps the centered block, and the button in it, still.
+    #[test]
+    fn footer_is_centered_and_the_create_button_holds_its_column() {
+        use crate::new_session::{make_textarea, NewSessionState, PickerFocus};
+        use crate::picker::FilterPicker;
+
+        // Leading and trailing blanks around the footer row's text, measured
+        // between the popup's own borders, plus the published button rect.
+        let render = |focus: PickerFocus| -> ((usize, usize), Rect) {
+            let mut state = AppState::new(100, 30);
+            state.overlay.new_session = Some(NewSessionState {
+                name: make_textarea("session-1"),
+                focus,
+                picker: FilterPicker::new(vec!["~/project".to_string()]),
+                scroll: 0,
+                target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
+            });
+
+            let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+            let mut rendered = RenderedModal::default();
+            terminal
+                .draw(|frame| {
+                    let area = frame.area();
+                    rendered = draw_active_modal(
+                        frame,
+                        &state,
+                        area,
+                        area,
+                        LayoutMode::Horizontal,
+                        &THEMES[0],
+                    );
+                })
+                .unwrap();
+
+            let create = rendered.new_session_create.expect("create hint published");
+            let buffer = terminal.backend().buffer();
+            let row: Vec<&str> = (0..buffer.area.width)
+                .map(|x| buffer[(x, create.y)].symbol())
+                .collect();
+            let left = row.iter().position(|s| *s == "│").expect("left border");
+            let right = row.iter().rposition(|s| *s == "│").expect("right border");
+            let inner = &row[left + 1..right];
+            let text = inner.iter().position(|s| *s != " ").expect("footer text");
+            let end = inner.iter().rposition(|s| *s != " ").expect("footer text");
+            ((text, inner.len() - end - 1), create)
+        };
+
+        // The path-focused row is the wider variant, so it carries no padding
+        // and its blanks are the block's true margins: equal within the odd
+        // column that cannot be split.
+        let ((left, right), path_create) = render(PickerFocus::Dir);
+        assert!(
+            left.abs_diff(right) <= 1 && left > 0,
+            "footer must be centered, not left-aligned: {left} left, {right} right"
+        );
+
+        let (_, name_create) = render(PickerFocus::Name);
+        assert_eq!(
+            name_create, path_create,
+            "the confirm button must not move when ⇥ swaps focus"
+        );
+    }
+
     /// The popup must not resize as the filter narrows, or it shifts under the
     /// cursor on every keystroke. The footer's published rect is the probe:
     /// it is the last row inside the frame, so its `y` is the popup's height.

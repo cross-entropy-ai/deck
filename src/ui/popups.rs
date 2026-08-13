@@ -19,8 +19,9 @@ use super::NewSessionView;
 /// open with it at the same offset, so the click target is the same rect
 /// whichever field has focus.
 const CREATE_HINT: &str = "⏎ create";
-/// Leading pad shared by every footer string, and thus the hint's x offset.
-const FOOTER_PAD: u16 = 2;
+/// Row markers: which input device the row's hints are for.
+const KEYS_ICON: &str = "\u{2328}";
+const MOUSE_ICON: &str = "\u{1f5b1}";
 
 /// What the drawn new-session picker published for this frame.
 pub struct NewSessionHits {
@@ -42,8 +43,9 @@ pub fn draw_new_session(
         Some(lane_title) => format!("New session · {lane_title}"),
         None => "New session".to_string(),
     };
-    // Keys on the first row, mouse on the second. Two shorter rows instead of
-    // one dense one: every hint here is arrow and symbol glyphs of *ambiguous*
+    // Keys on the first row, mouse on the second, each led by its device's
+    // icon so the split reads at a glance. Two shorter rows instead of one
+    // dense one: every hint here is arrow and symbol glyphs of *ambiguous*
     // East Asian width, so a row measured to fit exactly can still overflow in
     // a terminal that paints them double-width — and `modal_footer` clips
     // silently, which cost the trailing `⎋ cancel`.
@@ -51,12 +53,21 @@ pub fn draw_new_session(
     // `⏎ create` leads the keys row in both focus states, so the one hint that
     // is also a button never moves. The mouse row is identical in both, because
     // clicking a row works from either field.
-    let keys = if view.focus_name {
-        format!("  {CREATE_HINT} · ⇥ path · ←→ cursor · ⎋ cancel")
+    let (hints, alternate) = if view.focus_name {
+        ("⇥ path · ←→ cursor", "→← folder · ↑↓ move")
     } else {
-        format!("  {CREATE_HINT} · →← folder · ↑↓ move · ⎋ cancel")
+        ("→← folder · ↑↓ move", "⇥ path · ←→ cursor")
     };
-    let footer = [keys.as_str(), "  click open · right-click create here"];
+    // Pad the narrower focus variant out to the wider one. The block is
+    // centered on its widest row, so without this the whole footer — and the
+    // `⏎ create` button inside it — would slide a column on every ⇥.
+    let pad = " ".repeat(
+        unicode_width::UnicodeWidthStr::width(alternate)
+            .saturating_sub(unicode_width::UnicodeWidthStr::width(hints)),
+    );
+    let keys = format!("{KEYS_ICON} {CREATE_HINT} · {hints} · ⎋ cancel{pad}");
+    let mouse = format!("{MOUSE_ICON} click open · right-click create here");
+    let footer = [keys.as_str(), mouse.as_str()];
 
     let hits = draw_filter_picker(
         frame,
@@ -91,11 +102,13 @@ pub fn draw_new_session(
         |idx| format!("{}/", view.entries[idx]),
     );
 
-    // Carve the hint out of the footer it was just drawn into. Intersecting
-    // keeps the target inside the popup on a terminal too narrow to hold the
-    // whole footer, where the text is clipped.
+    // Carve the hint out of the footer it was just drawn into: the block's own
+    // rect supplies the centered offset, so the target follows the text. The
+    // hint sits one space past the row's icon. Intersecting keeps the target
+    // inside the popup on a terminal too narrow to hold the whole footer, where
+    // the text is clipped.
     let create = hits.footer.intersection(Rect {
-        x: hits.footer.x + FOOTER_PAD,
+        x: hits.footer.x + unicode_width::UnicodeWidthStr::width(KEYS_ICON) as u16 + 1,
         y: hits.footer.y,
         width: unicode_width::UnicodeWidthStr::width(CREATE_HINT) as u16,
         height: 1,
@@ -136,7 +149,7 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
             pinned: 0,
             empty_msg,
             error: p.error.as_deref(),
-            footer: &["  \u{23ce} add   \u{2191}\u{2193} select   \u{238b} cancel"],
+            footer: &["\u{23ce} add   \u{2191}\u{2193} select   \u{238b} cancel"],
         },
         |idx| p.items[idx].clone(),
     );
