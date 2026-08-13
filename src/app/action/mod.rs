@@ -283,6 +283,8 @@ pub enum MountAction {
     Prev,
     /// Mount the highlighted candidate, or ask first when it needs activating.
     Confirm,
+    /// Cycle the candidate order (see `overlay::MountSort`).
+    CycleSort,
     Close,
     /// A worker answered. Stale generations are dropped by the reducer.
     Discovered {

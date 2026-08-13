@@ -136,6 +136,10 @@ pub struct MountPickerState {
     /// (start someone's container on a shared host), so it never happens on a
     /// single keypress.
     pub confirming: Option<crate::system::MountCandidate>,
+    /// The order the candidate list is in. Carried in from `AppState` so the
+    /// choice outlives one picker, and applied to `candidates` rather than to a
+    /// view of it, keeping `picker.items` index-aligned by construction.
+    pub sort: MountSort,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,8 +148,68 @@ pub enum MountBusy {
     Activating,
 }
 
+/// How the mount picker orders what a system discovered.
+///
+/// Backends report discovery order (for containers, whatever `docker ps` felt
+/// like), which is not an order anyone can predict, so the picker imposes one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MountSort {
+    /// Mountable candidates first, then by name. The default, because a
+    /// candidate needing activation costs a side effect outside Deck and a
+    /// confirmation, so it is the one you less often mean.
+    #[default]
+    ReadyFirst,
+    /// Name order, ignoring readiness — better when you know what you want and
+    /// the list is long enough that grouping just moves it around.
+    Name,
+}
+
+impl MountSort {
+    /// The next order in the cycle. Two orders today, so this is a toggle; a
+    /// cycle keeps the call sites honest if a third is added.
+    pub fn next(self) -> Self {
+        match self {
+            Self::ReadyFirst => Self::Name,
+            Self::Name => Self::ReadyFirst,
+        }
+    }
+
+    /// What the picker says the current order is.
+    ///
+    /// Worded for containers ("running"), though the rule it describes is the
+    /// generic `needs_activation`. Same known compromise as the `Containers…`
+    /// menu label: when a second mount provider exists, both move into the
+    /// provider so each names its own candidates.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ReadyFirst => "running first, then name",
+            Self::Name => "name",
+        }
+    }
+
+    /// Order `candidates` by this rule.
+    ///
+    /// Names are compared case-insensitively so `Web` and `api` don't split
+    /// into separate alphabets, and ties fall back to the id, which is unique
+    /// per candidate — without that, two containers with the same name on
+    /// different engines would swap places between re-sorts.
+    pub fn apply(self, candidates: &mut [crate::system::MountCandidate]) {
+        candidates.sort_by(|a, b| {
+            let name = |c: &crate::system::MountCandidate| c.label.to_lowercase();
+            match self {
+                Self::ReadyFirst => (a.needs_activation, name(a), a.id.clone()).cmp(&(
+                    b.needs_activation,
+                    name(b),
+                    b.id.clone(),
+                )),
+                Self::Name => (name(a), a.id.clone()).cmp(&(name(b), b.id.clone())),
+            }
+        });
+    }
+}
+
 impl MountPickerState {
-    pub fn new(lane: crate::lane::LaneId, generation: u64) -> Self {
+    pub fn new(lane: crate::lane::LaneId, generation: u64, sort: MountSort) -> Self {
         Self {
             lane,
             generation,
@@ -153,15 +217,52 @@ impl MountPickerState {
             candidates: Vec::new(),
             busy: Some(MountBusy::Discovering),
             confirming: None,
+            sort,
         }
     }
 
-    /// Replace the candidate list, keeping labels and candidates aligned.
-    pub fn set_candidates(&mut self, candidates: Vec<crate::system::MountCandidate>) {
+    /// Replace the candidate list, sorted, keeping labels and candidates
+    /// aligned.
+    ///
+    /// The filter text survives: discovery is an ssh round trip, so the user
+    /// can well have started typing before the answer lands, and throwing that
+    /// away would look like dropped keystrokes.
+    pub fn set_candidates(&mut self, mut candidates: Vec<crate::system::MountCandidate>) {
+        self.sort.apply(&mut candidates);
+        self.rebuild(candidates, None);
+        self.busy = None;
+    }
+
+    /// Re-order the current candidates. The highlight follows its candidate
+    /// rather than its row: the set didn't change, only the order, so keeping
+    /// the row would silently point at something else.
+    pub fn resort(&mut self, sort: MountSort) {
+        self.sort = sort;
+        let anchor = self.selected().map(|candidate| candidate.id.clone());
+        let mut candidates = std::mem::take(&mut self.candidates);
+        self.sort.apply(&mut candidates);
+        self.rebuild(candidates, anchor);
+    }
+
+    /// Install `candidates` as the list, rebuilding the index-aligned labels
+    /// and re-deriving the filter, then put the highlight back on `anchor`.
+    fn rebuild(&mut self, candidates: Vec<crate::system::MountCandidate>, anchor: Option<String>) {
+        let input = std::mem::replace(&mut self.picker.input, make_textarea(""));
         self.picker =
             crate::picker::FilterPicker::new(candidates.iter().map(|c| c.label.clone()).collect());
+        self.picker.input = input;
         self.candidates = candidates;
-        self.busy = None;
+        self.refilter();
+        if let Some(anchor) = anchor {
+            let row = self
+                .picker
+                .filtered
+                .iter()
+                .position(|&index| self.candidates[index].id == anchor);
+            if let Some(row) = row {
+                self.picker.selected = row;
+            }
+        }
     }
 
     /// The highlighted candidate. Resolved through `filtered` so it survives

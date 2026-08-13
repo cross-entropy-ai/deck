@@ -2242,6 +2242,203 @@ fn mount_picker_opens_busy_and_fills_from_the_worker() {
     );
 }
 
+/// Candidates in an order no one can predict (`docker ps` order), used to
+/// prove the picker imposes its own.
+fn scrambled_candidates() -> Vec<crate::system::MountCandidate> {
+    let candidate = |id: &str, label: &str, needs_activation: bool| crate::system::MountCandidate {
+        id: id.into(),
+        label: label.into(),
+        needs_activation,
+    };
+    vec![
+        candidate("docker\x1fzeta", "zeta (docker)", false),
+        candidate("docker\x1fbeta", "beta (docker, stopped)", true),
+        candidate("docker\x1fWeb", "Web (docker)", false),
+        candidate("docker\x1falpha", "alpha (docker, stopped)", true),
+    ]
+}
+
+fn discover(state: &mut AppState, lane: &crate::lane::LaneId) {
+    let generation = state
+        .overlay
+        .mount_picker
+        .as_ref()
+        .expect("open")
+        .generation;
+    apply_action(
+        state,
+        Action::Mount(MountAction::Discovered {
+            lane: lane.clone(),
+            generation,
+            result: Ok(scrambled_candidates()),
+        }),
+    );
+}
+
+fn candidate_ids(state: &AppState) -> Vec<String> {
+    state
+        .overlay
+        .mount_picker
+        .as_ref()
+        .expect("open")
+        .candidates
+        .iter()
+        .map(|candidate| candidate.id.clone())
+        .collect()
+}
+
+#[test]
+fn discovered_candidates_are_ordered_ready_first_then_by_name() {
+    let mut state = make_test_state(1);
+    let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
+    mount_remote_lane(&mut state, "h1");
+    apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
+    discover(&mut state, &lane);
+
+    // Mountable ones first, and `Web` sorts with the lower-case names rather
+    // than ahead of them all.
+    assert_eq!(
+        candidate_ids(&state),
+        [
+            "docker\x1fWeb",
+            "docker\x1fzeta",
+            "docker\x1falpha",
+            "docker\x1fbeta"
+        ]
+    );
+    assert_eq!(
+        state.overlay.mount_picker.as_ref().unwrap().sort,
+        crate::overlay::MountSort::ReadyFirst
+    );
+}
+
+#[test]
+fn cycling_the_sort_reorders_and_is_remembered_for_the_next_picker() {
+    let mut state = make_test_state(1);
+    let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
+    mount_remote_lane(&mut state, "h1");
+    apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
+    discover(&mut state, &lane);
+
+    apply_action(&mut state, Action::Mount(MountAction::CycleSort));
+    assert_eq!(
+        candidate_ids(&state),
+        [
+            "docker\x1falpha",
+            "docker\x1fbeta",
+            "docker\x1fWeb",
+            "docker\x1fzeta"
+        ],
+        "name order ignores readiness"
+    );
+
+    // The choice outlives this picker, without being written to disk.
+    assert_eq!(state.mount_sort, crate::overlay::MountSort::Name);
+    apply_action(&mut state, Action::Mount(MountAction::Close));
+    apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
+    discover(&mut state, &lane);
+    assert_eq!(candidate_ids(&state)[0], "docker\x1falpha");
+
+    // And it cycles back.
+    apply_action(&mut state, Action::Mount(MountAction::CycleSort));
+    assert_eq!(state.mount_sort, crate::overlay::MountSort::ReadyFirst);
+    assert_eq!(candidate_ids(&state)[0], "docker\x1fWeb");
+}
+
+#[test]
+fn re_sorting_keeps_the_highlight_on_its_candidate_not_its_row() {
+    let mut state = make_test_state(1);
+    let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
+    mount_remote_lane(&mut state, "h1");
+    apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
+    discover(&mut state, &lane);
+
+    // Highlight `zeta`, which sorts second under ReadyFirst and last by name.
+    apply_action(&mut state, Action::Mount(MountAction::Next));
+    assert_eq!(
+        state
+            .overlay
+            .mount_picker
+            .as_ref()
+            .unwrap()
+            .selected()
+            .map(|c| c.id.as_str()),
+        Some("docker\x1fzeta")
+    );
+
+    apply_action(&mut state, Action::Mount(MountAction::CycleSort));
+    let picker = state.overlay.mount_picker.as_ref().unwrap();
+    assert_eq!(
+        picker.selected().map(|c| c.id.as_str()),
+        Some("docker\x1fzeta"),
+        "the highlight must follow the candidate through a re-sort"
+    );
+    assert_eq!(picker.picker.selected, 3, "which is now the last row");
+}
+
+#[test]
+fn re_sorting_abandons_a_pending_activation_confirmation() {
+    let mut state = make_test_state(1);
+    let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
+    mount_remote_lane(&mut state, "h1");
+    apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
+    discover(&mut state, &lane);
+
+    // Highlight a stopped candidate and ask to mount it: that arms the confirm.
+    for _ in 0..2 {
+        apply_action(&mut state, Action::Mount(MountAction::Next));
+    }
+    apply_action(&mut state, Action::Mount(MountAction::Confirm));
+    assert!(state
+        .overlay
+        .mount_picker
+        .as_ref()
+        .unwrap()
+        .confirming
+        .is_some());
+
+    apply_action(&mut state, Action::Mount(MountAction::CycleSort));
+    assert!(
+        state
+            .overlay
+            .mount_picker
+            .as_ref()
+            .unwrap()
+            .confirming
+            .is_none(),
+        "re-ordering moves the row the confirmation pointed at"
+    );
+}
+
+#[test]
+fn a_filter_typed_while_discovery_is_out_survives_the_answer() {
+    let mut state = make_test_state(1);
+    let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
+    mount_remote_lane(&mut state, "h1");
+    apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
+
+    // Discovery is an ssh hop; the user can type before it lands.
+    for ch in "et".chars() {
+        apply_action(
+            &mut state,
+            Action::Mount(MountAction::InputKey(key(crossterm::event::KeyCode::Char(
+                ch,
+            )))),
+        );
+    }
+    discover(&mut state, &lane);
+
+    let picker = state.overlay.mount_picker.as_ref().unwrap();
+    assert_eq!(picker.picker.input_str(), "et");
+    let shown: Vec<&str> = picker
+        .picker
+        .filtered
+        .iter()
+        .map(|&index| picker.candidates[index].id.as_str())
+        .collect();
+    assert_eq!(shown, ["docker\x1fzeta", "docker\x1fbeta"]);
+}
+
 #[test]
 fn a_late_worker_answer_for_a_superseded_picker_is_dropped() {
     let mut state = make_test_state(1);

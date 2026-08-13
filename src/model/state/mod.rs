@@ -660,6 +660,10 @@ pub struct AppState {
     /// Monotonic stamp for mount-picker requests, so a late worker answer for a
     /// closed or re-pointed picker is dropped instead of repopulating it.
     pub mount_generation: u64,
+    /// Candidate order the mount picker opens with. Held here rather than in
+    /// the overlay so the choice outlives one picker; not persisted, because
+    /// the mounts it orders don't outlive the session either.
+    pub mount_sort: crate::overlay::MountSort,
 
     /// Backend-provided sidebar section definitions, materialized by the
     /// injected `SystemRegistry`. Layout consumes these values without global
@@ -752,6 +756,7 @@ impl AppState {
             reload_status_at: None,
             config_remotes: Vec::new(),
             mount_generation: 0,
+            mount_sort: crate::overlay::MountSort::default(),
             system_sections: Vec::new(),
             agents: HashMap::new(),
             agent_entries: Vec::new(),

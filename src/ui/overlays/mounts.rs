@@ -20,6 +20,10 @@ use crate::ui::widgets::{
 const OVERLAY_WIDTH: u16 = 56;
 /// Rows of candidate list, before the input and footer.
 const BODY_ROWS: u16 = 10;
+/// Footer rows: keys, then the state of the list. Two short rows rather than
+/// one long one — the hint glyphs are ambiguous-width and `modal_footer` clips
+/// without wrapping, so a single row silently loses its tail.
+const FOOTER_ROWS: u16 = 2;
 
 pub fn draw_mount_picker(
     frame: &mut Frame,
@@ -31,7 +35,7 @@ pub fn draw_mount_picker(
     let width = OVERLAY_WIDTH.min(area.width.saturating_sub(4));
     // input + pad + list + pad + footer, plus the error/confirm row when shown.
     let extra = u16::from(picker.picker.error.is_some() || picker.confirming.is_some());
-    let height = (BODY_ROWS + 6 + extra).min(area.height);
+    let height = (BODY_ROWS + 5 + FOOTER_ROWS + extra).min(area.height);
     let title = format!(" Containers on {lane_title} ");
     let inner =
         ModalFrame::centered(width, height, Some(&title), theme).render(frame.buffer_mut(), area);
@@ -42,7 +46,7 @@ pub fn draw_mount_picker(
         ratatui::layout::Constraint::Length(BODY_ROWS),
         ratatui::layout::Constraint::Length(extra), // error / confirm prompt
         ratatui::layout::Constraint::Length(1),     // pad
-        ratatui::layout::Constraint::Length(1),     // footer
+        ratatui::layout::Constraint::Length(FOOTER_ROWS),
         ratatui::layout::Constraint::Min(0),
     ])
     .split(inner);
@@ -155,10 +159,23 @@ pub fn draw_mount_picker(
         );
     }
 
+    // Keys first, then what the list is currently doing: the order in force
+    // (which `⇥` cycles) and the reminder that a mount is session-scoped, since
+    // nothing else on screen says a lane mounted here won't come back.
     modal_footer(
         frame.buffer_mut(),
         rows[5],
-        " type to filter · ↑↓ select · Enter mount · Esc cancel · lasts this session only",
+        " ⏎ mount · ↑↓ select · ⇥ sort · ⎋ cancel",
+        theme,
+    );
+    modal_footer(
+        frame.buffer_mut(),
+        Rect {
+            y: rows[5].y + 1,
+            height: 1,
+            ..rows[5]
+        },
+        &format!(" by {} · this session only", picker.sort.label()),
         theme,
     );
 }
