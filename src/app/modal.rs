@@ -108,6 +108,7 @@ pub(super) fn draw_active_modal(
                         filtered: &ns.picker.filtered,
                         selected: ns.picker.selected,
                         scroll: ns.scroll,
+                        pinned: ns.pinned_rows(),
                         error: ns.picker.error.as_deref(),
                         lane_title: lane_title.as_deref(),
                     },
@@ -318,6 +319,99 @@ mod tests {
             .map(|x| buffer[(x, create.y)].symbol())
             .collect();
         assert_eq!(painted, "⏎ create");
+    }
+
+    /// Scrolling a long listing must not carry `../` off the top: it is the
+    /// way out of the directory, so it holds row 0 while the children scroll
+    /// under it, and its click target keeps pointing at it.
+    #[test]
+    fn parent_row_stays_on_screen_and_clickable_when_the_list_is_scrolled() {
+        use crate::new_session::{
+            make_textarea, with_parent_entry, NewSessionState, PickerFocus, DIRECTORY_VIEW_ROWS,
+        };
+        use crate::picker::FilterPicker;
+
+        let children: Vec<String> = (0..40).map(|index| format!("child-{index:02}")).collect();
+        let mut ns = NewSessionState {
+            name: make_textarea("session-1"),
+            focus: PickerFocus::Dir,
+            picker: FilterPicker::new(with_parent_entry(children)),
+            scroll: 0,
+            target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
+        };
+        ns.picker.input = make_textarea("~/");
+        ns.refilter();
+        // Walk to the bottom of the list, the state that used to scroll `..`
+        // out of view.
+        for _ in 0..39 {
+            ns.step_selection(1);
+        }
+        assert_eq!(ns.entry_at(ns.picker.selected), Some("child-39"));
+        assert!(
+            ns.scroll >= ns.pinned_rows(),
+            "the scroll window must start below the pinned row, got {}",
+            ns.scroll
+        );
+
+        let mut state = AppState::new(100, 30);
+        state.overlay.new_session = Some(ns);
+
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut rendered = RenderedModal::default();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                rendered = draw_active_modal(
+                    frame,
+                    &state,
+                    area,
+                    area,
+                    LayoutMode::Horizontal,
+                    &THEMES[0],
+                );
+            })
+            .unwrap();
+
+        assert_eq!(rendered.new_session_dirs.len(), DIRECTORY_VIEW_ROWS);
+        let first = rendered.new_session_dirs[0];
+        assert_eq!(first.index, 0, "row 0 must still resolve to the parent row");
+
+        let buffer = terminal.backend().buffer();
+        let painted_row = |rect: ratatui::layout::Rect| -> String {
+            (rect.x..rect.right())
+                .map(|x| buffer[(x, rect.y)].symbol())
+                .collect::<String>()
+                .trim()
+                .to_string()
+        };
+        assert_eq!(painted_row(first.rect), "../");
+        // The row under it is the scroll window's first child, and the last
+        // row is the selection we walked to.
+        assert!(
+            painted_row(rendered.new_session_dirs[1].rect).starts_with("child-"),
+            "children must scroll under the pinned row: {:?}",
+            painted_row(rendered.new_session_dirs[1].rect)
+        );
+        let last = rendered.new_session_dirs[DIRECTORY_VIEW_ROWS - 1];
+        let last_row = painted_row(last.rect);
+        assert!(
+            last_row.starts_with("▸ child-39/"),
+            "the highlighted child must be the last visible row: {last_row:?}"
+        );
+        assert!(
+            last_row.ends_with('█'),
+            "the scrollbar thumb belongs at the bottom of the scrolling part: {last_row:?}"
+        );
+
+        // The footer is tight enough to hold every hint at this popup width.
+        // `modal_footer` clips silently, so without this a longer hint list
+        // would quietly lose its tail.
+        let text = buffer_text(buffer);
+        assert!(
+            text.contains("⏎ create · →← folder · ↑↓ move · right-click create · ⎋"),
+            "the whole footer must fit unclipped: {text:?}"
+        );
     }
 
     #[test]

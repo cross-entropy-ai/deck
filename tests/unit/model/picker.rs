@@ -1,5 +1,5 @@
 use crate::new_session::make_textarea;
-use crate::picker::FilterPicker;
+use crate::picker::{clamp_list_scroll, FilterPicker};
 
 fn items() -> Vec<String> {
     vec!["alpha".into(), "alpine".into(), "beta".into()]
@@ -76,4 +76,28 @@ fn wrapped_step_cycles_across_both_ends() {
 
     p.step_wrapped(1);
     assert_eq!(p.selected_item(), Some("alpha"));
+}
+
+#[test]
+fn clamp_list_scroll_without_pinning_matches_a_plain_window() {
+    // 20 rows of content in an 8-row window: offsets 0..=12 are valid.
+    assert_eq!(clamp_list_scroll(0, 20, 8, 0), 0);
+    assert_eq!(clamp_list_scroll(12, 20, 8, 0), 12);
+    assert_eq!(clamp_list_scroll(99, 20, 8, 0), 12);
+    // Everything fits: there is nothing to scroll.
+    assert_eq!(clamp_list_scroll(5, 3, 8, 0), 0);
+}
+
+#[test]
+fn clamp_list_scroll_keeps_the_pinned_row_out_of_the_window() {
+    // One pinned row leaves 7 scrolling rows, and the offset never reaches 0
+    // — position 0 is drawn separately, so scrolling to it would show it twice.
+    assert_eq!(clamp_list_scroll(0, 20, 8, 1), 1);
+    assert_eq!(clamp_list_scroll(13, 20, 8, 1), 13);
+    assert_eq!(clamp_list_scroll(99, 20, 8, 1), 13);
+    // A short list still starts right below the pinned row.
+    assert_eq!(clamp_list_scroll(0, 3, 8, 1), 1);
+    assert_eq!(clamp_list_scroll(9, 3, 8, 1), 1);
+    // Degenerate: the pinned row is the only row there is.
+    assert_eq!(clamp_list_scroll(0, 1, 8, 1), 1);
 }

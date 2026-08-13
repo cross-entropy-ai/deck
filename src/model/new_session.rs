@@ -251,15 +251,32 @@ impl NewSessionState {
         self.picker.step_wrapped(if direction < 0 { -1 } else { 1 });
     }
 
+    /// How many leading rows the list holds above its scroll window: 1 while
+    /// the current filter keeps the `..` row, else 0.
+    ///
+    /// `..` is the way out of the directory, so it stays put while the children
+    /// scroll under it — the same reason a table header doesn't scroll.
+    pub fn pinned_rows(&self) -> usize {
+        usize::from(self.is_parent_row(0))
+    }
+
     /// Clamp the stored viewport and reveal the selection only when needed.
     pub fn keep_selection_visible(&mut self) {
+        let pinned = self.pinned_rows();
         let len = self.picker.filtered.len();
-        let max_scroll = len.saturating_sub(DIRECTORY_VIEW_ROWS);
-        self.scroll = self.scroll.min(max_scroll);
+        let clamp =
+            |scroll| crate::picker::clamp_list_scroll(scroll, len, DIRECTORY_VIEW_ROWS, pinned);
+        self.scroll = clamp(self.scroll);
+        // The pinned row is always on screen, so only a child selection can
+        // pull the window.
+        if self.picker.selected < pinned {
+            return;
+        }
+        let rows = DIRECTORY_VIEW_ROWS.saturating_sub(pinned).max(1);
         if self.picker.selected < self.scroll {
-            self.scroll = self.picker.selected;
-        } else if self.picker.selected >= self.scroll + DIRECTORY_VIEW_ROWS {
-            self.scroll = (self.picker.selected + 1 - DIRECTORY_VIEW_ROWS).min(max_scroll);
+            self.scroll = clamp(self.picker.selected);
+        } else if self.picker.selected >= self.scroll + rows {
+            self.scroll = clamp(self.picker.selected + 1 - rows);
         }
     }
 

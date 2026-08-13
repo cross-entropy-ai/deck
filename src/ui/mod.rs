@@ -36,6 +36,9 @@ pub struct NewSessionView<'a> {
     pub filtered: &'a [usize],
     pub selected: usize,
     pub scroll: usize,
+    /// Leading rows held above the scroll window — the `..` row, when the
+    /// current filter keeps it.
+    pub pinned: usize,
     pub error: Option<&'a str>,
     /// Optional non-primary lane label shown in the title.
     pub lane_title: Option<&'a str>,

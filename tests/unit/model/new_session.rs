@@ -176,3 +176,44 @@ fn path_after_entering_keeps_a_partially_typed_leaf_out_of_the_result() {
         Some("~/target/")
     );
 }
+
+#[test]
+fn the_parent_row_is_never_scrolled_out_of_view() {
+    let children: Vec<String> = (0..40).map(|index| format!("child-{index:02}")).collect();
+    let mut ns = picker_at_home(children);
+
+    // Walk the whole list; the window may move, but never over the pinned row.
+    for _ in 0..60 {
+        ns.step_selection(1);
+        assert_eq!(ns.pinned_rows(), 1);
+        assert!(
+            ns.scroll >= 1,
+            "scroll {} would hide the pinned `..` row",
+            ns.scroll
+        );
+        // The selection stays inside the rows left after pinning.
+        if ns.picker.selected >= 1 {
+            let rows = DIRECTORY_VIEW_ROWS - 1;
+            assert!(
+                (ns.scroll..ns.scroll + rows).contains(&ns.picker.selected),
+                "selection {} outside window {}..{}",
+                ns.picker.selected,
+                ns.scroll,
+                ns.scroll + rows
+            );
+        }
+    }
+}
+
+#[test]
+fn filtering_the_parent_row_away_gives_its_row_back_to_the_children() {
+    // Typing a leaf that `..` can't match drops it, and then nothing is
+    // pinned — the list scrolls as a plain one.
+    let mut ns = picker_at_home(vec!["src".into(), "target".into()]);
+    assert_eq!(ns.pinned_rows(), 1);
+    ns.picker.input = make_textarea("~/s");
+    ns.refilter();
+    assert_eq!(ns.pinned_rows(), 0);
+    assert_eq!(ns.scroll, 0);
+    assert_eq!(ns.entry_at(ns.picker.selected), Some("src"));
+}

@@ -42,12 +42,17 @@ pub fn draw_new_session(
         Some(lane_title) => format!("New session · {lane_title}"),
         None => "New session".to_string(),
     };
-    // Browsing keys are listed only while the list has focus; `⏎ create` leads
-    // both so the one thing that finishes the job never moves.
+    // Browsing hints are listed only while the list has focus; `⏎ create` leads
+    // both so the one thing that finishes the job never moves. Tightened to
+    // `·` separators and paired arrows to make room for the mouse gesture,
+    // which is the one thing here nothing on screen would otherwise reveal.
+    // `⇥` is advertised on the name field only: reaching the path field is
+    // what taught it. `modal_footer` clips rather than wraps, so a narrow
+    // terminal drops the tail hints instead of breaking the layout.
     let footer = if view.focus_name {
-        format!("  {CREATE_HINT}   ⇥ switch   ←→ cursor   ⎋ cancel")
+        format!("  {CREATE_HINT} · ⇥ path · ←→ cursor · ⎋ cancel")
     } else {
-        format!("  {CREATE_HINT}   → open   ← parent   ↑↓ select   ⇥ switch   ⎋")
+        format!("  {CREATE_HINT} · →← folder · ↑↓ move · right-click create · ⎋")
     };
 
     let hits = draw_filter_picker(
@@ -75,6 +80,7 @@ pub fn draw_new_session(
             selected: view.selected,
             scroll: view.scroll,
             list_focused: !view.focus_name,
+            pinned: view.pinned,
             empty_msg: "    (no entries)",
             error: view.error,
             footer: &footer,
@@ -124,6 +130,7 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
             selected: p.selected,
             scroll: super::widgets::scroll_window(p.selected, p.filtered.len(), 8),
             list_focused: true,
+            pinned: 0,
             empty_msg,
             error: p.error.as_deref(),
             footer: "  \u{23ce} add   \u{2191}\u{2193} select   \u{238b} cancel",

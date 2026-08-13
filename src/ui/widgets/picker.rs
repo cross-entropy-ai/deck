@@ -38,6 +38,9 @@ pub struct FilterPickerView<'a> {
     pub scroll: usize,
     /// Whether the candidate list owns focus and should paint its selection.
     pub list_focused: bool,
+    /// Leading filtered rows pinned above the scroll window, drawn at a fixed
+    /// position while the rest scrolls. 0 for pickers with a plain list.
+    pub pinned: usize,
     /// Shown in place of the list when `filtered` is empty.
     pub empty_msg: &'a str,
     pub error: Option<&'a str>,
@@ -102,11 +105,22 @@ pub fn draw_filter_picker(
     }
     idx += 1; // blank
 
-    let list_start = picker
-        .scroll
-        .min(picker.filtered.len().saturating_sub(picker.max_visible));
-    let list_end = (list_start + picker.max_visible).min(picker.filtered.len());
-    let rows_hits = (list_start..list_end)
+    // Hit regions mirror the draw order exactly: the pinned rows first, then
+    // the scroll window. Deriving both from the same window keeps a click
+    // landing on the row the user sees after any amount of scrolling.
+    let pinned = picker
+        .pinned
+        .min(picker.filtered.len())
+        .min(picker.max_visible);
+    let list_start = crate::picker::clamp_list_scroll(
+        picker.scroll,
+        picker.filtered.len(),
+        picker.max_visible,
+        pinned,
+    );
+    let list_end = (list_start + (picker.max_visible - pinned)).min(picker.filtered.len());
+    let rows_hits = (0..pinned)
+        .chain(list_start..list_end)
         .zip(rows[idx..].iter().copied())
         .map(|(selection, rect)| ListItemHit {
             rect,
@@ -130,6 +144,7 @@ pub fn draw_filter_picker(
                 selected: picker.selected,
                 scroll: list_start,
                 focused: picker.list_focused,
+                pinned,
             },
             picker.max_visible,
             content,
