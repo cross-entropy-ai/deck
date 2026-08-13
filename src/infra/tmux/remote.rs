@@ -383,6 +383,132 @@ fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Detect
     Some(agents)
 }
 
+/// Container engines Deck probes when discovering what a host could mount, in
+/// order. A host may have either or both installed; `docker` comes first because
+/// it is the common case and [`crate::config::DEFAULT_CONTAINER_ENGINE`].
+const CONTAINER_ENGINES: [&str; 2] = ["docker", "podman"];
+
+/// Separates one engine's `ps` output from the next in the combined probe. Must
+/// be shell-safe in any remote shell — see [`AGENT_PROBE_MARKER`].
+const ENGINE_PROBE_MARKER: &str = "__DECK_ENGINE_PROBE__";
+
+/// `ps -a` format. `|` needs no escaping once the whole format is single-quoted,
+/// and it cannot occur in a container name (`[a-zA-Z0-9][a-zA-Z0-9_.-]*`) nor in
+/// a state word — unlike `\t`, whose handling differs between engines and shells.
+/// `.State` is the machine-readable field (`running`/`exited`/`paused`/…);
+/// `.Status` is a human string like "Up 22 hours".
+const CONTAINER_LIST_FORMAT: &str = "{{.State}}|{{.Names}}";
+
+/// One container a host could mount as its own lane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredContainer {
+    pub name: String,
+    /// The engine that reported it, so mounting talks to the right CLI.
+    pub engine: String,
+    /// Whether it is already running. Deck can only `exec` into a running
+    /// container, so a stopped one needs starting first.
+    pub running: bool,
+}
+
+/// Containers on `host`, running or not, across every engine it has.
+///
+/// Best-effort by design: a host with neither engine, or one where the daemon is
+/// down, yields an empty list rather than an error — the picker then says the
+/// host has nothing to offer, which is the same thing from the user's side. Runs
+/// on a worker thread (one bounded ssh hop for both engines).
+pub fn list_containers(host: &str) -> Vec<DiscoveredContainer> {
+    list_containers_with(default_runner(), host)
+}
+
+fn list_containers_with(runner: &dyn CommandRunner, host: &str) -> Vec<DiscoveredContainer> {
+    // Discovery always addresses the host itself, never a container: a container
+    // cannot mount further containers.
+    let host = parse_remote_id(host).host;
+    let format = shell_single_quote(CONTAINER_LIST_FORMAT);
+    // One hop for both engines, blocks separated by the marker so a missing
+    // engine yields an empty block instead of failing the call. Starts with a
+    // simple command so `run_ssh`'s `PATH=…` prefix attaches, and ends in `true`
+    // so the compound's exit status is the probe's, not the last engine's.
+    let mut script = String::new();
+    for engine in CONTAINER_ENGINES {
+        if !script.is_empty() {
+            script.push_str(&format!(" ; echo {ENGINE_PROBE_MARKER} ; "));
+        }
+        script.push_str(&format!(
+            "{} ps -a --format {format} 2>/dev/null",
+            shell_single_quote(engine)
+        ));
+    }
+    script.push_str(" ; true");
+
+    let Ok(raw) = run_ssh(runner, host, &[script.as_str()]) else {
+        return Vec::new();
+    };
+    parse_discovered_containers(&raw)
+}
+
+/// Split the combined probe into per-engine blocks and parse each. Names that
+/// could not round-trip through a lane id are dropped rather than offered.
+fn parse_discovered_containers(raw: &str) -> Vec<DiscoveredContainer> {
+    let mut out: Vec<DiscoveredContainer> = Vec::new();
+    for (engine, block) in CONTAINER_ENGINES.iter().zip(raw.split(ENGINE_PROBE_MARKER)) {
+        for line in block.lines() {
+            let Some((state, names)) = line.trim().split_once('|') else {
+                continue;
+            };
+            // podman renders `.Names` as a list (`[web]`) and a container can
+            // carry several names; take the first and drop the brackets.
+            let name = names
+                .trim()
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .split(',')
+                .next()
+                .unwrap_or("")
+                .trim();
+            if crate::config::validate_container_name(name).is_err() {
+                continue;
+            }
+            if out.iter().any(|found| found.name == name) {
+                continue;
+            }
+            out.push(DiscoveredContainer {
+                name: name.to_string(),
+                engine: (*engine).to_string(),
+                running: state.trim().eq_ignore_ascii_case("running"),
+            });
+        }
+    }
+    out
+}
+
+/// Start a stopped container so Deck can `exec` into it. Returns the engine's
+/// own message on failure, which is what the user needs to see (permission
+/// denied, no such container, daemon down).
+pub fn start_container(host: &str, engine: &str, name: &str) -> Result<(), String> {
+    start_container_with(default_runner(), host, engine, name)
+}
+
+fn start_container_with(
+    runner: &dyn CommandRunner,
+    host: &str,
+    engine: &str,
+    name: &str,
+) -> Result<(), String> {
+    let host = parse_remote_id(host).host;
+    run_ssh(
+        runner,
+        host,
+        &[
+            shell_single_quote(engine).as_str(),
+            "start",
+            shell_single_quote(name).as_str(),
+        ],
+    )
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
 /// Marker line emitted before each pane's buffer in a batched capture. The
 /// leading `_` keeps it clear of the remote-shell `=`/`-` traps.
 const CAPTURE_MARKER: &str = "__deck_cap__";

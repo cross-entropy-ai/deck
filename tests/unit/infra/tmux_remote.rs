@@ -773,6 +773,64 @@ fn every_assembled_remote_command_is_valid_shell() {
 }
 
 #[test]
+fn container_discovery_probes_both_engines_in_one_hop() {
+    let runner = FakeRunner::new(ok(""));
+    let _ = list_containers_with(&runner, "box");
+    let call = &runner.calls()[0];
+
+    // One ssh hop, both engines, marker-separated so a missing engine yields an
+    // empty block instead of failing the call.
+    assert!(call.contains("'docker' ps -a --format '{{.State}}|{{.Names}}' 2>/dev/null"));
+    assert!(call.contains("'podman' ps -a --format '{{.State}}|{{.Names}}' 2>/dev/null"));
+    assert!(call.contains("echo __DECK_ENGINE_PROBE__"));
+    assert!(call.trim_end().ends_with("; true"), "call: {call}");
+    // A container id must never be used as the ssh destination for discovery.
+    let _ = list_containers_with(&FakeRunner::new(ok("")), "box#dev");
+}
+
+#[test]
+fn container_discovery_parses_both_engines_and_drops_unusable_names() {
+    // Real `docker ps -a --format` output shapes, then podman's, which renders
+    // `.Names` as a list and can carry several names.
+    let raw = "running|xserve-poc
+               exited|dualkv-validation
+               paused|frozen-box
+               __DECK_ENGINE_PROBE__
+               running|[pod-web,pod-web-alias]
+               running|
+               exited|-badname
+               running|xserve-poc
+";
+    let found = parse_discovered_containers(raw);
+
+    assert_eq!(
+        found
+            .iter()
+            .map(|c| (c.name.as_str(), c.engine.as_str(), c.running))
+            .collect::<Vec<_>>(),
+        vec![
+            ("xserve-poc", "docker", true),
+            ("dualkv-validation", "docker", false),
+            // Only `running` counts as mountable; paused cannot be exec'd into.
+            ("frozen-box", "docker", false),
+            ("pod-web", "podman", true),
+        ],
+        "got: {found:?}"
+    );
+    // Empty and leading-dash names cannot round-trip through a lane id, and the
+    // duplicate reported by the second engine is not offered twice.
+}
+
+#[test]
+fn starting_a_container_reports_the_engine_error() {
+    let runner = FakeRunner::new(ok(""));
+    assert!(start_container_with(&runner, "box", "podman", "dev").is_ok());
+    assert!(runner.calls()[0].contains("'podman' start 'dev'"));
+
+    assert!(start_container_with(&FakeRunner::failing(), "box", "docker", "dev").is_err());
+}
+
+#[test]
 fn new_session_reports_success_and_failure() {
     let okrunner = OneShot::new(ok(""));
     assert!(new_session_with(&okrunner, "box", "work", "~/proj").is_ok());
