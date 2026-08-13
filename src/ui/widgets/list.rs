@@ -29,6 +29,8 @@ pub(super) struct PickerViewport {
     pub selected: usize,
     pub scroll: usize,
     pub focused: bool,
+    /// Leading items held above the scroll window (see [`draw_picker_list`]).
+    pub pinned: usize,
 }
 
 /// Foreground that maintains readable contrast over the theme's accent fill.
@@ -177,6 +179,10 @@ pub fn modal_list_lines<'items, 'line, T>(
 /// item gets a `▸` marker and `content(filtered[i])` supplies row text. `rows`
 /// must hold at least `window` slots; any beyond the rendered items are left
 /// untouched (caller reserves them as blanks).
+///
+/// The viewport's leading `pinned` items are drawn first and excluded from the
+/// scroll window and its scrollbar, so they stay on screen at a fixed row
+/// while everything after them scrolls.
 pub fn draw_picker_list(
     buf: &mut Buffer,
     rows: &[Rect],
@@ -187,32 +193,44 @@ pub fn draw_picker_list(
     mut content: impl FnMut(usize) -> String,
 ) {
     let row_width = rows.first().map_or(0, |row| row.width as usize);
-    let start = viewport.scroll.min(filtered.len().saturating_sub(window));
-    let scrollbar = scrollbar_cells(window, filtered.len(), start);
-    let lines = modal_list_lines(
-        filtered,
-        window,
-        ListViewport::Offset(start),
-        |display, &idx| {
-            let sel = viewport.focused && display == viewport.selected;
-            let marker = if sel { "\u{25b8}" } else { " " };
-            let bar = scrollbar.get(display - start).copied().flatten();
-            let mut line = list_item_line(
-                theme,
-                sel,
-                format!("  {marker} "),
-                content(idx),
-                row_width.saturating_sub(usize::from(bar.is_some())),
-            );
-            if let Some(glyph) = bar {
-                line.spans.push(Span::styled(
-                    glyph,
-                    Style::default().fg(theme.dim).bg(theme.surface),
-                ));
-            }
-            line
-        },
+    let pinned = viewport.pinned.min(filtered.len()).min(window);
+    let start = crate::picker::clamp_list_scroll(viewport.scroll, filtered.len(), window, pinned);
+    // The scrollbar describes the scrolling part only: the pinned rows are
+    // never off-screen, so counting them would make the thumb claim there is
+    // more hidden above than there is.
+    let scrolling_rows = window - pinned;
+    let scrollbar = scrollbar_cells(
+        scrolling_rows,
+        filtered.len() - pinned,
+        start.saturating_sub(pinned),
     );
+    let mut row = |display: usize, bar: Option<&'static str>| {
+        let idx = filtered[display];
+        let sel = viewport.focused && display == viewport.selected;
+        let marker = if sel { "\u{25b8}" } else { " " };
+        let mut line = list_item_line(
+            theme,
+            sel,
+            format!("  {marker} "),
+            content(idx),
+            row_width.saturating_sub(usize::from(bar.is_some())),
+        );
+        if let Some(glyph) = bar {
+            line.spans.push(Span::styled(
+                glyph,
+                Style::default().fg(theme.dim).bg(theme.surface),
+            ));
+        }
+        line
+    };
+
+    let mut lines: Vec<Line> = (0..pinned).map(|display| row(display, None)).collect();
+    let end = (start + scrolling_rows).min(filtered.len());
+    lines.extend((start..end).map(|display| {
+        let bar = scrollbar.get(display - start).copied().flatten();
+        row(display, bar)
+    }));
+
     for (pos, line) in lines.into_iter().enumerate() {
         Paragraph::new(line).render(rows[pos], buf);
     }
@@ -288,6 +306,7 @@ mod tests {
                 selected: 0,
                 scroll: 0,
                 focused: true,
+                pinned: 0,
             },
             3,
             |idx| format!("dir-{idx}/"),
@@ -306,6 +325,7 @@ mod tests {
                 selected: 4,
                 scroll: 2,
                 focused: true,
+                pinned: 0,
             },
             3,
             |idx| format!("dir-{idx}/"),
@@ -332,6 +352,7 @@ mod tests {
                 selected: 1,
                 scroll: 0,
                 focused: false,
+                pinned: 0,
             },
             2,
             |idx| format!("dir-{idx}/"),

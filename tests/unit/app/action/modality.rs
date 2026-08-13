@@ -192,7 +192,7 @@ fn escape_cancels_nested_modal_edits_before_closing_the_surface() {
 }
 
 #[test]
-fn enter_on_new_session_directory_opens_highlighted_directory() {
+fn new_session_directory_field_confirms_on_enter_and_browses_with_arrows() {
     let mut state = make_state();
     open_modal(&mut state, Modal::NewSession);
     state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Dir;

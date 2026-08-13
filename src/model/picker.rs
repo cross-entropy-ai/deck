@@ -11,6 +11,23 @@ use ratatui_textarea::TextArea;
 use crate::new_session::{make_textarea, textarea_line};
 use crate::state::{clamp_cursor, step_clamped};
 
+/// Clamp a list's scroll offset for the current shape of that list.
+///
+/// `len` filtered rows are shown in `rows` screen rows, of which the first
+/// `pinned` are held above the scroll window and never move — the new-session
+/// browser pins its `..` row that way, so scrolling the children can't carry
+/// the way out of the list off the top. The offset is a filtered position, so
+/// with a pinned row it starts at `pinned`, not 0.
+///
+/// The model (keeping the highlight in view) and the renderer (choosing the
+/// window it paints) both clamp through here, so a scroll offset can never
+/// mean two different windows.
+pub fn clamp_list_scroll(scroll: usize, len: usize, rows: usize, pinned: usize) -> usize {
+    let scrolling_rows = rows.saturating_sub(pinned);
+    let max_start = len.saturating_sub(scrolling_rows).max(pinned);
+    scroll.clamp(pinned, max_start)
+}
+
 /// Text input + filtered list of `items`, with a clamped selection.
 #[derive(Debug, Clone)]
 pub struct FilterPicker {
