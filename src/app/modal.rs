@@ -419,6 +419,53 @@ mod tests {
         }
     }
 
+    /// The popup must not resize as the filter narrows, or it shifts under the
+    /// cursor on every keystroke. The footer's published rect is the probe:
+    /// it is the last row inside the frame, so its `y` is the popup's height.
+    #[test]
+    fn filtering_does_not_resize_the_popup() {
+        use crate::new_session::{make_textarea, with_parent_entry, NewSessionState, PickerFocus};
+        use crate::picker::FilterPicker;
+
+        let footer_y_for = |leaf: &str| -> u16 {
+            let entries: Vec<String> = (0..20).map(|index| format!("dir-{index:02}")).collect();
+            let mut ns = NewSessionState {
+                name: make_textarea("session-1"),
+                focus: PickerFocus::Dir,
+                picker: FilterPicker::new(with_parent_entry(entries)),
+                scroll: 0,
+                target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
+            };
+            ns.picker.input = make_textarea(&format!("~/{leaf}"));
+            ns.refilter();
+
+            let mut state = AppState::new(100, 30);
+            state.overlay.new_session = Some(ns);
+            let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+            let mut rendered = RenderedModal::default();
+            terminal
+                .draw(|frame| {
+                    let area = frame.area();
+                    rendered = draw_active_modal(
+                        frame,
+                        &state,
+                        area,
+                        area,
+                        LayoutMode::Horizontal,
+                        &THEMES[0],
+                    );
+                })
+                .unwrap();
+            rendered.new_session_create.expect("footer published").y
+        };
+
+        // 21 rows, then 1 (`dir-07` alone), then 0 matches.
+        let full = footer_y_for("");
+        assert_eq!(full, footer_y_for("dir-0"), "narrowing must not resize");
+        assert_eq!(full, footer_y_for("dir-07"), "one match must not resize");
+        assert_eq!(full, footer_y_for("nothing"), "no matches must not resize");
+    }
+
     #[test]
     fn vertical_confirm_is_visible_and_owns_click_regions() {
         use crate::state::{SessionEntry, SessionEntryKind};

@@ -30,6 +30,8 @@ pub struct FilterPickerView<'a> {
     pub title: &'a str,
     pub width: u16,
     pub min_height: u16,
+    /// Rows the candidate list always occupies, filled or not. Fixing it keeps
+    /// the popup a stable size while the filter narrows.
     pub max_visible: usize,
     pub fields: &'a [PickerField<'a>],
     pub filtered: &'a [usize],
@@ -71,8 +73,11 @@ pub fn draw_filter_picker(
     picker: FilterPickerView<'_>,
     content: impl FnMut(usize) -> String,
 ) -> PickerHits {
-    // Always reserve at least one list row (for the empty-state message).
-    let list_rows = picker.filtered.len().min(picker.max_visible).max(1);
+    // The list block is a fixed reservation, not a fit to the current match
+    // count: sizing it to `filtered` makes the popup resize under the cursor on
+    // every keystroke, and jump again when an async listing lands. Unused rows
+    // are left as modal surface.
+    let list_rows = picker.max_visible;
     // borders(2) + fields(N) + blank(1) + list + blank(1) + [error] + footer(N)
     let content_height = 2
         + picker.fields.len() as u16
