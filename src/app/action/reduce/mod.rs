@@ -776,6 +776,7 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
             state.overlay.mount_picker = Some(crate::overlay::MountPickerState::new(
                 lane.clone(),
                 generation,
+                state.mount_sort,
             ));
             fx.push(Effect::DiscoverMounts { lane, generation });
         }
@@ -795,6 +796,18 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
                 MountAction::Prev => picker.picker.step(-1),
                 _ => picker.picker.step(1),
             }
+        }
+        MountAction::CycleSort => {
+            let Some(picker) = state.overlay.mount_picker.as_mut() else {
+                return fx;
+            };
+            // Re-ordering moves the row a pending confirmation was aimed at, so
+            // it is abandoned like any other navigation.
+            picker.confirming = None;
+            let sort = picker.sort.next();
+            picker.resort(sort);
+            // Remembered for the next picker, not written to disk.
+            state.mount_sort = sort;
         }
         MountAction::Close => {
             state.overlay.mount_picker = None;

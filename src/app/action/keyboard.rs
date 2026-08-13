@@ -222,6 +222,10 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
             KeyCode::Esc => Action::Mount(MountAction::Close),
             KeyCode::Up => Action::Mount(MountAction::Prev),
             KeyCode::Down => Action::Mount(MountAction::Next),
+            // The picker has one field, so Tab has no focus to switch and is
+            // free for the only other thing here that has modes. Every
+            // printable key belongs to the filter, which rules out a letter.
+            KeyCode::Tab | KeyCode::BackTab => Action::Mount(MountAction::CycleSort),
             _ => Action::Mount(MountAction::InputKey(*key)),
         },
         Modal::SshSetting => match key.code {

@@ -93,6 +93,7 @@ fn open_modal(state: &mut AppState, modal: Modal) {
             state.overlay.mount_picker = Some(crate::overlay::MountPickerState::new(
                 crate::system::tmux::TmuxSystem::host_lane("prod"),
                 1,
+                crate::overlay::MountSort::default(),
             ));
         }
         Modal::SshSetting => {
