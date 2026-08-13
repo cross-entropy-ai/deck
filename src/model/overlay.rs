@@ -26,6 +26,7 @@ pub enum Modal {
     ThemePicker,
     KeybindingsView,
     ExcludeEditor,
+    MountPicker,
     SshSetting,
     SummaryLang,
     Help,
@@ -40,7 +41,7 @@ impl Modal {
     /// modal infrastructure iterate it without maintaining a second hand-
     /// written list that can drift when a variant is added.
     #[cfg(test)]
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::SummaryPopup,
         Self::NewSession,
         Self::AddRemote,
@@ -50,6 +51,7 @@ impl Modal {
         Self::ThemePicker,
         Self::KeybindingsView,
         Self::ExcludeEditor,
+        Self::MountPicker,
         Self::SshSetting,
         Self::SummaryLang,
         Self::Help,
@@ -107,6 +109,78 @@ impl ExcludeEditorState {
     /// Reset the add input to empty (called on StartAdd / CancelAdd / Confirm).
     pub fn reset_input(&mut self) {
         self.input = make_textarea("");
+    }
+}
+
+/// The "mount another lane under this one" picker: a filter over the candidates
+/// a system discovered, plus the async states that discovery and activation put
+/// it in. Rendering lives in `ui/overlays/mounts.rs`.
+///
+/// `generation` is stamped on every request so a late worker answer for a picker
+/// the user has already closed or re-pointed is dropped instead of repopulating
+/// a stale list.
+#[derive(Debug, Clone)]
+pub struct MountPickerState {
+    /// The lane whose mounts these are.
+    pub lane: crate::lane::LaneId,
+    pub generation: u64,
+    /// Labels are the picker items; `candidates` stays index-aligned with
+    /// `picker.items` so a selection resolves back to a backend id.
+    pub picker: crate::picker::FilterPicker,
+    pub candidates: Vec<crate::system::MountCandidate>,
+    /// Set while a worker is out; the list shows a placeholder rather than
+    /// "nothing found".
+    pub busy: Option<MountBusy>,
+    /// A candidate that needs a side effect before it can be mounted, awaiting
+    /// the user's confirmation. Deck will change something outside itself here
+    /// (start someone's container on a shared host), so it never happens on a
+    /// single keypress.
+    pub confirming: Option<crate::system::MountCandidate>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MountBusy {
+    Discovering,
+    Activating,
+}
+
+impl MountPickerState {
+    pub fn new(lane: crate::lane::LaneId, generation: u64) -> Self {
+        Self {
+            lane,
+            generation,
+            picker: crate::picker::FilterPicker::new(Vec::new()),
+            candidates: Vec::new(),
+            busy: Some(MountBusy::Discovering),
+            confirming: None,
+        }
+    }
+
+    /// Replace the candidate list, keeping labels and candidates aligned.
+    pub fn set_candidates(&mut self, candidates: Vec<crate::system::MountCandidate>) {
+        self.picker =
+            crate::picker::FilterPicker::new(candidates.iter().map(|c| c.label.clone()).collect());
+        self.candidates = candidates;
+        self.busy = None;
+    }
+
+    /// The highlighted candidate. Resolved through `filtered` so it survives
+    /// filtering, which reorders nothing but hides entries.
+    pub fn selected(&self) -> Option<&crate::system::MountCandidate> {
+        let index = *self.picker.filtered.get(self.picker.selected)?;
+        self.candidates.get(index)
+    }
+
+    pub fn refilter(&mut self) {
+        let needle = self.picker.input_str().to_lowercase();
+        self.picker.refilter(move |items, _| {
+            items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| item.to_lowercase().contains(&needle))
+                .map(|(index, _)| index)
+                .collect()
+        });
     }
 }
 
@@ -169,4 +243,6 @@ pub struct OverlayState {
     pub summary_lang_input: Option<TextArea<'static>>,
     /// Settings input box for Deck's ControlPath or ControlPersist value.
     pub ssh_setting_editor: Option<SshSettingEditorState>,
+    /// Picker over the lanes a system says the focused lane could mount.
+    pub mount_picker: Option<MountPickerState>,
 }

@@ -46,6 +46,7 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
             MenuKind::LaneDivider {
                 primary: state.is_primary_lane(&lane),
                 port_forward_enabled: state.lane_capabilities(&lane).port_forwards,
+                mounts_enabled: state.lane_capabilities(&lane).mounts,
                 lane,
             },
             x,
@@ -103,6 +104,7 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                     Some(MenuItem::NewSession) => {
                         fx.push(Effect::OpenNewSessionPicker(lane.clone()))
                     }
+                    Some(MenuItem::Containers) => fx.push(Effect::OpenMountPicker(lane.clone())),
                     Some(MenuItem::PortForward) => {
                         fx.push(Effect::OpenPortForwardOverlay(lane));
                     }

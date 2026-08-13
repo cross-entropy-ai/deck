@@ -6,7 +6,8 @@ use ratatui::layout::Rect;
 use ratatui::Frame;
 
 use crate::action::{
-    Action, AddRemoteAction, MenuAction, NewSessionAction, PfAction, SettingsAction, SummaryAction,
+    Action, AddRemoteAction, MenuAction, MountAction, NewSessionAction, PfAction, SettingsAction,
+    SummaryAction,
 };
 use crate::geometry::KillConfirmHits;
 use crate::overlay::Modal;
@@ -59,6 +60,7 @@ pub(super) fn close_action(modal: Modal, state: &AppState) -> Action {
             };
             Action::Settings(action)
         }
+        Modal::MountPicker => Action::Mount(MountAction::Close),
         Modal::SshSetting => Action::Settings(SettingsAction::SshSettingCancel),
         Modal::SummaryLang => Action::Summary(SummaryAction::LanguageCancel),
         Modal::Help => Action::DismissHelp,
@@ -186,6 +188,17 @@ pub(super) fn draw_active_modal(
                         input: &editor.input,
                         error: editor.error.as_deref(),
                     },
+                    theme,
+                );
+            }
+        }
+        Modal::MountPicker => {
+            if let Some(picker) = state.overlay.mount_picker.as_ref() {
+                crate::ui::overlays::mounts::draw_mount_picker(
+                    frame,
+                    full,
+                    picker,
+                    &state.section_title(&picker.lane),
                     theme,
                 );
             }

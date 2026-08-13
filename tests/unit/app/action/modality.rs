@@ -89,6 +89,12 @@ fn open_modal(state: &mut AppState, modal: Modal) {
             state.focus_mode = FocusMode::Main;
             state.overlay.exclude_editor = Some(ExcludeEditorState::new());
         }
+        Modal::MountPicker => {
+            state.overlay.mount_picker = Some(crate::overlay::MountPickerState::new(
+                crate::system::tmux::TmuxSystem::host_lane("prod"),
+                1,
+            ));
+        }
         Modal::SshSetting => {
             state.main_view = MainView::Settings;
             state.focus_mode = FocusMode::Main;
@@ -131,7 +137,7 @@ fn is_forbidden(a: &Action) -> bool {
     )
 }
 
-fn all_modals() -> [Modal; 13] {
+fn all_modals() -> [Modal; 14] {
     Modal::ALL
 }
 

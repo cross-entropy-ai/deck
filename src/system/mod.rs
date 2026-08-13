@@ -186,6 +186,39 @@ pub trait LaneActionProvider: Send + Sync {
     ) -> Vec<LaneShellIntent>;
 }
 
+/// A lane a system could mount on demand, found at runtime rather than declared
+/// in configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MountCandidate {
+    /// Backend-owned identity. The shell stores it and hands it back verbatim;
+    /// only the owning system decodes it, exactly like [`LaneActionId`].
+    pub id: String,
+    /// What the picker shows.
+    pub label: String,
+    /// Whether mounting has to change something outside Deck first (starting a
+    /// stopped container, say). The shell confirms with the user before it
+    /// commits to that, and never for candidates that don't need it.
+    pub needs_activation: bool,
+}
+
+/// Lanes a system can discover and mount for the current session only. Distinct
+/// from [`LaneConfigProvider`], which persists a lane into the config file:
+/// nothing here survives a restart, so the shell must not write these to disk.
+pub trait LaneMountProvider: Send + Sync {
+    /// What `lane` could mount right now. **Blocking** — the shell runs it on a
+    /// worker thread, like [`SessionCatalog::snapshot`]. The error is shown to
+    /// the user verbatim, so it should read as a reason, not a stack.
+    fn discover(&self, lane: &LaneId) -> Result<Vec<MountCandidate>, String>;
+
+    /// Bring a candidate into a mountable state. **Blocking**, and only called
+    /// for a candidate that declared `needs_activation` after the user agreed.
+    fn activate(&self, lane: &LaneId, candidate: &str) -> Result<(), String>;
+
+    /// Register the candidate as a live lane and return its id. Session-scoped:
+    /// it vanishes when Deck exits.
+    fn mount(&self, lane: &LaneId, candidate: &str) -> Option<LaneId>;
+}
+
 /// Backend-owned configuration mutations addressed by lane identity.
 /// The shell supplies the persisted configuration as a whole and applies the
 /// typed outcome; only the owning backend interprets its lane representation.
@@ -294,6 +327,9 @@ pub struct LaneCapabilities {
     /// against that shared socket. The shell greys its forward affordances out
     /// from this flag instead of re-deriving a backend's answer.
     pub port_forwards: bool,
+    /// Whether this lane can discover further lanes to mount — see
+    /// [`LaneMountProvider`]. The shell offers the picker only where true.
+    pub mounts: bool,
 }
 
 #[derive(Clone)]
@@ -303,6 +339,7 @@ pub struct LaneRuntime<'a> {
     session_control: Option<&'a dyn SessionControlProvider>,
     lane_actions: Option<&'a dyn LaneActionProvider>,
     lane_config: Option<&'a dyn LaneConfigProvider>,
+    lane_mounts: Option<&'a dyn LaneMountProvider>,
     focus_transport: Option<&'a dyn FocusTransportProvider>,
     summary_transport: Option<&'a dyn SummaryTransportProvider>,
     attachment: Option<&'a dyn AttachmentProvider>,
@@ -318,6 +355,7 @@ impl<'a> LaneRuntime<'a> {
             session_control: None,
             lane_actions: None,
             lane_config: None,
+            lane_mounts: None,
             focus_transport: None,
             summary_transport: None,
             attachment: None,
@@ -343,6 +381,11 @@ impl<'a> LaneRuntime<'a> {
 
     pub fn with_lane_config(mut self, config: &'a dyn LaneConfigProvider) -> Self {
         self.lane_config = Some(config);
+        self
+    }
+
+    pub fn with_lane_mounts(mut self, mounts: &'a dyn LaneMountProvider) -> Self {
+        self.lane_mounts = Some(mounts);
         self
     }
 
@@ -396,6 +439,10 @@ impl<'a> LaneRuntime<'a> {
 
     pub fn lane_config(&self) -> Option<&'a dyn LaneConfigProvider> {
         self.lane_config
+    }
+
+    pub fn lane_mounts(&self) -> Option<&'a dyn LaneMountProvider> {
+        self.lane_mounts
     }
 
     pub(crate) fn focus_transport(&self) -> Option<&'a dyn FocusTransportProvider> {
@@ -535,6 +582,7 @@ mod tests {
                         reorder_sessions: false,
                         actions: true,
                         port_forwards: false,
+                        mounts: false,
                     },
                 )
             } else {
@@ -721,6 +769,104 @@ mod tests {
             tmux::remote_ids(&config.remotes),
             vec!["devbox".to_string(), "devbox#dev".to_string()]
         );
+    }
+
+    #[test]
+    fn a_mounted_container_is_a_lane_that_config_never_sees() {
+        let system = tmux::TmuxSystem::default();
+        let mut config = Config::default();
+        config.remotes.push(crate::config::RemoteConfig {
+            host: "devbox".into(),
+            forward_agent: true,
+            containers: vec![],
+            forwards: vec![],
+        });
+        system.configure(&config);
+        let host = tmux::TmuxSystem::host_lane("devbox");
+        let candidate = format!("podman{}web", '\x1f');
+
+        let mounted = LaneMountProvider::mount(&system, &host, &candidate).expect("mounted");
+        assert_eq!(mounted, tmux::TmuxSystem::container_lane("devbox", "web"));
+        assert!(system.lanes().contains(&mounted));
+        // Session-scoped: the config it came from is untouched, so nothing can
+        // write it to disk.
+        assert!(config.remotes[0].containers.is_empty());
+        // The engine discovery found reaches the transport, which is what
+        // `<engine> exec` will use.
+        assert_eq!(
+            crate::remote_tmux::container_opts("devbox#web").engine,
+            "podman"
+        );
+
+        // A reload must not drop it — that was the whole risk of a second lane
+        // source next to config.
+        system.configure(&config);
+        assert!(system.lanes().contains(&mounted));
+        assert_eq!(
+            crate::remote_tmux::container_opts("devbox#web").engine,
+            "podman"
+        );
+
+        // Removing it is dropping it from memory, and it must report Removed so
+        // the shell offboards the lane rather than warning at the user.
+        assert_eq!(
+            LaneConfigProvider::remove_lane(&system, &mounted, &mut config),
+            LaneConfigOutcome::Removed
+        );
+        assert!(!system.lanes().contains(&mounted));
+        assert_eq!(
+            LaneConfigProvider::remove_lane(&system, &mounted, &mut config),
+            LaneConfigOutcome::Unsupported
+        );
+    }
+
+    #[test]
+    fn a_mounted_container_goes_when_its_host_does() {
+        let system = tmux::TmuxSystem::default();
+        let mut config = Config::default();
+        config.remotes.push(crate::config::RemoteConfig {
+            host: "devbox".into(),
+            forward_agent: true,
+            containers: vec![],
+            forwards: vec![],
+        });
+        system.configure(&config);
+        let host = tmux::TmuxSystem::host_lane("devbox");
+        let mounted =
+            LaneMountProvider::mount(&system, &host, &format!("docker{}web", '\x1f')).unwrap();
+        assert!(system.lanes().contains(&mounted));
+
+        // Its lane id names a host Deck can no longer reach, so it cannot outlive
+        // the host entry.
+        config.remotes.clear();
+        system.configure(&config);
+        assert!(!system.lanes().contains(&mounted));
+    }
+
+    #[test]
+    fn only_a_host_lane_can_mount() {
+        let system = tmux::TmuxSystem::default();
+        let mut config = Config::default();
+        config.remotes.push(crate::config::RemoteConfig {
+            host: "devbox".into(),
+            forward_agent: true,
+            containers: vec![],
+            forwards: vec![],
+        });
+        system.configure(&config);
+
+        let mounts = |lane: &LaneId| {
+            system
+                .runtime(lane)
+                .expect("runtime")
+                .lane_capabilities
+                .mounts
+        };
+        assert!(mounts(&tmux::TmuxSystem::host_lane("devbox")));
+        // The local lane has no engine Deck talks to, and a container cannot
+        // mount further containers.
+        assert!(!mounts(&tmux::TmuxSystem::local_lane()));
+        assert!(!mounts(&tmux::TmuxSystem::container_lane("devbox", "web")));
     }
 
     #[test]

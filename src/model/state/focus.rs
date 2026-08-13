@@ -148,6 +148,9 @@ impl AppState {
         if self.overlay.add_remote.is_some() {
             return Some(Modal::AddRemote);
         }
+        if self.overlay.mount_picker.is_some() {
+            return Some(Modal::MountPicker);
+        }
         if self.overlay.renaming.is_some() {
             return Some(Modal::Rename);
         }

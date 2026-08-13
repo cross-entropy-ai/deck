@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use crossterm::event::{self, ColorScheme, Event, KeyEventKind};
 use ratatui::DefaultTerminal;
 
-use crate::action::{self, Action, PfAction};
+use crate::action::{self, Action, MountAction, PfAction};
 use crate::state::{FocusMode, MainView};
 use crate::summary_card::SummaryState;
 
@@ -203,6 +203,50 @@ impl App {
                 ok,
                 message,
             }));
+            redraw = Redraw::Force;
+        }
+        redraw
+    }
+
+    /// The mount port for a lane, or `None` when its system offers none.
+    /// Borrowed from the `'static` registry so it can move into a worker thread.
+    pub(super) fn mount_provider(
+        &self,
+        lane: &crate::lane::LaneId,
+    ) -> Option<&'static dyn crate::system::LaneMountProvider> {
+        self.systems
+            .runtime(lane)
+            .and_then(|runtime| runtime.lane_mounts())
+    }
+
+    /// Drain answers from the mount workers. The reducer drops stale generations,
+    /// so a late reply for a closed picker is harmless.
+    fn pump_mounts(&mut self) -> Redraw {
+        let mut redraw = Redraw::No;
+        while let Some(event) = self.mounts.try_recv() {
+            let action = match event {
+                crate::app::mounts::MountEvent::Discovered {
+                    lane,
+                    generation,
+                    result,
+                } => MountAction::Discovered {
+                    lane,
+                    generation,
+                    result,
+                },
+                crate::app::mounts::MountEvent::Activated {
+                    lane,
+                    generation,
+                    candidate,
+                    result,
+                } => MountAction::Activated {
+                    lane,
+                    generation,
+                    candidate,
+                    result,
+                },
+            };
+            self.dispatch(Action::Mount(action));
             redraw = Redraw::Force;
         }
         redraw
@@ -498,6 +542,8 @@ impl App {
             }
 
             self.pump_port_forward()
+                .apply(&mut needs_render, &mut force_render);
+            self.pump_mounts()
                 .apply(&mut needs_render, &mut force_render);
             self.pump_active_pane()
                 .apply(&mut needs_render, &mut force_render);
