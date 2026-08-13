@@ -11,6 +11,14 @@ use crate::picker::FilterPicker;
 /// Number of directory rows kept visible in the new-session picker.
 pub const DIRECTORY_VIEW_ROWS: usize = 8;
 
+/// The synthetic "one level up" row, first in every listing.
+///
+/// It is shown and clickable, but the keyboard highlight skips it: `←` is the
+/// keyboard way up, so the highlight stays on the children that `→` and `⏎`
+/// act on. It is the only synthetic row, which is why skipping it is a single
+/// step rather than a loop.
+pub const PARENT_ENTRY: &str = "..";
+
 /// Validate a tmux session name against deck's supported format and the
 /// names already present on the target server. Creation and rename share this
 /// boundary so they cannot disagree about valid or duplicate names.
@@ -50,7 +58,7 @@ pub fn filter_entries(entries: &[String], leaf: &str) -> Vec<usize> {
         .iter()
         .enumerate()
         .filter(|(_, name)| {
-            if name.as_str() == ".." {
+            if name.as_str() == PARENT_ENTRY {
                 return leaf.is_empty() || name.starts_with(&leaf_lc);
             }
             if !allow_dot && name.starts_with('.') {
@@ -64,8 +72,8 @@ pub fn filter_entries(entries: &[String], leaf: &str) -> Vec<usize> {
 
 /// Prepend the synthetic parent-directory entry to a backend listing.
 pub fn with_parent_entry(mut entries: Vec<String>) -> Vec<String> {
-    entries.retain(|entry| entry != "..");
-    entries.insert(0, "..".to_string());
+    entries.retain(|entry| entry != PARENT_ENTRY);
+    entries.insert(0, PARENT_ENTRY.to_string());
     entries
 }
 
@@ -187,6 +195,10 @@ impl NewSessionState {
     pub fn refilter(&mut self) {
         self.picker
             .refilter(|entries, input| filter_entries(entries, split_input(input).1));
+        // A fresh listing clamps the selection to 0, which is the parent row.
+        // Push it down onto the first real child so the highlight always sits
+        // on something `→`/`⏎` can act on.
+        self.skip_parent_row(1);
         self.keep_selection_visible();
     }
 
@@ -194,7 +206,49 @@ impl NewSessionState {
     /// new selection would otherwise leave the current viewport.
     pub fn step_selection(&mut self, direction: i32) {
         self.picker.step_wrapped(direction);
+        self.skip_parent_row(direction);
         self.keep_selection_visible();
+    }
+
+    /// The listing entry at filtered position `index`.
+    pub fn entry_at(&self, index: usize) -> Option<&str> {
+        let item = *self.picker.filtered.get(index)?;
+        self.picker.items.get(item).map(String::as_str)
+    }
+
+    /// Whether filtered position `index` holds the synthetic parent row.
+    pub fn is_parent_row(&self, index: usize) -> bool {
+        self.entry_at(index) == Some(PARENT_ENTRY)
+    }
+
+    /// The path this picker would show after opening filtered position
+    /// `index`: a child appends its name, [`PARENT_ENTRY`] walks up. `None`
+    /// when `index` is not in the filtered list.
+    ///
+    /// Shared by every "open that row" path — key, click, and click-to-create
+    /// — so they cannot disagree about where a row leads.
+    pub fn path_after_entering(&self, index: usize) -> Option<String> {
+        let entry = self.entry_at(index)?;
+        let (parent, _leaf) = split_input(self.input_str());
+        Some(if entry == PARENT_ENTRY {
+            parent_directory(parent)
+        } else {
+            format!("{parent}{entry}/")
+        })
+    }
+
+    /// Step the highlight off the parent row, continuing in `direction`.
+    ///
+    /// A no-op when `..` is the only row: with no child to hold the highlight
+    /// it stays there, and `→` on it means the same thing `←` does.
+    fn skip_parent_row(&mut self, direction: i32) {
+        if !self.is_parent_row(self.picker.selected) {
+            return;
+        }
+        if (0..self.picker.filtered.len()).all(|index| self.is_parent_row(index)) {
+            return;
+        }
+        self.picker.step_wrapped(if direction < 0 { -1 } else { 1 });
     }
 
     /// Clamp the stored viewport and reveal the selection only when needed.

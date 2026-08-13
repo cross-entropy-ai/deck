@@ -57,7 +57,13 @@ fn state_with_new_session_dirs() -> AppState {
     use crate::picker::FilterPicker;
 
     let mut state = AppState::new(120, 40);
-    let mut picker = FilterPicker::new(vec!["alpha".into(), "beta".into(), "gamma".into()]);
+    // Listings always carry the synthetic parent row, so the fixture does too:
+    // index 0 is `..`, then alpha/beta/gamma at rows 11/12/13.
+    let mut picker = FilterPicker::new(crate::new_session::with_parent_entry(vec![
+        "alpha".into(),
+        "beta".into(),
+        "gamma".into(),
+    ]));
     picker.input = make_textarea("~/");
     state.overlay.new_session = Some(NewSessionState {
         name: make_textarea("session-0"),
@@ -66,7 +72,7 @@ fn state_with_new_session_dirs() -> AppState {
         scroll: 0,
         target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
     });
-    state.hit_regions.new_session_dirs = (0..3)
+    state.hit_regions.new_session_dirs = (0..4)
         .map(|index| ListItemHit {
             rect: Rect::new(20, 10 + index as u16, 24, 1),
             index,
@@ -116,31 +122,65 @@ fn left_click_over_agent_row_inside_card_still_selects_agent() {
 }
 
 #[test]
-fn directory_click_selects_then_second_click_enters() {
+fn directory_click_opens_that_folder_in_one_click() {
     let mut state = state_with_new_session_dirs();
-    let beta = ev(MouseEventKind::Down(MouseButton::Left), 22, 11);
+    // Row 12 is `beta`, and nothing is highlighted there first: a click acts
+    // on the row it landed on rather than selecting and waiting for a second.
+    let beta = ev(MouseEventKind::Down(MouseButton::Left), 22, 12);
 
-    let first = mouse_to_action(&beta, &state);
-    assert!(matches!(
-        first,
-        Action::NewSession(NewSessionAction::Select(1))
-    ));
-    crate::action::apply_action(&mut state, first);
+    let action = mouse_to_action(&beta, &state);
+    assert!(
+        matches!(action, Action::NewSession(NewSessionAction::DirOpen(2))),
+        "left-click must open the clicked row, got {action:?}"
+    );
+    let fx = crate::action::apply_action(&mut state, action);
     let ns = state.overlay.new_session.as_ref().unwrap();
+    assert_eq!(ns.input_str(), "~/beta/");
     assert_eq!(ns.focus, crate::new_session::PickerFocus::Dir);
-    assert_eq!(ns.picker.selected, 1);
+    assert!(fx.has_reread_new_session_entries());
+}
 
-    let second = mouse_to_action(&beta, &state);
-    assert!(matches!(
-        second,
-        Action::NewSession(NewSessionAction::DirEnter)
-    ));
-    let fx = crate::action::apply_action(&mut state, second);
+#[test]
+fn parent_row_is_clickable_even_though_the_keyboard_skips_it() {
+    let mut state = state_with_new_session_dirs();
+    let parent = ev(MouseEventKind::Down(MouseButton::Left), 22, 10);
+
+    let action = mouse_to_action(&parent, &state);
+    assert!(
+        matches!(action, Action::NewSession(NewSessionAction::DirOpen(0))),
+        "clicking `../` must be routed, got {action:?}"
+    );
+    crate::action::apply_action(&mut state, action);
     assert_eq!(
         state.overlay.new_session.as_ref().unwrap().input_str(),
-        "~/beta/"
+        "~/../",
+        "clicking `../` walks one level up"
     );
-    assert!(fx.has_reread_new_session_entries());
+}
+
+#[test]
+fn right_click_on_a_folder_creates_the_session_in_it() {
+    let state = state_with_new_session_dirs();
+    let action = mouse_to_action(
+        &ev(MouseEventKind::Down(MouseButton::Right), 22, 12),
+        &state,
+    );
+    assert!(
+        matches!(action, Action::NewSession(NewSessionAction::CreateIn(2))),
+        "right-click must create in the clicked folder, got {action:?}"
+    );
+}
+
+#[test]
+fn clicking_the_footer_create_hint_confirms() {
+    let mut state = state_with_new_session_dirs();
+    state.hit_regions.new_session_create = Some(Rect::new(20, 20, 8, 1));
+
+    let action = mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 22, 20), &state);
+    assert!(
+        matches!(action, Action::NewSession(NewSessionAction::Confirm)),
+        "the footer's `⏎ create` hint must be clickable, got {action:?}"
+    );
 }
 
 #[test]
@@ -148,14 +188,16 @@ fn wheel_over_directory_list_uses_wrapped_navigation() {
     let mut state = state_with_new_session_dirs();
     let ns = state.overlay.new_session.as_mut().unwrap();
     ns.focus = crate::new_session::PickerFocus::Dir;
-    ns.picker.selected = 2;
+    // `gamma`, the last row.
+    ns.picker.selected = 3;
 
     let action = mouse_to_action(&ev(MouseEventKind::ScrollDown, 22, 12), &state);
     assert!(matches!(action, Action::NewSession(NewSessionAction::Next)));
     crate::action::apply_action(&mut state, action);
     assert_eq!(
         state.overlay.new_session.as_ref().unwrap().picker.selected,
-        0
+        1,
+        "wrapping past the end lands on the first child, stepping over `..`"
     );
 }
 

@@ -44,6 +44,16 @@ pub struct FilterPickerView<'a> {
     pub footer: &'a str,
 }
 
+/// The click targets one drawn filter-picker published for this frame.
+pub struct PickerHits {
+    /// Visible candidate rows, each carrying its filtered index.
+    pub rows: Vec<ListItemHit>,
+    /// The footer line. Callers that put a clickable hint in their footer
+    /// carve its rect out of this one, so the hint's text and its hit region
+    /// are derived from the same layout.
+    pub footer: Rect,
+}
+
 /// Draw a filter-picker popup; `content(idx)` renders the list row for
 /// candidate `idx`.
 pub fn draw_filter_picker(
@@ -52,7 +62,7 @@ pub fn draw_filter_picker(
     theme: &Theme,
     picker: FilterPickerView<'_>,
     content: impl FnMut(usize) -> String,
-) -> Vec<ListItemHit> {
+) -> PickerHits {
     // Always reserve at least one list row (for the empty-state message).
     let list_rows = picker.filtered.len().min(picker.max_visible).max(1);
     // borders(2) + fields(N) + blank(1) + list + blank(1) + [error] + footer(1)
@@ -96,7 +106,7 @@ pub fn draw_filter_picker(
         .scroll
         .min(picker.filtered.len().saturating_sub(picker.max_visible));
     let list_end = (list_start + picker.max_visible).min(picker.filtered.len());
-    let item_hits = (list_start..list_end)
+    let rows_hits = (list_start..list_end)
         .zip(rows[idx..].iter().copied())
         .map(|(selection, rect)| ListItemHit {
             rect,
@@ -138,5 +148,8 @@ pub fn draw_filter_picker(
     }
 
     modal_footer(frame.buffer_mut(), rows[idx], picker.footer, theme);
-    item_hits
+    PickerHits {
+        rows: rows_hits,
+        footer: rows[idx],
+    }
 }

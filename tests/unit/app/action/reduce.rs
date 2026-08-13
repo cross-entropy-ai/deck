@@ -1795,11 +1795,51 @@ fn new_session_dir_enter_descends_into_selected() {
 }
 
 #[test]
-fn new_session_dir_enter_on_parent_entry_goes_up() {
+fn new_session_dir_enter_never_lands_on_the_parent_entry() {
+    // The highlight skips `..`, so `→` always descends. `←` (DirUp) is the
+    // keyboard way up, and clicking the row is the mouse way.
     let mut state = picker_state_with("~/foo/", vec!["..".into(), "bar".into()]);
+    let fx = apply_action(&mut state, Action::NewSession(NewSessionAction::DirEnter));
+    assert_eq!(ns_input_str(&state), "~/foo/bar/");
+    assert!(fx.has_reread_new_session_entries());
+}
+
+#[test]
+fn new_session_dir_enter_on_the_only_row_left_goes_up() {
+    // An empty directory leaves `..` holding the highlight, and then `→` on
+    // it means what `←` means.
+    let mut state = picker_state_with("~/foo/", vec!["..".into()]);
     let fx = apply_action(&mut state, Action::NewSession(NewSessionAction::DirEnter));
     assert_eq!(ns_input_str(&state), "~/");
     assert!(fx.has_reread_new_session_entries());
+}
+
+#[test]
+fn new_session_dir_open_targets_the_clicked_row_not_the_highlight() {
+    let mut state = picker_state_with("~/foo/", vec!["..".into(), "bar".into(), "baz".into()]);
+    // Highlight is on `bar`; the click landed on `baz`.
+    let fx = apply_action(&mut state, Action::NewSession(NewSessionAction::DirOpen(2)));
+    assert_eq!(ns_input_str(&state), "~/foo/baz/");
+    assert!(fx.has_reread_new_session_entries());
+}
+
+#[test]
+fn new_session_dir_open_on_the_parent_row_goes_up() {
+    let mut state = picker_state_with("~/foo/", vec!["..".into(), "bar".into()]);
+    let fx = apply_action(&mut state, Action::NewSession(NewSessionAction::DirOpen(0)));
+    assert_eq!(ns_input_str(&state), "~/");
+    assert!(fx.has_reread_new_session_entries());
+}
+
+#[test]
+fn new_session_dir_open_from_the_name_field_moves_focus_to_the_path() {
+    let mut state = picker_state_with("~/foo/", vec!["..".into(), "bar".into()]);
+    state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
+    apply_action(&mut state, Action::NewSession(NewSessionAction::DirOpen(1)));
+    assert_eq!(
+        state.overlay.new_session.as_ref().unwrap().focus,
+        crate::new_session::PickerFocus::Dir
+    );
 }
 
 #[test]

@@ -15,25 +15,42 @@ use super::widgets::{
 };
 use super::NewSessionView;
 
+/// The footer hint that doubles as the picker's confirm button. Both footers
+/// open with it at the same offset, so the click target is the same rect
+/// whichever field has focus.
+const CREATE_HINT: &str = "⏎ create";
+/// Leading pad shared by every footer string, and thus the hint's x offset.
+const FOOTER_PAD: u16 = 2;
+
+/// What the drawn new-session picker published for this frame.
+pub struct NewSessionHits {
+    /// Visible directory rows, each carrying its filtered index.
+    pub dirs: Vec<crate::geometry::ListItemHit>,
+    /// The footer's `⏎ create` hint, clickable to confirm.
+    pub create: Rect,
+}
+
 pub fn draw_new_session(
     frame: &mut Frame,
     area: Rect,
     view: &NewSessionView,
     theme: &Theme,
-) -> Vec<crate::geometry::ListItemHit> {
+) -> NewSessionHits {
     // The title carries the non-primary lane label so the picker target stays
     // clear without exposing connection metadata to UI.
     let title = match view.lane_title {
         Some(lane_title) => format!("New session · {lane_title}"),
         None => "New session".to_string(),
     };
+    // Browsing keys are listed only while the list has focus; `⏎ create` leads
+    // both so the one thing that finishes the job never moves.
     let footer = if view.focus_name {
-        "  ⏎ create   ⇥ switch   ←→ cursor   ⎋ cancel"
+        format!("  {CREATE_HINT}   ⇥ switch   ←→ cursor   ⎋ cancel")
     } else {
-        "  ⏎ create   → open   ← parent   ↑↓ select   ⇥ switch   ⎋"
+        format!("  {CREATE_HINT}   → open   ← parent   ↑↓ select   ⇥ switch   ⎋")
     };
 
-    draw_filter_picker(
+    let hits = draw_filter_picker(
         frame,
         area,
         theme,
@@ -60,10 +77,25 @@ pub fn draw_new_session(
             list_focused: !view.focus_name,
             empty_msg: "    (no entries)",
             error: view.error,
-            footer,
+            footer: &footer,
         },
         |idx| format!("{}/", view.entries[idx]),
-    )
+    );
+
+    // Carve the hint out of the footer it was just drawn into. Intersecting
+    // keeps the target inside the popup on a terminal too narrow to hold the
+    // whole footer, where the text is clipped.
+    let create = hits.footer.intersection(Rect {
+        x: hits.footer.x + FOOTER_PAD,
+        y: hits.footer.y,
+        width: unicode_width::UnicodeWidthStr::width(CREATE_HINT) as u16,
+        height: 1,
+    });
+
+    NewSessionHits {
+        dirs: hits.rows,
+        create,
+    }
 }
 
 pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, theme: &Theme) {

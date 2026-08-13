@@ -309,6 +309,7 @@ impl App {
             let rendered_modal = draw_active_modal(frame, s, full, main_inner, layout_mode, theme);
             captured_summary_popup_max_scroll = rendered_modal.summary_popup_max_scroll;
             captured_hits.new_session_dirs = rendered_modal.new_session_dirs;
+            captured_hits.new_session_create = rendered_modal.new_session_create;
             if rendered_modal.kill_hits.is_some() {
                 captured_hits.kill = rendered_modal.kill_hits;
             }

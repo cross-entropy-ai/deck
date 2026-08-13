@@ -304,9 +304,9 @@ fn modal_mouse_to_action(
             }
         }
         Modal::NewSession => {
-            let Some(ns) = state.overlay.new_session.as_ref() else {
+            if state.overlay.new_session.is_none() {
                 return Action::None;
-            };
+            }
             match (mouse.kind, hit) {
                 (MouseEventKind::ScrollUp, Some(HitKind::NewSessionDir(_))) => {
                     Action::NewSession(NewSessionAction::Prev)
@@ -314,14 +314,19 @@ fn modal_mouse_to_action(
                 (MouseEventKind::ScrollDown, Some(HitKind::NewSessionDir(_))) => {
                     Action::NewSession(NewSessionAction::Next)
                 }
-                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::NewSessionDir(index)))
-                    if ns.focus == crate::new_session::PickerFocus::Dir
-                        && ns.picker.selected == index =>
-                {
-                    Action::NewSession(NewSessionAction::DirEnter)
-                }
+                // Left button browses: a folder becomes the new path, `../`
+                // walks up. Right button finishes the job in the folder it
+                // landed on, so a mouse-only user never has to descend first.
                 (MouseEventKind::Down(MouseButton::Left), Some(HitKind::NewSessionDir(index))) => {
-                    Action::NewSession(NewSessionAction::Select(index))
+                    Action::NewSession(NewSessionAction::DirOpen(index))
+                }
+                (MouseEventKind::Down(MouseButton::Right), Some(HitKind::NewSessionDir(index))) => {
+                    Action::NewSession(NewSessionAction::CreateIn(index))
+                }
+                // The footer's own `⏎ create` hint, clickable: the mouse path
+                // to "create where the Path field points".
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::NewSessionCreate)) => {
+                    Action::NewSession(NewSessionAction::Confirm)
                 }
                 _ => Action::None,
             }

@@ -502,6 +502,9 @@ pub struct HitRegions {
     /// Visible directory rows in the active new-session picker. Each carries
     /// its absolute selection index in the filtered list.
     pub new_session_dirs: Vec<ListItemHit>,
+    /// The new-session picker's footer `⏎ create` hint, which doubles as the
+    /// modal's confirm button for the mouse.
+    pub new_session_create: Option<Rect>,
     /// The expanded header's collapse button, or the collapsed rail's expand
     /// button.
     pub sidebar_toggle: Option<Rect>,
@@ -526,6 +529,8 @@ pub enum HitKind {
     Tab(SidebarTab),
     /// A visible directory row in the new-session picker.
     NewSessionDir(usize),
+    /// The new-session picker's footer confirm hint.
+    NewSessionCreate,
     /// Collapse or expand the whole horizontal sidebar.
     SidebarToggle,
     /// The Summary card's "Generate" button.
@@ -561,6 +566,9 @@ impl HitRegions {
             .find(|item| item.rect.contains(pos))
         {
             return Some(HitKind::NewSessionDir(item.index));
+        }
+        if self.new_session_create.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::NewSessionCreate);
         }
         if self.banner.is_some_and(|r| r.contains(pos)) {
             return Some(HitKind::Banner);

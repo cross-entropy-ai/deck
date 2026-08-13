@@ -1,5 +1,5 @@
 use crate::action::{self, Action, MenuAction, NewSessionAction, PfAction, SummaryAction};
-use crate::effects::{Effect, SideEffect};
+use crate::effects::SideEffect;
 use crate::session::SessionControl;
 use crate::state::{FocusMode, MainView};
 use crate::tmux;
@@ -178,11 +178,15 @@ impl App {
                 false
             }
             Action::NewSession(NewSessionAction::Confirm) => {
-                if let Some(req) = self.confirm_new_session() {
-                    let mut fx = crate::effects::SideEffect::default();
-                    fx.push(Effect::CreateSession(req));
-                    fx.refresh_sessions();
-                    self.execute_side_effects(&fx);
+                self.create_session_from_picker();
+                false
+            }
+            Action::NewSession(NewSessionAction::CreateIn(index)) => {
+                // Right-click a folder: aim the path at it and finish, in one
+                // gesture. Same fs::metadata-dependent path as Confirm, which
+                // is why it lands here rather than in the reducer.
+                if self.aim_new_session_at(index) {
+                    self.create_session_from_picker();
                 }
                 false
             }
