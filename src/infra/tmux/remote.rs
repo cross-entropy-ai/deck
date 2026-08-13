@@ -104,6 +104,16 @@ pub fn set_container_opts(opts: HashMap<String, ContainerOpts>) {
     *table = opts;
 }
 
+/// Add or replace one entry without disturbing the rest. Used when a container
+/// is mounted at runtime, where rebuilding the whole table from config would
+/// drop exactly the entry being added.
+pub fn upsert_container_opts(remote_id: String, opts: ContainerOpts) {
+    CONTAINER_OPTS
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(remote_id, opts);
+}
+
 /// Transport settings for a container remote id; defaults (docker, no agent
 /// socket) for ids the config no longer mentions — a stale in-flight call
 /// then fails on docker's own error rather than panicking here.

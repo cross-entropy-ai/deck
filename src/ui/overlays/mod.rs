@@ -1,3 +1,4 @@
+pub mod mounts;
 pub mod port_forward;
 
 use ratatui::layout::{Constraint, Layout, Rect};

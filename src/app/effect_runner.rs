@@ -4,7 +4,7 @@
 //! module is the single place that translates those descriptions into App
 //! services and runtime mutations.
 
-use crate::action::{Action, MenuAction, PfAction};
+use crate::action::{Action, MenuAction, MountAction, PfAction};
 use crate::effects::{Effect, SideEffect};
 use crate::state::MainView;
 
@@ -191,6 +191,57 @@ impl App {
                 Effect::RereadNewSessionEntries => self.request_new_session_listing(),
                 Effect::OpenNewSessionPicker(lane) => self.open_new_session_picker(lane.clone()),
                 Effect::OpenAddRemotePicker => self.open_add_remote_picker(),
+                Effect::OpenMountPicker(lane) => {
+                    self.dispatch(Action::Mount(MountAction::Open(lane.clone())));
+                }
+                Effect::DiscoverMounts { lane, generation } => {
+                    match self.mount_provider(lane) {
+                        Some(provider) => self.mounts.discover(lane.clone(), *generation, provider),
+                        // The capability said this lane can mount, so a missing
+                        // provider is a composition bug, not a user error.
+                        None => {
+                            self.dispatch(Action::Mount(MountAction::Discovered {
+                                lane: lane.clone(),
+                                generation: *generation,
+                                result: Err("this lane cannot mount anything".into()),
+                            }));
+                        }
+                    }
+                }
+                Effect::ActivateMount {
+                    lane,
+                    generation,
+                    candidate,
+                } => match self.mount_provider(lane) {
+                    Some(provider) => {
+                        self.mounts
+                            .activate(lane.clone(), *generation, candidate.clone(), provider)
+                    }
+                    None => {
+                        self.dispatch(Action::Mount(MountAction::Activated {
+                            lane: lane.clone(),
+                            generation: *generation,
+                            candidate: candidate.clone(),
+                            result: Err("this lane cannot mount anything".into()),
+                        }));
+                    }
+                },
+                Effect::MountLane { lane, candidate } => {
+                    // `mount` publishes the new lane's transport settings before
+                    // returning, so onboarding (which spawns an attach PTY on a
+                    // worker thread) can read them safely.
+                    let mounted = self
+                        .mount_provider(lane)
+                        .and_then(|provider| provider.mount(lane, candidate));
+                    match mounted {
+                        Some(new_lane) => {
+                            self.state.system_sections = self.systems.sections();
+                            self.onboard_lane(&new_lane);
+                            self.request_refresh();
+                        }
+                        None => self.state.show_warning("could not mount that"),
+                    }
+                }
                 Effect::AddConfiguredLane { owner, candidate } => {
                     let mut config = self.config_snapshot();
                     let outcome = self

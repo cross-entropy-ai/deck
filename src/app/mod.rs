@@ -7,6 +7,7 @@ mod effect_runner;
 mod focus_executor;
 mod lifecycle;
 mod modal;
+mod mounts;
 mod new_session_flow;
 mod pty;
 mod refresh;
@@ -90,6 +91,8 @@ pub struct App {
     port_forward_rx: std::sync::mpsc::Receiver<crate::app::ssh::port_forward_task::OpResult>,
     /// Owns the read-only active-pane probe and its result channel.
     active_pane_probe: ActivePaneProbeExecutor,
+    /// Off-thread discovery/activation for the mount picker.
+    mounts: self::mounts::MountWorker,
     /// The in-flight Agents-tab summary generation, if any. A one-shot
     /// [`Worker`](crate::worker::Worker) carrying `Ok(text)` or `Err(reason)`
     /// (no agents, selected CLI missing, non-zero exit, timeout, cancel).
@@ -263,6 +266,7 @@ impl App {
             port_forward_tx,
             port_forward_rx: pf_result_rx,
             active_pane_probe: ActivePaneProbeExecutor::new(),
+            mounts: self::mounts::MountWorker::new(),
             active_pane_in_flight: false,
             summary_worker: None,
             focus_seq: 0,

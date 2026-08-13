@@ -657,6 +657,9 @@ pub struct AppState {
     /// without round-tripping through dispatch. Kept in sync by startup
     /// and `reload_config`.
     pub config_remotes: Vec<crate::config::RemoteConfig>,
+    /// Monotonic stamp for mount-picker requests, so a late worker answer for a
+    /// closed or re-pointed picker is dropped instead of repopulating it.
+    pub mount_generation: u64,
 
     /// Backend-provided sidebar section definitions, materialized by the
     /// injected `SystemRegistry`. Layout consumes these values without global
@@ -748,6 +751,7 @@ impl AppState {
             reload_status: None,
             reload_status_at: None,
             config_remotes: Vec::new(),
+            mount_generation: 0,
             system_sections: Vec::new(),
             agents: HashMap::new(),
             agent_entries: Vec::new(),
@@ -849,6 +853,7 @@ impl AppState {
                     reorder_sessions: true,
                     actions: true,
                     port_forwards: true,
+                    mounts: false,
                 },
                 |section| section.lane_capabilities,
             )

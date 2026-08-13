@@ -4,7 +4,8 @@ use crate::overlay::RenameState;
 use crate::state::{AppState, FocusMode, LayoutMode, MainView, SidebarTab, ViewMode};
 
 use super::{
-    Action, AddRemoteAction, MenuAction, NewSessionAction, PfAction, SettingsAction, SummaryAction,
+    Action, AddRemoteAction, MenuAction, MountAction, NewSessionAction, PfAction, SettingsAction,
+    SummaryAction,
 };
 
 mod menu;
@@ -580,6 +581,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
 
         Action::Pf(a) => return port_forward::reduce_pf(state, a),
         Action::AddRemote(a) => return reduce_add_remote(state, a),
+        Action::Mount(a) => return reduce_mount(state, a),
 
         Action::None => {}
     }
@@ -754,6 +756,124 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
             // Always reread: the user explicitly cleared the segment they
             // were typing and expects a fresh listing of the parent dir.
             fx.reread_new_session_entries();
+        }
+    }
+    fx
+}
+
+/// The mount picker. Mirrors `reduce_add_remote`, with two additions: worker
+/// answers arrive as actions (so a stale `generation` can be dropped), and a
+/// candidate that declared `needs_activation` takes a second Enter, because
+/// mounting it changes something outside Deck.
+fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
+    let mut fx = SideEffect::default();
+    match action {
+        MountAction::Open(lane) => {
+            if !state.lane_capabilities(&lane).mounts {
+                return fx;
+            }
+            // A fresh generation retires any probe still in flight for a
+            // previous picker.
+            state.mount_generation = state.mount_generation.wrapping_add(1);
+            let generation = state.mount_generation;
+            state.overlay.context_menu = None;
+            state.overlay.mount_picker = Some(crate::overlay::MountPickerState::new(
+                lane.clone(),
+                generation,
+            ));
+            fx.push(Effect::DiscoverMounts { lane, generation });
+        }
+        MountAction::InputKey(_) | MountAction::Prev | MountAction::Next => {
+            let Some(picker) = state.overlay.mount_picker.as_mut() else {
+                return fx;
+            };
+            // Any navigation abandons a pending confirmation rather than
+            // carrying it onto whatever is highlighted next.
+            picker.confirming = None;
+            match action {
+                MountAction::InputKey(key) => {
+                    picker.picker.input.input(key);
+                    picker.refilter();
+                    picker.picker.error = None;
+                }
+                MountAction::Prev => picker.picker.step(-1),
+                _ => picker.picker.step(1),
+            }
+        }
+        MountAction::Close => {
+            state.overlay.mount_picker = None;
+        }
+        MountAction::Confirm => {
+            let Some(picker) = state.overlay.mount_picker.as_mut() else {
+                return fx;
+            };
+            if picker.busy.is_some() {
+                return fx;
+            }
+            // Second Enter on a candidate we already asked about.
+            if let Some(pending) = picker.confirming.take() {
+                picker.busy = Some(crate::overlay::MountBusy::Activating);
+                fx.push(Effect::ActivateMount {
+                    lane: picker.lane.clone(),
+                    generation: picker.generation,
+                    candidate: pending.id,
+                });
+                return fx;
+            }
+            let Some(candidate) = picker.selected().cloned() else {
+                picker.picker.error = Some("nothing to mount".into());
+                return fx;
+            };
+            if candidate.needs_activation {
+                picker.confirming = Some(candidate);
+                return fx;
+            }
+            let lane = picker.lane.clone();
+            state.overlay.mount_picker = None;
+            fx.push(Effect::MountLane {
+                lane,
+                candidate: candidate.id,
+            });
+        }
+        MountAction::Discovered {
+            lane,
+            generation,
+            result,
+        } => {
+            let Some(picker) = state.overlay.mount_picker.as_mut() else {
+                return fx;
+            };
+            if picker.generation != generation || picker.lane != lane {
+                return fx;
+            }
+            match result {
+                Ok(candidates) => picker.set_candidates(candidates),
+                Err(error) => {
+                    picker.busy = None;
+                    picker.picker.error = Some(error);
+                }
+            }
+        }
+        MountAction::Activated {
+            lane,
+            generation,
+            candidate,
+            result,
+        } => {
+            let Some(picker) = state.overlay.mount_picker.as_mut() else {
+                return fx;
+            };
+            if picker.generation != generation || picker.lane != lane {
+                return fx;
+            }
+            picker.busy = None;
+            match result {
+                Ok(()) => {
+                    state.overlay.mount_picker = None;
+                    fx.push(Effect::MountLane { lane, candidate });
+                }
+                Err(error) => picker.picker.error = Some(error),
+            }
         }
     }
     fx

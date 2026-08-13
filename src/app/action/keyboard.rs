@@ -6,7 +6,8 @@ use crate::overlay::Modal;
 use crate::state::{AppState, FocusMode, MainView};
 
 use super::{
-    Action, AddRemoteAction, MenuAction, NewSessionAction, PfAction, SettingsAction, SummaryAction,
+    Action, AddRemoteAction, MenuAction, MountAction, NewSessionAction, PfAction, SettingsAction,
+    SummaryAction,
 };
 
 pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
@@ -214,6 +215,15 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
         Modal::ThemePicker => theme_picker_key_to_action(key),
         Modal::KeybindingsView => keybindings_view_key_to_action(key),
         Modal::ExcludeEditor => exclude_editor_key_to_action(key, state),
+        // Same shape as the add-remote picker: typing filters, arrows move,
+        // Enter commits (twice for a candidate needing activation).
+        Modal::MountPicker => match key.code {
+            KeyCode::Enter => Action::Mount(MountAction::Confirm),
+            KeyCode::Esc => Action::Mount(MountAction::Close),
+            KeyCode::Up => Action::Mount(MountAction::Prev),
+            KeyCode::Down => Action::Mount(MountAction::Next),
+            _ => Action::Mount(MountAction::InputKey(*key)),
+        },
         Modal::SshSetting => match key.code {
             KeyCode::Enter => Action::Settings(SettingsAction::SshSettingConfirm),
             KeyCode::Esc => Action::Settings(SettingsAction::SshSettingCancel),

@@ -21,14 +21,22 @@ const RENAME_DISABLED: &[MenuItem] = &[MenuItem::Rename];
 // is equivalent to `deck remote remove <host>`.
 const HOST_DIVIDER_MENU_ITEMS: &[MenuItem] = &[
     MenuItem::NewSession,
+    MenuItem::Containers,
     MenuItem::PortForward,
     MenuItem::RemoveFromList,
 ];
 // The `@local` divider reuses the host divider's item list for consistency,
 // but PortForward and RemoveFromList are remote-only: they're greyed out,
 // leaving just NewSession (creates a local session).
-const LOCAL_DIVIDER_DISABLED: &[MenuItem] = &[MenuItem::PortForward, MenuItem::RemoveFromList];
+const LOCAL_DIVIDER_DISABLED: &[MenuItem] = &[
+    MenuItem::Containers,
+    MenuItem::PortForward,
+    MenuItem::RemoveFromList,
+];
 const PORT_FORWARD_DISABLED: &[MenuItem] = &[MenuItem::PortForward];
+const MOUNTS_DISABLED: &[MenuItem] = &[MenuItem::Containers];
+const PORT_FORWARD_AND_MOUNTS_DISABLED: &[MenuItem] =
+    &[MenuItem::Containers, MenuItem::PortForward];
 // Right-click on blank sidebar space / the persistent footer button. Put the
 // primary creation action first; the explicit "local" label distinguishes it
 // from the per-host divider's NewSession action.
@@ -52,6 +60,7 @@ pub enum MenuItem {
     Quit,
     NewLocalSession,
     NewSession,
+    Containers,
     PortForward,
     RemoveFromList,
 }
@@ -67,6 +76,7 @@ impl MenuItem {
             MenuItem::Quit => "Quit",
             MenuItem::NewLocalSession => "New local session",
             MenuItem::NewSession => "New session",
+            MenuItem::Containers => "Containers…",
             MenuItem::PortForward => "Port Forward",
             MenuItem::RemoveFromList => "Remove from list",
         }
@@ -88,6 +98,8 @@ pub enum MenuKind {
         lane: crate::lane::LaneId,
         primary: bool,
         port_forward_enabled: bool,
+        /// Whether this lane's system offers lanes to mount under it.
+        mounts_enabled: bool,
     },
 }
 
@@ -109,8 +121,17 @@ impl MenuKind {
             MenuKind::LaneDivider { primary: true, .. } => LOCAL_DIVIDER_DISABLED,
             MenuKind::LaneDivider {
                 port_forward_enabled: false,
+                mounts_enabled: false,
+                ..
+            } => PORT_FORWARD_AND_MOUNTS_DISABLED,
+            MenuKind::LaneDivider {
+                port_forward_enabled: false,
                 ..
             } => PORT_FORWARD_DISABLED,
+            MenuKind::LaneDivider {
+                mounts_enabled: false,
+                ..
+            } => MOUNTS_DISABLED,
             MenuKind::Global | MenuKind::LaneDivider { .. } => &[],
         }
     }

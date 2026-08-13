@@ -16,9 +16,9 @@ use crate::{remote_tmux, tmux};
 use super::{
     AttachmentEndpoint, AttachmentProvider, AttachmentRole, CatalogError, ControlCtx,
     FocusTransportProvider, LaneActionId, LaneActionProvider, LaneCapabilities,
-    LaneConfigAddOutcome, LaneConfigOutcome, LaneConfigProvider, LaneRuntime, LaneShellIntent,
-    LaneSnapshot, SectionDef, SessionCapabilities, SessionCatalog, SessionControlProvider,
-    SnapshotCtx, SnapshotMode, SummaryTransportProvider, System,
+    LaneConfigAddOutcome, LaneConfigOutcome, LaneConfigProvider, LaneMountProvider, LaneRuntime,
+    LaneShellIntent, LaneSnapshot, MountCandidate, SectionDef, SessionCapabilities, SessionCatalog,
+    SessionControlProvider, SnapshotCtx, SnapshotMode, SummaryTransportProvider, System,
 };
 
 /// This system's id — the `system` half of every [`LaneId`] it produces.
@@ -38,16 +38,43 @@ mod cmd {
 /// lock so the injected registry can be shared by the UI and refresh worker.
 pub struct TmuxSystem {
     remotes: std::sync::RwLock<Vec<RemoteConfig>>,
+    /// Containers mounted from the picker rather than declared in config, for
+    /// this session only. Kept apart from `remotes` precisely so `configure`
+    /// cannot wipe them and so nothing ever writes them to disk — the shell asks
+    /// for lanes, not for where they came from.
+    mounted: std::sync::RwLock<Vec<MountedContainer>>,
     ssh_connection_reuse: std::sync::atomic::AtomicBool,
+}
+
+/// One session-scoped container lane. `engine` is remembered because discovery,
+/// not config, is what learned it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MountedContainer {
+    host: String,
+    name: String,
+    engine: String,
 }
 
 impl Default for TmuxSystem {
     fn default() -> Self {
         Self {
             remotes: std::sync::RwLock::new(Vec::new()),
+            mounted: std::sync::RwLock::new(Vec::new()),
             ssh_connection_reuse: std::sync::atomic::AtomicBool::new(true),
         }
     }
+}
+
+/// A [`MountCandidate`] id, which the shell round-trips without decoding: the
+/// engine and the container name, since `activate`/`mount` receive only the id
+/// and both need the engine discovery found.
+fn mount_candidate_id(engine: &str, name: &str) -> String {
+    format!("{engine}\x1f{name}")
+}
+
+fn parse_mount_candidate(id: &str) -> Option<(&str, &str)> {
+    let (engine, name) = id.split_once('\x1f')?;
+    (!engine.is_empty() && !name.is_empty()).then_some((engine, name))
 }
 
 impl TmuxSystem {
@@ -226,6 +253,10 @@ fn tmux_lane_capabilities(lane: &LaneId, ssh_connection_reuse: bool) -> LaneCapa
         reorder_sessions: true,
         actions: true,
         port_forwards: ssh_connection_reuse && owns_connection,
+        // Only a host lane can mount containers: the local lane has no engine
+        // Deck talks to (local Docker is out of scope), and a container cannot
+        // mount further containers.
+        mounts: owns_connection,
     }
 }
 
@@ -246,6 +277,17 @@ impl System for TmuxSystem {
                 .map(|remote| remote.host.clone())
                 .collect(),
         );
+        // A reload can remove a host; its session-mounted containers go with it,
+        // since their lane id no longer names anything Deck can reach.
+        let mut mounted = self
+            .mounted
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        mounted.retain(|entry| {
+            usable_remotes(&config.remotes).any(|remote| remote.host == entry.host)
+        });
+        // One table for both sources — the transport looks up by remote id and
+        // neither knows nor cares which list an entry came from.
         crate::remote_tmux::set_container_opts(
             usable_remotes(&config.remotes)
                 .flat_map(|remote| {
@@ -259,8 +301,18 @@ impl System for TmuxSystem {
                         )
                     })
                 })
+                .chain(mounted.iter().map(|entry| {
+                    (
+                        crate::remote_tmux::container_remote_id(&entry.host, &entry.name),
+                        crate::remote_tmux::ContainerOpts {
+                            engine: entry.engine.clone(),
+                            agent_sock: None,
+                        },
+                    )
+                }))
                 .collect(),
         );
+        drop(mounted);
         let mut remotes = self
             .remotes
             .write()
@@ -277,12 +329,25 @@ impl System for TmuxSystem {
             .remotes
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mounted = self
+            .mounted
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         std::iter::once(Self::local_lane())
             .chain(usable_remotes(&remotes).flat_map(|remote| {
-                std::iter::once(Self::host_lane(&remote.host)).chain(
-                    usable_containers(remote)
-                        .map(|container| Self::container_lane(&remote.host, &container.name)),
-                )
+                std::iter::once(Self::host_lane(&remote.host))
+                    .chain(
+                        usable_containers(remote)
+                            .map(|container| Self::container_lane(&remote.host, &container.name)),
+                    )
+                    // Session-mounted containers sit under their host, right
+                    // after the ones config declared.
+                    .chain(
+                        mounted
+                            .iter()
+                            .filter(|entry| entry.host == remote.host)
+                            .map(|entry| Self::container_lane(&entry.host, &entry.name)),
+                    )
             }))
             .collect()
     }
@@ -310,6 +375,7 @@ impl System for TmuxSystem {
                 .with_session_control(self)
                 .with_lane_actions(self)
                 .with_lane_config(self)
+                .with_lane_mounts(self)
                 .with_focus_transport(self)
                 .with_summary_transport(self)
                 .with_attachment(self)
@@ -375,6 +441,90 @@ impl SummaryTransportProvider for TmuxSystem {
     }
 }
 
+impl LaneMountProvider for TmuxSystem {
+    fn discover(&self, lane: &LaneId) -> Result<Vec<MountCandidate>, String> {
+        let Some(host) = Self::host_of(lane) else {
+            return Ok(Vec::new());
+        };
+        // Hide what is already a lane: config-declared containers and ones this
+        // session already mounted. Offering them again would only produce a
+        // duplicate id.
+        let existing: std::collections::HashSet<String> = {
+            let remotes = self
+                .remotes
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mounted = self
+                .mounted
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            usable_remotes(&remotes)
+                .filter(|remote| remote.host == host)
+                .flat_map(|remote| usable_containers(remote).map(|c| c.name.clone()))
+                .chain(
+                    mounted
+                        .iter()
+                        .filter(|entry| entry.host == host)
+                        .map(|entry| entry.name.clone()),
+                )
+                .collect()
+        };
+
+        Ok(crate::remote_tmux::list_containers(host)
+            .into_iter()
+            .filter(|found| !existing.contains(&found.name))
+            .map(|found| MountCandidate {
+                id: mount_candidate_id(&found.engine, &found.name),
+                // The engine is worth showing: a host may run both, and it
+                // decides which CLI Deck will exec through.
+                label: if found.running {
+                    format!("{} ({})", found.name, found.engine)
+                } else {
+                    format!("{} ({}, stopped)", found.name, found.engine)
+                },
+                needs_activation: !found.running,
+            })
+            .collect())
+    }
+
+    fn activate(&self, lane: &LaneId, candidate: &str) -> Result<(), String> {
+        let host = Self::host_of(lane).ok_or("the local lane has no containers")?;
+        let (engine, name) =
+            parse_mount_candidate(candidate).ok_or("malformed container candidate")?;
+        crate::remote_tmux::start_container(host, engine, name)
+    }
+
+    fn mount(&self, lane: &LaneId, candidate: &str) -> Option<LaneId> {
+        let host = Self::host_of(lane)?;
+        let (engine, name) = parse_mount_candidate(candidate)?;
+        // Publish the transport settings BEFORE returning: the shell onboards
+        // the lane as soon as it has the id, and the attach spawner reads this
+        // table on a worker thread.
+        crate::remote_tmux::upsert_container_opts(
+            crate::remote_tmux::container_remote_id(host, name),
+            crate::remote_tmux::ContainerOpts {
+                engine: engine.to_string(),
+                agent_sock: None,
+            },
+        );
+        let mut mounted = self
+            .mounted
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !mounted
+            .iter()
+            .any(|entry| entry.host == host && entry.name == name)
+        {
+            mounted.push(MountedContainer {
+                host: host.to_string(),
+                name: name.to_string(),
+                engine: engine.to_string(),
+            });
+        }
+        Some(Self::container_lane(host, name))
+    }
+}
+
 impl LaneConfigProvider for TmuxSystem {
     fn add_lane(&self, candidate: &str, config: &mut Config) -> LaneConfigAddOutcome {
         let host = candidate.trim();
@@ -403,6 +553,18 @@ impl LaneConfigProvider for TmuxSystem {
         // container lanes.
         let target = crate::remote_tmux::parse_remote_id(remote_id);
         if let Some(container) = target.container {
+            // Session-mounted containers were never written to config, so
+            // removal is purely dropping them from memory.
+            let mut mounted = self
+                .mounted
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let before = mounted.len();
+            mounted.retain(|entry| !(entry.host == target.host && entry.name == container));
+            if mounted.len() != before {
+                return LaneConfigOutcome::Removed;
+            }
+            drop(mounted);
             let Some(remote) = config
                 .remotes
                 .iter_mut()

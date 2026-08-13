@@ -749,6 +749,7 @@ fn local_divider_menu_greys_remote_only_items() {
             lane: crate::system::tmux::TmuxSystem::local_lane(),
             primary: true,
             port_forward_enabled: true,
+            mounts_enabled: true,
         },
         x: 0,
         y: 0,

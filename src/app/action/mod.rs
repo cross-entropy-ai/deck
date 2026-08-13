@@ -97,6 +97,7 @@ pub enum Action {
     Pf(PfAction),
     /// Add-remote-host picker.
     AddRemote(AddRemoteAction),
+    Mount(MountAction),
 
     None,
 }
@@ -265,6 +266,32 @@ pub enum PfTaskKind {
     Forward(crate::forwards::ForwardSpec),
     Cancel,
     Exit,
+}
+
+/// The mount picker: same input shape as the add-remote picker, plus the
+/// confirm step a side-effecting candidate needs.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MountAction {
+    /// Open for a lane and kick discovery.
+    Open(crate::lane::LaneId),
+    InputKey(crossterm::event::KeyEvent),
+    Next,
+    Prev,
+    /// Mount the highlighted candidate, or ask first when it needs activating.
+    Confirm,
+    Close,
+    /// A worker answered. Stale generations are dropped by the reducer.
+    Discovered {
+        lane: crate::lane::LaneId,
+        generation: u64,
+        result: Result<Vec<crate::system::MountCandidate>, String>,
+    },
+    Activated {
+        lane: crate::lane::LaneId,
+        generation: u64,
+        candidate: String,
+        result: Result<(), String>,
+    },
 }
 
 #[derive(Debug)]

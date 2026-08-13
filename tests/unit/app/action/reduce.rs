@@ -1,6 +1,8 @@
 use super::{
-    apply_action, Action, MenuAction, NewSessionAction, PfAction, SettingsAction, SummaryAction,
+    apply_action, Action, MenuAction, MountAction, NewSessionAction, PfAction, SettingsAction,
+    SummaryAction,
 };
+use crate::effects::Effect;
 use crate::overlay::RenameState;
 use crate::state::{
     AppState, FocusMode, LayoutMode, MainView, SessionEntry, SessionEntryKind, SettingsPage,
@@ -44,6 +46,7 @@ fn make_test_state(n: usize) -> AppState {
             reorder_sessions: true,
             actions: true,
             port_forwards: true,
+            mounts: false,
         },
     );
     state.clamp_projects_focus();
@@ -91,6 +94,7 @@ fn mount_remote_lane(state: &mut AppState, host: &str) {
             reorder_sessions: true,
             actions: true,
             port_forwards: true,
+            mounts: true,
         },
     });
 }
@@ -162,6 +166,7 @@ fn unsupported_session_mutations_are_disabled_and_reducer_guarded() {
             reorder_sessions: true,
             actions: false,
             port_forwards: false,
+            mounts: false,
         },
     );
     apply_action(
@@ -2071,6 +2076,7 @@ fn host_divider_menu_has_new_session_first_and_remove_last() {
         lane: crate::system::tmux::TmuxSystem::host_lane("h"),
         primary: false,
         port_forward_enabled: true,
+        mounts_enabled: true,
     }
     .items();
     assert_eq!(items.first().copied(), Some(MenuItem::NewSession));
@@ -2086,6 +2092,7 @@ fn host_divider_menu_greys_port_forward_when_reuse_is_off() {
         lane: crate::system::tmux::TmuxSystem::host_lane("h"),
         primary: false,
         port_forward_enabled: false,
+        mounts_enabled: true,
     };
     assert!(menu.disabled().contains(&MenuItem::PortForward));
     assert!(!menu.disabled().contains(&MenuItem::NewSession));
@@ -2117,6 +2124,7 @@ fn divider_menu_greys_port_forward_for_a_lane_without_its_own_connection() {
             reorder_sessions: true,
             actions: true,
             port_forwards: false,
+            mounts: false,
         },
     });
 
@@ -2134,6 +2142,200 @@ fn divider_menu_greys_port_forward_for_a_lane_without_its_own_connection() {
     // Opening the overlay directly is refused for the same reason.
     apply_action(&mut state, Action::Pf(PfAction::Open(container)));
     assert!(state.overlay.port_forward.is_none());
+}
+
+#[test]
+fn mount_picker_refuses_lanes_whose_system_offers_no_mounts() {
+    let mut state = make_test_state(1);
+    let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
+    mount_remote_lane(&mut state, "h1");
+    for section in &mut state.system_sections {
+        section.lane_capabilities.mounts = false;
+    }
+    let fx = apply_action(&mut state, Action::Mount(MountAction::Open(lane)));
+    assert!(state.overlay.mount_picker.is_none());
+    assert!(fx.effects().is_empty(), "no discovery should be requested");
+}
+
+#[test]
+fn mount_picker_opens_busy_and_fills_from_the_worker() {
+    let mut state = make_test_state(1);
+    let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
+    mount_remote_lane(&mut state, "h1");
+
+    let fx = apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
+    let picker = state.overlay.mount_picker.as_ref().expect("open");
+    let generation = picker.generation;
+    // Opens in a loading state so the list never reads as "nothing found" while
+    // the ssh hop is still out.
+    assert_eq!(picker.busy, Some(crate::overlay::MountBusy::Discovering));
+    assert!(fx
+        .effects()
+        .iter()
+        .any(|effect| matches!(effect, Effect::DiscoverMounts { .. })));
+
+    apply_action(
+        &mut state,
+        Action::Mount(MountAction::Discovered {
+            lane: lane.clone(),
+            generation,
+            result: Ok(vec![
+                crate::system::MountCandidate {
+                    id: "docker\x1fweb".into(),
+                    label: "web (docker)".into(),
+                    needs_activation: false,
+                },
+                crate::system::MountCandidate {
+                    id: "docker\x1fold".into(),
+                    label: "old (docker, stopped)".into(),
+                    needs_activation: true,
+                },
+            ]),
+        }),
+    );
+    let picker = state.overlay.mount_picker.as_ref().expect("still open");
+    assert_eq!(picker.busy, None);
+    assert_eq!(picker.picker.items.len(), 2);
+    assert_eq!(
+        picker.selected().map(|c| c.id.as_str()),
+        Some("docker\x1fweb")
+    );
+}
+
+#[test]
+fn a_late_worker_answer_for_a_superseded_picker_is_dropped() {
+    let mut state = make_test_state(1);
+    let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
+    mount_remote_lane(&mut state, "h1");
+
+    apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
+    let stale = state.overlay.mount_picker.as_ref().unwrap().generation;
+    // Reopening retires the in-flight probe.
+    apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
+
+    apply_action(
+        &mut state,
+        Action::Mount(MountAction::Discovered {
+            lane,
+            generation: stale,
+            result: Ok(vec![crate::system::MountCandidate {
+                id: "docker\x1fghost".into(),
+                label: "ghost".into(),
+                needs_activation: false,
+            }]),
+        }),
+    );
+    let picker = state.overlay.mount_picker.as_ref().expect("open");
+    assert!(
+        picker.candidates.is_empty(),
+        "stale answer must not fill the list"
+    );
+    assert_eq!(picker.busy, Some(crate::overlay::MountBusy::Discovering));
+}
+
+#[test]
+fn mounting_a_stopped_candidate_takes_a_second_enter() {
+    let mut state = make_test_state(1);
+    let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
+    mount_remote_lane(&mut state, "h1");
+    apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
+    let generation = state.overlay.mount_picker.as_ref().unwrap().generation;
+    apply_action(
+        &mut state,
+        Action::Mount(MountAction::Discovered {
+            lane: lane.clone(),
+            generation,
+            result: Ok(vec![crate::system::MountCandidate {
+                id: "docker\x1fold".into(),
+                label: "old (docker, stopped)".into(),
+                needs_activation: true,
+            }]),
+        }),
+    );
+
+    // Starting someone's container on a shared host must not happen on one
+    // keypress: the first Enter only asks.
+    let fx = apply_action(&mut state, Action::Mount(MountAction::Confirm));
+    assert!(fx.effects().is_empty(), "first Enter must not act");
+    let picker = state.overlay.mount_picker.as_ref().expect("open");
+    assert_eq!(
+        picker.confirming.as_ref().map(|c| c.id.as_str()),
+        Some("docker\x1fold")
+    );
+
+    // Navigating away abandons the pending question rather than carrying it.
+    apply_action(&mut state, Action::Mount(MountAction::Next));
+    assert!(state
+        .overlay
+        .mount_picker
+        .as_ref()
+        .unwrap()
+        .confirming
+        .is_none());
+
+    apply_action(&mut state, Action::Mount(MountAction::Confirm));
+    let fx = apply_action(&mut state, Action::Mount(MountAction::Confirm));
+    assert!(fx
+        .effects()
+        .iter()
+        .any(|effect| matches!(effect, Effect::ActivateMount { .. })));
+    assert_eq!(
+        state.overlay.mount_picker.as_ref().unwrap().busy,
+        Some(crate::overlay::MountBusy::Activating)
+    );
+}
+
+#[test]
+fn a_running_candidate_mounts_on_the_first_enter() {
+    let mut state = make_test_state(1);
+    let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
+    mount_remote_lane(&mut state, "h1");
+    apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
+    let generation = state.overlay.mount_picker.as_ref().unwrap().generation;
+    apply_action(
+        &mut state,
+        Action::Mount(MountAction::Discovered {
+            lane,
+            generation,
+            result: Ok(vec![crate::system::MountCandidate {
+                id: "docker\x1fweb".into(),
+                label: "web (docker)".into(),
+                needs_activation: false,
+            }]),
+        }),
+    );
+
+    let fx = apply_action(&mut state, Action::Mount(MountAction::Confirm));
+    assert!(fx
+        .effects()
+        .iter()
+        .any(|effect| matches!(effect, Effect::MountLane { .. })));
+    assert!(
+        state.overlay.mount_picker.is_none(),
+        "picker closes on mount"
+    );
+}
+
+#[test]
+fn host_divider_menu_greys_containers_when_the_system_offers_none() {
+    use crate::menu::{MenuItem, MenuKind};
+    let menu = MenuKind::LaneDivider {
+        lane: crate::system::tmux::TmuxSystem::host_lane("h"),
+        primary: false,
+        port_forward_enabled: true,
+        mounts_enabled: false,
+    };
+    assert!(menu.disabled().contains(&MenuItem::Containers));
+    assert!(!menu.disabled().contains(&MenuItem::PortForward));
+    // The local divider can mount nothing and forward nothing.
+    let local = MenuKind::LaneDivider {
+        lane: crate::system::tmux::TmuxSystem::local_lane(),
+        primary: true,
+        port_forward_enabled: false,
+        mounts_enabled: false,
+    };
+    assert!(local.disabled().contains(&MenuItem::Containers));
+    assert!(local.items().contains(&MenuItem::NewSession));
 }
 
 #[test]

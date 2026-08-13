@@ -35,6 +35,25 @@ pub enum Effect {
     OpenConfiguredPortForwards,
     OpenNewSessionPicker(LaneId),
     OpenAddRemotePicker,
+    /// Open the mount picker for a lane (the reducer kicks discovery).
+    OpenMountPicker(LaneId),
+    /// Ask the lane's system what it could mount, off the UI thread.
+    DiscoverMounts {
+        lane: LaneId,
+        generation: u64,
+    },
+    /// Bring a candidate into a mountable state (a side effect outside Deck),
+    /// then mount it. Only emitted after the user confirmed.
+    ActivateMount {
+        lane: LaneId,
+        generation: u64,
+        candidate: String,
+    },
+    /// Register a candidate as a live, session-scoped lane and onboard it.
+    MountLane {
+        lane: LaneId,
+        candidate: String,
+    },
     AddConfiguredLane {
         owner: crate::system::SystemId,
         candidate: String,
