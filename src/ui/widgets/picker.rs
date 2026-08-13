@@ -46,11 +46,13 @@ pub struct FilterPickerView<'a> {
     /// Shown in place of the list when `filtered` is empty.
     pub empty_msg: &'a str,
     pub error: Option<&'a str>,
-    /// Footer hint lines, one screen row each. Splitting across rows keeps
-    /// each row short: these hints are dense in arrow and symbol glyphs, which
-    /// are East Asian *ambiguous* width — `unicode-width` measures them as one
-    /// column while a CJK-configured terminal paints them as two, so a row
-    /// measured to fit exactly can still be clipped on the way out.
+    /// Footer hint lines, one screen row each, written without a leading pad:
+    /// they are drawn as one centered block (see `footer_block`). Splitting
+    /// across rows keeps each row short: these hints are dense in arrow and
+    /// symbol glyphs, which are East Asian *ambiguous* width — `unicode-width`
+    /// measures them as one column while a CJK-configured terminal paints them
+    /// as two, so a row measured to fit exactly can still be clipped on the
+    /// way out.
     pub footer: &'a [&'a str],
 }
 
@@ -176,15 +178,84 @@ pub fn draw_filter_picker(
     }
 
     let footer_top = rows[idx];
+    let (offset, block) = footer_block(inner.width, picker.footer);
     for line in picker.footer {
-        modal_footer(frame.buffer_mut(), rows[idx], line, theme);
+        let row = rows[idx];
+        // Indent the row rather than shrinking it to the block: a line that a
+        // CJK-configured terminal paints wider than measured should run into
+        // the free columns the offset reserved, not be clipped by ratatui.
+        modal_footer(
+            frame.buffer_mut(),
+            Rect {
+                x: row.x + offset,
+                width: row.width.saturating_sub(offset),
+                ..row
+            },
+            line,
+            theme,
+        );
         idx += 1;
     }
     PickerHits {
         rows: rows_hits,
         footer: Rect {
+            x: footer_top.x + offset,
+            width: block,
             height: picker.footer.len() as u16,
             ..footer_top
         },
+    }
+}
+
+/// Where the footer block starts inside a `width`-wide content area, and how
+/// wide it is.
+///
+/// The rows are one left-aligned block centered as a unit, not each row
+/// centered on its own: a hint shared by two rows (the `⏎ create` button) then
+/// keeps its column, and the rows read as a group. The offset is centered on
+/// the block's measured width, then clamped so the widest row still fits when
+/// the terminal paints East Asian *ambiguous* glyphs — the arrows and `·` these
+/// hints are built from — at two columns each.
+fn footer_block(width: u16, lines: &[&str]) -> (u16, u16) {
+    use unicode_width::UnicodeWidthStr;
+
+    let widest = |measure: fn(&str) -> usize| {
+        lines.iter().map(|line| measure(line)).max().unwrap_or(0) as u16
+    };
+    let block = widest(UnicodeWidthStr::width);
+    let centered = width.saturating_sub(block) / 2;
+    (
+        centered.min(width.saturating_sub(widest(UnicodeWidthStr::width_cjk))),
+        block.min(width),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::footer_block;
+
+    #[test]
+    fn footer_block_centers_every_row_on_the_widest_one() {
+        let (offset, block) = footer_block(20, &["abcdefgh", "abcd"]);
+
+        assert_eq!(block, 8);
+        // Both rows start at the same column: the block is centered as a unit,
+        // so the shorter row is not re-centered inside it.
+        assert_eq!(offset, 6);
+    }
+
+    #[test]
+    fn footer_block_gives_up_centering_before_it_gives_up_a_glyph() {
+        // 11 columns measured, but 16 in a terminal that paints the arrows and
+        // `·` double-width. Centering on 11 would start at column 2 and lose
+        // the last two columns, so the offset drops to the widest safe one.
+        let row = "\u{2190}\u{2192} a \u{b7} \u{2191}\u{2193} b";
+        assert_eq!(unicode_width::UnicodeWidthStr::width(row), 11);
+        assert_eq!(unicode_width::UnicodeWidthStr::width_cjk(row), 16);
+
+        assert_eq!(footer_block(16, &[row]), (0, 11));
+        assert_eq!(footer_block(18, &[row]), (2, 11));
+        // Wide enough for the pessimistic measure: truly centered.
+        assert_eq!(footer_block(30, &[row]), (9, 11));
     }
 }
