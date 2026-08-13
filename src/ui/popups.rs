@@ -42,18 +42,21 @@ pub fn draw_new_session(
         Some(lane_title) => format!("New session · {lane_title}"),
         None => "New session".to_string(),
     };
-    // Browsing hints are listed only while the list has focus; `⏎ create` leads
-    // both so the one thing that finishes the job never moves. Tightened to
-    // `·` separators and paired arrows to make room for the mouse gesture,
-    // which is the one thing here nothing on screen would otherwise reveal.
-    // `⇥` is advertised on the name field only: reaching the path field is
-    // what taught it. `modal_footer` clips rather than wraps, so a narrow
-    // terminal drops the tail hints instead of breaking the layout.
-    let footer = if view.focus_name {
+    // Keys on the first row, mouse on the second. Two shorter rows instead of
+    // one dense one: every hint here is arrow and symbol glyphs of *ambiguous*
+    // East Asian width, so a row measured to fit exactly can still overflow in
+    // a terminal that paints them double-width — and `modal_footer` clips
+    // silently, which cost the trailing `⎋ cancel`.
+    //
+    // `⏎ create` leads the keys row in both focus states, so the one hint that
+    // is also a button never moves. The mouse row is identical in both, because
+    // clicking a row works from either field.
+    let keys = if view.focus_name {
         format!("  {CREATE_HINT} · ⇥ path · ←→ cursor · ⎋ cancel")
     } else {
-        format!("  {CREATE_HINT} · →← folder · ↑↓ move · right-click create · ⎋")
+        format!("  {CREATE_HINT} · →← folder · ↑↓ move · ⎋ cancel")
     };
+    let footer = [keys.as_str(), "  click open · right-click create here"];
 
     let hits = draw_filter_picker(
         frame,
@@ -133,7 +136,7 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
             pinned: 0,
             empty_msg,
             error: p.error.as_deref(),
-            footer: "  \u{23ce} add   \u{2191}\u{2193} select   \u{238b} cancel",
+            footer: &["  \u{23ce} add   \u{2191}\u{2193} select   \u{238b} cancel"],
         },
         |idx| p.items[idx].clone(),
     );
