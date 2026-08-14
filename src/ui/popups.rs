@@ -74,7 +74,7 @@ pub fn draw_new_session(
             .saturating_sub(unicode_width::UnicodeWidthStr::width(hints)),
     );
     let keys = format!("{KEYS_ICON} {CREATE_HINT} · {hints} · ⎋ cancel{pad}");
-    let mouse = format!("{MOUSE_ICON} {LEFT_CLICK} open · {RIGHT_CLICK} create here");
+    let mouse = format!("{MOUSE_ICON} {LEFT_CLICK} folder · {RIGHT_CLICK} create");
     let footer = [keys.as_str(), mouse.as_str()];
 
     let hits = draw_filter_picker(
