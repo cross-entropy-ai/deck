@@ -299,6 +299,18 @@ fn state_path() -> PathBuf {
     state_dir().join("state.yaml")
 }
 
+/// Move a state file that did not parse to `<name>.bad`, returning where it
+/// went, so a rebuild can write a clean file without the broken one becoming
+/// the price. Any earlier `.bad` is replaced: the copy Deck just failed to
+/// read is the one describing the lanes the user actually had.
+fn keep_broken_file(path: &Path) -> std::io::Result<PathBuf> {
+    let mut name = path.file_name().unwrap_or_default().to_owned();
+    name.push(".bad");
+    let kept = path.with_file_name(name);
+    std::fs::rename(path, &kept)?;
+    Ok(kept)
+}
+
 impl LaneState {
     /// Load the remembered lanes, seeding from `config` the first time.
     ///
@@ -306,19 +318,53 @@ impl LaneState {
     /// all of it in the config, so the first run reads those fields once and
     /// writes them here. `Config` still parses them and never writes them
     /// again, so an old file keeps loading and stops growing stale copies.
-    pub fn load(config: &Config) -> Self {
+    /// Returns a warning to surface alongside the state whenever an existing
+    /// file could not be read. Reported rather than swallowed: a config that
+    /// does not parse says so (`Config::load_reporting_parse_failure`), and
+    /// this file going missing costs the user every linked host — the one
+    /// degradation that must not be quiet.
+    pub fn load(config: &Config) -> (Self, Option<String>) {
         Self::load_from(&state_path(), config)
     }
 
-    pub(crate) fn load_from(path: &Path, config: &Config) -> Self {
+    pub(crate) fn load_from(path: &Path, config: &Config) -> (Self, Option<String>) {
         if path.exists() {
-            // An unparseable file is left alone rather than overwritten, the
-            // same rule the config loader follows: one typo must not silently
-            // cost every linked host.
-            if let Ok(state) = confy::load_path::<Self>(path) {
-                return state;
+            match confy::load_path::<Self>(path) {
+                Ok(state) => return (state, None),
+                // Leaving an unparseable file untouched is what the config
+                // loader does, but on its own it does not hold here: nobody
+                // hand-writes this one, and the next fold or host edit saves
+                // straight over it — so "fix it by hand" lasts until the user
+                // touches anything. Moving it aside is what actually keeps it,
+                // and once it is safe there is no reason to come up empty.
+                Err(error) => match keep_broken_file(path) {
+                    Ok(kept) => {
+                        let seeded = Self::seeded_from(config);
+                        let _ = seeded.save_to(path);
+                        return (
+                            seeded,
+                            Some(format!(
+                                "state.yaml did not parse ({error}); kept it as {} and rebuilt from the config",
+                                kept.display()
+                            )),
+                        );
+                    }
+                    // Could not set it aside, so do not write over it here
+                    // either: an in-memory rebuild is worth having, the file is
+                    // not worth destroying for it. A later save still can —
+                    // this path does not own that — so the warning asks for the
+                    // file rather than promising anything about it.
+                    Err(io) => {
+                        return (
+                            Self::seeded_from(config),
+                            Some(format!(
+                                "state.yaml did not parse ({error}) and could not be set aside ({io}); \
+                                 running on what the config remembers — fix or remove the file"
+                            )),
+                        );
+                    }
+                },
             }
-            return Self::default();
         }
         // Persist the seed immediately. `Config::load` self-heals by rewriting
         // the file, and that rewrite drops the legacy keys — so the moment
@@ -327,7 +373,7 @@ impl LaneState {
         // rather than at whichever caller happens to save first.
         let seeded = Self::seeded_from(config);
         let _ = seeded.save_to(path);
-        seeded
+        (seeded, None)
     }
 
     /// The one-time read of the pre-split config fields.

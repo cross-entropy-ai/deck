@@ -202,7 +202,13 @@ fn finish_remote_change(
 /// way the app does so `deck remote add` works on a first run after upgrading.
 fn load_lane_state() -> Result<crate::lane_state::LaneState, String> {
     let config = Config::try_load()?;
-    Ok(crate::lane_state::LaneState::load(&config))
+    let (state, warning) = crate::lane_state::LaneState::load(&config);
+    // Say it before the edit's own success line: the host list this is about
+    // to rewrite is not the one the user left behind.
+    if let Some(warning) = warning {
+        eprintln!("deck: {warning}");
+    }
+    Ok(state)
 }
 
 pub(crate) fn run_remote_add(host: &str) -> i32 {

@@ -104,7 +104,11 @@ impl App {
         // Re-read the remembered lanes too, so `deck remote add` from another
         // process reaches a running Deck the way it did when the lane set
         // lived in the config file.
-        self.lane_state = crate::lane_state::LaneState::load(&cfg);
+        let (lanes, lane_state_warning) = crate::lane_state::LaneState::load(&cfg);
+        self.lane_state = lanes;
+        if let Some(warning) = lane_state_warning {
+            self.state.show_warning(warning);
+        }
         let remotes = self.lane_state.to_remote_configs();
         self.systems.configure(&cfg, &remotes);
 

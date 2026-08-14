@@ -141,11 +141,15 @@ fn an_existing_state_file_wins_over_the_legacy_config_fields() {
         legacy_remotes: vec![remote("stale", &[])],
         ..Config::default()
     };
-    let loaded = LaneState::load_from(&path, &config);
+    let (loaded, warning) = LaneState::load_from(&path, &config);
 
     assert_eq!(
         loaded.remotes.iter().map(|r| &r.host).collect::<Vec<_>>(),
         ["kept"]
+    );
+    assert!(
+        warning.is_none(),
+        "a file that parses is not worth a warning"
     );
     let _ = fs::remove_file(&path);
 }
@@ -174,7 +178,7 @@ fn the_lane_tree_round_trips_through_the_file() {
         "a container is a child node, not a spliced string: {text}"
     );
 
-    let loaded = LaneState::load_from(&path, &Config::default());
+    let (loaded, _) = LaneState::load_from(&path, &Config::default());
     assert_eq!(loaded, state);
     assert_eq!(
         loaded.collapsed_lanes(),
@@ -224,27 +228,49 @@ fn rewriting_the_host_list_keeps_each_survivor_s_memory() {
     );
 }
 
-/// An unparseable state file is left alone rather than overwritten, the same
-/// rule the config loader follows: one typo must not cost every linked host.
+/// An unparseable state file is kept, reported, and rebuilt from.
+///
+/// Leaving it in place and coming up empty was the first rule here, borrowed
+/// from the config loader. It does not survive contact with this file: nobody
+/// hand-writes it, so nobody goes and fixes it, and the first fold or host
+/// edit saves straight over it — the file was only ever safe until the user
+/// touched something. Setting it aside is what actually keeps it, and once it
+/// is kept there is no reason to throw away what the config still remembers.
 #[test]
-fn a_broken_state_file_is_not_silently_replaced() {
+fn a_broken_state_file_is_kept_aside_and_rebuilt_from_the_config() {
     let path = std::env::temp_dir().join("deck-lane-state-broken.yaml");
+    let kept = path.with_extension("yaml.bad");
+    let _ = fs::remove_file(&kept);
     fs::write(&path, "remotes: [oh no\n").unwrap();
 
     let config = Config {
         legacy_remotes: vec![remote("stale", &[])],
         ..Config::default()
     };
-    let loaded = LaneState::load_from(&path, &config);
+    let (loaded, warning) = LaneState::load_from(&path, &config);
 
-    assert!(
-        loaded.remotes.is_empty(),
-        "a broken file must not be re-seeded from a config that moved on"
+    assert_eq!(
+        loaded.remotes.iter().map(|r| &r.host).collect::<Vec<_>>(),
+        ["stale"],
+        "an empty sidebar is not the best available answer while the config \
+         still carries the lane set"
     );
     assert_eq!(
-        fs::read_to_string(&path).unwrap(),
+        fs::read_to_string(&kept).unwrap(),
         "remotes: [oh no\n",
-        "and it must still be on disk for the user to fix"
+        "the bytes Deck could not read must survive, whatever it writes next"
     );
+    let warning = warning.expect("losing every linked host cannot be silent");
+    assert!(
+        warning.contains("did not parse") && warning.contains(".bad"),
+        "the warning has to say what happened and where the old file went: {warning}"
+    );
+    // The rebuild is on disk, so the next launch is clean rather than a
+    // second round of this.
+    let (again, warning) = LaneState::load_from(&path, &config);
+    assert_eq!(again, loaded);
+    assert!(warning.is_none(), "the rebuilt file parses");
+
     let _ = fs::remove_file(&path);
+    let _ = fs::remove_file(&kept);
 }
