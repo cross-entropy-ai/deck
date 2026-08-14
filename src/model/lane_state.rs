@@ -345,8 +345,47 @@ impl LaneState {
 
         let mut state = Self::default();
         state.set_remote_configs(&config.legacy_remotes);
+        // A pre-split config records a session-mounted container *only* in the
+        // lane ids of its memory: the mount itself was never written to the
+        // host's `containers` list. So the tree has to grow the node before
+        // `remember` can land anything on it — `memory_mut` drops what it
+        // cannot find, and that silence would cost exactly the entries whose
+        // purpose is to outlive the mount.
+        state.adopt_remembered_containers(
+            folded
+                .iter()
+                .chain(folded_agents.iter())
+                .chain(hidden.keys()),
+        );
         state.remember(&folded, &folded_agents, &hidden);
         state
+    }
+
+    /// Add a container node for each `host#container` lane named by the seed
+    /// whose host is still linked. A lane under an unlinked host is left out:
+    /// it had nothing to attach to before the move either, so restoring it
+    /// would resurrect dead memory rather than preserve live memory.
+    fn adopt_remembered_containers<'a>(&mut self, lanes: impl Iterator<Item = &'a LaneId>) {
+        use crate::system::tmux::TmuxSystem;
+        for lane in lanes {
+            let Some((host, name)) = TmuxSystem::host_of(lane)
+                .and_then(|id| id.split_once(crate::remote_tmux::CONTAINER_SEP))
+            else {
+                continue;
+            };
+            let Some(remote) = self.remotes.iter_mut().find(|remote| remote.host == host) else {
+                continue;
+            };
+            if remote.containers.iter().any(|c| c.name == name) {
+                continue;
+            }
+            remote.containers.push(ContainerState {
+                name: name.to_string(),
+                engine: default_engine(),
+                agent_sock: None,
+                memory: LaneMemory::default(),
+            });
+        }
     }
 
     pub fn save(&self) -> Result<(), String> {
