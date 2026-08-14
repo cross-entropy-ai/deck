@@ -184,6 +184,62 @@ pub fn draw_add_remote(
     }
 }
 
+/// The restore picker's footer, whose hints double as its buttons.
+const RESTORE_ALL_HINT: &str = "^A all";
+const HIDDEN_FOOTER: &str = "\u{23ce} restore   \u{2191}\u{2193} select   ^A all   \u{238b} cancel";
+
+/// Draw the "restore a hidden session" picker for one lane.
+///
+/// The shared filter picker, like Add Remote: these are the same gesture —
+/// pick one name out of a list and act on it — and one click restores, with no
+/// highlight-then-confirm step.
+pub fn draw_hidden_sessions(
+    frame: &mut Frame,
+    area: Rect,
+    state: &crate::overlay::HiddenSessionsState,
+    lane_title: &str,
+    theme: &Theme,
+) -> crate::geometry::HiddenHits {
+    let p = &state.picker;
+    let title = format!("Hidden on {lane_title}");
+
+    let hits = draw_filter_picker(
+        frame,
+        area,
+        theme,
+        FilterPickerView {
+            title: &title,
+            width: 56,
+            min_height: 7,
+            max_visible: 8,
+            fields: &[PickerField {
+                label: "  filter: ",
+                textarea: &p.input,
+                focused: true,
+            }],
+            filtered: &p.filtered,
+            selected: p.selected,
+            scroll: super::widgets::scroll_window(p.selected, p.filtered.len(), 8),
+            list_focused: true,
+            pinned: 0,
+            empty_msg: "    (no matches)",
+            error: p.error.as_deref(),
+            footer: &[HIDDEN_FOOTER],
+        },
+        |idx| p.items[idx].clone(),
+    );
+
+    let footer_row = Rect {
+        height: 1,
+        ..hits.footer
+    };
+    crate::geometry::HiddenHits {
+        rows: hits.rows,
+        restore_all: hint_rect(footer_row, HIDDEN_FOOTER, RESTORE_ALL_HINT),
+        cancel: hint_rect(footer_row, HIDDEN_FOOTER, CANCEL_HINT),
+    }
+}
+
 /// Draw the Agents-tab summary "big view" over `area` and return the max
 /// scroll offset for the current text/size, so the caller can clamp scroll
 /// input. Opened from the card's popup button; scrolled with wheel or keys.

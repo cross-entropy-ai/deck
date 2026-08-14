@@ -4,8 +4,8 @@ use crate::overlay::RenameState;
 use crate::state::{AppState, FocusMode, LayoutMode, MainView, SidebarTab, ViewMode};
 
 use super::{
-    Action, AddRemoteAction, MenuAction, MountAction, NewSessionAction, PfAction, SettingsAction,
-    SummaryAction,
+    Action, AddRemoteAction, HiddenAction, MenuAction, MountAction, NewSessionAction, PfAction,
+    SettingsAction, SummaryAction,
 };
 
 mod menu;
@@ -367,13 +367,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.save_config();
             fx.refresh_sessions();
         }
-        Action::ShowHiddenSessions(lane) => {
-            if state.hidden_sessions.remove(&lane).is_none() {
-                return fx;
-            }
-            fx.save_config();
-            fx.refresh_sessions();
-        }
         Action::RemoveLane(lane) => {
             // Configuration ownership belongs to the lane runtime. App applies
             // the provider's typed result and reconciles state after success.
@@ -613,6 +606,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
 
         Action::Pf(a) => return port_forward::reduce_pf(state, a),
         Action::AddRemote(a) => return reduce_add_remote(state, a),
+        Action::Hidden(a) => return reduce_hidden(state, a),
         Action::Mount(a) => return reduce_mount(state, a),
 
         Action::None => {}
@@ -944,6 +938,83 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
                 }
                 Err(error) => picker.picker.error = Some(error),
             }
+        }
+    }
+    fx
+}
+
+/// Restoring is the inverse of hiding and shares its shape: the name leaves
+/// `hidden_sessions`, the choice is saved, and the worker is asked for a fresh
+/// snapshot — which is what actually brings the session back, since nothing
+/// downstream keeps a copy of what was excluded.
+fn reduce_hidden(state: &mut AppState, action: HiddenAction) -> SideEffect {
+    let mut fx = SideEffect::default();
+    match action {
+        HiddenAction::Open(lane) => {
+            state.overlay.context_menu = None;
+            let Some(names) = state.hidden_sessions.get(&lane) else {
+                return fx;
+            };
+            state.overlay.hidden_sessions =
+                Some(crate::overlay::HiddenSessionsState::new(lane, names));
+        }
+        HiddenAction::Close => {
+            state.overlay.hidden_sessions = None;
+        }
+        // Input and navigation edit the open picker; one guard for all.
+        HiddenAction::InputKey(_) | HiddenAction::Prev | HiddenAction::Next => {
+            let Some(open) = state.overlay.hidden_sessions.as_mut() else {
+                return fx;
+            };
+            match action {
+                HiddenAction::InputKey(key) => {
+                    open.picker.input.input(key);
+                    open.refilter();
+                }
+                HiddenAction::Prev => open.picker.step(-1),
+                _ => open.picker.step(1),
+            }
+        }
+        HiddenAction::ClickRow(index) => {
+            let Some(open) = state.overlay.hidden_sessions.as_mut() else {
+                return fx;
+            };
+            if index >= open.picker.filtered.len() {
+                return fx;
+            }
+            open.picker.selected = index;
+            return reduce_hidden(state, HiddenAction::Restore);
+        }
+        HiddenAction::Restore => {
+            let Some(open) = state.overlay.hidden_sessions.as_mut() else {
+                return fx;
+            };
+            let Some(name) = open.selected_name().map(str::to_string) else {
+                return fx;
+            };
+            let lane = open.lane.clone();
+            open.forget(&name);
+            // Closing on the last one is the honest end of the list: an empty
+            // picker offers nothing and would have to be dismissed by hand.
+            if open.picker.items.is_empty() {
+                state.overlay.hidden_sessions = None;
+            }
+            if let Some(names) = state.hidden_sessions.get_mut(&lane) {
+                names.remove(&name);
+                if names.is_empty() {
+                    state.hidden_sessions.remove(&lane);
+                }
+            }
+            fx.save_config();
+            fx.refresh_sessions();
+        }
+        HiddenAction::RestoreAll => {
+            let Some(open) = state.overlay.hidden_sessions.take() else {
+                return fx;
+            };
+            state.hidden_sessions.remove(&open.lane);
+            fx.save_config();
+            fx.refresh_sessions();
         }
     }
     fx

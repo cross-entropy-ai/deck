@@ -27,6 +27,7 @@ pub enum Modal {
     KeybindingsView,
     ExcludeEditor,
     MountPicker,
+    HiddenSessions,
     SshSetting,
     SummaryLang,
     Help,
@@ -41,7 +42,7 @@ impl Modal {
     /// modal infrastructure iterate it without maintaining a second hand-
     /// written list that can drift when a variant is added.
     #[cfg(test)]
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::SummaryPopup,
         Self::NewSession,
         Self::AddRemote,
@@ -52,6 +53,7 @@ impl Modal {
         Self::KeybindingsView,
         Self::ExcludeEditor,
         Self::MountPicker,
+        Self::HiddenSessions,
         Self::SshSetting,
         Self::SummaryLang,
         Self::Help,
@@ -79,6 +81,55 @@ impl RenameState {
             input: crate::new_session::make_textarea(&initial),
             lane,
         }
+    }
+}
+
+/// The "restore a hidden session" picker for one lane: a filter over the names
+/// that lane is currently not capturing. Rendering reuses the shared filter
+/// picker, so it reads as the same idiom as Add Remote.
+///
+/// The names are a snapshot taken when the picker opened, not a live view of
+/// `AppState::hidden_sessions`: restoring one shortens the list, and a list that
+/// re-sorted itself under the cursor between two clicks would restore the wrong
+/// session. The reducer removes from both.
+#[derive(Debug, Clone)]
+pub struct HiddenSessionsState {
+    pub lane: crate::lane::LaneId,
+    pub picker: crate::picker::FilterPicker,
+}
+
+impl HiddenSessionsState {
+    /// Open over `names`, sorted so the list has a stable order across opens.
+    pub fn new(lane: crate::lane::LaneId, names: &std::collections::HashSet<String>) -> Self {
+        let mut names: Vec<String> = names.iter().cloned().collect();
+        names.sort();
+        Self {
+            lane,
+            picker: crate::picker::FilterPicker::new(names),
+        }
+    }
+
+    /// The highlighted name, or `None` when the filter matched nothing.
+    pub fn selected_name(&self) -> Option<&str> {
+        self.picker.selected_item()
+    }
+
+    /// Drop `name` from the open list, keeping the cursor in range.
+    pub fn forget(&mut self, name: &str) {
+        self.picker.items.retain(|item| item != name);
+        self.refilter();
+    }
+
+    pub fn refilter(&mut self) {
+        let needle = self.picker.input_str().to_lowercase();
+        self.picker.refilter(move |items, _| {
+            items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| item.to_lowercase().contains(&needle))
+                .map(|(index, _)| index)
+                .collect()
+        });
     }
 }
 
@@ -346,4 +397,5 @@ pub struct OverlayState {
     pub ssh_setting_editor: Option<SshSettingEditorState>,
     /// Picker over the lanes a system says the focused lane could mount.
     pub mount_picker: Option<MountPickerState>,
+    pub hidden_sessions: Option<HiddenSessionsState>,
 }

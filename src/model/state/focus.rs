@@ -151,6 +151,9 @@ impl AppState {
         if self.overlay.mount_picker.is_some() {
             return Some(Modal::MountPicker);
         }
+        if self.overlay.hidden_sessions.is_some() {
+            return Some(Modal::HiddenSessions);
+        }
         if self.overlay.renaming.is_some() {
             return Some(Modal::Rename);
         }

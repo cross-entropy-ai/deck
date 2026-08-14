@@ -523,3 +523,69 @@ fn the_wheel_is_inert_while_the_add_form_covers_the_forward_list() {
         "the wheel must not reach the list under the form, got {action:?}"
     );
 }
+
+fn state_with_hidden_picker() -> AppState {
+    let lane = crate::system::tmux::TmuxSystem::local_lane();
+    let mut state = AppState::new(120, 40);
+    state.hidden_sessions.insert(
+        lane.clone(),
+        ["alpha", "beta"].iter().map(|s| s.to_string()).collect(),
+    );
+    state.overlay.hidden_sessions = Some(crate::overlay::HiddenSessionsState::new(
+        lane.clone(),
+        &state.hidden_sessions[&lane],
+    ));
+    state.hit_regions.hidden.rows = (0..2)
+        .map(|index| ListItemHit {
+            rect: Rect::new(20, 10 + index as u16, 24, 1),
+            index,
+        })
+        .collect();
+    state.hit_regions.hidden.restore_all = Some(Rect::new(20, 20, 6, 1));
+    state.hit_regions.hidden.cancel = Some(Rect::new(30, 20, 8, 1));
+    state
+}
+
+/// One click restores, the same gesture a host row in Add Remote takes — and it
+/// restores the row under the cursor, not whatever was highlighted.
+#[test]
+fn clicking_a_hidden_name_restores_that_one() {
+    let mut state = state_with_hidden_picker();
+
+    let action = mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 22, 11), &state);
+    assert!(
+        matches!(
+            action,
+            Action::Hidden(crate::action::HiddenAction::ClickRow(1))
+        ),
+        "left-click must route to the clicked name, got {action:?}"
+    );
+
+    crate::action::apply_action(&mut state, action);
+    let lane = crate::system::tmux::TmuxSystem::local_lane();
+    assert_eq!(
+        state.hidden_sessions[&lane],
+        std::collections::HashSet::from(["alpha".to_string()]),
+        "the click must restore `beta`, the row it landed on"
+    );
+}
+
+#[test]
+fn hidden_picker_footer_hints_are_buttons() {
+    let state = state_with_hidden_picker();
+    let click = |col| {
+        mouse_to_action(
+            &ev(MouseEventKind::Down(MouseButton::Left), col, 20),
+            &state,
+        )
+    };
+
+    assert!(matches!(
+        click(22),
+        Action::Hidden(crate::action::HiddenAction::RestoreAll)
+    ));
+    assert!(matches!(
+        click(32),
+        Action::Hidden(crate::action::HiddenAction::Close)
+    ));
+}

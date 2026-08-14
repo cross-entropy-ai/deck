@@ -402,6 +402,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
         // Modal regions are added by the modal renderer, which runs after this.
         add_remote: Default::default(),
         mounts: Default::default(),
+        hidden: Default::default(),
         port_forward: Default::default(),
         sidebar_toggle: Some(header_hits.sidebar_toggle),
         summary: summary_hits,

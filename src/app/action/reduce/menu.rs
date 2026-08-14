@@ -113,9 +113,10 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                     Some(MenuItem::PortForward) => {
                         fx.push(Effect::OpenPortForwardOverlay(lane));
                     }
-                    Some(MenuItem::ShowHidden) => {
-                        fx.merge(apply_action(state, Action::ShowHiddenSessions(lane)))
-                    }
+                    Some(MenuItem::ShowHidden) => fx.merge(apply_action(
+                        state,
+                        Action::Hidden(crate::action::HiddenAction::Open(lane)),
+                    )),
                     Some(MenuItem::RemoveFromList) if !primary => {
                         fx.merge(apply_action(state, Action::RemoveLane(lane)))
                     }

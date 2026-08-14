@@ -5,8 +5,8 @@ use crate::overlay::Modal;
 use crate::state::{AppState, FocusTarget, LayoutMode, MainView};
 
 use super::{
-    Action, AddRemoteAction, MenuAction, MountAction, NewSessionAction, PfAction, SettingsAction,
-    SummaryAction,
+    Action, AddRemoteAction, HiddenAction, MenuAction, MountAction, NewSessionAction, PfAction,
+    SettingsAction, SummaryAction,
 };
 
 pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
@@ -350,6 +350,26 @@ fn modal_mouse_to_action(
                 }
                 (MouseEventKind::Down(MouseButton::Left), Some(HitKind::AddRemoteCancel)) => {
                     Action::AddRemote(AddRemoteAction::Close)
+                }
+                _ => Action::None,
+            }
+        }
+        Modal::HiddenSessions => {
+            if state.overlay.hidden_sessions.is_none() {
+                return Action::None;
+            }
+            match (mouse.kind, hit) {
+                (MouseEventKind::ScrollUp, _) => Action::Hidden(HiddenAction::Prev),
+                (MouseEventKind::ScrollDown, _) => Action::Hidden(HiddenAction::Next),
+                // One click restores, like a host row in Add Remote.
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::HiddenRow(index))) => {
+                    Action::Hidden(HiddenAction::ClickRow(index))
+                }
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::HiddenRestoreAll)) => {
+                    Action::Hidden(HiddenAction::RestoreAll)
+                }
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::HiddenCancel)) => {
+                    Action::Hidden(HiddenAction::Close)
                 }
                 _ => Action::None,
             }

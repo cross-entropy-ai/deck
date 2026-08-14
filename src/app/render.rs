@@ -312,6 +312,7 @@ impl App {
             captured_hits.new_session_create = rendered_modal.new_session_create;
             captured_hits.add_remote = rendered_modal.add_remote;
             captured_hits.mounts = rendered_modal.mounts;
+            captured_hits.hidden = rendered_modal.hidden;
             captured_hits.port_forward = rendered_modal.port_forward;
             if rendered_modal.kill_hits.is_some() {
                 captured_hits.kill = rendered_modal.kill_hits;
