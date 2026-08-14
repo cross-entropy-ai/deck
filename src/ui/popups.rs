@@ -19,9 +19,16 @@ use super::NewSessionView;
 /// open with it at the same offset, so the click target is the same rect
 /// whichever field has focus.
 const CREATE_HINT: &str = "⏎ create";
-/// Row markers: which input device the row's hints are for.
-const KEYS_ICON: &str = "\u{2328}";
-const MOUSE_ICON: &str = "\u{1f5b1}";
+/// Row markers: which input device the row's hints are for. Nerd Font glyphs,
+/// like the sidebar's icons — plain Unicode's `\u{2328}`/`\u{1f5b1}` are absent
+/// from the monospace fonts terminals actually ship with, so a fallback font
+/// draws them at a weight that does not match the rest of the row.
+const KEYS_ICON: &str = "\u{f030c}"; // md-keyboard
+const MOUSE_ICON: &str = "\u{f037d}"; // md-mouse
+/// The two mouse buttons: a filled half-disc, flat side inward, which is the
+/// outline of one button on the `md-mouse` glyph leading the row.
+const LEFT_CLICK: &str = "\u{25d6}";
+const RIGHT_CLICK: &str = "\u{25d7}";
 
 /// What the drawn new-session picker published for this frame.
 pub struct NewSessionHits {
@@ -44,8 +51,9 @@ pub fn draw_new_session(
         None => "New session".to_string(),
     };
     // Keys on the first row, mouse on the second, each led by its device's
-    // icon so the split reads at a glance. Two shorter rows instead of one
-    // dense one: every hint here is arrow and symbol glyphs of *ambiguous*
+    // icon so the split reads at a glance, and each hint led by the key or
+    // button that triggers it. Two shorter rows instead of one dense one:
+    // every hint here is arrow and symbol glyphs of *ambiguous*
     // East Asian width, so a row measured to fit exactly can still overflow in
     // a terminal that paints them double-width — and `modal_footer` clips
     // silently, which cost the trailing `⎋ cancel`.
@@ -66,7 +74,7 @@ pub fn draw_new_session(
             .saturating_sub(unicode_width::UnicodeWidthStr::width(hints)),
     );
     let keys = format!("{KEYS_ICON} {CREATE_HINT} · {hints} · ⎋ cancel{pad}");
-    let mouse = format!("{MOUSE_ICON} click open · right-click create here");
+    let mouse = format!("{MOUSE_ICON} {LEFT_CLICK} open · {RIGHT_CLICK} create here");
     let footer = [keys.as_str(), mouse.as_str()];
 
     let hits = draw_filter_picker(
