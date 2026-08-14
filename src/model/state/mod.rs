@@ -504,10 +504,6 @@ impl Prefs {
     pub fn to_config(
         &self,
         keybindings: std::collections::BTreeMap<String, crate::config::KeyBindingValue>,
-        remotes: Vec<crate::config::RemoteConfig>,
-        collapsed: Vec<Option<String>>,
-        collapsed_agents: Vec<Option<String>>,
-        hidden_sessions: Vec<crate::config::HiddenSession>,
     ) -> crate::config::Config {
         crate::config::Config {
             theme: crate::theme::THEMES[self.theme_index].name.to_string(),
@@ -530,10 +526,12 @@ impl Prefs {
             ssh_connection_reuse: self.ssh_connection_reuse,
             ssh_control_path: self.ssh_control_path.clone(),
             ssh_control_persist: self.ssh_control_persist.clone(),
-            remotes,
-            collapsed_sections: collapsed,
-            collapsed_agent_sections: collapsed_agents,
-            hidden_sessions,
+            // The lane set and its per-lane memory live in `lane_state`; the
+            // legacy fields stay empty so a save never rewrites them.
+            legacy_remotes: Vec::new(),
+            legacy_collapsed_sections: Vec::new(),
+            legacy_collapsed_agent_sections: Vec::new(),
+            legacy_hidden_sessions: Vec::new(),
             summary_prompt: self.summary_prompt.clone(),
             summary_prompt_version: crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION,
             summary_agent: self.summary_agent,
@@ -800,10 +798,6 @@ impl AppState {
             self.project_drag.cancel();
         }
         self.keybindings = keybindings;
-        // Re-seeded on reload, unlike `collapsed_sections`: this one is a
-        // boundary, not a view preference. A hidden session edited into the
-        // file must take effect on the next reload, not the next restart.
-        self.hidden_sessions = crate::system::tmux::hidden_from_config(&cfg.hidden_sessions);
         // Theme indices may have shifted; keep the picker's cursor valid.
         self.settings.theme_picker_selected = theme_index;
     }

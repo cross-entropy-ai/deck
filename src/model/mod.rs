@@ -4,6 +4,7 @@ pub mod exclude;
 pub mod geometry;
 pub mod keybindings;
 pub mod lane;
+pub mod lane_state;
 pub mod menu;
 pub mod new_session;
 pub mod overlay;

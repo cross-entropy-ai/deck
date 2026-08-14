@@ -62,9 +62,8 @@ fn mount_tmux_sections(state: &mut crate::state::AppState) {
     use crate::system::System;
 
     let system = crate::system::tmux::TmuxSystem::default();
-    let mut config = crate::config::Config::default();
-    config.remotes.clone_from(&state.config_remotes);
-    system.configure(&config);
+    let config = crate::config::Config::default();
+    system.configure(&config, &state.config_remotes);
     state.system_sections = system
         .lanes()
         .into_iter()

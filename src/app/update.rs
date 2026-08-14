@@ -19,28 +19,39 @@ fn apply_config_save_result(
 
 impl App {
     pub(super) fn config_snapshot(&self) -> crate::config::Config {
-        self.state.prefs.to_config(
-            self.raw_keybindings.clone(),
-            self.state.config_remotes.clone(),
-            crate::system::tmux::hosts_from_lanes(&self.state.collapsed_sections),
-            crate::system::tmux::hosts_from_lanes(&self.state.collapsed_agent_sections),
-            crate::system::tmux::hidden_to_config(&self.state.hidden_sessions),
-        )
+        self.state.prefs.to_config(self.raw_keybindings.clone())
+    }
+
+    /// Fold the app's live per-lane stores into the remembered lane tree and
+    /// write it. Separate file, separate lifetime: the config below is what the
+    /// user wrote, this is what Deck did.
+    pub(super) fn save_lane_state(&mut self) {
+        self.lane_state
+            .set_remote_configs(&self.state.config_remotes);
+        self.lane_state.remember(
+            &self.state.collapsed_sections,
+            &self.state.collapsed_agent_sections,
+            &self.state.hidden_sessions,
+        );
+        if let Err(error) = self.lane_state.save() {
+            self.state.show_warning(error);
+        }
     }
 
     pub(super) fn save_config(&mut self) {
-        // The single prefs→Config mapping (`Prefs::to_config`), fed the
-        // runtime fields outside `Prefs`: `raw_keybindings` (lives on `App`);
-        // `config_remotes` (UI-managed `forwards` here; CLI changes flow in via
-        // hot-reload); `collapsed_sections` (runtime state, not a pref).
+        // The single prefs→Config mapping (`Prefs::to_config`), fed the one
+        // runtime field outside `Prefs`: `raw_keybindings` (lives on `App`).
+        // Everything lane-keyed goes to the state file instead.
+        self.save_lane_state();
         let config = self.config_snapshot();
         // Persist BEFORE applying: `save` is what validates, so applying first
         // could publish a value to ssh and the port-forward worker that we then
         // turn around and tell the user we rejected.
         let result = config.save().map(|()| crate::config::config_mtime());
         if result.is_ok() {
-            let stop_hosts = config
-                .remotes
+            let stop_hosts = self
+                .state
+                .config_remotes
                 .iter()
                 .map(|remote| remote.host.clone())
                 .collect();
@@ -48,7 +59,7 @@ impl App {
             // Keep the injected backends and the model's materialized section
             // definitions aligned with an in-app remote/forward edit before the
             // next refresh or render.
-            self.systems.configure(&config);
+            self.systems.configure(&config, &self.state.config_remotes);
             self.state.system_sections = self.systems.sections();
         }
         // Adopt the new mtime so the config watcher in `run` doesn't see our
@@ -92,8 +103,8 @@ impl App {
         crate::ssh::configure_connection(new_settings.clone());
 
         let forward_hosts = if new_settings.enabled {
-            config
-                .remotes
+            self.state
+                .config_remotes
                 .iter()
                 .filter(|remote| !remote.forwards.is_empty())
                 .map(|remote| (remote.host.clone(), remote.forwards.clone()))
