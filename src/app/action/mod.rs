@@ -244,6 +244,9 @@ pub enum PfAction {
     Close,
     FocusUp,
     FocusDown,
+    /// Move focus to a clicked row. Click only focuses: deleting a forward is
+    /// destructive and stays behind the explicit `[d] delete` button.
+    FocusRow(usize),
     Delete,
     AddOpen,
     AddCancel,
@@ -283,6 +286,9 @@ pub enum MountAction {
     Prev,
     /// Mount the highlighted candidate, or ask first when it needs activating.
     Confirm,
+    /// Mount the candidate on a clicked row, with the same activation prompt
+    /// `Confirm` raises. One click does the whole job.
+    ClickCandidate(usize),
     /// Cycle the candidate order (see `overlay::MountSort`).
     CycleSort,
     Close,
@@ -306,5 +312,8 @@ pub enum AddRemoteAction {
     Next,
     Prev,
     Confirm,
+    /// Add the host on a clicked row. One click does the whole job, so a
+    /// mouse-only user never has to highlight a row and then confirm it.
+    ClickHost(usize),
     Close,
 }

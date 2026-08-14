@@ -46,6 +46,21 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
                 _ => o.add_form = None,
             }
         }
+        // The renderer publishes a row only for a forward it drew, so the index
+        // is in range; clamping anyway keeps a stale frame's click harmless.
+        PfAction::FocusRow(index) => {
+            let lane = state
+                .overlay
+                .port_forward
+                .as_ref()
+                .map(|overlay| overlay.lane.clone());
+            if let Some(lane) = lane {
+                let len = forwards_len(state, &lane);
+                if let Some(o) = state.overlay.port_forward.as_mut() {
+                    o.selected = index.min(len.saturating_sub(1));
+                }
+            }
+        }
         PfAction::FocusDown => {
             let lane = state
                 .overlay

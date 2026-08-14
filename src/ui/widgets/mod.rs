@@ -13,10 +13,10 @@ mod textarea;
 pub use field::field_row;
 pub use list::{
     contrasting_foreground, full_width_row, list_item_line, modal_list_lines,
-    modal_selection_foreground, scroll_window, ListViewport,
+    modal_list_lines_windowed, modal_selection_foreground, scroll_window, ListViewport,
 };
 pub use picker::{draw_filter_picker, FilterPickerView, PickerField};
-pub use popup::{centered_rect, clamp_popup_height, modal_footer, ModalFrame};
+pub use popup::{centered_rect, clamp_popup_height, hint_rect, modal_footer, ModalFrame};
 pub use textarea::{style_textarea, TextAreaColors};
 
 // `markdown_window` is consumed only within `ui` (the Summary card and its

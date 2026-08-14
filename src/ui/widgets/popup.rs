@@ -170,6 +170,28 @@ pub fn modal_footer(buf: &mut Buffer, area: Rect, text: &str, theme: &Theme) {
     .render(area, buf);
 }
 
+/// The rect covering `hint` inside a footer row that was drawn with `text`.
+///
+/// Modal footers double as button bars: a hint like `⏎ mount` is both the label
+/// and the mouse's way to trigger it. Locating the hint in the very string that
+/// was painted keeps the target and the text from drifting when either is
+/// reworded. `None` when the hint is absent; the result is clipped to `row`, so
+/// a terminal too narrow to hold the whole footer yields a target no wider than
+/// the text it can actually show.
+pub fn hint_rect(row: Rect, text: &str, hint: &str) -> Option<Rect> {
+    use unicode_width::UnicodeWidthStr;
+
+    let offset = text.find(hint)?;
+    let x = row.x.saturating_add(text[..offset].width() as u16);
+    Some(row.intersection(Rect {
+        x,
+        y: row.y,
+        width: hint.width() as u16,
+        height: 1,
+    }))
+    .filter(|rect| !rect.is_empty())
+}
+
 /// Clear one cell immediately outside each vertical edge of the modal.
 ///
 /// A double-width glyph that starts beside a modal can otherwise occupy the

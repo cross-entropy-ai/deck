@@ -4,7 +4,10 @@ use crate::geometry::HitKind;
 use crate::overlay::Modal;
 use crate::state::{AppState, FocusTarget, LayoutMode, MainView};
 
-use super::{Action, MenuAction, NewSessionAction, SettingsAction, SummaryAction};
+use super::{
+    Action, AddRemoteAction, MenuAction, MountAction, NewSessionAction, PfAction, SettingsAction,
+    SummaryAction,
+};
 
 pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     // Single resolver for every rect-based button/region the sidebar publishes.
@@ -331,15 +334,86 @@ fn modal_mouse_to_action(
                 _ => Action::None,
             }
         }
+        Modal::AddRemote => {
+            if state.overlay.add_remote.is_none() {
+                return Action::None;
+            }
+            match (mouse.kind, hit) {
+                (MouseEventKind::ScrollUp, _) => Action::AddRemote(AddRemoteAction::Prev),
+                (MouseEventKind::ScrollDown, _) => Action::AddRemote(AddRemoteAction::Next),
+                // A host row has one thing to offer, so one click delivers it.
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::AddRemoteHost(index))) => {
+                    Action::AddRemote(AddRemoteAction::ClickHost(index))
+                }
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::AddRemoteAdd)) => {
+                    Action::AddRemote(AddRemoteAction::Confirm)
+                }
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::AddRemoteCancel)) => {
+                    Action::AddRemote(AddRemoteAction::Close)
+                }
+                _ => Action::None,
+            }
+        }
+        Modal::MountPicker => {
+            if state.overlay.mount_picker.is_none() {
+                return Action::None;
+            }
+            match (mouse.kind, hit) {
+                (MouseEventKind::ScrollUp, _) => Action::Mount(MountAction::Prev),
+                (MouseEventKind::ScrollDown, _) => Action::Mount(MountAction::Next),
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::MountRow(index))) => {
+                    Action::Mount(MountAction::ClickCandidate(index))
+                }
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::MountConfirm)) => {
+                    Action::Mount(MountAction::Confirm)
+                }
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::MountSort)) => {
+                    Action::Mount(MountAction::CycleSort)
+                }
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::MountCancel)) => {
+                    Action::Mount(MountAction::Close)
+                }
+                _ => Action::None,
+            }
+        }
+        Modal::PortForward => {
+            // The add form covers the list. It publishes no targets, but the
+            // wheel is hit-independent, so it would otherwise move a selection
+            // the user cannot see.
+            let showing_list = state
+                .overlay
+                .port_forward
+                .as_ref()
+                .is_some_and(|overlay| overlay.add_form.is_none());
+            if !showing_list {
+                return Action::None;
+            }
+            match (mouse.kind, hit) {
+                (MouseEventKind::ScrollUp, _) => Action::Pf(PfAction::FocusUp),
+                (MouseEventKind::ScrollDown, _) => Action::Pf(PfAction::FocusDown),
+                // Clicking a forward only focuses it: the one thing a row can
+                // do is be deleted, which stays behind its own button.
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::PfRow(index))) => {
+                    Action::Pf(PfAction::FocusRow(index))
+                }
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::PfAdd)) => {
+                    Action::Pf(PfAction::AddOpen)
+                }
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::PfDelete)) => {
+                    Action::Pf(PfAction::Delete)
+                }
+                (MouseEventKind::Down(MouseButton::Left), Some(HitKind::PfClose)) => {
+                    Action::Pf(PfAction::Close)
+                }
+                _ => Action::None,
+            }
+        }
         // Every other overlay is keyboard-driven; swallow mouse so clicks
         // don't fire phantom session switches or context menus behind it.
-        Modal::AddRemote
-        | Modal::Rename
-        | Modal::PortForward
+        Modal::Rename
         | Modal::ThemePicker
         | Modal::KeybindingsView
         | Modal::ExcludeEditor
-        | Modal::MountPicker
         | Modal::SshSetting
         | Modal::SummaryLang
         | Modal::Help => Action::None,

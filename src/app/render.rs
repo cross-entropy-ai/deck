@@ -310,6 +310,9 @@ impl App {
             captured_summary_popup_max_scroll = rendered_modal.summary_popup_max_scroll;
             captured_hits.new_session_dirs = rendered_modal.new_session_dirs;
             captured_hits.new_session_create = rendered_modal.new_session_create;
+            captured_hits.add_remote = rendered_modal.add_remote;
+            captured_hits.mounts = rendered_modal.mounts;
+            captured_hits.port_forward = rendered_modal.port_forward;
             if rendered_modal.kill_hits.is_some() {
                 captured_hits.kill = rendered_modal.kill_hits;
             }
