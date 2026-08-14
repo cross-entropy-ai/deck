@@ -618,3 +618,44 @@ fn remote_config_forwards_roundtrip() {
     let parsed: RemoteConfig = serde_json::from_str(&s).unwrap();
     assert_eq!(parsed, r);
 }
+
+/// A container lane's id is `host#container`, and that `#` has to survive the
+/// config file — YAML opens a comment at `#` whenever it follows whitespace, so
+/// a value one space away from being truncated is worth pinning.
+///
+/// It matters because container mounts are session-scoped: the entry sits in
+/// the file naming a lane that will not exist until the container is mounted
+/// again, and it has to resolve to that same lane when it comes back.
+#[test]
+fn a_hidden_session_on_a_container_lane_survives_the_config_file() {
+    let lane = crate::system::tmux::TmuxSystem::container_lane("CF-NUS-H200", "xserve-poc");
+    assert_eq!(
+        lane,
+        crate::system::tmux::TmuxSystem::host_lane("CF-NUS-H200#xserve-poc"),
+        "the two constructors must agree, or the round trip below proves nothing"
+    );
+
+    let hidden = std::collections::HashMap::from([(
+        lane,
+        std::collections::HashSet::from(["someone-elses-work".to_string()]),
+    )]);
+    let path = std::env::temp_dir().join("deck-hidden-container-session.yaml");
+    let config = Config {
+        hidden_sessions: crate::system::tmux::hidden_to_config(&hidden),
+        ..Config::default()
+    };
+    config.save_to(&path).unwrap();
+
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(
+        text.contains("CF-NUS-H200#xserve-poc"),
+        "the container id must reach the file intact: {text}"
+    );
+    let loaded = Config::try_load_from(&path).unwrap();
+    assert_eq!(
+        crate::system::tmux::hidden_from_config(&loaded.hidden_sessions),
+        hidden,
+        "the entry must resolve to the lane a later mount will produce"
+    );
+    let _ = fs::remove_file(&path);
+}
