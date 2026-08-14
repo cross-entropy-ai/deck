@@ -832,8 +832,11 @@ mod tests {
         });
         system.configure(&config);
         let host = tmux::TmuxSystem::host_lane("devbox");
+        // A container name of its own: mounting publishes the engine into the
+        // process-wide transport table, keyed `host#container`, so two tests
+        // sharing a name would race over one entry when run in parallel.
         let mounted =
-            LaneMountProvider::mount(&system, &host, &format!("docker{}web", '\x1f')).unwrap();
+            LaneMountProvider::mount(&system, &host, &format!("docker{}api", '\x1f')).unwrap();
         assert!(system.lanes().contains(&mounted));
 
         // Its lane id names a host Deck can no longer reach, so it cannot outlive

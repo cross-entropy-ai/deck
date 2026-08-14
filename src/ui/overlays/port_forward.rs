@@ -8,13 +8,19 @@ use ratatui_textarea::TextArea;
 
 use crate::forwards::{ForwardMode, ForwardSpec};
 use crate::forwards::{PfAddForm, PfField, PortForwardOverlay};
+use crate::geometry::{ListItemHit, PfHits};
 use crate::theme::Theme;
 use crate::ui::widgets::{
-    field_row, list_item_line, modal_footer, modal_list_lines, ListViewport, ModalFrame,
+    field_row, hint_rect, list_item_line, modal_footer, modal_list_lines, ListViewport, ModalFrame,
     TextAreaColors,
 };
 
 const OVERLAY_WIDTH: u16 = 64;
+/// The list footer, whose hints double as its buttons.
+const ADD_HINT: &str = "[a] add";
+const DELETE_HINT: &str = "[d] delete";
+const CLOSE_HINT: &str = "[esc] close";
+const LIST_FOOTER: &str = "  [a] add   [d] delete   [esc] close";
 
 pub fn draw_port_forward(
     frame: &mut Frame,
@@ -23,7 +29,7 @@ pub fn draw_port_forward(
     lane_title: &str,
     forwards: &[ForwardSpec],
     theme: &Theme,
-) {
+) -> PfHits {
     let buf = frame.buffer_mut();
 
     let body_height = if overlay.add_form.is_some() {
@@ -44,7 +50,12 @@ pub fn draw_port_forward(
 
     match &overlay.add_form {
         None => draw_list(buf, inner, forwards, overlay, theme),
-        Some(form) => draw_form(buf, inner, form, overlay.status.as_deref(), theme),
+        Some(form) => {
+            // The form replaces the list, so the list's targets must not
+            // survive into a frame that no longer paints them.
+            draw_form(buf, inner, form, overlay.status.as_deref(), theme);
+            PfHits::default()
+        }
     }
 }
 
@@ -54,7 +65,7 @@ fn draw_list(
     forwards: &[ForwardSpec],
     overlay: &PortForwardOverlay,
     theme: &Theme,
-) {
+) -> PfHits {
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::raw(""));
     if forwards.is_empty() {
@@ -97,12 +108,29 @@ fn draw_list(
         height: 1,
         ..area
     };
-    modal_footer(
-        buf,
-        footer_area,
-        "  [a] add   [d] delete   [esc] close",
-        theme,
-    );
+    modal_footer(buf, footer_area, LIST_FOOTER, theme);
+
+    // The list is preceded by exactly one blank line and never scrolls — it is
+    // drawn with `visible == forwards.len()`, and the modal is sized to fit —
+    // so row `i` is always at `area.y + 1 + i`.
+    let rows = (0..forwards.len())
+        .map(|index| ListItemHit {
+            rect: Rect {
+                y: area.y + 1 + index as u16,
+                height: 1,
+                ..area
+            },
+            index,
+        })
+        .filter(|row| area.contains(ratatui::layout::Position::new(row.rect.x, row.rect.y)))
+        .collect();
+
+    PfHits {
+        rows,
+        add: hint_rect(footer_area, LIST_FOOTER, ADD_HINT),
+        delete: hint_rect(footer_area, LIST_FOOTER, DELETE_HINT),
+        close: hint_rect(footer_area, LIST_FOOTER, CLOSE_HINT),
+    }
 }
 
 fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str>, theme: &Theme) {

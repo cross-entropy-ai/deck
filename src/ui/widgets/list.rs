@@ -156,21 +156,37 @@ pub fn modal_list_lines<'items, 'line, T>(
     items: &'items [T],
     visible: usize,
     viewport: ListViewport,
-    mut line: impl FnMut(usize, &'items T) -> Line<'line>,
+    line: impl FnMut(usize, &'items T) -> Line<'line>,
 ) -> Vec<Line<'line>> {
+    modal_list_lines_windowed(items, visible, viewport, line).0
+}
+
+/// [`modal_list_lines`], plus the index the first drawn row holds.
+///
+/// Callers that publish click targets for the rows they just drew need that
+/// index to map a row back to its item. Taking it from the same call that built
+/// the lines is what keeps a click landing on the row the user sees — deriving
+/// the window twice invites the two from drifting apart.
+pub fn modal_list_lines_windowed<'items, 'line, T>(
+    items: &'items [T],
+    visible: usize,
+    viewport: ListViewport,
+    mut line: impl FnMut(usize, &'items T) -> Line<'line>,
+) -> (Vec<Line<'line>>, usize) {
     if visible == 0 || items.is_empty() {
-        return Vec::new();
+        return (Vec::new(), 0);
     }
     let start = match viewport {
         ListViewport::FollowSelection(selected) => scroll_window(selected, items.len(), visible),
         ListViewport::Offset(offset) => offset.min(items.len().saturating_sub(visible)),
     };
     let end = (start + visible).min(items.len());
-    items[start..end]
+    let lines = items[start..end]
         .iter()
         .enumerate()
         .map(|(offset, item)| line(start + offset, item))
-        .collect()
+        .collect();
+    (lines, start)
 }
 
 /// Render a windowed, single-selection list into `rows`, one item per row.

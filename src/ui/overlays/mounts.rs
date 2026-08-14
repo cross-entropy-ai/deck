@@ -10,14 +10,21 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::Frame;
 
+use crate::geometry::{ListItemHit, MountHits};
 use crate::overlay::{MountBusy, MountPickerState};
 use crate::theme::Theme;
 use crate::ui::widgets::{
-    field_row, list_item_line, modal_footer, modal_list_lines, ListViewport, ModalFrame,
-    TextAreaColors,
+    field_row, hint_rect, list_item_line, modal_footer, modal_list_lines_windowed, ListViewport,
+    ModalFrame, TextAreaColors,
 };
 
 const OVERLAY_WIDTH: u16 = 56;
+/// The keys row of the footer, whose hints double as the picker's buttons.
+const MOUNT_HINT: &str = "\u{23ce} mount";
+const SORT_HINT: &str = "\u{21e5} sort";
+const CANCEL_HINT: &str = "\u{238b} cancel";
+const MOUNT_FOOTER: &str =
+    " \u{23ce} mount \u{b7} \u{2191}\u{2193} select \u{b7} \u{21e5} sort \u{b7} \u{238b} cancel";
 /// Rows of candidate list, before the input and footer.
 const BODY_ROWS: u16 = 10;
 /// Footer rows: keys, then the state of the list. Two short rows rather than
@@ -31,7 +38,7 @@ pub fn draw_mount_picker(
     picker: &MountPickerState,
     lane_title: &str,
     theme: &Theme,
-) {
+) -> MountHits {
     let width = OVERLAY_WIDTH.min(area.width.saturating_sub(4));
     // input + pad + list + pad + footer, plus the error/confirm row when shown.
     let extra = u16::from(picker.picker.error.is_some() || picker.confirming.is_some());
@@ -73,6 +80,10 @@ pub fn draw_mount_picker(
         None => None,
     };
 
+    // Rows are published only when real candidates are on screen: a placeholder
+    // ("looking for containers…") occupies the same rows but is not clickable.
+    let mut candidate_rows = Vec::new();
+
     if let Some(text) = placeholder {
         ratatui::widgets::Widget::render(
             ratatui::widgets::Paragraph::new(Line::from(Span::styled(
@@ -85,7 +96,7 @@ pub fn draw_mount_picker(
     } else {
         // `filtered` holds indices into `candidates`, so the list renders the
         // filtered view while each row still resolves back to its candidate.
-        let lines = modal_list_lines(
+        let (lines, start) = modal_list_lines_windowed(
             &picker.picker.filtered,
             rows[2].height as usize,
             ListViewport::FollowSelection(picker.picker.selected),
@@ -120,6 +131,19 @@ pub fn draw_mount_picker(
                 }
             },
         );
+        // One hit per line actually drawn, taken from the window that drew
+        // them, so a click resolves to the row under the cursor after any
+        // amount of scrolling.
+        candidate_rows = (0..lines.len() as u16)
+            .map(|offset| ListItemHit {
+                rect: Rect {
+                    y: rows[2].y + offset,
+                    height: 1,
+                    ..rows[2]
+                },
+                index: start + offset as usize,
+            })
+            .collect();
         ratatui::widgets::Widget::render(
             ratatui::widgets::Paragraph::new(lines),
             rows[2],
@@ -162,12 +186,11 @@ pub fn draw_mount_picker(
     // Keys first, then what the list is currently doing: the order in force
     // (which `⇥` cycles) and the reminder that a mount is session-scoped, since
     // nothing else on screen says a lane mounted here won't come back.
-    modal_footer(
-        frame.buffer_mut(),
-        rows[5],
-        " ⏎ mount · ↑↓ select · ⇥ sort · ⎋ cancel",
-        theme,
-    );
+    let keys_row = Rect {
+        height: 1,
+        ..rows[5]
+    };
+    modal_footer(frame.buffer_mut(), keys_row, MOUNT_FOOTER, theme);
     modal_footer(
         frame.buffer_mut(),
         Rect {
@@ -178,4 +201,11 @@ pub fn draw_mount_picker(
         &format!(" by {} · this session only", picker.sort.label()),
         theme,
     );
+
+    MountHits {
+        rows: candidate_rows,
+        mount: hint_rect(keys_row, MOUNT_FOOTER, MOUNT_HINT),
+        sort: hint_rect(keys_row, MOUNT_FOOTER, SORT_HINT),
+        cancel: hint_rect(keys_row, MOUNT_FOOTER, CANCEL_HINT),
+    }
 }

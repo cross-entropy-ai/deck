@@ -11,7 +11,7 @@ use crate::add_remote::AddRemoteState;
 use crate::theme::Theme;
 
 use super::widgets::{
-    draw_filter_picker, markdown_window, FilterPickerView, ModalFrame, PickerField,
+    draw_filter_picker, hint_rect, markdown_window, FilterPickerView, ModalFrame, PickerField,
 };
 use super::NewSessionView;
 
@@ -111,16 +111,17 @@ pub fn draw_new_session(
     );
 
     // Carve the hint out of the footer it was just drawn into: the block's own
-    // rect supplies the centered offset, so the target follows the text. The
-    // hint sits one space past the row's icon. Intersecting keeps the target
-    // inside the popup on a terminal too narrow to hold the whole footer, where
-    // the text is clipped.
-    let create = hits.footer.intersection(Rect {
-        x: hits.footer.x + unicode_width::UnicodeWidthStr::width(KEYS_ICON) as u16 + 1,
-        y: hits.footer.y,
-        width: unicode_width::UnicodeWidthStr::width(CREATE_HINT) as u16,
-        height: 1,
-    });
+    // rect supplies the centered offset, and locating the hint in the string
+    // that was painted keeps the target on the text through any rewording.
+    let create = hint_rect(
+        Rect {
+            height: 1,
+            ..hits.footer
+        },
+        &keys,
+        CREATE_HINT,
+    )
+    .unwrap_or_default();
 
     NewSessionHits {
         dirs: hits.rows,
@@ -128,7 +129,17 @@ pub fn draw_new_session(
     }
 }
 
-pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, theme: &Theme) {
+/// The add-remote footer, whose hints double as its buttons.
+const ADD_HINT: &str = "\u{23ce} add";
+const CANCEL_HINT: &str = "\u{238b} cancel";
+const ADD_REMOTE_FOOTER: &str = "\u{23ce} add   \u{2191}\u{2193} select   \u{238b} cancel";
+
+pub fn draw_add_remote(
+    frame: &mut Frame,
+    area: Rect,
+    state: &AddRemoteState,
+    theme: &Theme,
+) -> crate::geometry::AddRemoteHits {
     let p = &state.picker;
     let empty_msg = if p.items.is_empty() {
         "    (no ~/.ssh/config hosts \u{2014} type a hostname)"
@@ -136,7 +147,7 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
         "    (no matches \u{2014} press \u{23ce} to add typed host)"
     };
 
-    let _ = draw_filter_picker(
+    let hits = draw_filter_picker(
         frame,
         area,
         theme,
@@ -157,10 +168,20 @@ pub fn draw_add_remote(frame: &mut Frame, area: Rect, state: &AddRemoteState, th
             pinned: 0,
             empty_msg,
             error: p.error.as_deref(),
-            footer: &["\u{23ce} add   \u{2191}\u{2193} select   \u{238b} cancel"],
+            footer: &[ADD_REMOTE_FOOTER],
         },
         |idx| p.items[idx].clone(),
     );
+
+    let footer_row = Rect {
+        height: 1,
+        ..hits.footer
+    };
+    crate::geometry::AddRemoteHits {
+        hosts: hits.rows,
+        add: hint_rect(footer_row, ADD_REMOTE_FOOTER, ADD_HINT),
+        cancel: hint_rect(footer_row, ADD_REMOTE_FOOTER, CANCEL_HINT),
+    }
 }
 
 /// Draw the Agents-tab summary "big view" over `area` and return the max

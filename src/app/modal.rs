@@ -21,6 +21,9 @@ pub(super) struct RenderedModal {
     pub kill_hits: Option<KillConfirmHits>,
     pub new_session_dirs: Vec<crate::geometry::ListItemHit>,
     pub new_session_create: Option<Rect>,
+    pub add_remote: crate::geometry::AddRemoteHits,
+    pub mounts: crate::geometry::MountHits,
+    pub port_forward: crate::geometry::PfHits,
 }
 
 /// One close/cancel policy for every formal modal. Keyboard routing handles
@@ -120,7 +123,7 @@ pub(super) fn draw_active_modal(
         }
         Modal::AddRemote => {
             if let Some(picker) = state.overlay.add_remote.as_ref() {
-                ui::draw_add_remote(frame, full, picker, theme);
+                rendered.add_remote = ui::draw_add_remote(frame, full, picker, theme);
             }
         }
         Modal::Rename => {
@@ -153,7 +156,7 @@ pub(super) fn draw_active_modal(
                     &overlay.lane,
                 )
                 .map_or(&[][..], |remote| remote.forwards.as_slice());
-                crate::ui::overlays::port_forward::draw_port_forward(
+                rendered.port_forward = crate::ui::overlays::port_forward::draw_port_forward(
                     frame,
                     full,
                     overlay,
@@ -198,7 +201,7 @@ pub(super) fn draw_active_modal(
         }
         Modal::MountPicker => {
             if let Some(picker) = state.overlay.mount_picker.as_ref() {
-                crate::ui::overlays::mounts::draw_mount_picker(
+                rendered.mounts = crate::ui::overlays::mounts::draw_mount_picker(
                     frame,
                     full,
                     picker,
@@ -254,6 +257,138 @@ mod tests {
         (0..buffer.area.height)
             .flat_map(|y| (0..buffer.area.width).map(move |x| buffer[(x, y)].symbol()))
             .collect()
+    }
+
+    /// The text a rect actually covers on screen, trimmed.
+    fn painted(buffer: &Buffer, rect: Rect) -> String {
+        (rect.x..rect.right())
+            .map(|x| buffer[(x, rect.y)].symbol())
+            .collect::<String>()
+            .trim()
+            .to_string()
+    }
+
+    /// The mount picker windows its list by hand, so its published rows must be
+    /// proved against the pixels: after scrolling, the rect for a candidate has
+    /// to cover that candidate's painted row, not the one it started at. Its
+    /// footer hints double as buttons, so those must sit on their labels too.
+    #[test]
+    fn mount_picker_rows_and_buttons_land_on_what_was_painted() {
+        use crate::overlay::{MountPickerState, MountSort};
+        use crate::system::MountCandidate;
+
+        let candidates: Vec<MountCandidate> = (0..20)
+            .map(|index| MountCandidate {
+                id: format!("id-{index:02}"),
+                label: format!("container-{index:02}"),
+                needs_activation: false,
+            })
+            .collect();
+        let mut picker =
+            crate::picker::FilterPicker::new(candidates.iter().map(|c| c.label.clone()).collect());
+        // Deep enough that the window has scrolled well past the first rows.
+        picker.selected = 17;
+
+        let mut state = AppState::new(100, 30);
+        state.overlay.mount_picker = Some(MountPickerState {
+            lane: crate::system::tmux::TmuxSystem::host_lane("devbox"),
+            generation: 1,
+            picker,
+            candidates,
+            busy: None,
+            confirming: None,
+            sort: MountSort::default(),
+        });
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        let mut rendered = RenderedModal::default();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                rendered = draw_active_modal(
+                    frame,
+                    &state,
+                    area,
+                    area,
+                    LayoutMode::Horizontal,
+                    &THEMES[0],
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let hits = &rendered.mounts;
+        assert!(!hits.rows.is_empty(), "scrolled list must publish rows");
+        for row in &hits.rows {
+            assert!(
+                painted(buffer, row.rect).contains(&format!("container-{:02}", row.index)),
+                "row {} must cover the candidate it resolves to, painted {:?}",
+                row.index,
+                painted(buffer, row.rect)
+            );
+        }
+        assert!(
+            hits.rows.iter().any(|row| row.index == 17),
+            "the selected candidate is on screen, so it must be clickable"
+        );
+
+        for (rect, label) in [
+            (hits.mount, "\u{23ce} mount"),
+            (hits.sort, "\u{21e5} sort"),
+            (hits.cancel, "\u{238b} cancel"),
+        ] {
+            let rect = rect.expect("footer button published");
+            assert_eq!(painted(buffer, rect), label);
+        }
+    }
+
+    /// The add-remote picker shares the New Session widget, so the same proof
+    /// applies: rows resolve to the host under the cursor, and `⏎ add` — the
+    /// mouse's only way to commit a typed hostname — sits on its own text.
+    #[test]
+    fn add_remote_rows_and_add_button_land_on_what_was_painted() {
+        let hosts: Vec<String> = (0..4).map(|index| format!("host-{index}")).collect();
+        let mut state = AppState::new(100, 30);
+        state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(
+            crate::app::ssh::config_adapter::owner(),
+            hosts,
+        ));
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        let mut rendered = RenderedModal::default();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                rendered = draw_active_modal(
+                    frame,
+                    &state,
+                    area,
+                    area,
+                    LayoutMode::Horizontal,
+                    &THEMES[0],
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let hits = &rendered.add_remote;
+        assert_eq!(hits.hosts.len(), 4);
+        for row in &hits.hosts {
+            assert!(
+                painted(buffer, row.rect).contains(&format!("host-{}", row.index)),
+                "row {} painted {:?}",
+                row.index,
+                painted(buffer, row.rect)
+            );
+        }
+        assert_eq!(
+            painted(buffer, hits.add.expect("add button published")),
+            "\u{23ce} add"
+        );
+        assert_eq!(
+            painted(buffer, hits.cancel.expect("cancel button published")),
+            "\u{238b} cancel"
+        );
     }
 
     #[test]

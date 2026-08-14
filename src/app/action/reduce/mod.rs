@@ -844,6 +844,35 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
                 candidate: candidate.id,
             });
         }
+        // A click aims and fires in one gesture. Landing on the row the pending
+        // prompt already asked about answers it; landing anywhere else re-aims,
+        // so a misclick during a prompt cannot start the wrong container.
+        MountAction::ClickCandidate(index) => {
+            {
+                let Some(picker) = state.overlay.mount_picker.as_mut() else {
+                    return fx;
+                };
+                if picker.busy.is_some() || index >= picker.picker.filtered.len() {
+                    return fx;
+                }
+                let clicked = picker
+                    .picker
+                    .filtered
+                    .get(index)
+                    .and_then(|candidate| picker.candidates.get(*candidate))
+                    .map(|candidate| candidate.id.clone());
+                let answers_prompt = picker
+                    .confirming
+                    .as_ref()
+                    .is_some_and(|pending| Some(&pending.id) == clicked.as_ref());
+                if !answers_prompt {
+                    picker.confirming = None;
+                }
+                picker.picker.selected = index;
+                picker.picker.error = None;
+            }
+            return reduce_mount(state, MountAction::Confirm);
+        }
         MountAction::Discovered {
             lane,
             generation,
@@ -908,6 +937,19 @@ fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffec
         }
         AddRemoteAction::Close => {
             state.overlay.add_remote = None;
+        }
+        // A click aims and fires in one gesture: highlight the host, then take
+        // the same path Enter does, so the two cannot add different things.
+        AddRemoteAction::ClickHost(index) => {
+            let Some(ar) = state.overlay.add_remote.as_mut() else {
+                return fx;
+            };
+            if index >= ar.picker.filtered.len() {
+                return fx;
+            }
+            ar.picker.selected = index;
+            ar.picker.error = None;
+            return reduce_add_remote(state, AddRemoteAction::Confirm);
         }
         AddRemoteAction::Confirm => {
             let request = state.overlay.add_remote.as_ref().and_then(|picker| {

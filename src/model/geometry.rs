@@ -481,6 +481,96 @@ pub struct SummaryHits {
     pub max_scroll: usize,
 }
 
+/// The add-remote picker's click targets: one per visible host, plus the
+/// footer hints that double as its buttons.
+#[derive(Debug, Clone, Default)]
+pub struct AddRemoteHits {
+    /// Visible host rows, each carrying its index in the filtered list.
+    pub hosts: Vec<ListItemHit>,
+    pub add: Option<Rect>,
+    pub cancel: Option<Rect>,
+}
+
+/// The mount picker's click targets: one per visible candidate, plus the
+/// footer hints that double as its buttons.
+#[derive(Debug, Clone, Default)]
+pub struct MountHits {
+    /// Visible candidate rows, each carrying its index in the filtered list.
+    pub rows: Vec<ListItemHit>,
+    pub mount: Option<Rect>,
+    pub sort: Option<Rect>,
+    pub cancel: Option<Rect>,
+}
+
+/// The port-forward list's click targets. `None` for every button while the
+/// add form is open, since the list is not on screen then.
+#[derive(Debug, Clone, Default)]
+pub struct PfHits {
+    /// Visible forward rows, each carrying its index in the forward list.
+    pub rows: Vec<ListItemHit>,
+    pub add: Option<Rect>,
+    pub delete: Option<Rect>,
+    pub close: Option<Rect>,
+}
+
+/// Find the row `pos` lands on, as an index into the list that produced it.
+fn row_at(rows: &[ListItemHit], pos: Position) -> Option<usize> {
+    rows.iter()
+        .find(|row| row.rect.contains(pos))
+        .map(|row| row.index)
+}
+
+impl AddRemoteHits {
+    fn hit(&self, pos: Position) -> Option<HitKind> {
+        if let Some(index) = row_at(&self.hosts, pos) {
+            return Some(HitKind::AddRemoteHost(index));
+        }
+        if self.add.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::AddRemoteAdd);
+        }
+        if self.cancel.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::AddRemoteCancel);
+        }
+        None
+    }
+}
+
+impl MountHits {
+    fn hit(&self, pos: Position) -> Option<HitKind> {
+        if let Some(index) = row_at(&self.rows, pos) {
+            return Some(HitKind::MountRow(index));
+        }
+        if self.mount.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::MountConfirm);
+        }
+        if self.sort.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::MountSort);
+        }
+        if self.cancel.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::MountCancel);
+        }
+        None
+    }
+}
+
+impl PfHits {
+    fn hit(&self, pos: Position) -> Option<HitKind> {
+        if let Some(index) = row_at(&self.rows, pos) {
+            return Some(HitKind::PfRow(index));
+        }
+        if self.add.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::PfAdd);
+        }
+        if self.delete.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::PfDelete);
+        }
+        if self.close.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::PfClose);
+        }
+        None
+    }
+}
+
 /// Every clickable region published for one frame. The sidebar provides the
 /// base set and the active modal can add its own rows; `AppState` stores the
 /// combined registry. `HitRegions::hit` is the single resolver mouse dispatch
@@ -505,6 +595,12 @@ pub struct HitRegions {
     /// The new-session picker's footer `⏎ create` hint, which doubles as the
     /// modal's confirm button for the mouse.
     pub new_session_create: Option<Rect>,
+    /// Rows and buttons of the active add-remote picker.
+    pub add_remote: AddRemoteHits,
+    /// Rows and buttons of the active mount picker.
+    pub mounts: MountHits,
+    /// Rows and buttons of the active port-forward list.
+    pub port_forward: PfHits,
     /// The expanded header's collapse button, or the collapsed rail's expand
     /// button.
     pub sidebar_toggle: Option<Rect>,
@@ -531,6 +627,28 @@ pub enum HitKind {
     NewSessionDir(usize),
     /// The new-session picker's footer confirm hint.
     NewSessionCreate,
+    /// A visible host row in the add-remote picker.
+    AddRemoteHost(usize),
+    /// The add-remote picker's footer `⏎ add` hint.
+    AddRemoteAdd,
+    /// The add-remote picker's footer `⎋ cancel` hint.
+    AddRemoteCancel,
+    /// A visible candidate row in the mount picker.
+    MountRow(usize),
+    /// The mount picker's footer `⏎ mount` hint.
+    MountConfirm,
+    /// The mount picker's footer `⇥ sort` hint.
+    MountSort,
+    /// The mount picker's footer `⎋ cancel` hint.
+    MountCancel,
+    /// A visible forward row in the port-forward list.
+    PfRow(usize),
+    /// The port-forward list's `[a] add` hint.
+    PfAdd,
+    /// The port-forward list's `[d] delete` hint.
+    PfDelete,
+    /// The port-forward list's `[esc] close` hint.
+    PfClose,
     /// Collapse or expand the whole horizontal sidebar.
     SidebarToggle,
     /// The Summary card's "Generate" button.
@@ -569,6 +687,15 @@ impl HitRegions {
         }
         if self.new_session_create.is_some_and(|r| r.contains(pos)) {
             return Some(HitKind::NewSessionCreate);
+        }
+        if let Some(hit) = self.add_remote.hit(pos) {
+            return Some(hit);
+        }
+        if let Some(hit) = self.mounts.hit(pos) {
+            return Some(hit);
+        }
+        if let Some(hit) = self.port_forward.hit(pos) {
+            return Some(hit);
         }
         if self.banner.is_some_and(|r| r.contains(pos)) {
             return Some(HitKind::Banner);
