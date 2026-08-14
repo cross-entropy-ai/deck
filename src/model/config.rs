@@ -181,6 +181,23 @@ impl<'de> Deserialize<'de> for KeyBindingValue {
     }
 }
 
+/// One session excluded by name on one lane.
+///
+/// Anchored to the *name*, not tmux's `#{session_id}`: a name outlives the
+/// tmux server, so a colleague's session that comes back after a restart stays
+/// excluded, which is the case this list exists for. The cost is that renaming
+/// an excluded session un-excludes it — the same rule `exclude_patterns` has
+/// always had, and the same answer: a session that changed its name is a
+/// different session as far as matching goes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct HiddenSession {
+    /// `null` = the local lane, a string = a remote id, exactly like
+    /// `collapsed_sections`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub name: String,
+}
+
 /// Persisted user preferences.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -232,6 +249,13 @@ pub struct Config {
     /// tabs fold independently. Same `[null, "host1"]` shape. Empty by default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collapsed_agent_sections: Vec<Option<String>>,
+    /// Sessions the user chose not to capture, named one at a time from the
+    /// session's own context menu. Complements `exclude_patterns`, which
+    /// matches by name shape: this list is for the case where the pattern is
+    /// "that one, over there" — a colleague's session on a shared machine that
+    /// Deck must leave alone. Empty by default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_sessions: Vec<HiddenSession>,
     /// The Agents-tab summary prompt template. `{{SESSIONS}}` is replaced
     /// with one `<session>` block per agent pane. Editable; reset to the
     /// bundled default when `summary_prompt_version` falls behind — see
@@ -288,6 +312,7 @@ impl Default for Config {
             ssh_control_path: DEFAULT_SSH_CONTROL_PATH.to_string(),
             ssh_control_persist: DEFAULT_SSH_CONTROL_PERSIST.to_string(),
             remotes: Vec::new(),
+            hidden_sessions: Vec::new(),
             collapsed_sections: Vec::new(),
             collapsed_agent_sections: Vec::new(),
             // Seeded with version 0 so `migrate_summary_prompt` always

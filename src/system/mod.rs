@@ -532,6 +532,21 @@ pub struct LaneSnapshot {
 
 #[cfg(test)]
 mod tests {
+    /// `TmuxSystem::configure` replaces a *process-wide* container-options
+    /// table with the calling instance's view of it, so two tests configuring
+    /// their own systems in parallel silently overwrite each other's entries —
+    /// which showed up as this module failing intermittently on whichever
+    /// engine lost the race. Every test that configures a system takes this.
+    static CONTAINER_TABLE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Hold [`CONTAINER_TABLE`] for the rest of the test, ignoring poisoning
+    /// from an unrelated failure so one panic does not cascade.
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        CONTAINER_TABLE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     use super::*;
 
     struct TestSystem;
@@ -734,6 +749,7 @@ mod tests {
 
     #[test]
     fn configured_containers_become_their_own_lanes_with_titled_sections() {
+        let _serial = serial();
         let system = tmux::TmuxSystem::default();
         let mut config = Config::default();
         config.remotes.push(crate::config::RemoteConfig {
@@ -773,6 +789,7 @@ mod tests {
 
     #[test]
     fn a_mounted_container_is_a_lane_that_config_never_sees() {
+        let _serial = serial();
         let system = tmux::TmuxSystem::default();
         let mut config = Config::default();
         config.remotes.push(crate::config::RemoteConfig {
@@ -822,6 +839,7 @@ mod tests {
 
     #[test]
     fn a_mounted_container_goes_when_its_host_does() {
+        let _serial = serial();
         let system = tmux::TmuxSystem::default();
         let mut config = Config::default();
         config.remotes.push(crate::config::RemoteConfig {
@@ -848,6 +866,7 @@ mod tests {
 
     #[test]
     fn only_a_host_lane_can_mount() {
+        let _serial = serial();
         let system = tmux::TmuxSystem::default();
         let mut config = Config::default();
         config.remotes.push(crate::config::RemoteConfig {
@@ -972,6 +991,7 @@ mod tests {
 
     #[test]
     fn only_lanes_owning_a_connection_advertise_port_forwards() {
+        let _serial = serial();
         let system = tmux::TmuxSystem::default();
         let mut config = Config::default();
         config.remotes.push(crate::config::RemoteConfig {
@@ -1010,6 +1030,7 @@ mod tests {
 
     #[test]
     fn config_entries_that_cannot_round_trip_through_a_lane_id_are_not_mounted() {
+        let _serial = serial();
         let system = tmux::TmuxSystem::default();
         let mut config = Config::default();
         config.remotes.push(crate::config::RemoteConfig {

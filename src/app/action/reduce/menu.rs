@@ -47,6 +47,10 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                 primary: state.is_primary_lane(&lane),
                 port_forward_enabled: state.lane_capabilities(&lane).port_forwards,
                 mounts_enabled: state.lane_capabilities(&lane).mounts,
+                has_hidden: state
+                    .hidden_sessions
+                    .get(&lane)
+                    .is_some_and(|names| !names.is_empty()),
                 lane,
             },
             x,
@@ -84,6 +88,7 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                             fx.merge(apply_action(state, Action::StartRename))
                         }
                         Some(MenuItem::Close) => fx.merge(apply_action(state, Action::KillSession)),
+                        Some(MenuItem::Hide) => fx.merge(apply_action(state, Action::HideSession)),
                         _ => {}
                     }
                 }
@@ -107,6 +112,9 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                     Some(MenuItem::Containers) => fx.push(Effect::OpenMountPicker(lane.clone())),
                     Some(MenuItem::PortForward) => {
                         fx.push(Effect::OpenPortForwardOverlay(lane));
+                    }
+                    Some(MenuItem::ShowHidden) => {
+                        fx.merge(apply_action(state, Action::ShowHiddenSessions(lane)))
                     }
                     Some(MenuItem::RemoveFromList) if !primary => {
                         fx.merge(apply_action(state, Action::RemoveLane(lane)))

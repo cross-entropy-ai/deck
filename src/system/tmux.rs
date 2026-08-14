@@ -135,6 +135,41 @@ pub fn hosts_from_lanes(lanes: &std::collections::HashSet<LaneId>) -> Vec<Option
         .collect()
 }
 
+/// Config's hidden-session list -> the per-lane name sets the refresh worker
+/// filters on. Entries naming a lane this system does not own are dropped: a
+/// stale one would otherwise sit in the map forever, matching nothing.
+pub fn hidden_from_config(
+    hidden: &[crate::config::HiddenSession],
+) -> std::collections::HashMap<LaneId, std::collections::HashSet<String>> {
+    let mut out: std::collections::HashMap<LaneId, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
+    for entry in hidden {
+        out.entry(lane(entry.host.as_deref()))
+            .or_default()
+            .insert(entry.name.clone());
+    }
+    out
+}
+
+/// The inverse of [`hidden_from_config`]. Sorted so saving twice without an
+/// edit in between cannot rewrite the file in a different order.
+pub fn hidden_to_config(
+    hidden: &std::collections::HashMap<LaneId, std::collections::HashSet<String>>,
+) -> Vec<crate::config::HiddenSession> {
+    let mut out: Vec<crate::config::HiddenSession> = hidden
+        .iter()
+        .flat_map(|(lane, names)| {
+            let host = TmuxSystem::host_of(lane).map(str::to_string);
+            names.iter().map(move |name| crate::config::HiddenSession {
+                host: host.clone(),
+                name: name.clone(),
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| (&a.host, &a.name).cmp(&(&b.host, &b.name)));
+    out
+}
+
 /// Every managed remote id a config defines: each host followed by its
 /// containers (`host#container`), in config order. The reload diff
 /// onboards/offboards attachment lanes from these sets.

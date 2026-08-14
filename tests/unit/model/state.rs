@@ -750,6 +750,7 @@ fn local_divider_menu_greys_remote_only_items() {
             primary: true,
             port_forward_enabled: true,
             mounts_enabled: true,
+            has_hidden: false,
         },
         x: 0,
         y: 0,
@@ -917,12 +918,14 @@ fn vertical_tabs_hit_test_remote_sessions() {
 
 #[test]
 fn context_menu_navigation_skips_disabled_items() {
-    use crate::menu::{ContextMenu, MenuItem, MenuKind};
-    // A placeholder remote menu: every session item disabled.
+    use crate::menu::{ContextMenu, MenuItem, MenuKind, PLACEHOLDER_DISABLED_ITEMS};
+    // A placeholder remote menu: every session item disabled. Taken from the
+    // real constant, not a copy of it — a menu item added later must not
+    // quietly leave this fixture testing a *partly* enabled menu.
     let all_disabled = ContextMenu {
         kind: MenuKind::Session {
             focus: FocusTarget(0),
-            disabled: &[MenuItem::Rename, MenuItem::Close],
+            disabled: PLACEHOLDER_DISABLED_ITEMS,
         },
         x: 0,
         y: 0,
@@ -934,8 +937,8 @@ fn context_menu_navigation_skips_disabled_items() {
     assert_eq!(all_disabled.first_enabled(), 0);
     assert_eq!(all_disabled.next_enabled(), 0);
 
-    // One disabled item among enabled ones: navigation stays on Close.
-    // Items are the fixed session list: Rename, Close.
+    // One disabled item among enabled ones: navigation steps over Rename in
+    // both directions. Items are the fixed session list: Rename, Close, Hide.
     let mixed = ContextMenu {
         kind: MenuKind::Session {
             focus: FocusTarget(0),
@@ -946,12 +949,15 @@ fn context_menu_navigation_skips_disabled_items() {
         selected: 1,
     };
     assert_eq!(mixed.first_enabled(), 1);
-    assert_eq!(mixed.next_enabled(), 1);
+    assert_eq!(mixed.next_enabled(), 2);
+    // Nothing enabled above Close, so backwards stays put rather than landing
+    // on the greyed Rename.
     assert_eq!(mixed.prev_enabled(), 1);
 
-    assert_eq!(mixed.items().len(), 2);
+    assert_eq!(mixed.items().len(), 3);
     assert_eq!(mixed.items()[0].label(), "Rename");
     assert_eq!(mixed.items()[1].label(), "Close");
+    assert_eq!(mixed.items()[2].label(), "Hide");
 }
 
 // --- PfAddForm::validate() tests ---
@@ -1183,6 +1189,7 @@ fn prefs_config_round_trip_is_identity() {
     // (so the load-time clamps are no-ops and the comparison is exact), map
     // it into prefs, write it back out, and re-derive — the prefs must match.
     let cfg = crate::config::Config {
+        hidden_sessions: Vec::new(),
         theme: crate::theme::THEMES[2].name.to_string(),
         theme_auto: true,
         dark_theme: crate::theme::THEMES[1].name.to_string(),
@@ -1219,6 +1226,7 @@ fn prefs_config_round_trip_is_identity() {
     let prefs = Prefs::from_config(&cfg, theme_index);
     let written = prefs.to_config(
         std::collections::BTreeMap::new(),
+        Vec::new(),
         Vec::new(),
         Vec::new(),
         Vec::new(),

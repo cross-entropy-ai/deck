@@ -507,6 +507,7 @@ impl Prefs {
         remotes: Vec<crate::config::RemoteConfig>,
         collapsed: Vec<Option<String>>,
         collapsed_agents: Vec<Option<String>>,
+        hidden_sessions: Vec<crate::config::HiddenSession>,
     ) -> crate::config::Config {
         crate::config::Config {
             theme: crate::theme::THEMES[self.theme_index].name.to_string(),
@@ -532,6 +533,7 @@ impl Prefs {
             remotes,
             collapsed_sections: collapsed,
             collapsed_agent_sections: collapsed_agents,
+            hidden_sessions,
             summary_prompt: self.summary_prompt.clone(),
             summary_prompt_version: crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION,
             summary_agent: self.summary_agent,
@@ -692,6 +694,13 @@ pub struct AppState {
     /// Persisted to config (`collapsed_sections`), restored at startup.
     pub collapsed_sections: HashSet<LaneId>,
 
+    /// Sessions the user named as not-to-capture, per lane. Seeded from config
+    /// at startup and persisted on every edit, like `collapsed_sections` —
+    /// except that a reload *does* re-seed it, because unlike a collapse this
+    /// is a boundary: a `deck` restarted after an edit must not start
+    /// capturing a session the user excluded.
+    pub hidden_sessions: HashMap<LaneId, HashSet<String>>,
+
     /// Agents-tab twin of `collapsed_sections`, keyed the same way. Separate so
     /// a host collapsed on Projects doesn't hide its agent rows (and vice versa)
     /// — the two tabs fold independently. Persisted to config
@@ -761,6 +770,7 @@ impl AppState {
             agents: HashMap::new(),
             agent_entries: Vec::new(),
             active_agent: None,
+            hidden_sessions: HashMap::new(),
             collapsed_sections: HashSet::new(),
             collapsed_agent_sections: HashSet::new(),
         }
@@ -790,6 +800,10 @@ impl AppState {
             self.project_drag.cancel();
         }
         self.keybindings = keybindings;
+        // Re-seeded on reload, unlike `collapsed_sections`: this one is a
+        // boundary, not a view preference. A hidden session edited into the
+        // file must take effect on the next reload, not the next restart.
+        self.hidden_sessions = crate::system::tmux::hidden_from_config(&cfg.hidden_sessions);
         // Theme indices may have shifted; keep the picker's cursor valid.
         self.settings.theme_picker_selected = theme_index;
     }

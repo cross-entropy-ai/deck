@@ -174,8 +174,28 @@ impl RemoteSpawner {
 ///   silently re-point each other's panes, so one could sign with the other's
 ///   forwarded keys. See [`crate::remote_tmux::agent_socket_token`].
 ///
+/// The marker sweep detaches Deck's *own* leftover clients, one tty at a time,
+/// before writing this connection's marker.
+///
+/// It replaces an `attach -d` on the container path. sshd SIGHUPs its session
+/// when the ssh client dies, reaping the previous `tmux attach`; a container
+/// engine does not kill an exec'd process when its client goes away, so every
+/// reconnect left another attached client alive inside the container, clamping
+/// the window to a stale client's size under `window-size smallest`. `-d` swept
+/// those — and every other client with them, including a colleague sitting in
+/// the same session on a shared host. A marker file records the tty of each
+/// client Deck attached, so detaching exactly those ttys fixes Deck's own
+/// accumulation and touches nobody else's client.
+///
+/// The pattern is scoped to this Deck process (`client-{pid}-…`), so a Deck
+/// that died leaves a client this sweep cannot name. Broadening it would let
+/// two Deck instances sharing one remote account detach each other; a stale
+/// client only clamps the window size, which is the lesser harm.
+///
 /// POSIX-sh only, and no token starts with `=`/`-`/`#` (see CLAUDE.md on remote
-/// shells re-parsing argv).
+/// shells re-parsing argv). `while read` rather than `for m in $(find …)`: the
+/// cache directory sits under the remote `$HOME`, which Deck does not get to
+/// assume is free of spaces.
 fn attach_command(remote_id: &str, marker_id: u64) -> String {
     let dir = crate::remote_tmux::client_cache_dir_token();
     let marker_pattern = crate::remote_tmux::client_marker_name_pattern(remote_id);
@@ -183,32 +203,21 @@ fn attach_command(remote_id: &str, marker_id: u64) -> String {
     let agent = crate::remote_tmux::agent_socket_token();
     format!(
         "mkdir -p {dir} 2>/dev/null ; \
-         find {dir} -type f -name '{marker_pattern}' -exec rm -f -- {{}} + 2>/dev/null ; \
+         find {dir} -type f -name '{marker_pattern}' 2>/dev/null | while IFS= read -r m ; do \
+         t=$(cat \"$m\" 2>/dev/null) ; \
+         [ -n \"$t\" ] && {path} {tmux} detach-client -t \"$t\" 2>/dev/null ; \
+         rm -f -- \"$m\" 2>/dev/null ; \
+         done ; \
          tty > {marker} 2>/dev/null ; \
          if [ -S \"${{SSH_AUTH_SOCK-}}\" ] && (umask 077 && mkdir -p \"$HOME/.ssh\") 2>/dev/null \
          && ln -sf \"$SSH_AUTH_SOCK\" {agent} 2>/dev/null ; then \
          SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK ; \
          {path} {tmux} set-environment -g SSH_AUTH_SOCK {agent} 2>/dev/null ; \
-         fi ; {path} {tmux} attach{detach_others}",
+         fi ; {path} {tmux} attach",
         path = crate::remote_tmux::REMOTE_PATH_PREFIX,
         // The attached client renders the user's panes, so a container's
         // locale-less tmux would draw every non-ASCII byte in them as `_`.
         tmux = crate::remote_tmux::REMOTE_TMUX,
-        // Container path only. sshd SIGHUPs its session when the ssh client
-        // dies, reaping the previous `tmux attach`; a container engine does not
-        // kill an exec'd process when its client goes away, so every reconnect
-        // would leave another attached client alive inside the container —
-        // clamping the window to a stale client's size under
-        // `window-size smallest`. `-d` detaches the others as we attach, at the
-        // cost of also detaching a human's own client of that session.
-        detach_others = if crate::remote_tmux::parse_remote_id(remote_id)
-            .container
-            .is_some()
-        {
-            " -d"
-        } else {
-            ""
-        },
     )
 }
 
@@ -340,19 +349,38 @@ mod tests {
         let expected_pattern = format!("client-{}-web_prod-*", std::process::id());
 
         assert!(command.contains(&format!("-name '{expected_pattern}'")));
-        assert!(command.contains("-exec rm -f -- {} +"));
         assert!(!command.contains("rm -f \"$HOME\"/.cache/deck/client-"));
         assert!(command.contains("tty > \"$HOME\"/'.cache/deck/client-"));
         assert!(command.ends_with("tmux -u attach"));
     }
 
+    /// A container engine does not kill an exec'd process when its client dies,
+    /// so every reconnect leaves another attached tmux client alive inside the
+    /// container (sshd SIGHUPs the host case for us). Deck sweeps those by the
+    /// tty each one recorded, and must never reach for `attach -d`, which would
+    /// take a colleague's client on a shared host with it.
     #[test]
-    fn container_attach_detaches_orphaned_clients_but_a_host_attach_does_not() {
-        // A container engine does not kill an exec'd process when its client
-        // dies, so without `-d` every reconnect leaves another attached tmux
-        // client alive inside the container. sshd SIGHUPs the host case for us.
-        assert!(attach_command("box#dev", 1).ends_with("tmux -u attach -d"));
-        assert!(attach_command("box", 1).ends_with("tmux -u attach"));
+    fn a_reconnect_detaches_only_the_clients_deck_itself_left_behind() {
+        for remote_id in ["box#dev", "box"] {
+            let command = attach_command(remote_id, 1);
+            assert!(
+                command.ends_with("tmux -u attach"),
+                "{remote_id} must not detach anyone wholesale: {command}"
+            );
+            assert!(
+                command.contains("detach-client -t \"$t\""),
+                "{remote_id} must detach its own recorded ttys: {command}"
+            );
+            // The sweep reads each marker before deleting it, and finishes
+            // before this connection records its own tty — otherwise the
+            // attach would detach the client it is about to become.
+            let sweep = command.find("detach-client").expect("sweep present");
+            let own_marker = command.find("tty > ").expect("marker written");
+            assert!(
+                sweep < own_marker,
+                "the sweep must run before our own marker exists: {command}"
+            );
+        }
     }
 
     #[test]
