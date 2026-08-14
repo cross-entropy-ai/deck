@@ -71,6 +71,62 @@ fn the_first_run_seeds_itself_from_the_pre_split_config() {
     );
 }
 
+/// The container these entries name is *not* in the pre-split config's host
+/// list, because a session mount was never written there. That is the whole
+/// reason such an entry exists: it outlives the mount and applies when the
+/// container comes back, so the entry is the only record of the container and
+/// the seed has to grow the node itself.
+///
+/// A lane under a host that is no longer linked is the opposite case: it had
+/// nothing to attach to before the move either, so it stays dropped.
+#[test]
+fn a_seed_grows_the_container_nodes_its_memory_names() {
+    let config = Config {
+        // Genuine pre-split host entries: no containers, because a session
+        // mount was never persisted into one.
+        legacy_remotes: vec![remote("box", &[]), remote("tin", &[])],
+        legacy_collapsed_sections: vec![Some("box#web".to_string())],
+        legacy_collapsed_agent_sections: vec![Some("tin#ci".to_string())],
+        legacy_hidden_sessions: vec![
+            HiddenSession {
+                host: Some("box#web".into()),
+                name: "theirs".into(),
+            },
+            HiddenSession {
+                host: Some("gone#ghost".into()),
+                name: "dead".into(),
+            },
+        ],
+        ..Config::default()
+    };
+
+    let state = LaneState::seeded_from(&config);
+
+    assert_eq!(
+        state.hidden_sessions(),
+        HashMap::from([(
+            TmuxSystem::container_lane("box", "web"),
+            HashSet::from(["theirs".to_string()])
+        )]),
+        "the entry names the only record of that container; dropping it loses \
+         the hidden session for good once the config stops carrying the key"
+    );
+    assert_eq!(
+        state.collapsed_lanes(),
+        HashSet::from([TmuxSystem::container_lane("box", "web")]),
+        "a folded container lane reaches the seed the same way and must survive it"
+    );
+    assert_eq!(
+        state.collapsed_agent_lanes(),
+        HashSet::from([TmuxSystem::container_lane("tin", "ci")]),
+        "and the Agents-tab fold, which is a separate legacy list"
+    );
+    assert!(
+        !state.remotes.iter().any(|remote| remote.host == "gone"),
+        "an unlinked host must not be resurrected by the memory naming it"
+    );
+}
+
 /// Once the state file exists it is the answer, even against a config that
 /// still carries the old keys — otherwise every launch would re-seed over
 /// whatever the user has changed since.
