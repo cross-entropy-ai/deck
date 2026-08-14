@@ -28,6 +28,10 @@ use crate::system::{
 pub struct RefreshRequest {
     pub slave_tty: String,
     pub exclude_patterns: Vec<String>,
+    /// Sessions excluded one at a time, per lane. Applied at the same point as
+    /// `exclude_patterns` so both mean exactly the same thing downstream:
+    /// nothing Deck does can reach a session that never enters its state.
+    pub hidden_sessions: std::collections::HashMap<LaneId, std::collections::HashSet<String>>,
     /// Whether to detect interactive agents this round. When false the
     /// local/remote agent probes are skipped entirely (the Agents tab
     /// isn't active), so no `ps`/subtree walk and no extra ssh work runs.
@@ -247,6 +251,12 @@ fn worker_loop(
             compiled = exclude::compile_patterns(&req.exclude_patterns);
             cached_raw = req.exclude_patterns.clone();
         }
+        // Rebuilt per tick: the hidden list changes on a menu click, and both
+        // collectors must see the same set for the same round.
+        let exclusions = Arc::new(Exclusions {
+            patterns: compiled.clone(),
+            hidden: std::mem::take(&mut req.hidden_sessions),
+        });
 
         let (foreground, background): (Vec<_>, Vec<_>) =
             systems.snapshot_routes().into_iter().partition(|runtime| {
@@ -257,7 +267,8 @@ fn worker_loop(
 
         // Fast lanes update synchronously so the sidebar populates immediately.
         if !foreground.is_empty() {
-            let lanes = collect_sequential(foreground, req.show_agents, &req.slave_tty, &compiled);
+            let lanes =
+                collect_sequential(foreground, req.show_agents, &req.slave_tty, &exclusions);
             if update_tx.send(RefreshUpdate::Lanes(lanes)).is_err() {
                 break;
             }
@@ -268,7 +279,7 @@ fn worker_loop(
         if !background.is_empty() {
             let probe_agents = req.show_agents;
             let client_locator = req.slave_tty.clone();
-            let compiled = Arc::new(compiled.clone());
+            let exclusions = Arc::clone(&exclusions);
             spawn_remote_task(
                 &background_in_flight,
                 &update_tx,
@@ -283,7 +294,7 @@ fn worker_loop(
                         background,
                         probe_agents,
                         client_locator,
-                        compiled,
+                        exclusions,
                     ))
                 },
             );
@@ -293,11 +304,32 @@ fn worker_loop(
 
 type SnapshotRoute = LaneRuntime<'static>;
 
+/// Everything that makes a session none of Deck's business, resolved once per
+/// tick. Both mechanisms land here rather than at their own call sites, so
+/// "excluded" has one definition and one place it is enforced.
+#[derive(Default)]
+struct Exclusions {
+    /// Compiled `exclude_patterns` — matching by name *shape*.
+    patterns: Vec<regex::Regex>,
+    /// Names picked one at a time from a session's own menu, per lane.
+    hidden: std::collections::HashMap<LaneId, std::collections::HashSet<String>>,
+}
+
+impl Exclusions {
+    fn excluded(&self, lane: &LaneId, name: &str) -> bool {
+        exclude::session_excluded(name, &self.patterns)
+            || self
+                .hidden
+                .get(lane)
+                .is_some_and(|names| names.contains(name))
+    }
+}
+
 fn collect_one(
     runtime: LaneRuntime<'static>,
     probe_agents: bool,
     client_locator: &str,
-    compiled: &[regex::Regex],
+    exclusions: &Exclusions,
 ) -> LaneRefresh {
     let ctx = SnapshotCtx {
         probe_agents,
@@ -312,9 +344,9 @@ fn collect_one(
     if let Ok(snapshot) = snapshot.as_mut() {
         snapshot
             .sessions
-            .retain(|session| !exclude::session_excluded(&session.name, compiled));
+            .retain(|session| !exclusions.excluded(&lane, &session.name));
         if let Some(agents) = snapshot.agents.as_mut() {
-            agents.retain(|agent| !exclude::session_excluded(&agent.session, compiled));
+            agents.retain(|agent| !exclusions.excluded(&lane, &agent.session));
         }
     }
     LaneRefresh {
@@ -328,11 +360,11 @@ fn collect_sequential(
     routes: Vec<SnapshotRoute>,
     probe_agents: bool,
     client_locator: &str,
-    compiled: &[regex::Regex],
+    exclusions: &Exclusions,
 ) -> Vec<LaneRefresh> {
     routes
         .into_iter()
-        .map(|runtime| collect_one(runtime, probe_agents, client_locator, compiled))
+        .map(|runtime| collect_one(runtime, probe_agents, client_locator, exclusions))
         .collect()
 }
 
@@ -340,7 +372,7 @@ fn collect_parallel(
     routes: Vec<SnapshotRoute>,
     probe_agents: bool,
     client_locator: String,
-    compiled: Arc<Vec<regex::Regex>>,
+    exclusions: Arc<Exclusions>,
 ) -> Vec<LaneRefresh> {
     let handles: Vec<_> = routes
         .into_iter()
@@ -348,12 +380,10 @@ fn collect_parallel(
             let lane_for_fallback = runtime.lane().clone();
             let thread_name = format!("deck-refresh-{}", runtime.lane().diagnostic_label());
             let client_locator = client_locator.clone();
-            let compiled = Arc::clone(&compiled);
+            let exclusions = Arc::clone(&exclusions);
             thread::Builder::new()
                 .name(thread_name)
-                .spawn(move || {
-                    collect_one(runtime, probe_agents, &client_locator, compiled.as_slice())
-                })
+                .spawn(move || collect_one(runtime, probe_agents, &client_locator, &exclusions))
                 .map_or_else(
                     |error| (lane_for_fallback.clone(), Err(error.to_string())),
                     |handle| (lane_for_fallback.clone(), Ok(handle)),

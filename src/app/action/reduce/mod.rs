@@ -342,6 +342,38 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::CancelKill => {
             state.overlay.confirm_kill = false;
         }
+        // Hiding is a boundary, not a view filter: the entry leaves `entries`
+        // now rather than after the next refresh, so nothing — an in-flight
+        // capture, a reorder, a stray keypress — can act on a session the user
+        // has just said is not Deck's.
+        Action::HideSession => {
+            let Some(entry) = state.entries.get(state.focused) else {
+                return fx;
+            };
+            if !matches!(entry.kind, crate::state::SessionEntryKind::Live { .. }) {
+                return fx;
+            }
+            let (lane, name) = (entry.lane.clone(), entry.name.clone());
+            state
+                .hidden_sessions
+                .entry(lane.clone())
+                .or_default()
+                .insert(name.clone());
+            let key = state.focused_session_key();
+            state
+                .entries
+                .retain(|entry| entry.lane != lane || entry.name != name);
+            state.reanchor_projects_focus(key);
+            fx.save_config();
+            fx.refresh_sessions();
+        }
+        Action::ShowHiddenSessions(lane) => {
+            if state.hidden_sessions.remove(&lane).is_none() {
+                return fx;
+            }
+            fx.save_config();
+            fx.refresh_sessions();
+        }
         Action::RemoveLane(lane) => {
             // Configuration ownership belongs to the lane runtime. App applies
             // the provider's typed result and reconciles state after success.

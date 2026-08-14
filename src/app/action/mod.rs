@@ -26,6 +26,11 @@ pub enum Action {
     ReorderSessionTo(usize),
     /// Ask the owning runtime to remove a configured lane.
     RemoveLane(crate::lane::LaneId),
+    /// Stop capturing the focused session: it stays on its tmux server,
+    /// untouched, and leaves Deck's state entirely.
+    HideSession,
+    /// Capture this lane's hidden sessions again.
+    ShowHiddenSessions(crate::lane::LaneId),
     StartRename,
     RenameInputKey(crossterm::event::KeyEvent),
     RenameConfirm,

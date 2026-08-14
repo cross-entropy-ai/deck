@@ -7,11 +7,11 @@ use crate::system::SessionCapabilities;
 // One list for local and remote rows. No "Switch" item — focus already
 // switches. On a remote row Rename/Close map to `ssh <host> tmux <cmd>`.
 // Reordering is direct manipulation (left-button drag), not a menu command.
-const SESSION_MENU_ITEMS: &[MenuItem] = &[MenuItem::Rename, MenuItem::Close];
+const SESSION_MENU_ITEMS: &[MenuItem] = &[MenuItem::Rename, MenuItem::Close, MenuItem::Hide];
 // Greyed-out when the right-clicked row is a synthetic placeholder (remote
 // host with no sessions, or unreachable): no real session to
 // Rename/Close, i.e. every session item.
-const PLACEHOLDER_DISABLED_ITEMS: &[MenuItem] = SESSION_MENU_ITEMS;
+pub(crate) const PLACEHOLDER_DISABLED_ITEMS: &[MenuItem] = SESSION_MENU_ITEMS;
 // Only Close is greyed when the row is the last live session on a remote
 // host: killing it would tear down that host's tmux server. Rename is
 // still fine.
@@ -23,20 +23,9 @@ const HOST_DIVIDER_MENU_ITEMS: &[MenuItem] = &[
     MenuItem::NewSession,
     MenuItem::Containers,
     MenuItem::PortForward,
+    MenuItem::ShowHidden,
     MenuItem::RemoveFromList,
 ];
-// The `@local` divider reuses the host divider's item list for consistency,
-// but PortForward and RemoveFromList are remote-only: they're greyed out,
-// leaving just NewSession (creates a local session).
-const LOCAL_DIVIDER_DISABLED: &[MenuItem] = &[
-    MenuItem::Containers,
-    MenuItem::PortForward,
-    MenuItem::RemoveFromList,
-];
-const PORT_FORWARD_DISABLED: &[MenuItem] = &[MenuItem::PortForward];
-const MOUNTS_DISABLED: &[MenuItem] = &[MenuItem::Containers];
-const PORT_FORWARD_AND_MOUNTS_DISABLED: &[MenuItem] =
-    &[MenuItem::Containers, MenuItem::PortForward];
 // Right-click on blank sidebar space / the persistent footer button. Put the
 // primary creation action first; the explicit "local" label distinguishes it
 // from the per-host divider's NewSession action.
@@ -62,6 +51,12 @@ pub enum MenuItem {
     NewSession,
     Containers,
     PortForward,
+    /// Stop capturing this one session (see `config::HiddenSession`).
+    Hide,
+    /// Undo every `Hide` on this lane. It lives on the divider because that is
+    /// where the sessions went missing, which is where someone will look for
+    /// them — a Settings list would be correct and undiscoverable.
+    ShowHidden,
     RemoveFromList,
 }
 
@@ -78,6 +73,8 @@ impl MenuItem {
             MenuItem::NewSession => "New session",
             MenuItem::Containers => "Containers…",
             MenuItem::PortForward => "Port Forward",
+            MenuItem::Hide => "Hide",
+            MenuItem::ShowHidden => "Show hidden",
             MenuItem::RemoveFromList => "Remove from list",
         }
     }
@@ -100,6 +97,8 @@ pub enum MenuKind {
         port_forward_enabled: bool,
         /// Whether this lane's system offers lanes to mount under it.
         mounts_enabled: bool,
+        /// Whether this lane has any hidden session to restore.
+        has_hidden: bool,
     },
 }
 
@@ -113,26 +112,38 @@ impl MenuKind {
     }
 
     /// Items that are shown but greyed-out / unselectable: session menus
-    /// carry a per-row set, and the `@local` divider greys the remote-only
-    /// items. Other menus have every item enabled.
-    pub fn disabled(&self) -> &'static [MenuItem] {
+    /// carry a per-row set, and a divider greys whatever its lane cannot do.
+    ///
+    /// Built rather than picked from a static table: the divider's greyed set
+    /// is three independent flags, and enumerating their combinations was
+    /// already at four constants before `Show hidden` would have made it eight.
+    pub fn disabled(&self) -> Vec<MenuItem> {
         match self {
-            MenuKind::Session { disabled, .. } => disabled,
-            MenuKind::LaneDivider { primary: true, .. } => LOCAL_DIVIDER_DISABLED,
+            MenuKind::Session { disabled, .. } => disabled.to_vec(),
+            MenuKind::Global => Vec::new(),
             MenuKind::LaneDivider {
-                port_forward_enabled: false,
-                mounts_enabled: false,
+                primary,
+                port_forward_enabled,
+                mounts_enabled,
+                has_hidden,
                 ..
-            } => PORT_FORWARD_AND_MOUNTS_DISABLED,
-            MenuKind::LaneDivider {
-                port_forward_enabled: false,
-                ..
-            } => PORT_FORWARD_DISABLED,
-            MenuKind::LaneDivider {
-                mounts_enabled: false,
-                ..
-            } => MOUNTS_DISABLED,
-            MenuKind::Global | MenuKind::LaneDivider { .. } => &[],
+            } => {
+                let mut out = Vec::new();
+                if !mounts_enabled || *primary {
+                    out.push(MenuItem::Containers);
+                }
+                if !port_forward_enabled || *primary {
+                    out.push(MenuItem::PortForward);
+                }
+                if !has_hidden {
+                    out.push(MenuItem::ShowHidden);
+                }
+                // The local lane is not in the list it would be removed from.
+                if *primary {
+                    out.push(MenuItem::RemoveFromList);
+                }
+                out
+            }
         }
     }
 }
@@ -171,7 +182,7 @@ impl ContextMenu {
         self.kind.items()
     }
 
-    pub fn disabled(&self) -> &'static [MenuItem] {
+    pub fn disabled(&self) -> Vec<MenuItem> {
         self.kind.disabled()
     }
 

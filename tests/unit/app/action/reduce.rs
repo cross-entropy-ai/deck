@@ -2117,6 +2117,7 @@ fn host_divider_menu_has_new_session_first_and_remove_last() {
         primary: false,
         port_forward_enabled: true,
         mounts_enabled: true,
+        has_hidden: false,
     }
     .items();
     assert_eq!(items.first().copied(), Some(MenuItem::NewSession));
@@ -2133,6 +2134,7 @@ fn host_divider_menu_greys_port_forward_when_reuse_is_off() {
         primary: false,
         port_forward_enabled: false,
         mounts_enabled: true,
+        has_hidden: false,
     };
     assert!(menu.disabled().contains(&MenuItem::PortForward));
     assert!(!menu.disabled().contains(&MenuItem::NewSession));
@@ -2561,6 +2563,7 @@ fn host_divider_menu_greys_containers_when_the_system_offers_none() {
         primary: false,
         port_forward_enabled: true,
         mounts_enabled: false,
+        has_hidden: false,
     };
     assert!(menu.disabled().contains(&MenuItem::Containers));
     assert!(!menu.disabled().contains(&MenuItem::PortForward));
@@ -2570,6 +2573,7 @@ fn host_divider_menu_greys_containers_when_the_system_offers_none() {
         primary: true,
         port_forward_enabled: false,
         mounts_enabled: false,
+        has_hidden: false,
     };
     assert!(local.disabled().contains(&MenuItem::Containers));
     assert!(local.items().contains(&MenuItem::NewSession));
@@ -2982,4 +2986,91 @@ mod agents_tab {
             "no kill prompt on the Agents tab"
         );
     }
+}
+
+/// Hiding drops the row on the spot rather than waiting for the next refresh:
+/// between the click and the tick, a reorder or a summary could still have
+/// reached a session the user just said is not Deck's to touch.
+#[test]
+fn hiding_a_session_removes_it_now_and_persists_the_choice() {
+    let mut state = make_test_state(3);
+    state.focused = 1;
+    let lane = crate::system::tmux::TmuxSystem::local_lane();
+
+    let fx = crate::action::apply_action(&mut state, Action::HideSession);
+
+    let names: Vec<&str> = state.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["sess-0", "sess-2"]);
+    assert!(state.hidden_sessions[&lane].contains("sess-1"));
+    assert!(fx.has_save_config(), "the choice must outlive the process");
+    assert!(
+        fx.has_refresh_sessions(),
+        "the worker must be told before it captures anything else"
+    );
+}
+
+/// A placeholder row (an unreachable host, a lane with no sessions) names no
+/// session, so there is nothing to hide and nothing should be written.
+#[test]
+fn hiding_a_placeholder_row_is_a_noop() {
+    let mut state = make_test_state(1);
+    state.entries.push(SessionEntry {
+        lane: crate::system::tmux::TmuxSystem::host_lane("box"),
+        name: "box".into(),
+        dir: String::new(),
+        kind: SessionEntryKind::Unreachable,
+    });
+    state.focused = 1;
+
+    let fx = crate::action::apply_action(&mut state, Action::HideSession);
+
+    assert!(state.hidden_sessions.is_empty());
+    assert!(!fx.has_save_config());
+    assert_eq!(state.entries.len(), 2);
+}
+
+#[test]
+fn showing_hidden_sessions_clears_the_lane_and_asks_for_a_refresh() {
+    let mut state = make_test_state(2);
+    state.focused = 0;
+    crate::action::apply_action(&mut state, Action::HideSession);
+    let lane = crate::system::tmux::TmuxSystem::local_lane();
+    assert!(state.hidden_sessions.contains_key(&lane));
+
+    let fx = crate::action::apply_action(&mut state, Action::ShowHiddenSessions(lane.clone()));
+
+    assert!(!state.hidden_sessions.contains_key(&lane));
+    assert!(fx.has_save_config());
+    assert!(fx.has_refresh_sessions());
+
+    // Nothing hidden left, so a second call has nothing to write.
+    let fx = crate::action::apply_action(&mut state, Action::ShowHiddenSessions(lane));
+    assert!(!fx.has_save_config());
+}
+
+/// The hidden list survives a save/load round trip, and `Show hidden` is greyed
+/// on a lane that has nothing to restore.
+#[test]
+fn hidden_sessions_round_trip_through_config_and_gate_the_divider_item() {
+    use crate::menu::{MenuItem, MenuKind};
+
+    let lane = crate::system::tmux::TmuxSystem::host_lane("box");
+    let hidden = std::collections::HashMap::from([(
+        lane.clone(),
+        std::collections::HashSet::from(["theirs".to_string()]),
+    )]);
+    let persisted = crate::system::tmux::hidden_to_config(&hidden);
+    assert_eq!(persisted.len(), 1);
+    assert_eq!(persisted[0].host.as_deref(), Some("box"));
+    assert_eq!(crate::system::tmux::hidden_from_config(&persisted), hidden);
+
+    let divider = |has_hidden| MenuKind::LaneDivider {
+        lane: lane.clone(),
+        primary: false,
+        port_forward_enabled: true,
+        mounts_enabled: true,
+        has_hidden,
+    };
+    assert!(divider(false).disabled().contains(&MenuItem::ShowHidden));
+    assert!(!divider(true).disabled().contains(&MenuItem::ShowHidden));
 }

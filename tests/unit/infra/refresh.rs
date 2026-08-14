@@ -15,6 +15,7 @@ fn worker_coalesces_pending_requests() {
     // return at most one snapshot per distinct "latest" request.
     for _ in 0..10 {
         worker.request(RefreshRequest {
+            hidden_sessions: Default::default(),
             slave_tty: String::new(),
             exclude_patterns: vec![],
             show_agents: true,
@@ -80,6 +81,7 @@ fn worker_disconnect_is_reported_even_if_request_noticed_it_first() {
     };
 
     worker.request(RefreshRequest {
+        hidden_sessions: Default::default(),
         slave_tty: String::new(),
         exclude_patterns: vec![],
         show_agents: false,
@@ -189,7 +191,7 @@ fn collect_one_preserves_unreachable_catalog_failure() {
         crate::system::LaneRuntime::new(&lane).with_catalog(&UNREACHABLE_CATALOG),
         false,
         "fixture-client",
-        &[],
+        &Exclusions::default(),
     );
 
     assert!(matches!(
@@ -207,7 +209,7 @@ fn collect_one_preserves_backend_failure_without_calling_it_unreachable() {
         crate::system::LaneRuntime::new(&lane).with_catalog(&BROKEN_CATALOG),
         false,
         "fixture-client",
-        &[],
+        &Exclusions::default(),
     );
 
     assert!(matches!(
@@ -216,4 +218,96 @@ fn collect_one_preserves_backend_failure_without_calling_it_unreachable() {
             crate::system::CatalogError::Backend(ref detail)
         )) if detail == "invalid payload"
     ));
+}
+
+/// A lane whose server always reports the same three sessions, one of them
+/// carrying an agent — the shape the exclusion boundary has to cut.
+struct PopulatedCatalog;
+
+impl crate::system::SessionCatalog for PopulatedCatalog {
+    fn snapshot(
+        &self,
+        _lane: &crate::lane::LaneId,
+        _ctx: &crate::system::SnapshotCtx<'_>,
+    ) -> Result<crate::system::LaneSnapshot, crate::system::CatalogError> {
+        let sessions = ["mine", "theirs", "_scratch"]
+            .into_iter()
+            .map(|name| crate::model::session::SessionSnapshot {
+                name: name.to_string(),
+                dir: "/tmp".to_string(),
+                activity: 0,
+                order: None,
+                is_current: false,
+            })
+            .collect();
+        Ok(crate::system::LaneSnapshot {
+            sessions,
+            agents: Some(vec![crate::agent::DetectedAgent {
+                kind: crate::agent::AgentKind::Claude,
+                session: "theirs".to_string(),
+                window: "0".to_string(),
+                pane_id: "%9".to_string(),
+                status: crate::agent::AgentStatus::Unknown,
+            }]),
+        })
+    }
+}
+
+static POPULATED_CATALOG: PopulatedCatalog = PopulatedCatalog;
+
+fn collect_with(exclusions: Exclusions) -> LaneRefresh {
+    let lane = crate::lane::LaneId::new("fixture", "shared-box");
+    collect_one(
+        crate::system::LaneRuntime::new(&lane).with_catalog(&POPULATED_CATALOG),
+        true,
+        "fixture-client",
+        &exclusions,
+    )
+}
+
+/// Hiding is a boundary, not a display filter: an excluded session must not
+/// reach the snapshot the app builds its state from, because *everything* Deck
+/// might do to a session — capture its pane into a summary prompt, write
+/// `@deck_order` onto it, switch to it — reads that state. Dropping it here is
+/// what makes "Deck will not touch someone else's session" true by
+/// construction rather than by auditing every downstream caller.
+#[test]
+fn a_hidden_session_never_enters_the_snapshot_and_takes_its_agent_with_it() {
+    let lane = crate::lane::LaneId::new("fixture", "shared-box");
+    let refresh = collect_with(Exclusions {
+        patterns: Vec::new(),
+        hidden: std::collections::HashMap::from([(
+            lane,
+            std::collections::HashSet::from(["theirs".to_string()]),
+        )]),
+    });
+
+    let snapshot = refresh.snapshot.expect("reachable");
+    let names: Vec<&str> = snapshot.sessions.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["mine", "_scratch"]);
+    // The agent went with it. Otherwise the Agents tab would still list the
+    // session, and the summary would still capture its pane.
+    assert!(snapshot.agents.expect("probed").is_empty());
+}
+
+/// The two mechanisms are one boundary, not two: a name matched by either is
+/// gone, and hiding on one lane says nothing about the same name on another.
+#[test]
+fn patterns_and_hidden_names_compose_and_stay_lane_scoped() {
+    let elsewhere = crate::lane::LaneId::new("fixture", "other-box");
+    let refresh = collect_with(Exclusions {
+        patterns: crate::exclude::compile_patterns(&["_*".to_string()]),
+        hidden: std::collections::HashMap::from([(
+            elsewhere,
+            std::collections::HashSet::from(["theirs".to_string()]),
+        )]),
+    });
+
+    let snapshot = refresh.snapshot.expect("reachable");
+    let names: Vec<&str> = snapshot.sessions.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["mine", "theirs"],
+        "the pattern drops `_scratch`; the other lane's hidden name must not reach this one"
+    );
 }

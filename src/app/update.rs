@@ -24,6 +24,7 @@ impl App {
             self.state.config_remotes.clone(),
             crate::system::tmux::hosts_from_lanes(&self.state.collapsed_sections),
             crate::system::tmux::hosts_from_lanes(&self.state.collapsed_agent_sections),
+            crate::system::tmux::hidden_to_config(&self.state.hidden_sessions),
         )
     }
 

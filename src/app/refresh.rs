@@ -16,6 +16,7 @@ impl App {
             // ack/current logic, so their slave_ttys aren't plumbed.
             slave_tty,
             exclude_patterns: self.state.prefs.exclude_patterns.clone(),
+            hidden_sessions: self.state.hidden_sessions.clone(),
             show_agents: self.state.agents_tab_active(),
         }
     }
