@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use crate::infra::command::{default_runner, CommandRunner};
 use crate::infra::parser::tmux::exact_target;
-use crate::remote_tmux::{run_ssh, shell_single_quote};
+use crate::remote_tmux::{run_ssh, shell_single_quote, REMOTE_TMUX};
 use crate::tmux::PaneFocus;
 
 /// Echoed once the rule selected the window/pane and switched our client.
@@ -41,7 +41,7 @@ pub(crate) enum FocusTransport {
 /// The shared focus rule as a POSIX-sh snippet. `set_client_tty` assigns
 /// `$C` (a literal tty locally, a `cat` of the marker file remotely); the
 /// rest is identical across transports.
-fn focus_command(set_client_tty: &str, session: &str, pane_id: &str) -> String {
+fn focus_command(set_client_tty: &str, tmux: &str, session: &str, pane_id: &str) -> String {
     // `pane` is a `%N` id for select-window/select-pane (left bare inside the
     // quotes); `sess` is the `=`-exact target for tmux `-t`.
     let pane = shell_single_quote(pane_id);
@@ -51,30 +51,35 @@ fn focus_command(set_client_tty: &str, session: &str, pane_id: &str) -> String {
     // client at it — any co-client on the session follows along.
     format!(
         "{set_client_tty} ; [ -z \"$C\" ] && exit 0 ; \
-         tmux select-window -t {pane} ';' select-pane -t {pane} ';' switch-client -c \"$C\" -t {sess} && echo {exact_marker}",
+         {tmux} select-window -t {pane} ';' select-pane -t {pane} ';' switch-client -c \"$C\" -t {sess} && echo {exact_marker}",
         exact_marker = FOCUS_EXACT_MARKER,
     )
 }
 
 /// Run a `$C`-guarded snippet over the transport, returning its trimmed
 /// stdout. `build` gets the `$C` assignment to prefix (a literal tty locally,
-/// a `cat` of the marker file remotely) — the only thing that differs, so the
-/// local/remote split stops here.
+/// a `cat` of the marker file remotely) and how to spell `tmux` — the only two
+/// things that differ, so the local/remote split stops here.
+///
+/// Remote invocations take `-u` (see [`REMOTE_TMUX`]): a container's tmux has
+/// no locale to infer UTF-8 from, and would replace every byte of a non-ASCII
+/// session name in `display-message` output with `_`, leaving the focus rule
+/// unable to match the session it just read.
 fn run_snippet(
     runner: &dyn CommandRunner,
     transport: &FocusTransport,
-    build: impl Fn(&str) -> String,
+    build: impl Fn(&str, &str) -> String,
 ) -> Result<String, crate::infra::command::CommandError> {
     match transport {
         FocusTransport::Local { client_tty } => {
-            let cmd = build(&format!("C={}", shell_single_quote(client_tty)));
+            let cmd = build(&format!("C={}", shell_single_quote(client_tty)), "tmux");
             runner
                 .run("sh", &["-c", &cmd], LOCAL_TIMEOUT)
                 .map(|o| o.stdout_trimmed())
         }
         FocusTransport::Remote { host, marker_id } => {
             let set_c = crate::remote_tmux::read_client_tty(host, *marker_id);
-            run_ssh(runner, host, &[build(&set_c).as_str()])
+            run_ssh(runner, host, &[build(&set_c, REMOTE_TMUX).as_str()])
         }
     }
 }
@@ -88,7 +93,9 @@ pub(crate) fn run_focus_with(
     session: &str,
     pane_id: &str,
 ) -> PaneFocus {
-    let out = run_snippet(runner, transport, |c| focus_command(c, session, pane_id));
+    let out = run_snippet(runner, transport, |c, tmux| {
+        focus_command(c, tmux, session, pane_id)
+    });
     match out {
         Ok(o) if o.contains(FOCUS_EXACT_MARKER) => PaneFocus::ExactPane,
         _ => PaneFocus::Failed,
@@ -128,10 +135,10 @@ pub(crate) fn active_target_with(
 }
 
 /// The `$C`-guarded `display-message` that reads our client's active target.
-fn active_target_command(set_client_tty: &str) -> String {
+fn active_target_command(set_client_tty: &str, tmux: &str) -> String {
     format!(
         "{set_client_tty} ; [ -z \"$C\" ] && exit 0 ; \
-         tmux display-message -t \"$C\" -p '#{{pane_id}} #{{session_name}}'",
+         {tmux} display-message -t \"$C\" -p '#{{pane_id}} #{{session_name}}'",
     )
 }
 

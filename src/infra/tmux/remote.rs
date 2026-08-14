@@ -171,6 +171,28 @@ pub(crate) const REMOTE_PATH_PREFIX: &str = concat!(
     ":$PATH"
 );
 
+/// How every remote tmux invocation spells `tmux`. `run_ssh` joins its argv
+/// into one command line for the remote shell (and `container_exec_argv` joins
+/// it again for the container's `sh`), so a two-word token is a single element
+/// here and in the script-shaped calls alike.
+///
+/// `-u` states tmux's UTF-8 flag outright. Without it tmux infers UTF-8 from
+/// the locale, and when it decides the client is *not* UTF-8 it runs its output
+/// through `utf8_sanitize`, which replaces every byte it then considers
+/// unprintable with `_`. A container command arrives through `<engine> exec`
+/// with no locale at all — `LC_CTYPE=POSIX` — so the tab separating the fields
+/// of every `-F` format came back as `_`, no session row parsed, and a
+/// container lane with live sessions rendered as `(no sessions)`. Reported from
+/// manual testing and confirmed against the real container: the same tmux 3.7b
+/// answered `X\tY` over plain ssh (whose login shell has `LANG`) and `X_Y`
+/// through `docker exec`.
+///
+/// Not fixed by exporting a locale instead: `LC_ALL=C.UTF-8` is silently
+/// ignored when the image has no such locale installed — common in slim images
+/// — and glibc falls back to C, which is exactly the state that broke. The flag
+/// depends on nothing the image has to provide.
+pub(crate) const REMOTE_TMUX: &str = "tmux -u";
+
 /// Run `remote_argv` on the remote id's tmux server: on the host itself, or —
 /// for a container id — inside the container via [`container_exec_argv`].
 pub(crate) fn run_ssh(
@@ -259,7 +281,7 @@ fn list_sessions_with(
     } else {
         SESSION_LIST_FORMAT_SSH
     };
-    match run_ssh(runner, host, &["tmux", "list-sessions", "-F", format]) {
+    match run_ssh(runner, host, &[REMOTE_TMUX, "list-sessions", "-F", format]) {
         // No window-activity probe (unlike local): nothing reads remote
         // activity, so the extra `list-windows -a` roundtrip per host per
         // tick would be waste. Rows parse with `activity = 0`.
@@ -341,7 +363,7 @@ fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Detect
         runner,
         host,
         &[
-            "tmux",
+            REMOTE_TMUX,
             "list-panes",
             "-a",
             "-F",
@@ -543,9 +565,10 @@ pub(crate) fn capture_panes(host: &str, pane_ids: &[String]) -> HashMap<String, 
         .join(" ");
     let script = format!(
         "export {prefix}; for p in {ids}; do echo {marker} \"$p\"; \
-         tmux capture-pane -p -J -t \"$p\" 2>/dev/null; done",
+         {tmux} capture-pane -p -J -t \"$p\" 2>/dev/null; done",
         prefix = REMOTE_PATH_PREFIX,
         marker = CAPTURE_MARKER,
+        tmux = REMOTE_TMUX,
     );
     // Through `run_ssh` so a container id gets the exec wrapping. Its PATH
     // prefix lands ahead of the script's own `export` (which a `for` loop
@@ -787,7 +810,7 @@ fn switch_client_with(
     // client. An untargeted `switch-client` could re-point another client,
     // so a missing marker no-ops and a later call (after it lands) switches.
     let cmd = format!(
-        "{read_c} ; [ -n \"$C\" ] && tmux switch-client -c \"$C\" -t {target}",
+        "{read_c} ; [ -n \"$C\" ] && {REMOTE_TMUX} switch-client -c \"$C\" -t {target}",
         read_c = read_client_tty(host, marker_id),
     );
     run_ssh(runner, host, &[cmd.as_str()]).map(|_| ())
@@ -842,7 +865,7 @@ pub fn kill_session(host: &str, name: &str) -> Result<(), CommandError> {
     run_ssh(
         runner,
         host,
-        &["tmux", "kill-session", "-t", target.as_str()],
+        &[REMOTE_TMUX, "kill-session", "-t", target.as_str()],
     )
     .map(|_| ())
 }
@@ -858,7 +881,7 @@ pub fn rename_session(host: &str, old_name: &str, new_name: &str) -> Result<(), 
         runner,
         host,
         &[
-            "tmux",
+            REMOTE_TMUX,
             "rename-session",
             "-t",
             target.as_str(),
@@ -890,7 +913,7 @@ fn persist_session_order_with(
     // commands. The remote shell re-parses the joined argv, so the
     // separator is single-quoted (`';'`) to reach tmux as its command
     // separator, not split the shell command; names are quoted likewise.
-    let mut argv: Vec<String> = vec!["tmux".to_string()];
+    let mut argv: Vec<String> = vec![REMOTE_TMUX.to_string()];
     // Bare names, not `exact_target` — see `order_set_option_args`.
     argv.extend(order_set_option_args(order, "';'", shell_single_quote));
     let argv_ref: Vec<&str> = argv.iter().map(String::as_str).collect();
@@ -933,8 +956,9 @@ fn new_session_with(
         "export {prefix} ; \
          if [ -S {agent} ]; then SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK ; \
          else unset SSH_AUTH_SOCK ; fi ; \
-         tmux new-session -d -s {name} -c {dir}",
+         {tmux} new-session -d -s {name} -c {dir}",
         prefix = REMOTE_PATH_PREFIX,
+        tmux = REMOTE_TMUX,
     );
     run_ssh(runner, host, &[script.as_str()]).map(|_| ())
 }
