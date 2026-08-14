@@ -3029,23 +3029,80 @@ fn hiding_a_placeholder_row_is_a_noop() {
     assert_eq!(state.entries.len(), 2);
 }
 
+/// Restoring one name leaves the rest hidden, and the picker shrinks with the
+/// store — a list that kept a restored row would let a second click act on a
+/// session that is already back.
 #[test]
-fn showing_hidden_sessions_clears_the_lane_and_asks_for_a_refresh() {
+fn restoring_one_hidden_session_leaves_the_others_hidden() {
+    use crate::action::HiddenAction;
+
+    let mut state = make_test_state(3);
+    let lane = crate::system::tmux::TmuxSystem::local_lane();
+    for focused in [0, 0] {
+        state.focused = focused;
+        crate::action::apply_action(&mut state, Action::HideSession);
+    }
+    assert_eq!(state.hidden_sessions[&lane].len(), 2);
+
+    crate::action::apply_action(&mut state, Action::Hidden(HiddenAction::Open(lane.clone())));
+    let fx = crate::action::apply_action(&mut state, Action::Hidden(HiddenAction::Restore));
+
+    assert_eq!(
+        state.hidden_sessions[&lane],
+        std::collections::HashSet::from(["sess-1".to_string()])
+    );
+    let open = state.overlay.hidden_sessions.as_ref().expect("still open");
+    assert_eq!(open.picker.items, ["sess-1"]);
+    assert!(fx.has_save_config());
+    assert!(fx.has_refresh_sessions());
+}
+
+/// The lane's entry goes when its last name does, so `Show hidden` greys out
+/// again instead of offering an empty picker.
+#[test]
+fn restoring_the_last_hidden_session_closes_the_picker_and_drops_the_lane() {
+    use crate::action::HiddenAction;
+
     let mut state = make_test_state(2);
     state.focused = 0;
     crate::action::apply_action(&mut state, Action::HideSession);
     let lane = crate::system::tmux::TmuxSystem::local_lane();
-    assert!(state.hidden_sessions.contains_key(&lane));
 
-    let fx = crate::action::apply_action(&mut state, Action::ShowHiddenSessions(lane.clone()));
+    crate::action::apply_action(&mut state, Action::Hidden(HiddenAction::Open(lane.clone())));
+    crate::action::apply_action(&mut state, Action::Hidden(HiddenAction::Restore));
 
     assert!(!state.hidden_sessions.contains_key(&lane));
-    assert!(fx.has_save_config());
-    assert!(fx.has_refresh_sessions());
+    assert!(state.overlay.hidden_sessions.is_none());
+}
 
-    // Nothing hidden left, so a second call has nothing to write.
-    let fx = crate::action::apply_action(&mut state, Action::ShowHiddenSessions(lane));
-    assert!(!fx.has_save_config());
+#[test]
+fn restore_all_empties_the_lane_in_one_step() {
+    use crate::action::HiddenAction;
+
+    let mut state = make_test_state(3);
+    let lane = crate::system::tmux::TmuxSystem::local_lane();
+    for _ in 0..2 {
+        state.focused = 0;
+        crate::action::apply_action(&mut state, Action::HideSession);
+    }
+
+    crate::action::apply_action(&mut state, Action::Hidden(HiddenAction::Open(lane.clone())));
+    let fx = crate::action::apply_action(&mut state, Action::Hidden(HiddenAction::RestoreAll));
+
+    assert!(!state.hidden_sessions.contains_key(&lane));
+    assert!(state.overlay.hidden_sessions.is_none());
+    assert!(fx.has_save_config());
+}
+
+/// A lane with nothing hidden has no picker to open.
+#[test]
+fn opening_the_restore_picker_for_a_lane_with_nothing_hidden_is_a_noop() {
+    use crate::action::HiddenAction;
+
+    let mut state = make_test_state(1);
+    let lane = crate::system::tmux::TmuxSystem::local_lane();
+    crate::action::apply_action(&mut state, Action::Hidden(HiddenAction::Open(lane)));
+    assert!(state.overlay.hidden_sessions.is_none());
 }
 
 /// The hidden list survives a save/load round trip, and `Show hidden` is greyed

@@ -9,7 +9,7 @@ mod text;
 pub mod widgets;
 
 pub use menu::draw_context_menu;
-pub use popups::{draw_add_remote, draw_new_session, draw_summary_popup};
+pub use popups::{draw_add_remote, draw_hidden_sessions, draw_new_session, draw_summary_popup};
 pub use reload::{draw_reload_bar, reload_row_count};
 pub use settings::{
     draw_exclude_editor, draw_keybindings_view, draw_settings_page, draw_ssh_setting_editor,

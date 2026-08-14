@@ -55,6 +55,12 @@ fn open_modal(state: &mut AppState, modal: Modal) {
                 vec![],
             ));
         }
+        Modal::HiddenSessions => {
+            state.overlay.hidden_sessions = Some(crate::overlay::HiddenSessionsState::new(
+                crate::system::tmux::TmuxSystem::local_lane(),
+                &std::collections::HashSet::from(["sess-0".to_string()]),
+            ));
+        }
         Modal::Rename => {
             state.overlay.renaming = Some(RenameState::new_with_lane(
                 "sess-0".into(),
@@ -138,7 +144,7 @@ fn is_forbidden(a: &Action) -> bool {
     )
 }
 
-fn all_modals() -> [Modal; 14] {
+fn all_modals() -> [Modal; 15] {
     Modal::ALL
 }
 

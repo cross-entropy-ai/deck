@@ -197,6 +197,7 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
         }),
         Modal::NewSession => new_session_key_to_action(key, state),
         Modal::AddRemote => add_remote_key_to_action(key),
+        Modal::HiddenSessions => hidden_key_to_action(key),
         Modal::Rename => match key.code {
             KeyCode::Enter => Action::RenameConfirm,
             _ => Action::RenameInputKey(*key),
@@ -356,6 +357,21 @@ fn add_remote_key_to_action(key: &KeyEvent) -> Action {
         KeyCode::Down => Action::AddRemote(AddRemoteAction::Next),
         _ => Action::AddRemote(AddRemoteAction::InputKey(*key)),
     }
+}
+
+/// The restore picker types to filter, like Add Remote — except that `Ctrl-A`
+/// restores the whole lane, the batch action the divider used to perform.
+fn hidden_key_to_action(key: &KeyEvent) -> Action {
+    use crate::action::HiddenAction;
+    Action::Hidden(match key.code {
+        KeyCode::Enter => HiddenAction::Restore,
+        KeyCode::Up => HiddenAction::Prev,
+        KeyCode::Down => HiddenAction::Next,
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            HiddenAction::RestoreAll
+        }
+        _ => HiddenAction::InputKey(*key),
+    })
 }
 
 fn new_session_key_to_action(key: &KeyEvent, state: &AppState) -> Action {

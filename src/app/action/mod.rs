@@ -29,8 +29,8 @@ pub enum Action {
     /// Stop capturing the focused session: it stays on its tmux server,
     /// untouched, and leaves Deck's state entirely.
     HideSession,
-    /// Capture this lane's hidden sessions again.
-    ShowHiddenSessions(crate::lane::LaneId),
+    /// The hidden-session restore picker.
+    Hidden(HiddenAction),
     StartRename,
     RenameInputKey(crossterm::event::KeyEvent),
     RenameConfirm,
@@ -309,6 +309,23 @@ pub enum MountAction {
         candidate: String,
         result: Result<(), String>,
     },
+}
+
+#[derive(Debug)]
+pub enum HiddenAction {
+    /// Open the restore picker for a lane's hidden sessions.
+    Open(crate::lane::LaneId),
+    InputKey(crossterm::event::KeyEvent),
+    Next,
+    Prev,
+    /// Capture the highlighted session again.
+    Restore,
+    /// Capture the session on a clicked row again. One click, like the other
+    /// pickers.
+    ClickRow(usize),
+    /// Capture every session this lane was hiding.
+    RestoreAll,
+    Close,
 }
 
 #[derive(Debug)]

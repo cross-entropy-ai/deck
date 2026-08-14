@@ -23,6 +23,7 @@ pub(super) struct RenderedModal {
     pub new_session_create: Option<Rect>,
     pub add_remote: crate::geometry::AddRemoteHits,
     pub mounts: crate::geometry::MountHits,
+    pub hidden: crate::geometry::HiddenHits,
     pub port_forward: crate::geometry::PfHits,
 }
 
@@ -65,6 +66,7 @@ pub(super) fn close_action(modal: Modal, state: &AppState) -> Action {
             Action::Settings(action)
         }
         Modal::MountPicker => Action::Mount(MountAction::Close),
+        Modal::HiddenSessions => Action::Hidden(crate::action::HiddenAction::Close),
         Modal::SshSetting => Action::Settings(SettingsAction::SshSettingCancel),
         Modal::SummaryLang => Action::Summary(SummaryAction::LanguageCancel),
         Modal::Help => Action::DismissHelp,
@@ -124,6 +126,17 @@ pub(super) fn draw_active_modal(
         Modal::AddRemote => {
             if let Some(picker) = state.overlay.add_remote.as_ref() {
                 rendered.add_remote = ui::draw_add_remote(frame, full, picker, theme);
+            }
+        }
+        Modal::HiddenSessions => {
+            if let Some(picker) = state.overlay.hidden_sessions.as_ref() {
+                rendered.hidden = ui::draw_hidden_sessions(
+                    frame,
+                    full,
+                    picker,
+                    &state.section_title(&picker.lane),
+                    theme,
+                );
             }
         }
         Modal::Rename => {

@@ -491,6 +491,15 @@ pub struct AddRemoteHits {
     pub cancel: Option<Rect>,
 }
 
+/// The hidden-session restore picker's click targets.
+#[derive(Debug, Clone, Default)]
+pub struct HiddenHits {
+    /// Visible name rows, each carrying its index in the filtered list.
+    pub rows: Vec<ListItemHit>,
+    pub restore_all: Option<Rect>,
+    pub cancel: Option<Rect>,
+}
+
 /// The mount picker's click targets: one per visible candidate, plus the
 /// footer hints that double as its buttons.
 #[derive(Debug, Clone, Default)]
@@ -530,6 +539,21 @@ impl AddRemoteHits {
         }
         if self.cancel.is_some_and(|r| r.contains(pos)) {
             return Some(HitKind::AddRemoteCancel);
+        }
+        None
+    }
+}
+
+impl HiddenHits {
+    fn hit(&self, pos: Position) -> Option<HitKind> {
+        if let Some(index) = row_at(&self.rows, pos) {
+            return Some(HitKind::HiddenRow(index));
+        }
+        if self.restore_all.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::HiddenRestoreAll);
+        }
+        if self.cancel.is_some_and(|r| r.contains(pos)) {
+            return Some(HitKind::HiddenCancel);
         }
         None
     }
@@ -599,6 +623,8 @@ pub struct HitRegions {
     pub add_remote: AddRemoteHits,
     /// Rows and buttons of the active mount picker.
     pub mounts: MountHits,
+    /// Rows and buttons of the active hidden-session restore picker.
+    pub hidden: HiddenHits,
     /// Rows and buttons of the active port-forward list.
     pub port_forward: PfHits,
     /// The expanded header's collapse button, or the collapsed rail's expand
@@ -633,6 +659,12 @@ pub enum HitKind {
     AddRemoteAdd,
     /// The add-remote picker's footer `⎋ cancel` hint.
     AddRemoteCancel,
+    /// A visible name row in the hidden-session restore picker.
+    HiddenRow(usize),
+    /// The restore picker's footer `^A all` hint.
+    HiddenRestoreAll,
+    /// The restore picker's footer `⎋ cancel` hint.
+    HiddenCancel,
     /// A visible candidate row in the mount picker.
     MountRow(usize),
     /// The mount picker's footer `⏎ mount` hint.
@@ -692,6 +724,9 @@ impl HitRegions {
             return Some(hit);
         }
         if let Some(hit) = self.mounts.hit(pos) {
+            return Some(hit);
+        }
+        if let Some(hit) = self.hidden.hit(pos) {
             return Some(hit);
         }
         if let Some(hit) = self.port_forward.hit(pos) {
