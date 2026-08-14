@@ -410,7 +410,7 @@ mod tests {
         let text = buffer_text(buffer);
         for row in [
             "⏎ create · →← folder · ↑↓ move · ⎋ cancel",
-            "\u{25d6} open · \u{25d7} create here",
+            "\u{25d6} folder · \u{25d7} create",
         ] {
             assert!(
                 text.contains(row),
