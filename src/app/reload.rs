@@ -101,13 +101,18 @@ impl App {
         // the agent to the host the user just marked untrusted, for the whole
         // life of that PTY. The startup and in-app-add paths already order it
         // this way.
-        self.systems.configure(&cfg);
+        // Re-read the remembered lanes too, so `deck remote add` from another
+        // process reaches a running Deck the way it did when the lane set
+        // lived in the config file.
+        self.lane_state = crate::lane_state::LaneState::load(&cfg);
+        let remotes = self.lane_state.to_remote_configs();
+        self.systems.configure(&cfg, &remotes);
 
         // Diff old vs new remote forwards and send ops to the worker.
         // (`config_remotes` is deliberately outside `apply_config`: the
         // diff below needs the old list before the new one is committed.)
         let old_remotes = std::mem::take(&mut self.state.config_remotes);
-        let new_remotes = cfg.remotes.clone();
+        let new_remotes = remotes.clone();
         let mut stop_hosts: Vec<String> = old_remotes
             .iter()
             .chain(new_remotes.iter())

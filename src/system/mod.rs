@@ -49,9 +49,9 @@ impl<'a> SystemRegistry<'a> {
 
     /// Apply the shell configuration to every system. Each backend extracts
     /// only its own settings and owns them thereafter.
-    pub fn configure(&self, config: &Config) {
+    pub fn configure(&self, config: &Config, remotes: &[crate::config::RemoteConfig]) {
         for system in &self.systems {
-            system.configure(config);
+            system.configure(config, remotes);
         }
     }
 
@@ -132,8 +132,10 @@ pub trait System: Send + Sync {
     fn id(&self) -> &str;
 
     /// Refresh backend-owned configuration. The shell passes the neutral app
-    /// config; implementations retain only the subset they understand.
-    fn configure(&self, _config: &Config) {}
+    /// config plus the lanes it remembers being linked to — the two live in
+    /// different files because a user authors one and Deck writes the other
+    /// (see `lane_state`), and a backend may need either.
+    fn configure(&self, _config: &Config, _remotes: &[crate::config::RemoteConfig]) {}
 
     /// Configured lanes in display order. Include lanes that currently have no
     /// sessions so the shell can render their empty/loading sections.
@@ -214,17 +216,40 @@ pub trait LaneMountProvider: Send + Sync {
     /// for a candidate that declared `needs_activation` after the user agreed.
     fn activate(&self, lane: &LaneId, candidate: &str) -> Result<(), String>;
 
-    /// Register the candidate as a live lane and return its id. Session-scoped:
-    /// it vanishes when Deck exits.
-    fn mount(&self, lane: &LaneId, candidate: &str) -> Option<LaneId>;
+    /// Record the candidate as a linked lane and return its id, writing it
+    /// into the lane set the caller then persists.
+    ///
+    /// It used to be session-scoped, on the grounds that a mount must not be
+    /// written to the config file. That was right about the config file and
+    /// wrong about persistence: the lane set is what Deck remembers, and it
+    /// lives in its own file now (see `lane_state`), so a container mounted
+    /// today is there again tomorrow.
+    fn mount(
+        &self,
+        lane: &LaneId,
+        candidate: &str,
+        remotes: &mut Vec<crate::config::RemoteConfig>,
+    ) -> Option<LaneId>;
 }
 
 /// Backend-owned configuration mutations addressed by lane identity.
 /// The shell supplies the persisted configuration as a whole and applies the
 /// typed outcome; only the owning backend interprets its lane representation.
+/// Add/remove a lane from the set Deck remembers being linked to. The list is
+/// passed rather than the config, because the lane set moved out of the config
+/// file — a linked host is something Deck recorded, not something a user
+/// configured (see `lane_state`).
 pub trait LaneConfigProvider: Send + Sync {
-    fn add_lane(&self, candidate: &str, config: &mut Config) -> LaneConfigAddOutcome;
-    fn remove_lane(&self, lane: &LaneId, config: &mut Config) -> LaneConfigOutcome;
+    fn add_lane(
+        &self,
+        candidate: &str,
+        remotes: &mut Vec<crate::config::RemoteConfig>,
+    ) -> LaneConfigAddOutcome;
+    fn remove_lane(
+        &self,
+        lane: &LaneId,
+        remotes: &mut Vec<crate::config::RemoteConfig>,
+    ) -> LaneConfigOutcome;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -664,7 +689,7 @@ mod tests {
     #[test]
     fn local_tmux_divider_is_a_single_direct_new_session_action() {
         let system = tmux::TmuxSystem::default();
-        system.configure(&Config::default());
+        system.configure(&Config::default(), &[]);
         let lane = tmux::TmuxSystem::local_lane();
         let section = system.section_for(&lane).expect("local section");
         assert_eq!(section.buttons.len(), 1);
@@ -751,8 +776,7 @@ mod tests {
     fn configured_containers_become_their_own_lanes_with_titled_sections() {
         let _serial = serial();
         let system = tmux::TmuxSystem::default();
-        let mut config = Config::default();
-        config.remotes.push(crate::config::RemoteConfig {
+        let remotes = vec![crate::config::RemoteConfig {
             host: "devbox".into(),
             forward_agent: true,
             containers: vec![crate::config::ContainerConfig {
@@ -761,8 +785,8 @@ mod tests {
                 agent_sock: None,
             }],
             forwards: vec![],
-        });
-        system.configure(&config);
+        }];
+        system.configure(&Config::default(), &remotes);
 
         let lanes = system.lanes();
         let container = tmux::TmuxSystem::container_lane("devbox", "dev");
@@ -782,57 +806,73 @@ mod tests {
         );
 
         assert_eq!(
-            tmux::remote_ids(&config.remotes),
+            tmux::remote_ids(&remotes),
             vec!["devbox".to_string(), "devbox#dev".to_string()]
         );
     }
 
+    /// Mounting records the container in the lane set the caller persists, so
+    /// the container is there again next launch. It used to be scoped to one
+    /// run because the only place to write it was the config file; the lane set
+    /// has its own file now, and "the containers I was working in" is exactly
+    /// what that file is for.
     #[test]
-    fn a_mounted_container_is_a_lane_that_config_never_sees() {
+    fn a_mounted_container_joins_the_lane_set_the_caller_persists() {
         let _serial = serial();
         let system = tmux::TmuxSystem::default();
-        let mut config = Config::default();
-        config.remotes.push(crate::config::RemoteConfig {
+        let _config = Config::default();
+        let mut remotes = vec![crate::config::RemoteConfig {
             host: "devbox".into(),
             forward_agent: true,
             containers: vec![],
             forwards: vec![],
-        });
-        system.configure(&config);
+        }];
+        system.configure(&Config::default(), &remotes);
         let host = tmux::TmuxSystem::host_lane("devbox");
         let candidate = format!("podman{}web", '\x1f');
 
-        let mounted = LaneMountProvider::mount(&system, &host, &candidate).expect("mounted");
+        let mounted =
+            LaneMountProvider::mount(&system, &host, &candidate, &mut remotes).expect("mounted");
         assert_eq!(mounted, tmux::TmuxSystem::container_lane("devbox", "web"));
+        // Live immediately: the shell onboards the lane on a worker thread as
+        // soon as it has the id, without waiting for the commit below.
         assert!(system.lanes().contains(&mounted));
-        // Session-scoped: the config it came from is untouched, so nothing can
-        // write it to disk.
-        assert!(config.remotes[0].containers.is_empty());
-        // The engine discovery found reaches the transport, which is what
-        // `<engine> exec` will use.
+        // And written into the caller's list, which is what reaches the file.
+        assert_eq!(remotes[0].containers.len(), 1);
+        assert_eq!(remotes[0].containers[0].name, "web");
+        assert_eq!(
+            remotes[0].containers[0].engine, "podman",
+            "the engine discovery found has to survive the restart too"
+        );
+        // The engine reaches the transport, which is what `<engine> exec` uses.
         assert_eq!(
             crate::remote_tmux::container_opts("devbox#web").engine,
             "podman"
         );
 
-        // A reload must not drop it — that was the whole risk of a second lane
-        // source next to config.
-        system.configure(&config);
-        assert!(system.lanes().contains(&mounted));
+        // Committing the caller's list is idempotent, not a second lane.
+        system.configure(&Config::default(), &remotes);
         assert_eq!(
-            crate::remote_tmux::container_opts("devbox#web").engine,
-            "podman"
+            system
+                .lanes()
+                .iter()
+                .filter(|lane| **lane == mounted)
+                .count(),
+            1,
+            "the mount and the committed entry are one lane, not two"
         );
 
-        // Removing it is dropping it from memory, and it must report Removed so
-        // the shell offboards the lane rather than warning at the user.
+        // Removing it reports Removed so the shell offboards the lane rather
+        // than warning at the user.
         assert_eq!(
-            LaneConfigProvider::remove_lane(&system, &mounted, &mut config),
+            LaneConfigProvider::remove_lane(&system, &mounted, &mut remotes),
             LaneConfigOutcome::Removed
         );
+        assert!(remotes[0].containers.is_empty());
+        system.configure(&Config::default(), &remotes);
         assert!(!system.lanes().contains(&mounted));
         assert_eq!(
-            LaneConfigProvider::remove_lane(&system, &mounted, &mut config),
+            LaneConfigProvider::remove_lane(&system, &mounted, &mut remotes),
             LaneConfigOutcome::Unsupported
         );
     }
@@ -841,26 +881,30 @@ mod tests {
     fn a_mounted_container_goes_when_its_host_does() {
         let _serial = serial();
         let system = tmux::TmuxSystem::default();
-        let mut config = Config::default();
-        config.remotes.push(crate::config::RemoteConfig {
+        let mut remotes = vec![crate::config::RemoteConfig {
             host: "devbox".into(),
             forward_agent: true,
             containers: vec![],
             forwards: vec![],
-        });
-        system.configure(&config);
+        }];
+        system.configure(&Config::default(), &remotes);
         let host = tmux::TmuxSystem::host_lane("devbox");
         // A container name of its own: mounting publishes the engine into the
         // process-wide transport table, keyed `host#container`, so two tests
         // sharing a name would race over one entry when run in parallel.
-        let mounted =
-            LaneMountProvider::mount(&system, &host, &format!("docker{}api", '\x1f')).unwrap();
+        let mounted = LaneMountProvider::mount(
+            &system,
+            &host,
+            &format!("docker{}api", '\x1f'),
+            &mut remotes,
+        )
+        .unwrap();
         assert!(system.lanes().contains(&mounted));
 
         // Its lane id names a host Deck can no longer reach, so it cannot outlive
         // the host entry.
-        config.remotes.clear();
-        system.configure(&config);
+        remotes.clear();
+        system.configure(&Config::default(), &remotes);
         assert!(!system.lanes().contains(&mounted));
     }
 
@@ -868,14 +912,13 @@ mod tests {
     fn only_a_host_lane_can_mount() {
         let _serial = serial();
         let system = tmux::TmuxSystem::default();
-        let mut config = Config::default();
-        config.remotes.push(crate::config::RemoteConfig {
+        let remotes = vec![crate::config::RemoteConfig {
             host: "devbox".into(),
             forward_agent: true,
             containers: vec![],
             forwards: vec![],
-        });
-        system.configure(&config);
+        }];
+        system.configure(&Config::default(), &remotes);
 
         let mounts = |lane: &LaneId| {
             system
@@ -895,30 +938,29 @@ mod tests {
     fn tmux_lane_config_provider_owns_lane_to_config_translation() {
         let system = tmux::TmuxSystem::default();
         let lane = tmux::TmuxSystem::host_lane("prod");
-        let mut config = Config::default();
-        config.remotes.push(crate::config::RemoteConfig {
+        let mut remotes = vec![crate::config::RemoteConfig {
             host: "prod".into(),
             containers: vec![],
             forward_agent: true,
             forwards: vec![],
-        });
+        }];
 
         assert_eq!(
-            LaneConfigProvider::remove_lane(&system, &lane, &mut config),
+            LaneConfigProvider::remove_lane(&system, &lane, &mut remotes),
             LaneConfigOutcome::Removed
         );
-        assert!(config.remotes.is_empty());
+        assert!(remotes.is_empty());
         assert_eq!(
-            LaneConfigProvider::remove_lane(&system, &tmux::TmuxSystem::local_lane(), &mut config,),
+            LaneConfigProvider::remove_lane(&system, &tmux::TmuxSystem::local_lane(), &mut remotes),
             LaneConfigOutcome::Unsupported
         );
 
         assert_eq!(
-            LaneConfigProvider::add_lane(&system, "next", &mut config),
+            LaneConfigProvider::add_lane(&system, "next", &mut remotes),
             LaneConfigAddOutcome::Added(tmux::TmuxSystem::host_lane("next"))
         );
         assert_eq!(
-            LaneConfigProvider::add_lane(&system, "next", &mut config),
+            LaneConfigProvider::add_lane(&system, "next", &mut remotes),
             LaneConfigAddOutcome::AlreadyExists
         );
     }
@@ -926,8 +968,7 @@ mod tests {
     #[test]
     fn removing_a_container_lane_edits_its_host_entry() {
         let system = tmux::TmuxSystem::default();
-        let mut config = Config::default();
-        config.remotes.push(crate::config::RemoteConfig {
+        let mut remotes = vec![crate::config::RemoteConfig {
             host: "devbox".into(),
             forward_agent: true,
             containers: vec![
@@ -943,7 +984,7 @@ mod tests {
                 },
             ],
             forwards: vec![],
-        });
+        }];
 
         // A container id names an entry inside its host's list, so removal must
         // reach that list and leave the host (and its other containers) alone.
@@ -951,20 +992,20 @@ mod tests {
             LaneConfigProvider::remove_lane(
                 &system,
                 &tmux::TmuxSystem::container_lane("devbox", "dev"),
-                &mut config,
+                &mut remotes
             ),
             LaneConfigOutcome::Removed
         );
-        assert_eq!(config.remotes.len(), 1);
-        assert_eq!(config.remotes[0].containers.len(), 1);
-        assert_eq!(config.remotes[0].containers[0].name, "build");
+        assert_eq!(remotes.len(), 1);
+        assert_eq!(remotes[0].containers.len(), 1);
+        assert_eq!(remotes[0].containers[0].name, "build");
 
         // Unknown container, and a container under an unknown host.
         assert_eq!(
             LaneConfigProvider::remove_lane(
                 &system,
                 &tmux::TmuxSystem::container_lane("devbox", "dev"),
-                &mut config,
+                &mut remotes
             ),
             LaneConfigOutcome::Unsupported
         );
@@ -972,7 +1013,7 @@ mod tests {
             LaneConfigProvider::remove_lane(
                 &system,
                 &tmux::TmuxSystem::container_lane("nope", "dev"),
-                &mut config,
+                &mut remotes
             ),
             LaneConfigOutcome::Unsupported
         );
@@ -982,11 +1023,11 @@ mod tests {
             LaneConfigProvider::remove_lane(
                 &system,
                 &tmux::TmuxSystem::host_lane("devbox"),
-                &mut config,
+                &mut remotes
             ),
             LaneConfigOutcome::Removed
         );
-        assert!(config.remotes.is_empty());
+        assert!(remotes.is_empty());
     }
 
     #[test]
@@ -994,7 +1035,7 @@ mod tests {
         let _serial = serial();
         let system = tmux::TmuxSystem::default();
         let mut config = Config::default();
-        config.remotes.push(crate::config::RemoteConfig {
+        let remotes = vec![crate::config::RemoteConfig {
             host: "devbox".into(),
             forward_agent: true,
             containers: vec![crate::config::ContainerConfig {
@@ -1003,8 +1044,8 @@ mod tests {
                 agent_sock: None,
             }],
             forwards: vec![],
-        });
-        system.configure(&config);
+        }];
+        system.configure(&Config::default(), &remotes);
 
         let caps = |lane: &LaneId| {
             system
@@ -1024,7 +1065,7 @@ mod tests {
         // Reuse off takes the capability away everywhere: the forward commands
         // are `ssh -O` against the socket it provides.
         config.ssh_connection_reuse = false;
-        system.configure(&config);
+        system.configure(&config, &remotes);
         assert!(!caps(&tmux::TmuxSystem::host_lane("devbox")));
     }
 
@@ -1032,8 +1073,7 @@ mod tests {
     fn config_entries_that_cannot_round_trip_through_a_lane_id_are_not_mounted() {
         let _serial = serial();
         let system = tmux::TmuxSystem::default();
-        let mut config = Config::default();
-        config.remotes.push(crate::config::RemoteConfig {
+        let mut remotes = vec![crate::config::RemoteConfig {
             // `host#` would read back as the host `"devbox#"`, and a `#` in the
             // host would read back as a container lane.
             host: "devbox".into(),
@@ -1056,21 +1096,21 @@ mod tests {
                 },
             ],
             forwards: vec![],
-        });
-        config.remotes.push(crate::config::RemoteConfig {
+        }];
+        remotes.push(crate::config::RemoteConfig {
             host: "srv#2".into(),
             forward_agent: true,
             containers: vec![],
             forwards: vec![],
         });
-        system.configure(&config);
+        system.configure(&Config::default(), &remotes);
 
         let lanes = system.lanes();
         assert!(lanes.contains(&tmux::TmuxSystem::host_lane("devbox")));
         assert!(lanes.contains(&tmux::TmuxSystem::container_lane("devbox", "good")));
         assert_eq!(lanes.len(), 3, "local + devbox + devbox/good: {lanes:?}");
         assert_eq!(
-            tmux::remote_ids(&config.remotes),
+            tmux::remote_ids(&remotes),
             vec!["devbox".to_string(), "devbox#good".to_string()]
         );
     }

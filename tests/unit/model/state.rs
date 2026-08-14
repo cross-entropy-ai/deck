@@ -83,7 +83,7 @@ fn make_state(
     state.prefs.show_borders = show_borders;
     state.entries = vec![make_session("alpha"), make_session("beta")];
     let system = crate::system::tmux::TmuxSystem::default();
-    system.configure(&crate::config::Config::default());
+    system.configure(&crate::config::Config::default(), &[]);
     state.system_sections = system
         .lanes()
         .into_iter()
@@ -781,9 +781,8 @@ fn remote_divider_shows_forward_count() {
     // probes per-forward liveness, so the count is the only forward feedback.
     let forward_glyph = |state: &AppState, host: &str| -> Option<String> {
         let system = TmuxSystem::default();
-        let mut config = crate::config::Config::default();
-        config.remotes.clone_from(&state.config_remotes);
-        system.configure(&config);
+        let config = crate::config::Config::default();
+        system.configure(&config, &state.config_remotes);
         system
             .section_for(&TmuxSystem::host_lane(host))?
             .buttons
@@ -1189,7 +1188,7 @@ fn prefs_config_round_trip_is_identity() {
     // (so the load-time clamps are no-ops and the comparison is exact), map
     // it into prefs, write it back out, and re-derive — the prefs must match.
     let cfg = crate::config::Config {
-        hidden_sessions: Vec::new(),
+        legacy_hidden_sessions: Vec::new(),
         theme: crate::theme::THEMES[2].name.to_string(),
         theme_auto: true,
         dark_theme: crate::theme::THEMES[1].name.to_string(),
@@ -1208,9 +1207,9 @@ fn prefs_config_round_trip_is_identity() {
         ssh_connection_reuse: false,
         ssh_control_path: "/tmp/deck/cm-%C".to_string(),
         ssh_control_persist: "1h30m".to_string(),
-        remotes: Vec::new(),
-        collapsed_sections: Vec::new(),
-        collapsed_agent_sections: Vec::new(),
+        legacy_remotes: Vec::new(),
+        legacy_collapsed_sections: Vec::new(),
+        legacy_collapsed_agent_sections: Vec::new(),
         summary_prompt: "prompt".to_string(),
         summary_prompt_version: crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION,
         summary_agent: crate::summary_card::SummaryAgent::Codex,
@@ -1224,13 +1223,7 @@ fn prefs_config_round_trip_is_identity() {
 
     let theme_index = 2;
     let prefs = Prefs::from_config(&cfg, theme_index);
-    let written = prefs.to_config(
-        std::collections::BTreeMap::new(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-    );
+    let written = prefs.to_config(std::collections::BTreeMap::new());
     // Re-derive the theme index from the written name rather than reusing the
     // input, so the round trip actually exercises the name<->index mapping
     // that lives outside Prefs (to_config writes THEMES[idx].name).

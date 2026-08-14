@@ -66,6 +66,22 @@ pub struct ContainerConfig {
 
 pub const DEFAULT_CONTAINER_ENGINE: &str = "docker";
 
+/// Every host and container in a linked-lane list. Shared by the config's
+/// one-time read of the pre-split `remotes:` and by the state file that owns
+/// the list now, so both refuse the same values.
+pub fn validate_remotes(remotes: &[RemoteConfig]) -> Result<(), String> {
+    for remote in remotes {
+        validate_remote_host(&remote.host).map_err(|e| format!("{}: {e}", remote.host))?;
+        for container in &remote.containers {
+            validate_container_name(&container.name)
+                .map_err(|e| format!("{}: {e}", remote.host))?;
+            validate_container_engine(&container.engine)
+                .map_err(|e| format!("{}/{}: {e}", remote.host, container.name))?;
+        }
+    }
+    Ok(())
+}
+
 /// Validate a container engine before it is interpolated into a remote shell
 /// command. One command name or absolute path, nothing a shell would treat as
 /// more than a word.
@@ -240,22 +256,26 @@ pub struct Config {
     /// Deck-owned OpenSSH `ControlPersist` value (for example `10m` or
     /// `1h30m`). This explicitly overrides ssh_config as well.
     pub ssh_control_persist: String,
-    pub remotes: Vec<RemoteConfig>,
+    /// Pre-split home of the linked hosts. Read once to seed
+    /// `lane_state::LaneState`, never written again — see that module for why
+    /// the lane set is not configuration.
+    #[serde(rename = "remotes", default, skip_serializing)]
+    pub legacy_remotes: Vec<RemoteConfig>,
     /// Sidebar groups collapsed (Expanded view only). `null` = `@local`,
     /// a string = remote `@host`. Serializes as `[null, "host1"]`. Empty by default.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub collapsed_sections: Vec<Option<String>>,
+    #[serde(rename = "collapsed_sections", default, skip_serializing)]
+    pub legacy_collapsed_sections: Vec<Option<String>>,
     /// Agents-tab twin of `collapsed_sections`, kept separate so the two
     /// tabs fold independently. Same `[null, "host1"]` shape. Empty by default.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub collapsed_agent_sections: Vec<Option<String>>,
+    #[serde(rename = "collapsed_agent_sections", default, skip_serializing)]
+    pub legacy_collapsed_agent_sections: Vec<Option<String>>,
     /// Sessions the user chose not to capture, named one at a time from the
     /// session's own context menu. Complements `exclude_patterns`, which
     /// matches by name shape: this list is for the case where the pattern is
     /// "that one, over there" — a colleague's session on a shared machine that
     /// Deck must leave alone. Empty by default.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub hidden_sessions: Vec<HiddenSession>,
+    #[serde(rename = "hidden_sessions", default, skip_serializing)]
+    pub legacy_hidden_sessions: Vec<HiddenSession>,
     /// The Agents-tab summary prompt template. `{{SESSIONS}}` is replaced
     /// with one `<session>` block per agent pane. Editable; reset to the
     /// bundled default when `summary_prompt_version` falls behind — see
@@ -311,10 +331,10 @@ impl Default for Config {
             ssh_connection_reuse: true,
             ssh_control_path: DEFAULT_SSH_CONTROL_PATH.to_string(),
             ssh_control_persist: DEFAULT_SSH_CONTROL_PERSIST.to_string(),
-            remotes: Vec::new(),
-            hidden_sessions: Vec::new(),
-            collapsed_sections: Vec::new(),
-            collapsed_agent_sections: Vec::new(),
+            legacy_remotes: Vec::new(),
+            legacy_hidden_sessions: Vec::new(),
+            legacy_collapsed_sections: Vec::new(),
+            legacy_collapsed_agent_sections: Vec::new(),
             // Seeded with version 0 so `migrate_summary_prompt` always
             // stamps the real version and persists the prompt to disk.
             summary_prompt: crate::summary::DEFAULT_SUMMARY_PROMPT.to_string(),
@@ -501,16 +521,9 @@ impl Config {
     fn validate(&self) -> Result<(), String> {
         validate_ssh_control_path(&self.ssh_control_path)?;
         validate_ssh_control_persist(&self.ssh_control_persist)?;
-        for remote in &self.remotes {
-            validate_remote_host(&remote.host).map_err(|e| format!("{}: {e}", remote.host))?;
-            for container in &remote.containers {
-                validate_container_name(&container.name)
-                    .map_err(|e| format!("{}: {e}", remote.host))?;
-                validate_container_engine(&container.engine)
-                    .map_err(|e| format!("{}/{}: {e}", remote.host, container.name))?;
-            }
-        }
-        Ok(())
+        // Still checked on the way in: a bad host here would otherwise be
+        // copied verbatim into the state file by the one-time seed.
+        validate_remotes(&self.legacy_remotes)
     }
 
     fn repair_invalid_ssh_settings(&mut self) -> bool {

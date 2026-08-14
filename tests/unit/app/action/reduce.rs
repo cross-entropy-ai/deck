@@ -3105,22 +3105,13 @@ fn opening_the_restore_picker_for_a_lane_with_nothing_hidden_is_a_noop() {
     assert!(state.overlay.hidden_sessions.is_none());
 }
 
-/// The hidden list survives a save/load round trip, and `Show hidden` is greyed
-/// on a lane that has nothing to restore.
+/// `Show hidden` is greyed on a lane with nothing to restore. (The round trip
+/// through the file itself lives with the state model, in `lane_state`.)
 #[test]
-fn hidden_sessions_round_trip_through_config_and_gate_the_divider_item() {
+fn the_divider_item_is_gated_on_the_lane_actually_hiding_something() {
     use crate::menu::{MenuItem, MenuKind};
 
     let lane = crate::system::tmux::TmuxSystem::host_lane("box");
-    let hidden = std::collections::HashMap::from([(
-        lane.clone(),
-        std::collections::HashSet::from(["theirs".to_string()]),
-    )]);
-    let persisted = crate::system::tmux::hidden_to_config(&hidden);
-    assert_eq!(persisted.len(), 1);
-    assert_eq!(persisted[0].host.as_deref(), Some("box"));
-    assert_eq!(crate::system::tmux::hidden_from_config(&persisted), hidden);
-
     let divider = |has_hidden| MenuKind::LaneDivider {
         lane: lane.clone(),
         primary: false,

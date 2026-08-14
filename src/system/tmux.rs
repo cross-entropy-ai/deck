@@ -38,28 +38,13 @@ mod cmd {
 /// lock so the injected registry can be shared by the UI and refresh worker.
 pub struct TmuxSystem {
     remotes: std::sync::RwLock<Vec<RemoteConfig>>,
-    /// Containers mounted from the picker rather than declared in config, for
-    /// this session only. Kept apart from `remotes` precisely so `configure`
-    /// cannot wipe them and so nothing ever writes them to disk — the shell asks
-    /// for lanes, not for where they came from.
-    mounted: std::sync::RwLock<Vec<MountedContainer>>,
     ssh_connection_reuse: std::sync::atomic::AtomicBool,
-}
-
-/// One session-scoped container lane. `engine` is remembered because discovery,
-/// not config, is what learned it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MountedContainer {
-    host: String,
-    name: String,
-    engine: String,
 }
 
 impl Default for TmuxSystem {
     fn default() -> Self {
         Self {
             remotes: std::sync::RwLock::new(Vec::new()),
-            mounted: std::sync::RwLock::new(Vec::new()),
             ssh_connection_reuse: std::sync::atomic::AtomicBool::new(true),
         }
     }
@@ -124,50 +109,6 @@ pub fn lane(host: Option<&str>) -> LaneId {
 /// (e.g. `collapsed_sections`) keys on.
 pub fn lanes_from_hosts(hosts: &[Option<String>]) -> std::collections::HashSet<LaneId> {
     hosts.iter().map(|h| lane(h.as_deref())).collect()
-}
-
-/// The inverse of [`lanes_from_hosts`], for persisting a per-lane store. Lives
-/// here so callers don't reach for `host_of` to un-abstract a lane themselves.
-pub fn hosts_from_lanes(lanes: &std::collections::HashSet<LaneId>) -> Vec<Option<String>> {
-    lanes
-        .iter()
-        .map(|l| TmuxSystem::host_of(l).map(str::to_string))
-        .collect()
-}
-
-/// Config's hidden-session list -> the per-lane name sets the refresh worker
-/// filters on. Entries naming a lane this system does not own are dropped: a
-/// stale one would otherwise sit in the map forever, matching nothing.
-pub fn hidden_from_config(
-    hidden: &[crate::config::HiddenSession],
-) -> std::collections::HashMap<LaneId, std::collections::HashSet<String>> {
-    let mut out: std::collections::HashMap<LaneId, std::collections::HashSet<String>> =
-        std::collections::HashMap::new();
-    for entry in hidden {
-        out.entry(lane(entry.host.as_deref()))
-            .or_default()
-            .insert(entry.name.clone());
-    }
-    out
-}
-
-/// The inverse of [`hidden_from_config`]. Sorted so saving twice without an
-/// edit in between cannot rewrite the file in a different order.
-pub fn hidden_to_config(
-    hidden: &std::collections::HashMap<LaneId, std::collections::HashSet<String>>,
-) -> Vec<crate::config::HiddenSession> {
-    let mut out: Vec<crate::config::HiddenSession> = hidden
-        .iter()
-        .flat_map(|(lane, names)| {
-            let host = TmuxSystem::host_of(lane).map(str::to_string);
-            names.iter().map(move |name| crate::config::HiddenSession {
-                host: host.clone(),
-                name: name.clone(),
-            })
-        })
-        .collect();
-    out.sort_by(|a, b| (&a.host, &a.name).cmp(&(&b.host, &b.name)));
-    out
 }
 
 /// Every managed remote id a config defines: each host followed by its
@@ -300,31 +241,20 @@ impl System for TmuxSystem {
         TMUX
     }
 
-    fn configure(&self, config: &Config) {
+    fn configure(&self, config: &Config, remotes_cfg: &[crate::config::RemoteConfig]) {
         // Hand the transport layer the per-host ForwardAgent answer and the
         // per-container exec settings before any ssh spawns read them
         // (configure runs on startup and reload).
         crate::ssh::set_agent_forward_disabled(
-            config
-                .remotes
+            remotes_cfg
                 .iter()
                 .filter(|remote| !remote.forward_agent)
                 .map(|remote| remote.host.clone())
                 .collect(),
         );
-        // A reload can remove a host; its session-mounted containers go with it,
-        // since their lane id no longer names anything Deck can reach.
-        let mut mounted = self
-            .mounted
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        mounted.retain(|entry| {
-            usable_remotes(&config.remotes).any(|remote| remote.host == entry.host)
-        });
-        // One table for both sources — the transport looks up by remote id and
-        // neither knows nor cares which list an entry came from.
+        // The transport looks up container settings by remote id.
         crate::remote_tmux::set_container_opts(
-            usable_remotes(&config.remotes)
+            usable_remotes(remotes_cfg)
                 .flat_map(|remote| {
                     usable_containers(remote).map(|container| {
                         (
@@ -336,23 +266,13 @@ impl System for TmuxSystem {
                         )
                     })
                 })
-                .chain(mounted.iter().map(|entry| {
-                    (
-                        crate::remote_tmux::container_remote_id(&entry.host, &entry.name),
-                        crate::remote_tmux::ContainerOpts {
-                            engine: entry.engine.clone(),
-                            agent_sock: None,
-                        },
-                    )
-                }))
                 .collect(),
         );
-        drop(mounted);
         let mut remotes = self
             .remotes
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        remotes.clone_from(&config.remotes);
+        *remotes = remotes_cfg.to_vec();
         self.ssh_connection_reuse.store(
             config.ssh_connection_reuse,
             std::sync::atomic::Ordering::Relaxed,
@@ -364,25 +284,12 @@ impl System for TmuxSystem {
             .remotes
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mounted = self
-            .mounted
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         std::iter::once(Self::local_lane())
             .chain(usable_remotes(&remotes).flat_map(|remote| {
-                std::iter::once(Self::host_lane(&remote.host))
-                    .chain(
-                        usable_containers(remote)
-                            .map(|container| Self::container_lane(&remote.host, &container.name)),
-                    )
-                    // Session-mounted containers sit under their host, right
-                    // after the ones config declared.
-                    .chain(
-                        mounted
-                            .iter()
-                            .filter(|entry| entry.host == remote.host)
-                            .map(|entry| Self::container_lane(&entry.host, &entry.name)),
-                    )
+                std::iter::once(Self::host_lane(&remote.host)).chain(
+                    usable_containers(remote)
+                        .map(|container| Self::container_lane(&remote.host, &container.name)),
+                )
             }))
             .collect()
     }
@@ -481,27 +388,16 @@ impl LaneMountProvider for TmuxSystem {
         let Some(host) = Self::host_of(lane) else {
             return Ok(Vec::new());
         };
-        // Hide what is already a lane: config-declared containers and ones this
-        // session already mounted. Offering them again would only produce a
-        // duplicate id.
+        // Hide what is already a lane. One list to consult now that a mount is
+        // an ordinary entry rather than a session-scoped shadow of one.
         let existing: std::collections::HashSet<String> = {
             let remotes = self
                 .remotes
                 .read()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let mounted = self
-                .mounted
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
             usable_remotes(&remotes)
                 .filter(|remote| remote.host == host)
                 .flat_map(|remote| usable_containers(remote).map(|c| c.name.clone()))
-                .chain(
-                    mounted
-                        .iter()
-                        .filter(|entry| entry.host == host)
-                        .map(|entry| entry.name.clone()),
-                )
                 .collect()
         };
 
@@ -529,7 +425,12 @@ impl LaneMountProvider for TmuxSystem {
         crate::remote_tmux::start_container(host, engine, name)
     }
 
-    fn mount(&self, lane: &LaneId, candidate: &str) -> Option<LaneId> {
+    fn mount(
+        &self,
+        lane: &LaneId,
+        candidate: &str,
+        remotes: &mut Vec<RemoteConfig>,
+    ) -> Option<LaneId> {
         let host = Self::host_of(lane)?;
         let (engine, name) = parse_mount_candidate(candidate)?;
         // Publish the transport settings BEFORE returning: the shell onboards
@@ -542,34 +443,57 @@ impl LaneMountProvider for TmuxSystem {
                 agent_sock: None,
             },
         );
-        let mut mounted = self
-            .mounted
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !mounted
+        let remote = remotes.iter_mut().find(|remote| remote.host == host)?;
+        if !remote
+            .containers
             .iter()
-            .any(|entry| entry.host == host && entry.name == name)
+            .any(|container| container.name == name)
         {
-            mounted.push(MountedContainer {
-                host: host.to_string(),
+            remote.containers.push(crate::config::ContainerConfig {
                 name: name.to_string(),
+                // Remembered because discovery, not the user, is what learned
+                // it — and the transport needs it on every later run.
                 engine: engine.to_string(),
+                agent_sock: None,
             });
+        }
+        // Publish into this system's own list as well, so the lane exists the
+        // instant the id is returned — the shell onboards it immediately, on a
+        // worker thread, without waiting for the `configure` that commits the
+        // caller's copy. Both writes are idempotent.
+        {
+            let mut own = self
+                .remotes
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(remote) = own.iter_mut().find(|remote| remote.host == host) {
+                if !remote
+                    .containers
+                    .iter()
+                    .any(|container| container.name == name)
+                {
+                    remote.containers.push(crate::config::ContainerConfig {
+                        name: name.to_string(),
+                        engine: engine.to_string(),
+                        agent_sock: None,
+                    });
+                }
+            }
         }
         Some(Self::container_lane(host, name))
     }
 }
 
 impl LaneConfigProvider for TmuxSystem {
-    fn add_lane(&self, candidate: &str, config: &mut Config) -> LaneConfigAddOutcome {
+    fn add_lane(&self, candidate: &str, remotes: &mut Vec<RemoteConfig>) -> LaneConfigAddOutcome {
         let host = candidate.trim();
         if host.is_empty() {
             return LaneConfigAddOutcome::Invalid;
         }
-        if config.remotes.iter().any(|remote| remote.host == host) {
+        if remotes.iter().any(|remote| remote.host == host) {
             return LaneConfigAddOutcome::AlreadyExists;
         }
-        config.remotes.push(RemoteConfig {
+        remotes.push(RemoteConfig {
             host: host.to_string(),
             containers: vec![],
             forward_agent: true,
@@ -578,7 +502,7 @@ impl LaneConfigProvider for TmuxSystem {
         LaneConfigAddOutcome::Added(Self::host_lane(host))
     }
 
-    fn remove_lane(&self, lane: &LaneId, config: &mut Config) -> LaneConfigOutcome {
+    fn remove_lane(&self, lane: &LaneId, remotes: &mut Vec<RemoteConfig>) -> LaneConfigOutcome {
         let Some(remote_id) = Self::host_of(lane) else {
             return LaneConfigOutcome::Unsupported;
         };
@@ -588,23 +512,7 @@ impl LaneConfigProvider for TmuxSystem {
         // container lanes.
         let target = crate::remote_tmux::parse_remote_id(remote_id);
         if let Some(container) = target.container {
-            // Session-mounted containers were never written to config, so
-            // removal is purely dropping them from memory.
-            let mut mounted = self
-                .mounted
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let before = mounted.len();
-            mounted.retain(|entry| !(entry.host == target.host && entry.name == container));
-            if mounted.len() != before {
-                return LaneConfigOutcome::Removed;
-            }
-            drop(mounted);
-            let Some(remote) = config
-                .remotes
-                .iter_mut()
-                .find(|remote| remote.host == target.host)
-            else {
+            let Some(remote) = remotes.iter_mut().find(|remote| remote.host == target.host) else {
                 return LaneConfigOutcome::Unsupported;
             };
             let before = remote.containers.len();
@@ -617,9 +525,9 @@ impl LaneConfigProvider for TmuxSystem {
                 LaneConfigOutcome::Removed
             };
         }
-        let before = config.remotes.len();
-        config.remotes.retain(|remote| remote.host != target.host);
-        if config.remotes.len() == before {
+        let before = remotes.len();
+        remotes.retain(|remote| remote.host != target.host);
+        if remotes.len() == before {
             LaneConfigOutcome::Unsupported
         } else {
             LaneConfigOutcome::Removed

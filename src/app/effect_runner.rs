@@ -89,12 +89,12 @@ impl App {
                     );
                 }
                 Effect::RemoveLane(lane) => {
-                    let mut config = self.config_snapshot();
+                    let mut remotes = self.state.config_remotes.clone();
                     let outcome = self
                         .systems
                         .runtime(lane)
                         .and_then(|runtime| runtime.lane_config())
-                        .map(|provider| provider.remove_lane(lane, &mut config));
+                        .map(|provider| provider.remove_lane(lane, &mut remotes));
                     match outcome {
                         Some(crate::system::LaneConfigOutcome::Removed) => {
                             // Removing one lane can retire others the backend
@@ -110,7 +110,7 @@ impl App {
                                 .iter()
                                 .map(|section| section.lane.clone())
                                 .collect();
-                            self.state.config_remotes = config.remotes;
+                            self.state.config_remotes = remotes;
                             crate::app::ssh::port_forward_task::stop_lane(
                                 &self.port_forward_tx,
                                 lane,
@@ -230,11 +230,19 @@ impl App {
                     // `mount` publishes the new lane's transport settings before
                     // returning, so onboarding (which spawns an attach PTY on a
                     // worker thread) can read them safely.
+                    let mut remotes = self.state.config_remotes.clone();
                     let mounted = self
                         .mount_provider(lane)
-                        .and_then(|provider| provider.mount(lane, candidate));
+                        .and_then(|provider| provider.mount(lane, candidate, &mut remotes));
                     match mounted {
                         Some(new_lane) => {
+                            // The mount is now an ordinary entry in the lane
+                            // set, so it is committed and saved like any other
+                            // — which is what brings it back next launch.
+                            self.state.config_remotes = remotes;
+                            let config = self.config_snapshot();
+                            self.systems.configure(&config, &self.state.config_remotes);
+                            self.save_lane_state();
                             self.state.system_sections = self.systems.sections();
                             self.onboard_lane(&new_lane);
                             self.request_refresh();
@@ -243,14 +251,14 @@ impl App {
                     }
                 }
                 Effect::AddConfiguredLane { owner, candidate } => {
-                    let mut config = self.config_snapshot();
+                    let mut remotes = self.state.config_remotes.clone();
                     let outcome = self
                         .systems
                         .config_provider(owner)
-                        .map(|provider| provider.add_lane(candidate, &mut config));
+                        .map(|provider| provider.add_lane(candidate, &mut remotes));
                     match outcome {
                         Some(crate::system::LaneConfigAddOutcome::Added(lane)) => {
-                            self.state.config_remotes = config.remotes;
+                            self.state.config_remotes = remotes;
                             self.state.overlay.add_remote = None;
                             self.save_config();
                             self.onboard_lane(&lane);

@@ -81,6 +81,10 @@ pub struct App {
     /// `run` doesn't treat deck's own save as an external edit and self-reload.
     /// `None` = file absent / mtime unreadable.
     config_mtime_seen: Option<std::time::SystemTime>,
+    /// The lanes Deck remembers being linked to, and their per-lane memory.
+    /// Held so a save can rewrite the file without losing what the app does
+    /// not keep in `AppState` (a host's forwards, a container's engine).
+    lane_state: crate::lane_state::LaneState,
     /// Set to true after a session switch so the next render call
     /// wipes the host terminal before drawing — clears any residue the
     /// terminal emulator leaves from the previous session.
@@ -158,8 +162,12 @@ impl App {
         let theme_index = THEMES.iter().position(|t| t.name == cfg.theme).unwrap_or(0);
         let (keybindings, kb_warnings) = Keybindings::from_config(&cfg.keybindings);
 
+        // Seeds itself from the pre-split config fields the first time, so an
+        // upgrade keeps its hosts, forwards and folded groups.
+        let lanes = crate::lane_state::LaneState::load(&cfg);
+        let remotes = lanes.to_remote_configs();
         let systems = crate::system::builtin_registry();
-        systems.configure(&cfg);
+        systems.configure(&cfg, &remotes);
 
         let mut state = AppState::new(term_width, term_height);
         // Same field list reload uses, so startup and hot-reload can't
@@ -167,9 +175,9 @@ impl App {
         state.apply_config(&cfg, theme_index, keybindings);
         // Seeded once at startup only — a later reload must not stomp the
         // user's live collapse state (see `apply_config`).
-        state.collapsed_sections = crate::system::tmux::lanes_from_hosts(&cfg.collapsed_sections);
-        state.collapsed_agent_sections =
-            crate::system::tmux::lanes_from_hosts(&cfg.collapsed_agent_sections);
+        state.collapsed_sections = lanes.collapsed_lanes();
+        state.collapsed_agent_sections = lanes.collapsed_agent_lanes();
+        state.hidden_sessions = lanes.hidden_sessions();
 
         // The TUI owns the alternate screen, so a startup eprintln! would be
         // wiped invisibly. Surface keybinding warnings in the reload strip
@@ -202,7 +210,7 @@ impl App {
 
         // Seed the in-memory mirror of remote configs so port-forward
         // state is available from the very first frame.
-        state.config_remotes = cfg.remotes.clone();
+        state.config_remotes = remotes.clone();
         state.system_sections = systems.sections();
 
         let primary_lane = state
@@ -262,6 +270,7 @@ impl App {
             upgrade_instance: None,
             last_update_request,
             config_mtime_seen: crate::config::config_mtime(),
+            lane_state: lanes,
             needs_full_redraw: false,
             port_forward_tx,
             port_forward_rx: pf_result_rx,
@@ -284,8 +293,7 @@ impl App {
 
         if ssh_settings.enabled {
             // Establish ControlMasters and launch configured forwards eagerly.
-            let hosts: Vec<(String, Vec<crate::forwards::ForwardSpec>)> = cfg
-                .remotes
+            let hosts: Vec<(String, Vec<crate::forwards::ForwardSpec>)> = remotes
                 .iter()
                 .filter(|r| !r.forwards.is_empty())
                 .map(|r| (r.host.clone(), r.forwards.clone()))
@@ -298,11 +306,7 @@ impl App {
         } else {
             // Idempotently close any Deck-owned persistent sockets left by an
             // earlier run, then lock the worker in its disabled state.
-            let stop_hosts = cfg
-                .remotes
-                .iter()
-                .map(|remote| remote.host.clone())
-                .collect();
+            let stop_hosts = remotes.iter().map(|remote| remote.host.clone()).collect();
             let _ = app
                 .port_forward_tx
                 .send(crate::app::ssh::port_forward_task::Op::Reconfigure {

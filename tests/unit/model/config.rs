@@ -56,7 +56,7 @@ fn disabled_reuse_preserves_saved_port_forward_rules() {
 
     let config = Config::try_load_from(&path).unwrap();
     assert!(!config.ssh_connection_reuse);
-    assert_eq!(config.remotes[0].forwards.len(), 1);
+    assert_eq!(config.legacy_remotes[0].forwards.len(), 1);
     let _ = fs::remove_file(&path);
 }
 
@@ -451,13 +451,16 @@ fn load_repairs_only_invalid_ssh_fields_without_dropping_user_data() {
 
     let loaded = Config::load_from(&path);
     assert_eq!(loaded.theme, "Nord");
-    assert_eq!(loaded.remotes[0].host, "prod-box");
+    assert_eq!(loaded.legacy_remotes[0].host, "prod-box");
     assert_eq!(loaded.ssh_control_path, DEFAULT_SSH_CONTROL_PATH);
     assert_eq!(loaded.ssh_control_persist, DEFAULT_SSH_CONTROL_PERSIST);
 
+    // The rewrite drops `remotes:` — the lane set lives in the state file now.
+    // What matters is that the in-memory copy above still carried it, because
+    // that is what `LaneState` seeds itself from on this very launch.
     let reloaded = Config::try_load_from(&path).unwrap();
     assert_eq!(reloaded.theme, "Nord");
-    assert_eq!(reloaded.remotes[0].host, "prod-box");
+    assert!(reloaded.legacy_remotes.is_empty());
     let _ = fs::remove_file(path);
 }
 
@@ -468,12 +471,6 @@ fn load_self_heals_a_valid_file_without_dropping_user_data() {
         theme: "Nord".to_string(),
         ..Config::default()
     };
-    original.remotes.push(RemoteConfig {
-        host: "prod-box".to_string(),
-        containers: vec![],
-        forward_agent: true,
-        forwards: vec![],
-    });
     // Force the summary-prompt migration to fire so load takes the
     // self-heal-and-save branch.
     original.summary_prompt_version = 0;
@@ -481,14 +478,13 @@ fn load_self_heals_a_valid_file_without_dropping_user_data() {
 
     let cfg = Config::load_from(&path);
     assert_eq!(cfg.theme, "Nord");
-    assert_eq!(cfg.remotes.len(), 1, "self-heal must not drop remotes");
     assert_eq!(
         cfg.summary_prompt_version,
         crate::summary::DEFAULT_SUMMARY_PROMPT_VERSION
     );
-    // The rewrite on disk kept the remote too.
+    // The rewrite on disk kept the user's data too.
     let reloaded = Config::try_load_from(&path).unwrap();
-    assert_eq!(reloaded.remotes.len(), 1);
+    assert_eq!(reloaded.theme, "Nord");
     let _ = fs::remove_file(&path);
 }
 
@@ -617,45 +613,4 @@ fn remote_config_forwards_roundtrip() {
     let s = serde_json::to_string(&r).unwrap();
     let parsed: RemoteConfig = serde_json::from_str(&s).unwrap();
     assert_eq!(parsed, r);
-}
-
-/// A container lane's id is `host#container`, and that `#` has to survive the
-/// config file — YAML opens a comment at `#` whenever it follows whitespace, so
-/// a value one space away from being truncated is worth pinning.
-///
-/// It matters because container mounts are session-scoped: the entry sits in
-/// the file naming a lane that will not exist until the container is mounted
-/// again, and it has to resolve to that same lane when it comes back.
-#[test]
-fn a_hidden_session_on_a_container_lane_survives_the_config_file() {
-    let lane = crate::system::tmux::TmuxSystem::container_lane("CF-NUS-H200", "xserve-poc");
-    assert_eq!(
-        lane,
-        crate::system::tmux::TmuxSystem::host_lane("CF-NUS-H200#xserve-poc"),
-        "the two constructors must agree, or the round trip below proves nothing"
-    );
-
-    let hidden = std::collections::HashMap::from([(
-        lane,
-        std::collections::HashSet::from(["someone-elses-work".to_string()]),
-    )]);
-    let path = std::env::temp_dir().join("deck-hidden-container-session.yaml");
-    let config = Config {
-        hidden_sessions: crate::system::tmux::hidden_to_config(&hidden),
-        ..Config::default()
-    };
-    config.save_to(&path).unwrap();
-
-    let text = fs::read_to_string(&path).unwrap();
-    assert!(
-        text.contains("CF-NUS-H200#xserve-poc"),
-        "the container id must reach the file intact: {text}"
-    );
-    let loaded = Config::try_load_from(&path).unwrap();
-    assert_eq!(
-        crate::system::tmux::hidden_from_config(&loaded.hidden_sessions),
-        hidden,
-        "the entry must resolve to the lane a later mount will produce"
-    );
-    let _ = fs::remove_file(&path);
 }

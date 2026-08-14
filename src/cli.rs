@@ -182,32 +182,40 @@ pub(crate) fn parse_args<I: IntoIterator<Item = String>>(
 }
 
 fn finish_remote_change(
-    config: &Config,
+    state: &crate::lane_state::LaneState,
     success_message: &str,
-    save: impl FnOnce(&Config) -> Result<(), String>,
+    save: impl FnOnce(&crate::lane_state::LaneState) -> Result<(), String>,
 ) -> i32 {
-    match save(config) {
+    match save(state) {
         Ok(()) => {
             println!("{success_message}");
             0
         }
         Err(e) => {
-            eprintln!("deck: cannot save config: {e}");
+            eprintln!("deck: cannot save linked lanes: {e}");
             1
         }
     }
 }
 
+/// Load the remembered lanes for a CLI edit, seeding from the config the same
+/// way the app does so `deck remote add` works on a first run after upgrading.
+fn load_lane_state() -> Result<crate::lane_state::LaneState, String> {
+    let config = Config::try_load()?;
+    Ok(crate::lane_state::LaneState::load(&config))
+}
+
 pub(crate) fn run_remote_add(host: &str) -> i32 {
-    let mut config = match Config::try_load() {
-        Ok(c) => c,
+    let mut state = match load_lane_state() {
+        Ok(s) => s,
         Err(e) => {
             eprintln!("deck: cannot read config ({e}); refusing to modify it.");
             eprintln!("deck: fix ~/.config/deck/config.yaml by hand, then retry.");
             return 1;
         }
     };
-    if config.remotes.iter().any(|r| r.host == host) {
+    let mut remotes = state.to_remote_configs();
+    if remotes.iter().any(|r| r.host == host) {
         eprintln!("deck: remote '{host}' is already configured");
         return 1;
     }
@@ -227,63 +235,63 @@ pub(crate) fn run_remote_add(host: &str) -> i32 {
         println!("deck: resolved '{host}' -> {hostname}");
     }
 
-    config.remotes.push(RemoteConfig {
+    remotes.push(RemoteConfig {
         host: host.to_string(),
         containers: vec![],
         forward_agent: true,
         forwards: vec![],
     });
+    state.set_remote_configs(&remotes);
     finish_remote_change(
-        &config,
+        &state,
         &format!("deck: added remote '{host}'."),
-        Config::save,
+        crate::lane_state::LaneState::save,
     )
 }
 
 pub(crate) fn run_remote_list() {
     // try_load, not load: listing must never rewrite a malformed config.
-    let config = match Config::try_load() {
-        Ok(c) => c,
+    let state = match load_lane_state() {
+        Ok(s) => s,
         Err(e) => {
             eprintln!("deck: cannot read config: {e}");
             return;
         }
     };
-    if config.remotes.is_empty() {
-        println!("(no remotes configured)");
+    if state.remotes.is_empty() {
+        println!("(no remotes linked)");
         return;
     }
-    for r in &config.remotes {
-        println!("{}", r.host);
+    for remote in &state.remotes {
+        println!("{}", remote.host);
     }
 }
 
 pub(crate) fn run_remote_remove(host: &str) -> i32 {
-    let mut config = match Config::try_load() {
-        Ok(c) => c,
+    let mut state = match load_lane_state() {
+        Ok(s) => s,
         Err(e) => {
             eprintln!("deck: cannot read config ({e}); refusing to modify it.");
             eprintln!("deck: fix ~/.config/deck/config.yaml by hand, then retry.");
             return 1;
         }
     };
-    let before = config.remotes.len();
-    config.remotes.retain(|r| r.host != host);
-    if config.remotes.len() == before {
+    let before = state.remotes.len();
+    state.remotes.retain(|remote| remote.host != host);
+    if state.remotes.len() == before {
         eprintln!("deck: no remote named '{host}'");
         return 1;
     }
     finish_remote_change(
-        &config,
+        &state,
         &format!("deck: removed remote '{host}'."),
-        Config::save,
+        crate::lane_state::LaneState::save,
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{finish_remote_change, parse_args, ParsedArgs, ParsedCommand};
-    use crate::config::Config;
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| s.to_string()).collect()
@@ -312,9 +320,11 @@ mod tests {
 
     #[test]
     fn remote_change_returns_failure_when_config_cannot_be_saved() {
-        let code = finish_remote_change(&Config::default(), "must not succeed", |_| {
-            Err("permission denied".to_string())
-        });
+        let code = finish_remote_change(
+            &crate::lane_state::LaneState::default(),
+            "must not succeed",
+            |_| Err("permission denied".to_string()),
+        );
 
         assert_eq!(code, 1);
     }
