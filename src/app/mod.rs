@@ -164,7 +164,7 @@ impl App {
 
         // Seeds itself from the pre-split config fields the first time, so an
         // upgrade keeps its hosts, forwards and folded groups.
-        let lanes = crate::lane_state::LaneState::load(&cfg);
+        let (lanes, lane_state_warning) = crate::lane_state::LaneState::load(&cfg);
         let remotes = lanes.to_remote_configs();
         let systems = crate::system::builtin_registry();
         systems.configure(&cfg, &remotes);
@@ -195,6 +195,9 @@ impl App {
             state.show_warning(
                 "config.yaml did not parse — running on defaults and NOT saving; fix the file and reload".to_string(),
             );
+        }
+        if let Some(warning) = lane_state_warning {
+            state.show_warning(warning);
         }
 
         let (update_checker, last_update_request) = if cfg.update_check == UpdateCheckMode::Enabled
