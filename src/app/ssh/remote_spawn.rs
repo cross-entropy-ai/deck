@@ -188,9 +188,12 @@ fn attach_command(remote_id: &str, marker_id: u64) -> String {
          if [ -S \"${{SSH_AUTH_SOCK-}}\" ] && (umask 077 && mkdir -p \"$HOME/.ssh\") 2>/dev/null \
          && ln -sf \"$SSH_AUTH_SOCK\" {agent} 2>/dev/null ; then \
          SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK ; \
-         {path} tmux set-environment -g SSH_AUTH_SOCK {agent} 2>/dev/null ; \
-         fi ; {path} tmux attach{detach_others}",
+         {path} {tmux} set-environment -g SSH_AUTH_SOCK {agent} 2>/dev/null ; \
+         fi ; {path} {tmux} attach{detach_others}",
         path = crate::remote_tmux::REMOTE_PATH_PREFIX,
+        // The attached client renders the user's panes, so a container's
+        // locale-less tmux would draw every non-ASCII byte in them as `_`.
+        tmux = crate::remote_tmux::REMOTE_TMUX,
         // Container path only. sshd SIGHUPs its session when the ssh client
         // dies, reaping the previous `tmux attach`; a container engine does not
         // kill an exec'd process when its client goes away, so every reconnect
@@ -340,7 +343,7 @@ mod tests {
         assert!(command.contains("-exec rm -f -- {} +"));
         assert!(!command.contains("rm -f \"$HOME\"/.cache/deck/client-"));
         assert!(command.contains("tty > \"$HOME\"/'.cache/deck/client-"));
-        assert!(command.ends_with("tmux attach"));
+        assert!(command.ends_with("tmux -u attach"));
     }
 
     #[test]
@@ -348,8 +351,8 @@ mod tests {
         // A container engine does not kill an exec'd process when its client
         // dies, so without `-d` every reconnect leaves another attached tmux
         // client alive inside the container. sshd SIGHUPs the host case for us.
-        assert!(attach_command("box#dev", 1).ends_with("tmux attach -d"));
-        assert!(attach_command("box", 1).ends_with("tmux attach"));
+        assert!(attach_command("box#dev", 1).ends_with("tmux -u attach -d"));
+        assert!(attach_command("box", 1).ends_with("tmux -u attach"));
     }
 
     #[test]
@@ -408,13 +411,13 @@ mod tests {
         // Both the attach client env and the tmux global env carry the
         // symlink, never the per-connection socket path.
         assert!(command.contains(&format!("SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK")));
-        assert!(command.contains(&format!("tmux set-environment -g SSH_AUTH_SOCK {agent}")));
+        assert!(command.contains(&format!("tmux -u set-environment -g SSH_AUTH_SOCK {agent}")));
         // Process-scoped: a shared remote account must not let two decks
         // re-point each other's agent.
         assert!(agent.contains(&std::process::id().to_string()));
         // set-environment must run before the attach that consumes it.
         let setenv = command.find("set-environment").unwrap();
-        let attach = command.rfind("tmux attach").unwrap();
+        let attach = command.rfind("tmux -u attach").unwrap();
         assert!(setenv < attach);
     }
 }

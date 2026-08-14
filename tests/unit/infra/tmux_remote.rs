@@ -316,6 +316,71 @@ fn container_agent_probe_survives_an_image_without_procps() {
     assert!(!call.contains("|| ps ||"));
 }
 
+/// Reported from manual testing: a container lane with two live sessions
+/// rendered as `(no sessions)`.
+///
+/// `<engine> exec` hands the container no locale, so tmux decided its client
+/// was not UTF-8 and ran its output through `utf8_sanitize`, which turns every
+/// byte it considers unprintable into `_` — including the tab separating the
+/// fields of the `-F` format. Not one row parsed. `-u` states the flag
+/// outright; confirmed against the real container, where the same tmux 3.7b
+/// answered `X\tY` over plain ssh and `X_Y` through `docker exec`.
+#[test]
+fn every_remote_tmux_call_forces_the_utf8_flag() {
+    // The listing is the one that broke, on both transports.
+    for host in ["box", "box#dev"] {
+        let runner = FakeRunner::new(ok(""));
+        let _ = list_sessions_with(&runner, host);
+        let call = &runner.calls()[0];
+        assert!(
+            call.contains("tmux -u list-sessions"),
+            "{host} listing must force UTF-8: {call}"
+        );
+    }
+
+    // And every other command deck sends over a container id, so a format
+    // added later cannot reintroduce the bug on a path this test does not name.
+    type Call = Box<dyn Fn(&FakeRunner)>;
+    let cases: Vec<(&str, Call)> = vec![
+        (
+            "new-session",
+            Box::new(|r: &FakeRunner| {
+                let _ = new_session_with(r, "box#dev", "work", "~/p");
+            }),
+        ),
+        (
+            "list-panes",
+            Box::new(|r: &FakeRunner| {
+                let _ = agent_probe_with(r, "box#dev");
+            }),
+        ),
+        (
+            "switch-client",
+            Box::new(|r: &FakeRunner| {
+                let _ = switch_client_with(r, "box#dev", 1, "work");
+            }),
+        ),
+        (
+            "set-option",
+            Box::new(|r: &FakeRunner| {
+                let _ = persist_session_order_with(r, "box#dev", &["work".to_string()]);
+            }),
+        ),
+        (
+            "display-message",
+            Box::new(|r: &FakeRunner| {
+                let _ = active_target_with(r, "box#dev", 1);
+            }),
+        ),
+    ];
+    for (label, run) in cases {
+        let runner = FakeRunner::new(ok(""));
+        run(&runner);
+        let call = runner.calls().join(" ");
+        assert!(call.contains("tmux -u"), "{label} must force UTF-8: {call}");
+    }
+}
+
 #[test]
 fn container_exec_argv_respects_the_engine() {
     let argv = container_exec_argv("podman", "dev", &["tmux", "kill-server"]);
@@ -424,7 +489,7 @@ fn switch_client_targets_deck_client_explicitly() {
     // scoped. Writing `-c "$C"` directly (two words) avoids the zsh
     // `${C:+…}` single-word-collapse trap.
     assert!(
-        calls[0].contains("[ -n \"$C\" ] && tmux switch-client -c \"$C\" -t '=work'"),
+        calls[0].contains("[ -n \"$C\" ] && tmux -u switch-client -c \"$C\" -t '=work'"),
         "no-op unless the client tty is known: {}",
         calls[0]
     );
@@ -688,7 +753,7 @@ fn new_session_never_bakes_this_calls_own_agent_socket_into_the_session() {
         "call: {call}"
     );
     assert!(
-        call.contains("tmux new-session -d -s 'work'"),
+        call.contains("tmux -u new-session -d -s 'work'"),
         "call: {call}"
     );
 }
