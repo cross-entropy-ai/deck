@@ -112,6 +112,9 @@ pub const TAB_OVERFLOW_MARKER: &str = "…";
 pub const TREE_BRANCH: &str = "├ ";
 /// See [`TREE_BRANCH`].
 pub const TREE_BRANCH_LAST: &str = "└ ";
+/// The line those connectors hang from, carried down the gutter of every row
+/// between a group's divider and the nested one below it.
+pub const TREE_TRUNK: &str = "│";
 const TAB_OVERFLOW_RUN_WIDTH: u16 = 2; // marker + one separating space
 
 /// Minimum sidebar content width before the update banner renders at all.
@@ -374,6 +377,12 @@ pub struct SectionLayoutOpts {
 pub struct BuiltLayout {
     pub layout: SidebarLayout,
     pub sections: Vec<SectionMeta>,
+    /// Per row (by row index): whether the tree line running down the gutter
+    /// continues past it, because a section below still hangs off the same
+    /// parent — or off this row's own lane. Without it the connector on a
+    /// nested divider dangles: the elbow is drawn, but nothing joins it to the
+    /// group it came from across the rows in between.
+    pub tree_rows: Vec<bool>,
 }
 
 impl Default for BuiltLayout {
@@ -381,6 +390,7 @@ impl Default for BuiltLayout {
         Self {
             layout: SidebarLayout::new(),
             sections: Vec::new(),
+            tree_rows: Vec::new(),
         }
     }
 }

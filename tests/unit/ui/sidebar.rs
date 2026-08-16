@@ -857,4 +857,98 @@ fn container_dividers_render_as_a_branch_under_their_host() {
         1,
         "{lines:#?}"
     );
+
+    // The line reaches the elbows: every row between a divider and the nested
+    // one below it carries the trunk down its gutter, so the connector joins
+    // the group it came from instead of dangling. A focus/drag marker holds
+    // that same cell and reads as an emphasized segment of the run.
+    let gutter = |row: usize| lines[row].chars().nth(1).unwrap_or(' ');
+    let dev = row_of("├ ▾ dev ");
+    let build = row_of("└ ▾ build ");
+    for row in (host + 1..dev).chain(dev + 1..build) {
+        assert!(
+            matches!(gutter(row), '│' | '▌'),
+            "gap in the trunk at row {row}: {lines:#?}"
+        );
+    }
+    // And it stops at the last child: nothing below belongs to the branch.
+    for row in build + 1..lines.len() {
+        assert_ne!(gutter(row), '│', "trunk outlives the branch: {lines:#?}");
+    }
+}
+
+#[test]
+fn the_tree_line_reaches_a_container_on_the_agents_tab_too() {
+    // The Agents tab draws the same tree, and its rows go through an extra
+    // transform (the status dot recolor) that rebuilds their spans — the
+    // gutter has to survive it, or the line breaks on exactly the rows that
+    // have an agent in them.
+    use crate::agent::{AgentKind, AgentStatus, DetectedAgent};
+    use crate::config::{ContainerConfig, RemoteConfig};
+    use crate::state::{AppState, SidebarTab, ViewMode};
+    use crate::system::tmux::TmuxSystem;
+
+    let theme = &crate::theme::THEMES[0];
+    let keybindings = Keybindings::default();
+
+    let mut state = AppState::new(100, 24);
+    state.prefs.sidebar_tab = SidebarTab::Agents;
+    state.config_remotes = vec![RemoteConfig {
+        host: "devbox".into(),
+        forward_agent: true,
+        forwards: vec![],
+        containers: vec![ContainerConfig {
+            name: "dev".into(),
+            engine: "docker".into(),
+            agent_sock: None,
+        }],
+    }];
+    mount_tmux_sections(&mut state);
+    state.agents.insert(
+        TmuxSystem::host_lane("devbox"),
+        vec![DetectedAgent {
+            kind: AgentKind::Claude,
+            session: "work".into(),
+            window: "1".into(),
+            pane_id: "%1".into(),
+            status: AgentStatus::Working,
+        }],
+    );
+    state.rebuild_agent_entries();
+
+    let built = state.agents_layout(ViewMode::Expanded);
+    let agent_entries = state.agent_entries.clone();
+    let sessions: Vec<crate::state::SessionEntry> = Vec::new();
+    let props = SidebarProps {
+        sidebar_tab: SidebarTab::Agents,
+        agent_entries: &agent_entries,
+        focus_target: None,
+        ..sidebar_props(&sessions, &built, theme, &keybindings)
+    };
+    let (terminal, _) = render_sidebar(38, 20, None, props);
+
+    let buf = terminal.backend().buffer();
+    let lines: Vec<String> = (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect();
+    let row_of = |needle: &str| {
+        lines
+            .iter()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("{needle} not drawn in {lines:#?}"))
+    };
+    let host = row_of(" devbox ");
+    let container = row_of("└ ▾ dev ");
+    assert!(host < container);
+    for row in host + 1..container {
+        assert_eq!(
+            lines[row].chars().nth(1),
+            Some('│'),
+            "gap in the trunk at row {row}: {lines:#?}"
+        );
+    }
 }

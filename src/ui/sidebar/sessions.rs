@@ -11,7 +11,9 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
-use crate::geometry::{AgentEntry, AgentHit, AgentTarget, BuiltLayout, DividerHit, SummaryHits};
+use crate::geometry::{
+    AgentEntry, AgentHit, AgentTarget, BuiltLayout, DividerHit, SummaryHits, TREE_TRUNK,
+};
 use crate::state::FocusTarget;
 use crate::summary_card::SummaryState;
 
@@ -127,6 +129,31 @@ fn lead_with_branch(mut text: Text<'static>) -> Text<'static> {
     text
 }
 
+/// Carry the tree line down a row's gutter, joining a group's divider to the
+/// nested one below it. Without this the elbow on a nested divider dangles —
+/// the rows in between leave a gap where the line should run.
+///
+/// Only into a *blank* gutter. The focus and drag markers live in the same
+/// cell, and each is itself a vertical mark in that column, so a marked row
+/// reads as an emphasized segment of the same run rather than a break in it —
+/// and neither marker gets quietly overwritten by structure. Every line of the
+/// row is carried, so a two-line entry doesn't leave a hole under itself.
+fn mark_tree_line(mut text: Text<'static>, theme: &Theme) -> Text<'static> {
+    for line in &mut text.lines {
+        let Some(span) = line.spans.first_mut() else {
+            continue;
+        };
+        let Some(rest) = span.content.strip_prefix(' ') else {
+            continue;
+        };
+        span.content = format!("{TREE_TRUNK}{rest}").into();
+        // The same color the connector on the divider takes: one line, drawn
+        // in one weight, however many rows it spans.
+        span.style = span.style.fg(theme.muted);
+    }
+    text
+}
+
 /// Paint a fixed-width marker into the preset's two-cell row gutter. The
 /// grabbed source stays marked with `↕`; once the pointer visits another row,
 /// that prospective drop target gets `▸` while the normal focus background
@@ -216,26 +243,31 @@ pub(super) fn draw_sessions(
     let agents_tab = props.agents_tab;
     let agent_entries = props.agent_entries;
     let project_drag = props.project_drag;
+    let tree_rows = props.built.tree_rows.as_slice();
     let widget = SectionedListWidget::new(layout, move |item, item_ctx| {
         let mut text = basic_style(item, item_ctx);
-        if agents_tab && matches!(item.kind, ItemKind::Row) {
+        if matches!(item.kind, ItemKind::Header) {
+            return lead_with_branch(unbold(text));
+        }
+        if agents_tab {
             if let Some(status) = item_ctx
                 .row_idx
                 .and_then(|i| agent_entries.get(i))
                 .and_then(|e| e.agent())
                 .map(|a| a.status)
             {
-                return recolor_agent_dot(text, theme, status);
+                text = recolor_agent_dot(text, theme, status);
             }
-            return text;
+        } else if let (Some(row_idx), Some((source, target))) = (item_ctx.row_idx, project_drag) {
+            text = mark_project_drag(text, row_idx, source, target, theme);
         }
-        if !agents_tab && matches!(item.kind, ItemKind::Row) {
-            if let (Some(row_idx), Some((source, target))) = (item_ctx.row_idx, project_drag) {
-                text = mark_project_drag(text, row_idx, source, target, theme);
-            }
-        }
-        if matches!(item.kind, ItemKind::Header) {
-            return lead_with_branch(unbold(text));
+        // Last, so the line only ever fills a gutter the markers above left
+        // blank — and so it reaches rows on both tabs.
+        if item_ctx
+            .row_idx
+            .is_some_and(|row| tree_rows.get(row).copied().unwrap_or(false))
+        {
+            text = mark_tree_line(text, theme);
         }
         text
     })
