@@ -228,6 +228,11 @@ pub(crate) fn run_ssh(
 /// Container-bound commands must stay POSIX-sh clean: `sh` in slim images is
 /// dash, which has no `$'…'` ANSI-C quoting — that's why `list_sessions` and
 /// `agent_probe` pick `…_CONTAINER` spellings of their tmux formats.
+///
+/// `TERM` is passed for the same reason the attach path passes it — the engine
+/// substitutes its own for the caller's, and tmux believes it (see
+/// [`crate::pty::CHILD_TERM`]). It costs nothing here and keeps the two exec
+/// spellings from drifting apart again.
 fn container_exec_argv(engine: &str, container: &str, remote_argv: &[&str]) -> Vec<String> {
     let inner = format!("{REMOTE_PATH_PREFIX} {}", remote_argv.join(" "));
     vec![
@@ -239,6 +244,8 @@ fn container_exec_argv(engine: &str, container: &str, remote_argv: &[&str]) -> V
         // value to one command, so quoting costs nothing legitimate.
         shell_single_quote(engine),
         "exec".to_string(),
+        "-e".to_string(),
+        shell_single_quote(&format!("TERM={}", crate::pty::CHILD_TERM)),
         shell_single_quote(container),
         "sh".to_string(),
         "-c".to_string(),

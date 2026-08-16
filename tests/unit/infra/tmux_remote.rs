@@ -167,7 +167,7 @@ fn container_run_wraps_command_in_engine_exec_on_the_host() {
     );
     // The command runs inside the container through one sh -c word.
     assert!(
-        call.contains("'docker' exec 'dev' sh -c '"),
+        call.contains("'docker' exec -e 'TERM=xterm-256color' 'dev' sh -c '"),
         "missing exec wrap: {call}"
     );
     // The inner command keeps the PATH prefix contract run_ssh promises.
@@ -214,7 +214,7 @@ fn container_switch_client_runs_inside_the_container() {
     let call = &runner.calls()[0];
 
     assert!(
-        call.contains("'docker' exec 'dev' sh -c '"),
+        call.contains("'docker' exec -e 'TERM=xterm-256color' 'dev' sh -c '"),
         "missing exec wrap: {call}"
     );
     assert!(call.contains("switch-client"), "missing switch: {call}");
@@ -386,11 +386,15 @@ fn container_exec_argv_respects_the_engine() {
     let argv = container_exec_argv("podman", "dev", &["tmux", "kill-server"]);
     assert_eq!(argv[0], "'podman'");
     assert_eq!(argv[1], "exec");
-    assert_eq!(argv[2], "'dev'");
-    assert_eq!(argv[3], "sh");
-    assert_eq!(argv[4], "-c");
-    assert!(argv[5].starts_with("'PATH="));
-    assert!(argv[5].contains("tmux kill-server"));
+    // The engine does not carry the caller's TERM into the container, and a
+    // tmux client that reads the engine's own reports 8 colors.
+    assert_eq!(argv[2], "-e");
+    assert_eq!(argv[3], format!("'TERM={}'", crate::pty::CHILD_TERM));
+    assert_eq!(argv[4], "'dev'");
+    assert_eq!(argv[5], "sh");
+    assert_eq!(argv[6], "-c");
+    assert!(argv[7].starts_with("'PATH="));
+    assert!(argv[7].contains("tmux kill-server"));
 }
 
 #[test]
@@ -776,63 +780,70 @@ fn every_assembled_remote_command_is_valid_shell() {
     // `while`, `{ }`) first and the remote shell reads the reserved word as a
     // command name and dies with a syntax error. That shipped once, in
     // `new_session`, and only showed up against a real host.
-    type Invoke = Box<dyn Fn(&FakeRunner)>;
+    type Invoke = Box<dyn Fn(&FakeRunner, &str)>;
     let cases: Vec<(&str, Invoke)> = vec![
         (
             "list_sessions",
-            Box::new(|r: &FakeRunner| {
-                let _ = list_sessions_with(r, "box");
+            Box::new(|r: &FakeRunner, id: &str| {
+                let _ = list_sessions_with(r, id);
             }),
         ),
         (
             "new_session",
-            Box::new(|r: &FakeRunner| {
-                let _ = new_session_with(r, "box", "work", "~/proj");
+            Box::new(|r: &FakeRunner, id: &str| {
+                let _ = new_session_with(r, id, "work", "~/proj");
             }),
         ),
         (
             "switch_client",
-            Box::new(|r: &FakeRunner| {
-                let _ = switch_client_with(r, "box", 7, "work");
+            Box::new(|r: &FakeRunner, id: &str| {
+                let _ = switch_client_with(r, id, 7, "work");
             }),
         ),
         (
             "persist_session_order",
-            Box::new(|r: &FakeRunner| {
-                let _ = persist_session_order_with(r, "box", &["a".to_string()]);
+            Box::new(|r: &FakeRunner, id: &str| {
+                let _ = persist_session_order_with(r, id, &["a".to_string()]);
             }),
         ),
         (
             "list_dir",
-            Box::new(|r: &FakeRunner| {
-                let _ = list_dir_with(r, "box", "~/proj");
+            Box::new(|r: &FakeRunner, id: &str| {
+                let _ = list_dir_with(r, id, "~/proj");
             }),
         ),
         (
             "wait_for_client_marker",
-            Box::new(|r: &FakeRunner| {
-                let _ = wait_for_client_marker_with(r, "box", 7);
+            Box::new(|r: &FakeRunner, id: &str| {
+                let _ = wait_for_client_marker_with(r, id, 7);
             }),
         ),
     ];
 
+    // Both spellings of every call: on the host, and wrapped in `<engine>
+    // exec … sh -c '…'` for a container. The wrapping re-quotes the whole
+    // command into one word, so it is its own chance to produce something the
+    // remote shell cannot parse.
     for (name, run) in cases {
-        let runner = FakeRunner::new(ok(""));
-        run(&runner);
-        let command = remote_command_of(&runner.calls()[0]);
-        // `-n` parses without executing. bash is the common remote login shell;
-        // sh covers the stricter POSIX reading (and is what a container gets).
-        for shell in ["bash", "sh"] {
-            let status = std::process::Command::new(shell)
-                .arg("-n")
-                .arg("-c")
-                .arg(&command)
-                .status()
-                .expect("spawn shell");
-            assert!(
-                status.success(),
-                "{name} produced a command {shell} cannot parse:\n{command}"
-            );
+        for id in ["box", "box#dev"] {
+            let runner = FakeRunner::new(ok(""));
+            run(&runner, id);
+            let command = remote_command_of(&runner.calls()[0]);
+            // `-n` parses without executing. bash is the common remote login
+            // shell; sh covers the stricter POSIX reading (and is what a
+            // container gets).
+            for shell in ["bash", "sh"] {
+                let status = std::process::Command::new(shell)
+                    .arg("-n")
+                    .arg("-c")
+                    .arg(&command)
+                    .status()
+                    .expect("spawn shell");
+                assert!(
+                    status.success(),
+                    "{name} on {id} produced a command {shell} cannot parse:\n{command}"
+                );
+            }
         }
     }
 }
