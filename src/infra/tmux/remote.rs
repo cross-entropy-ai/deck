@@ -474,10 +474,12 @@ fn list_containers_with(runner: &dyn CommandRunner, host: &str) -> Vec<Discovere
     let host = parse_remote_id(host).host;
     let format = shell_single_quote(CONTAINER_LIST_FORMAT);
     // One hop for both engines, blocks separated by the marker so a missing
-    // engine yields an empty block instead of failing the call. Starts with a
-    // simple command so `run_ssh`'s `PATH=…` prefix attaches, and ends in `true`
+    // engine yields an empty block instead of failing the call, ending in `true`
     // so the compound's exit status is the probe's, not the last engine's.
-    let mut script = String::new();
+    // `export PATH` rather than `run_ssh`'s leading assignment, which attaches
+    // to the first simple command only — the second engine would otherwise be
+    // looked up with the login shell's PATH alone.
+    let mut script = format!("export {REMOTE_PATH_PREFIX} ; ");
     for engine in CONTAINER_ENGINES {
         if !script.is_empty() {
             script.push_str(&format!(" ; echo {ENGINE_PROBE_MARKER} ; "));
@@ -581,9 +583,15 @@ fn container_forward_target_with(
     // One hop for both questions, marker-separated so an engine that answers
     // neither yields two empty blocks instead of failing the call. Ends in
     // `true` so the compound's status is the probe's, not the last command's.
+    // `export PATH`, not `run_ssh`'s leading `PATH=…` assignment: that form
+    // attaches to one *simple command*, so everything after the first `;` — the
+    // inspect, here — would run with only the login shell's PATH and quietly
+    // find no engine. Mirrors `capture_panes`, which takes the same care.
     let script = format!(
-        "{engine_q} port {name_q} {port} 2>/dev/null ; echo {FORWARD_PROBE_MARKER} ; \
+        "export {prefix} ; {engine_q} port {name_q} {port} 2>/dev/null ; \
+         echo {FORWARD_PROBE_MARKER} ; \
          {engine_q} inspect -f {format} {name_q} 2>/dev/null ; true",
+        prefix = REMOTE_PATH_PREFIX,
         format = shell_single_quote(CONTAINER_IP_FORMAT),
     );
     let raw = run_ssh(runner, host, &[script.as_str()])
