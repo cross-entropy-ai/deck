@@ -143,6 +143,11 @@ fn the_path_prefix_covers_per_user_installs() {
     assert!(REMOTE_PATH_PREFIX.starts_with("PATH=$HOME/.local/bin:"));
     // $PATH stays last so the target's own entries survive.
     assert!(REMOTE_PATH_PREFIX.ends_with(":$PATH"));
+    // A Mac remote running OrbStack keeps its `docker` here, reachable from a
+    // login shell only — which `ssh host cmd` is not. Last of the explicit
+    // entries: a fallback for a host that would otherwise read as having no
+    // container engine, never a preference over one already found.
+    assert!(REMOTE_PATH_PREFIX.ends_with(":$HOME/.orbstack/bin:$PATH"));
     // It has to reach the container path too, not just the host one.
     let runner = FakeRunner::new(ok(""));
     let _ = list_sessions_with(&runner, "box#dev");
