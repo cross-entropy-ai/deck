@@ -24,6 +24,18 @@ fn pty_err(e: impl std::fmt::Display) -> io::Error {
     io::Error::other(e.to_string())
 }
 
+/// What Deck's embedded emulator advertises to the child in its PTY, and to
+/// anything further down the chain that does not inherit it.
+///
+/// `ssh -tt` carries it to a remote shell, but a container engine's `exec`
+/// does not carry it into the container — it supplies a TERM of its own, and
+/// the tmux client inside then believes it has 8 colors and quantizes the
+/// user's palette down to them. So the container exec paths pass this value
+/// explicitly (`remote_tmux::container_exec_argv`, the attach wrapper in
+/// `app::ssh::remote_spawn`), and they take it from here: a pane opened inside
+/// a container must not claim fewer colors than the pane beside it.
+pub const CHILD_TERM: &str = "xterm-256color";
+
 impl Pty {
     /// Spawn a command in a new PTY with additional environment variables.
     pub fn spawn_with_env(
@@ -45,7 +57,7 @@ impl Pty {
         for arg in args {
             cmd.arg(*arg);
         }
-        cmd.env("TERM", "xterm-256color");
+        cmd.env("TERM", CHILD_TERM);
         for &(key, val) in extra_env {
             cmd.env(key, val);
         }

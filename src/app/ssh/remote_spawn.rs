@@ -223,10 +223,15 @@ fn attach_command(remote_id: &str, marker_id: u64) -> String {
 
 /// The complete remote-shell command for one attach connection: the prelude
 /// itself on a host id, or — for a container id — the prelude wrapped in
-/// `<engine> exec -it [-e SSH_AUTH_SOCK=…] <name> sh -c '…'`, so the tmux
-/// client, the client-tty marker, and the agent symlink all live inside the
-/// container (the same filesystem the one-shot `run_ssh` calls exec into).
+/// `<engine> exec -it -e TERM=… [-e SSH_AUTH_SOCK=…] <name> sh -c '…'`, so the
+/// tmux client, the client-tty marker, and the agent symlink all live inside
+/// the container (the same filesystem the one-shot `run_ssh` calls exec into).
 /// `-it` keeps a TTY through the exec; ssh's `-tt` supplies the outer one.
+///
+/// `TERM` is passed because the engine does not carry the caller's through the
+/// exec: the tmux client inside the container read the engine's own value,
+/// concluded it had 8 colors, and quantized the user's 256-color panes down to
+/// them. See [`crate::pty::CHILD_TERM`].
 fn attach_shell_command(remote_id: &str, marker_id: u64) -> String {
     attach_shell_command_with(
         remote_id,
@@ -257,8 +262,9 @@ fn attach_shell_command_with(
         })
         .unwrap_or_default();
     format!(
-        "{path} {engine} exec -it {agent_env}{name} sh -c {script}",
+        "{path} {engine} exec -it -e {term} {agent_env}{name} sh -c {script}",
         path = crate::remote_tmux::REMOTE_PATH_PREFIX,
+        term = crate::remote_tmux::shell_single_quote(&format!("TERM={}", crate::pty::CHILD_TERM)),
         engine = crate::remote_tmux::shell_single_quote(&opts.engine),
         name = crate::remote_tmux::shell_single_quote(container),
         script = crate::remote_tmux::shell_single_quote(&prelude),
@@ -400,7 +406,11 @@ mod tests {
         // Engine resolved on the host via the PATH prefix; TTY through the
         // exec; the whole prelude as ONE sh -c word.
         assert!(command.starts_with("PATH="));
-        assert!(command.contains("'docker' exec -it 'dev' sh -c '"));
+        assert!(command.contains("'docker' exec -it -e 'TERM=xterm-256color' 'dev' sh -c '"));
+        // The engine substitutes its own TERM for the caller's, and the tmux
+        // client inside believes it — left alone it reported 8 colors and
+        // quantized the user's palette down to them.
+        assert!(command.contains(crate::pty::CHILD_TERM));
         // No exec-time agent env unless the config names a socket path (the
         // prelude's own symlink block still mentions SSH_AUTH_SOCK).
         assert!(!command.contains("-e 'SSH_AUTH_SOCK"));
@@ -418,7 +428,49 @@ mod tests {
         };
         let command = attach_shell_command_with("web.prod#dev", 17, &opts);
 
-        assert!(command.contains("'podman' exec -it -e 'SSH_AUTH_SOCK=/ssh-agent' 'dev' sh -c '"));
+        assert!(command.contains(
+            "'podman' exec -it -e 'TERM=xterm-256color' -e 'SSH_AUTH_SOCK=/ssh-agent' 'dev' sh -c '"
+        ));
+    }
+
+    /// The twin of `every_assembled_remote_command_is_valid_shell` for the one
+    /// command that does not go through `run_ssh`. This one is the interactive
+    /// path: a quoting slip here is a lane that never opens a pane, and the
+    /// container spelling re-quotes the whole prelude into a single word, so it
+    /// gets its own chance to produce something the remote shell cannot parse.
+    #[test]
+    fn every_attach_command_is_valid_shell() {
+        let cases = [
+            ("host", crate::remote_tmux::ContainerOpts::default()),
+            ("container", crate::remote_tmux::ContainerOpts::default()),
+            (
+                "container with an agent socket",
+                crate::remote_tmux::ContainerOpts {
+                    engine: "podman".to_string(),
+                    agent_sock: Some("/ssh-agent".to_string()),
+                },
+            ),
+        ];
+        for (name, opts) in cases {
+            let remote_id = if name == "host" {
+                "web.prod"
+            } else {
+                "web.prod#dev"
+            };
+            let command = attach_shell_command_with(remote_id, 17, &opts);
+            for shell in ["bash", "sh"] {
+                let status = std::process::Command::new(shell)
+                    .arg("-n")
+                    .arg("-c")
+                    .arg(&command)
+                    .status()
+                    .expect("spawn shell");
+                assert!(
+                    status.success(),
+                    "{name} produced a command {shell} cannot parse:\n{command}"
+                );
+            }
+        }
     }
 
     #[test]
