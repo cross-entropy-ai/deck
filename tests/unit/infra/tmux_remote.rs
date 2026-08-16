@@ -829,6 +829,15 @@ fn every_assembled_remote_command_is_valid_shell() {
                 let _ = container_forward_target_with(r, id, "docker", "dev", 8080);
             }),
         ),
+        // Absent from this table when discovery grew a second engine block, and
+        // it shipped a script with an empty command in it (v1.1.1) that no
+        // shell would parse — the one class of bug this test exists to catch.
+        (
+            "list_containers",
+            Box::new(|r: &FakeRunner, id: &str| {
+                let _ = list_containers_with(r, id);
+            }),
+        ),
     ];
 
     // Both spellings of every call: on the host, and wrapped in `<engine>
@@ -958,6 +967,33 @@ fn container_discovery_probes_both_engines_in_one_hop() {
     assert!(call.trim_end().ends_with("; true"), "call: {call}");
     // A container id must never be used as the ssh destination for discovery.
     let _ = list_containers_with(&FakeRunner::new(ok("")), "box#dev");
+}
+
+#[test]
+fn container_discovery_separates_the_engines_and_nothing_else() {
+    // The separator belongs *between* the engine blocks. Emitted ahead of the
+    // first one as well, the script carried an empty command
+    // (`export PATH=… ;  ; echo …`): the remote shell rejected the whole thing,
+    // and discovery's best-effort `Err` arm read that as "this host has no
+    // container engine" — on every host. Shipped in v1.1.1.
+    //
+    // `every_assembled_remote_command_is_valid_shell` now covers the syntax;
+    // this pins the placement, so a separator that merely lands in the wrong
+    // *parseable* spot (splitting one engine's output into two blocks) is
+    // caught too.
+    let runner = FakeRunner::new(ok(""));
+    let _ = list_containers_with(&runner, "box");
+    let call = &runner.calls()[0];
+
+    assert!(
+        call.contains("$PATH ; 'docker' ps -a"),
+        "the first engine follows the PATH export directly: {call}"
+    );
+    assert_eq!(
+        call.matches(ENGINE_PROBE_MARKER).count(),
+        CONTAINER_ENGINES.len() - 1,
+        "one separator per gap between engines: {call}"
+    );
 }
 
 #[test]

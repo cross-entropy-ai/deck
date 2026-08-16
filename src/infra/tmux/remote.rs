@@ -479,17 +479,26 @@ fn list_containers_with(runner: &dyn CommandRunner, host: &str) -> Vec<Discovere
     // `export PATH` rather than `run_ssh`'s leading assignment, which attaches
     // to the first simple command only — the second engine would otherwise be
     // looked up with the login shell's PATH alone.
-    let mut script = format!("export {REMOTE_PATH_PREFIX} ; ");
-    for engine in CONTAINER_ENGINES {
-        if !script.is_empty() {
-            script.push_str(&format!(" ; echo {ENGINE_PROBE_MARKER} ; "));
-        }
-        script.push_str(&format!(
-            "{} ps -a --format {format} 2>/dev/null",
-            shell_single_quote(engine)
-        ));
-    }
-    script.push_str(" ; true");
+    //
+    // `join`, not push-if-not-first: the separator goes *between* engine blocks
+    // and nowhere else. Deriving "not first" from the buffer instead put one
+    // ahead of `docker` once the buffer stopped starting out empty, leaving an
+    // empty command (`export PATH=… ;  ; echo …`) that every POSIX shell
+    // rejects outright — so the probe exited 2 and the `Err` arm below read it
+    // as "this host has no engine", on every host.
+    let probes: Vec<String> = CONTAINER_ENGINES
+        .iter()
+        .map(|engine| {
+            format!(
+                "{} ps -a --format {format} 2>/dev/null",
+                shell_single_quote(engine)
+            )
+        })
+        .collect();
+    let script = format!(
+        "export {REMOTE_PATH_PREFIX} ; {} ; true",
+        probes.join(&format!(" ; echo {ENGINE_PROBE_MARKER} ; "))
+    );
 
     let Ok(raw) = run_ssh(runner, host, &[script.as_str()]) else {
         return Vec::new();
