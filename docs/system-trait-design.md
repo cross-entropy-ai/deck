@@ -75,6 +75,15 @@ terminal. Attachment, focus, summary, configuration, and lane-action behavior
 are optional runtime capabilities; section presentation contains no connection
 key.
 
+`SectionDef.parent` is how a system declares that one of its lanes hangs under
+another — a container under the host it runs on. The shell indents that
+section's divider and folds it away with its parent; it never inspects a lane
+payload to work the relationship out, so any system that mounts lanes beneath
+other lanes gets the same nesting by declaring it. `divider_title` is the
+short label for the nested divider itself, where the parent's name is already
+on screen one row up; `title` stays the standalone name every other surface
+(overlay headings, tab labels) uses.
+
 ## Extension test
 
 `system::tests::partial_system_mounts_snapshot_and_actions_without_dummy_control`

@@ -824,6 +824,29 @@ impl AppState {
             )
     }
 
+    /// The lane `lane` hangs under, as its owning system declared it — a
+    /// container's host, say. `None` for a top-level lane and for one no
+    /// mounted system claims.
+    pub fn parent_lane(&self, lane: &LaneId) -> Option<&LaneId> {
+        self.system_sections
+            .iter()
+            .find(|section| section.lane == *lane)?
+            .parent
+            .as_ref()
+    }
+
+    /// Whether `lane` is folded in `collapsed` — directly, or because the lane
+    /// it hangs under is. The nested case matters wherever a fold has to hide
+    /// rows rather than just a divider: the child's rows are laid out inside the
+    /// folded parent's section, so anything reasoning about visibility has to
+    /// follow the same rule the layout does.
+    pub fn folded_in(&self, lane: &LaneId, collapsed: &HashSet<LaneId>) -> bool {
+        collapsed.contains(lane)
+            || self
+                .parent_lane(lane)
+                .is_some_and(|parent| collapsed.contains(parent))
+    }
+
     pub fn is_primary_entry(&self, entry: &SessionEntry) -> bool {
         self.primary_lane().map_or_else(
             || {
@@ -1190,23 +1213,31 @@ impl AppState {
         }
     }
 
+    /// Tab-bar labels for the flat session list, in `entries` order.
+    ///
+    /// Renderer and hit-tester both take them from here, because a label that
+    /// is one width on screen and another in the click map sends a click to the
+    /// wrong session. Deriving them twice is what let that drift in: the two
+    /// read the lane's name from different places and disagreed wherever those
+    /// differed — a folded group, a placeholder row, Compact view.
+    pub fn tab_labels(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .map(|entry| {
+                let origin =
+                    (!self.is_primary_entry(entry)).then(|| self.section_title(&entry.lane));
+                tab_label(origin.as_deref(), entry.display_name())
+            })
+            .collect()
+    }
+
     /// Map a screen column to a tab index in vertical/tabs mode.
     pub fn session_at_col(&self, col: u16, row: u16) -> Option<usize> {
         let b = self.border_inset();
         if row != b {
             return None;
         }
-        // Build labels in the same flat order and from the same section
-        // presentation metadata as the tab renderer.
-        let labels: Vec<String> = self
-            .entries
-            .iter()
-            .map(|entry| {
-                let origin =
-                    (!self.is_primary_entry(entry)).then(|| self.section_title(&entry.lane));
-                tab_label(origin.as_deref(), &entry.name)
-            })
-            .collect();
+        let labels = self.tab_labels();
         let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
         let content_width = self.term_width.saturating_sub(b.saturating_mul(2));
         let layout = tab_bar_layout(&label_refs, self.focused, content_width);

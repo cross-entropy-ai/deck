@@ -61,6 +61,8 @@ fn set_capabilities(
     state.system_sections = vec![crate::system::SectionDef {
         lane: crate::system::tmux::TmuxSystem::local_lane(),
         title: "test".into(),
+        parent: None,
+        divider_title: None,
         buttons: vec![],
         top_margin: false,
         primary: true,
@@ -81,6 +83,8 @@ fn mount_remote_lane(state: &mut AppState, host: &str) {
     state.system_sections.push(crate::system::SectionDef {
         lane: crate::system::tmux::TmuxSystem::host_lane(host),
         title: host.into(),
+        parent: None,
+        divider_title: None,
         buttons: vec![],
         top_margin: true,
         primary: false,
@@ -2153,8 +2157,10 @@ fn divider_menu_greys_port_forward_for_a_lane_without_its_own_connection() {
     state.system_sections.push(crate::system::SectionDef {
         lane: container.clone(),
         title: "devbox/dev".into(),
+        parent: Some(crate::system::tmux::TmuxSystem::host_lane("devbox")),
+        divider_title: Some("dev".into()),
         buttons: vec![],
-        top_margin: true,
+        top_margin: false,
         primary: false,
         session_capabilities: crate::system::SessionCapabilities {
             activate: true,

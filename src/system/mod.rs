@@ -531,8 +531,22 @@ pub enum SnapshotMode {
 pub struct SectionDef {
     /// Identity of this section's lane.
     pub lane: LaneId,
-    /// Divider title (e.g. `"local"`, `"myhost"`). System-defined.
+    /// Divider title (e.g. `"local"`, `"myhost"`). System-defined. Must stand
+    /// alone: overlays, tab labels and compact rows all name the lane with it,
+    /// away from any divider that would supply context.
     pub title: String,
+    /// The lane this one hangs under, when its system mounted it beneath
+    /// another. The shell indents such a section's divider and folds it away
+    /// with its parent — it never decodes a lane payload to work the
+    /// relationship out, so a system that nests lanes has to say so here.
+    pub parent: Option<LaneId>,
+    /// Shorter label for this section's own divider, for when [`title`] repeats
+    /// what the parent's divider already shows one row up (a container reads
+    /// `host/name` everywhere else, but under its host it is just `name`).
+    /// `None` draws [`title`].
+    ///
+    /// [`title`]: Self::title
+    pub divider_title: Option<String>,
     /// Buttons on the divider, left→right.
     pub buttons: Vec<SectionButton>,
     /// Give this section's header a 1-row top margin (vs. flush).
@@ -592,6 +606,8 @@ mod tests {
             (lane.system() == self.id()).then(|| SectionDef {
                 lane: lane.clone(),
                 title: lane.lane().into(),
+                parent: None,
+                divider_title: None,
                 buttons: vec![SectionButton {
                     glyph: "!".into(),
                     action: LaneActionId::from("refresh"),
@@ -798,6 +814,20 @@ mod tests {
         // managed runtime so it attaches/controls like any remote lane.
         let section = system.section_for(&container).expect("container section");
         assert_eq!(section.title, "devbox/dev");
+        // Nested under the host it runs on: the shell indents the divider there
+        // and folds it away with the host, without decoding the lane id to work
+        // out that a container belongs to one.
+        assert_eq!(section.parent, Some(tmux::TmuxSystem::host_lane("devbox")));
+        assert_eq!(section.divider_title.as_deref(), Some("dev"));
+        assert!(
+            !section.top_margin,
+            "a container is inside its host's block, not a new one"
+        );
+        let host = system
+            .section_for(&tmux::TmuxSystem::host_lane("devbox"))
+            .expect("host section");
+        assert_eq!(host.parent, None);
+        assert!(host.top_margin);
         let cmds: Vec<&str> = section.buttons.iter().map(|b| b.action.as_str()).collect();
         assert_eq!(cmds, ["reconnect", "menu"]);
         assert_eq!(

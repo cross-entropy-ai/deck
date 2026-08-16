@@ -148,6 +148,7 @@ impl App {
             };
 
             let layout = self.state.current_layout(view_mode);
+            let tab_labels = self.state.tab_labels();
             let agent_entries = self.state.agent_entries.as_slice();
             let focus_target = self.state.focus_target();
             let project_drag = self.state.project_drag_indicators();
@@ -161,6 +162,7 @@ impl App {
                     ui::SidebarProps {
                         sessions: &self.state.entries,
                         built: &layout,
+                        tab_labels: &tab_labels,
                         focus_target,
                         project_drag,
                         sidebar_active,

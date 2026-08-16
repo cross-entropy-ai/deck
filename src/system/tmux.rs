@@ -170,6 +170,8 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId, ssh_connection_reuse: bo
         None => SectionDef {
             lane: lane.clone(),
             title: "local".to_string(),
+            parent: None,
+            divider_title: None,
             buttons: vec![new_session_button()],
             top_margin: false,
             primary: true,
@@ -186,15 +188,28 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId, ssh_connection_reuse: bo
                 crate::ssh::divider::divider(remotes, remote_id, ssh_connection_reuse);
             buttons.push(menu_button());
             let target = crate::remote_tmux::parse_remote_id(remote_id);
-            let title = match target.container {
-                None => remote_id.to_string(),
-                Some(container) => format!("{}/{}", target.host, container),
+            // A container hangs under the host it runs on: the shell indents it
+            // there and folds it away when the host folds. Its full title still
+            // names the host, because everywhere *else* the label appears — an
+            // overlay heading, a compact row's prefix — the divider above is not
+            // there to say which machine this is.
+            let (title, divider_title, parent) = match target.container {
+                None => (remote_id.to_string(), None, None),
+                Some(container) => (
+                    format!("{}/{}", target.host, container),
+                    Some(container.to_string()),
+                    Some(TmuxSystem::host_lane(target.host)),
+                ),
             };
             SectionDef {
                 lane: lane.clone(),
                 title,
+                // A blank row above would read as a new machine starting. A
+                // container is part of the block it sits in, so it stays flush.
+                top_margin: parent.is_none(),
+                parent,
+                divider_title,
                 buttons,
-                top_margin: true,
                 primary: false,
                 session_capabilities: tmux_session_capabilities(),
                 lane_capabilities: tmux_lane_capabilities(lane, ssh_connection_reuse),

@@ -328,10 +328,6 @@ pub struct SectionMeta {
     /// it. For a non-divider placeholder header it's still set; read `divider`
     /// to tell them apart.
     pub lane: LaneId,
-    /// Backend-provided presentation label for this lane.
-    pub title: String,
-    /// Whether this is the embedded primary lane.
-    pub primary: bool,
     /// Buttons on this divider, left→right, matching the `BasicItem`
     /// `.button()` order. Empty for placeholder headers (empty-local /
     /// no-agents / detecting).
