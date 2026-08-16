@@ -20,6 +20,9 @@ fn sidebar_props<'a>(
     SidebarProps {
         sessions,
         built,
+        // Overridden by the tabs-mode tests, which are the only ones that draw
+        // a tab bar; every other layout ignores it.
+        tab_labels: &[],
         focus_target: None,
         project_drag: None,
         sidebar_active: true,
@@ -243,9 +246,11 @@ fn overflowing_vertical_tabs_keep_focus_and_menu_visible() {
     let built = state.sidebar_layout(state.prefs.view_mode);
     let sessions = state.entries.clone();
 
+    let labels = state.tab_labels();
     let props = SidebarProps {
         focus_target: state.focus_target(),
         tabs_mode: true,
+        tab_labels: &labels,
         ..sidebar_props(&sessions, &built, theme, &keybindings)
     };
     let (terminal, captured) = render_sidebar(40, 12, Some(Rect::new(0, 0, 40, 3)), props);
@@ -769,4 +774,85 @@ fn narrow_agents_tab_does_not_leak_into_pty() {
             "click past the sidebar must be inert"
         );
     }
+}
+
+#[test]
+fn container_dividers_render_as_a_branch_under_their_host() {
+    // The sidebar is the only place the nesting is visible, so this pins what
+    // it draws: the host's own divider, then its containers indented beneath
+    // it with no blank row between, and the host name spent only once.
+    use crate::config::{ContainerConfig, RemoteConfig};
+    use crate::state::{AppState, SidebarTab, ViewMode};
+    use crate::system::tmux::TmuxSystem;
+
+    let theme = &crate::theme::THEMES[0];
+    let keybindings = Keybindings::default();
+
+    let mut state = AppState::new(100, 24);
+    state.prefs.sidebar_tab = SidebarTab::Projects;
+    state.prefs.sidebar_width = 32;
+    state.config_remotes = vec![RemoteConfig {
+        host: "devbox".into(),
+        forward_agent: true,
+        forwards: vec![],
+        containers: ["dev", "build"]
+            .into_iter()
+            .map(|name| ContainerConfig {
+                name: name.into(),
+                engine: "docker".into(),
+                agent_sock: None,
+            })
+            .collect(),
+    }];
+    mount_tmux_sections(&mut state);
+    for lane in [
+        TmuxSystem::host_lane("devbox"),
+        TmuxSystem::container_lane("devbox", "dev"),
+        TmuxSystem::container_lane("devbox", "build"),
+    ] {
+        state.entries.push(crate::state::SessionEntry {
+            lane,
+            name: "s".to_string(),
+            dir: String::new(),
+            kind: crate::state::SessionEntryKind::Live { is_current: false },
+        });
+    }
+    state.clamp_projects_focus();
+
+    let built = state.sidebar_layout(ViewMode::Expanded);
+    let sessions = state.entries.clone();
+    let props = SidebarProps {
+        focus_target: state.focus_target(),
+        ..sidebar_props(&sessions, &built, theme, &keybindings)
+    };
+    let (terminal, _) = render_sidebar(32, 24, None, props);
+
+    let buf = terminal.backend().buffer();
+    let lines: Vec<String> = (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect();
+    let row_of = |needle: &str| {
+        lines
+            .iter()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("{needle} not drawn in {lines:#?}"))
+    };
+    let host = row_of(" devbox ");
+    // Drawn under the host, in mount order, each naming only itself — the
+    // machine is on the divider above and does not need repeating.
+    assert!(host < row_of("├ dev "));
+    assert!(row_of("├ dev ") < row_of("└ build "));
+    // And the host half is spent once: no `devbox/dev` eating the width the
+    // container name needs.
+    assert_eq!(
+        lines.iter().filter(|line| line.contains("devbox")).count(),
+        1,
+        "{lines:#?}"
+    );
 }

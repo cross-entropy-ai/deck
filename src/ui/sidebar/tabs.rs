@@ -5,7 +5,6 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
-use crate::geometry::BuiltLayout;
 use crate::geometry::{tab_bar_layout, truncate, TAB_OVERFLOW_MARKER, TAB_SEPARATOR};
 
 use super::super::text::pad_line;
@@ -15,7 +14,8 @@ use crate::state::{SessionEntry, SessionEntryKind};
 
 pub(super) struct TabsProps<'a> {
     pub sessions: &'a [SessionEntry],
-    pub built: &'a BuiltLayout,
+    /// One label per session, in `sessions` order — see `AppState::tab_labels`.
+    pub labels: &'a [String],
     pub focused: usize,
     pub sidebar_active: bool,
     pub show_borders: bool,
@@ -42,21 +42,7 @@ pub(super) fn draw_sidebar_tabs(
         ..content
     };
     let mut spans: Vec<Span> = Vec::new();
-    let labels: Vec<String> = sessions
-        .iter()
-        .map(|session| {
-            let section = props
-                .built
-                .sections
-                .iter()
-                .find(|section| section.lane == session.lane);
-            let origin = section
-                .filter(|section| !section.primary)
-                .map(|section| section.title.as_str());
-            crate::geometry::tab_label(origin, session.display_name())
-        })
-        .collect();
-    let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+    let label_refs: Vec<&str> = props.labels.iter().map(String::as_str).collect();
     let layout = tab_bar_layout(&label_refs, focused, content.width);
     let mut cursor = 0u16;
     let pad_to = |target: u16, spans: &mut Vec<Span<'static>>, cursor: &mut u16| {
@@ -88,7 +74,7 @@ pub(super) fn draw_sidebar_tabs(
         let idx_width = idx.width() as u16;
         let after_idx = tab_width.saturating_sub(idx_width);
         let label_room = after_idx.saturating_sub(2) as usize;
-        let label = truncate(&labels[i], label_room);
+        let label = truncate(&props.labels[i], label_room);
 
         let bg = if is_focused { theme.surface } else { theme.bg };
         let name_fg = if matches!(session.kind, SessionEntryKind::Unreachable) {

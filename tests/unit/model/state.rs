@@ -1141,6 +1141,119 @@ fn focus_skips_collapsed_remote_group() {
     assert!(!state.is_focus_collapsed(2));
 }
 
+/// A state whose sections come from a real `TmuxSystem` holding one remote
+/// host with `containers` mounted under it, one session row per remote lane.
+/// Rows follow section order — the two local rows from `make_state`, then one
+/// per remote lane — so a flat index means the same thing to `entries` and to
+/// the built layout.
+fn state_with_containers(containers: &[&str]) -> AppState {
+    use crate::system::System;
+
+    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    let system = crate::system::tmux::TmuxSystem::default();
+    let remotes = vec![crate::config::RemoteConfig {
+        host: "devbox".into(),
+        forward_agent: true,
+        forwards: vec![],
+        containers: containers
+            .iter()
+            .map(|name| crate::config::ContainerConfig {
+                name: (*name).to_string(),
+                engine: "docker".into(),
+                agent_sock: None,
+            })
+            .collect(),
+    }];
+    system.configure(&crate::config::Config::default(), &remotes);
+    state.system_sections = system
+        .lanes()
+        .into_iter()
+        .filter_map(|lane| system.section_for(&lane))
+        .collect();
+    for lane in system.lanes().into_iter().skip(1) {
+        state.entries.push(SessionEntry {
+            lane,
+            name: "s".to_string(),
+            dir: "/tmp".to_string(),
+            kind: SessionEntryKind::Live { is_current: false },
+        });
+    }
+    state
+}
+
+/// The divider labels a built layout draws, top to bottom.
+fn header_titles(built: &BuiltLayout) -> Vec<String> {
+    built
+        .layout
+        .items()
+        .iter()
+        .filter(|item| matches!(item.kind, ratatui_sectioned_list::ItemKind::Header))
+        .map(|item| item.data.title.clone())
+        .collect()
+}
+
+#[test]
+fn container_dividers_hang_under_their_host_as_a_branch() {
+    let state = state_with_containers(&["dev", "build"]);
+    let built = state.sidebar_layout(ViewMode::Expanded);
+
+    // The host half of a container's name is already on the divider above it,
+    // so the branch spends the sidebar's width on the part that differs.
+    assert_eq!(
+        header_titles(&built),
+        vec!["local", "devbox", "├ dev", "└ build"]
+    );
+
+    // And no blank row between a host and what runs on it: the margin is what
+    // separates one machine from the next, so a container inside the block
+    // must not have one.
+    let leads: Vec<u16> = built
+        .layout
+        .items()
+        .iter()
+        .filter(|item| matches!(item.kind, ratatui_sectioned_list::ItemKind::Header))
+        .map(|item| item.lead)
+        .collect();
+    assert_eq!(leads, vec![0, 1, 0, 0]);
+}
+
+#[test]
+fn folding_a_host_folds_the_containers_under_it() {
+    // Rows: 0,1 local; 2 the host's; 3 the container's.
+    let mut state = state_with_containers(&["dev"]);
+    state
+        .collapsed_sections
+        .insert(crate::system::tmux::TmuxSystem::host_lane("devbox"));
+    let built = state.sidebar_layout(ViewMode::Expanded);
+
+    // The container's divider goes with its host — left behind it would head a
+    // group whose machine is no longer on screen.
+    assert_eq!(header_titles(&built), vec!["local", "devbox"]);
+    // Its rows land inside the folded host's section, so they fold with it,
+    // and the cursor steps over them instead of parking out of sight.
+    assert!(built.layout.is_row_hidden(2));
+    assert!(built.layout.is_row_hidden(3));
+    assert!(state.is_focus_collapsed(3));
+    // A sibling host is untouched by any of it.
+    assert!(!state.is_focus_collapsed(0));
+}
+
+#[test]
+fn a_container_tab_keeps_its_host_prefix_while_the_host_is_folded() {
+    // The tab bar names a lane from the model, not from the dividers the
+    // sidebar happens to be drawing: a folded host removes the container's
+    // divider, and a label sourced from that list would silently lose the
+    // host it needs to disambiguate.
+    let mut state = state_with_containers(&["dev"]);
+    let unfolded = state.tab_labels();
+    // An origin at all — the bar truncates it to its own width budget.
+    assert!(unfolded[3].contains(':'), "{}", unfolded[3]);
+    state
+        .collapsed_sections
+        .insert(crate::system::tmux::TmuxSystem::host_lane("devbox"));
+    assert_eq!(state.tab_labels(), unfolded);
+}
+
 #[test]
 fn agents_probe_interval_cycles_and_labels() {
     assert_eq!(

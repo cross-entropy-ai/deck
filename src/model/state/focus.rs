@@ -33,15 +33,18 @@ impl AppState {
 
     /// Whether the row at flat focus index `idx` sits in a collapsed group
     /// (so keyboard focus should skip over it). Tab-aware: each tab folds
-    /// against its own collapse set.
+    /// against its own collapse set. A row in a lane nested under a folded one
+    /// counts as collapsed too — it is hidden on screen, so stepping onto it
+    /// would park the cursor somewhere the user cannot see.
     pub fn is_focus_collapsed(&self, idx: usize) -> bool {
         if self.agents_tab_active() {
             return self
                 .agent_entries
                 .get(idx)
-                .is_some_and(|e| self.collapsed_agent_sections.contains(&e.lane));
+                .is_some_and(|e| self.folded_in(&e.lane, &self.collapsed_agent_sections));
         }
-        idx < self.focusable_count() && self.collapsed_sections.contains(&self.entries[idx].lane)
+        idx < self.focusable_count()
+            && self.folded_in(&self.entries[idx].lane, &self.collapsed_sections)
     }
 
     /// Decode the active tab's cursor into a focus target. Returns `None`

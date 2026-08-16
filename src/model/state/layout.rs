@@ -77,6 +77,27 @@ impl AppState {
         }
     }
 
+    /// The text on one section's own divider. A top-level section draws its
+    /// title; a nested one draws a branch glyph plus its short label, so the
+    /// sidebar reads as a tree without spending scarce width repeating the
+    /// parent's name. `├` continues a run of siblings, `└` closes it.
+    fn divider_label(
+        &self,
+        def: &crate::system::SectionDef,
+        position: usize,
+        lanes: &[LaneId],
+    ) -> String {
+        let Some(parent) = def.parent.as_ref() else {
+            return def.title.clone();
+        };
+        let more_siblings = lanes
+            .get(position + 1)
+            .and_then(|next| self.parent_lane(next))
+            .is_some_and(|next_parent| next_parent == parent);
+        let label = def.divider_title.as_deref().unwrap_or(&def.title);
+        format!("{} {label}", if more_siblings { "├" } else { "└" })
+    }
+
     /// Shared skeleton behind both sidebar tabs: a local section then one per
     /// remote host (in `remote_hosts_in_order`). Each gets its local/host
     /// divider plus matching [`SectionMeta`] (when `opts.show_headers`), then
@@ -121,7 +142,7 @@ impl AppState {
             }
         }
 
-        for lane_id in &lanes {
+        for (position, lane_id) in lanes.iter().enumerate() {
             // The lane's owning system already styled the divider. A plain
             // fallback keeps isolated model tests and late discovery rows
             // renderable without reintroducing a service locator.
@@ -133,6 +154,8 @@ impl AppState {
                 .unwrap_or_else(|| crate::system::SectionDef {
                     lane: lane_id.clone(),
                     title: self.section_title(lane_id),
+                    parent: None,
+                    divider_title: None,
                     buttons: Vec::new(),
                     top_margin: false,
                     primary: self
@@ -142,11 +165,22 @@ impl AppState {
                     session_capabilities: crate::system::SessionCapabilities::default(),
                     lane_capabilities: crate::system::LaneCapabilities::default(),
                 });
-            if opts.show_headers {
+            // A nested section whose parent is folded gives up its divider, and
+            // its rows then fall inside the parent's collapsed section and
+            // vanish with it — folding a group has to take what hangs off it,
+            // or a container is left stranded under a host that isn't there.
+            // The rows are still pushed, so this list stays row-for-row with
+            // `entries` and every flat index keeps meaning what it meant.
+            let folded_with_parent = opts.collapsible
+                && def
+                    .parent
+                    .as_ref()
+                    .is_some_and(|parent| collapsed.contains(parent));
+            if opts.show_headers && !folded_with_parent {
                 // Section dividers stay muted on purpose — least distraction,
                 // no per-host tint.
                 let color = theme.muted;
-                let mut header = BasicItem::new(def.title.clone())
+                let mut header = BasicItem::new(self.divider_label(&def, position, &lanes))
                     .separator("─")
                     .color(color);
                 for b in &def.buttons {
@@ -162,8 +196,6 @@ impl AppState {
                 }
                 sections.push(SectionMeta {
                     lane: def.lane.clone(),
-                    title: def.title,
-                    primary: def.primary,
                     buttons: def.buttons,
                     divider: true,
                 });

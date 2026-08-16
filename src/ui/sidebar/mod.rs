@@ -37,6 +37,10 @@ use tabs::{draw_sidebar_tabs, TabsProps};
 pub struct SidebarProps<'a> {
     pub sessions: &'a [crate::state::SessionEntry],
     pub built: &'a BuiltLayout,
+    /// Tab-bar label per session, in `sessions` order. Built by the model
+    /// (`AppState::tab_labels`) so the bar and its hit-test measure the same
+    /// strings.
+    pub tab_labels: &'a [String],
     pub focus_target: Option<FocusTarget>,
     /// Active Projects drag as `(source row, current drop target)`.
     pub project_drag: Option<(usize, usize)>,
@@ -227,7 +231,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
             &ctx,
             TabsProps {
                 sessions: props.sessions,
-                built: props.built,
+                labels: props.tab_labels,
                 focused,
                 sidebar_active: props.sidebar_active,
                 show_borders: props.show_borders,
