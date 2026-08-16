@@ -82,6 +82,9 @@ fn make_state(
     state.prefs.layout_mode = layout_mode;
     state.prefs.show_borders = show_borders;
     state.entries = vec![make_session("alpha"), make_session("beta")];
+    // Configuring a system rewrites a process-wide table other tests assert on
+    // — see `crate::system::serial`.
+    let _serial = crate::system::serial::configure_lock();
     let system = crate::system::tmux::TmuxSystem::default();
     system.configure(&crate::config::Config::default(), &[]);
     state.system_sections = system
@@ -780,6 +783,8 @@ fn remote_divider_shows_forward_count() {
     // System supplies; N counts the host's configured forwards. deck no longer
     // probes per-forward liveness, so the count is the only forward feedback.
     let forward_glyph = |state: &AppState, host: &str| -> Option<String> {
+        // See `crate::system::serial`.
+        let _serial = crate::system::serial::configure_lock();
         let system = TmuxSystem::default();
         let config = crate::config::Config::default();
         system.configure(&config, &state.config_remotes);
@@ -1151,6 +1156,9 @@ fn state_with_containers(containers: &[&str]) -> AppState {
     use crate::system::System;
 
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    // Taken after `make_state`, which takes and releases it itself — the lock
+    // is not reentrant. See `crate::system::serial`.
+    let _serial = crate::system::serial::configure_lock();
     let system = crate::system::tmux::TmuxSystem::default();
     let remotes = vec![crate::config::RemoteConfig {
         host: "devbox".into(),

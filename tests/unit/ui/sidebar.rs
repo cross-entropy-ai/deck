@@ -64,6 +64,9 @@ fn render_sidebar(
 fn mount_tmux_sections(state: &mut crate::state::AppState) {
     use crate::system::System;
 
+    // Configuring a system rewrites a process-wide table other tests assert on
+    // — see `crate::system::serial`.
+    let _serial = crate::system::serial::configure_lock();
     let system = crate::system::tmux::TmuxSystem::default();
     let config = crate::config::Config::default();
     system.configure(&config, &state.config_remotes);
