@@ -587,23 +587,32 @@ pub struct LaneSnapshot {
     pub agents: Option<Vec<DetectedAgent>>,
 }
 
+/// The lock every test that calls `System::configure` holds, wherever in the
+/// suite it lives. Not inside the module's own `tests` below: the unit tests
+/// under `tests/unit/**` are `#[path]`-included into this same binary and
+/// configure systems too, so a lock only that module could name left them
+/// racing — the flake this exists to stop, still flaking.
 #[cfg(test)]
-mod tests {
+pub(crate) mod serial {
     /// `TmuxSystem::configure` replaces a *process-wide* container-options
     /// table with the calling instance's view of it, so two tests configuring
     /// their own systems in parallel silently overwrite each other's entries —
-    /// which showed up as this module failing intermittently on whichever
-    /// engine lost the race. Every test that configures a system takes this.
+    /// which showed up as intermittent failures on whichever engine lost the
+    /// race. Every test that configures a system takes this.
     static CONTAINER_TABLE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Hold [`CONTAINER_TABLE`] for the rest of the test, ignoring poisoning
     /// from an unrelated failure so one panic does not cascade.
-    fn serial() -> std::sync::MutexGuard<'static, ()> {
+    pub(crate) fn configure_lock() -> std::sync::MutexGuard<'static, ()> {
         CONTAINER_TABLE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
+}
 
+#[cfg(test)]
+mod tests {
+    use super::serial::configure_lock as serial;
     use super::*;
 
     struct TestSystem;
@@ -723,6 +732,12 @@ mod tests {
 
     #[test]
     fn local_tmux_divider_is_a_single_direct_new_session_action() {
+        // `configure` replaces the process-wide container-options table
+        // wholesale, so it has to take the lock even when the case under test
+        // is the *local* divider and the remote list is empty: without it, this
+        // wiped the table out from under a concurrent mount test, whose
+        // container then read back the default engine instead of its own.
+        let _serial = serial();
         let system = tmux::TmuxSystem::default();
         system.configure(&Config::default(), &[]);
         let lane = tmux::TmuxSystem::local_lane();
