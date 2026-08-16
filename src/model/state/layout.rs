@@ -124,6 +124,7 @@ impl AppState {
     ) -> BuiltLayout {
         let mut layout = SidebarLayout::new();
         let mut sections: Vec<SectionMeta> = Vec::new();
+        let mut tree_rows: Vec<bool> = Vec::new();
         layout.set_collapsible(opts.collapsible);
 
         // Section headers in push order: (section_idx, lane), so collapse flags
@@ -208,7 +209,18 @@ impl AppState {
                     divider: true,
                 });
             }
+            // Does the gutter line carry on past this lane's rows? It does
+            // while something below still belongs to the same branch: a
+            // container under this host, or a sibling after this container.
+            // Measured around `push_rows` because only it knows how many rows
+            // a lane contributed.
+            let continues = lanes[position + 1..].iter().any(|below| {
+                let below_parent = self.parent_lane(below);
+                below_parent == Some(lane_id)
+                    || (def.parent.is_some() && below_parent == def.parent.as_ref())
+            });
             push_rows(&mut layout, &mut sections, lane_id);
+            tree_rows.resize(layout.row_count(), continues);
         }
 
         // Flip each header's collapsed flag (from the caller's collapse set:
@@ -221,7 +233,11 @@ impl AppState {
             }
         }
 
-        BuiltLayout { layout, sections }
+        BuiltLayout {
+            layout,
+            sections,
+            tree_rows,
+        }
     }
 
     /// Build the unified Projects-tab layout: a flat `BasicItem` list of
