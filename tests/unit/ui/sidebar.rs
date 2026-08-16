@@ -845,9 +845,11 @@ fn container_dividers_render_as_a_branch_under_their_host() {
     };
     let host = row_of(" devbox ");
     // Drawn under the host, in mount order, each naming only itself — the
-    // machine is on the divider above and does not need repeating.
-    assert!(host < row_of("├ dev "));
-    assert!(row_of("├ dev ") < row_of("└ build "));
+    // machine is on the divider above and does not need repeating. The
+    // connector comes first and the collapse chevron after it: the line
+    // establishes what the section belongs to, the chevron acts on it.
+    assert!(host < row_of("├ ▾ dev "));
+    assert!(row_of("├ ▾ dev ") < row_of("└ ▾ build "));
     // And the host half is spent once: no `devbox/dev` eating the width the
     // container name needs.
     assert_eq!(
