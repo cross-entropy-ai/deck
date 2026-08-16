@@ -110,10 +110,25 @@ impl App {
                                 .iter()
                                 .map(|section| section.lane.clone())
                                 .collect();
+                            // Read the lane's endpoint and rules from the list
+                            // it is still in — after the commit below there is
+                            // nothing left to cancel a container's forwards by.
+                            let endpoint = crate::app::ssh::config_adapter::forward_endpoint(
+                                &self.state.config_remotes,
+                                lane,
+                            );
+                            let forwards = crate::app::ssh::config_adapter::forwards_for_lane(
+                                &self.state.config_remotes,
+                                lane,
+                            )
+                            .cloned()
+                            .unwrap_or_default();
                             self.state.config_remotes = remotes;
-                            crate::app::ssh::port_forward_task::stop_lane(
+                            crate::app::ssh::port_forward_task::release_lane(
                                 &self.port_forward_tx,
                                 lane,
+                                endpoint,
+                                &forwards,
                             );
                             self.save_config();
                             let after: std::collections::HashSet<crate::lane::LaneId> = self

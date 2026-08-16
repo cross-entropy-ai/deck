@@ -63,6 +63,11 @@ pub struct ContainerState {
     pub engine: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_sock: Option<String>,
+    /// Forwards into this container — see [`ContainerConfig::forwards`]. They
+    /// live here for the same reason the host's do: Deck recorded them, nobody
+    /// hand-wrote them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forwards: Vec<crate::forwards::ForwardSpec>,
     #[serde(flatten)]
     pub memory: LaneMemory,
 }
@@ -136,6 +141,7 @@ impl LaneState {
                         name: container.name.clone(),
                         engine: container.engine.clone(),
                         agent_sock: container.agent_sock.clone(),
+                        forwards: container.forwards.clone(),
                     })
                     .collect(),
             })
@@ -172,6 +178,7 @@ impl LaneState {
                                 name: container.name.clone(),
                                 engine: container.engine.clone(),
                                 agent_sock: container.agent_sock.clone(),
+                                forwards: container.forwards.clone(),
                                 memory: kept.map(|kept| kept.memory.clone()).unwrap_or_default(),
                             }
                         })
@@ -429,6 +436,7 @@ impl LaneState {
                 name: name.to_string(),
                 engine: default_engine(),
                 agent_sock: None,
+                forwards: Vec::new(),
                 memory: LaneMemory::default(),
             });
         }

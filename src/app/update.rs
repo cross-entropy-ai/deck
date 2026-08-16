@@ -49,12 +49,8 @@ impl App {
         // turn around and tell the user we rejected.
         let result = config.save().map(|()| crate::config::config_mtime());
         if result.is_ok() {
-            let stop_hosts = self
-                .state
-                .config_remotes
-                .iter()
-                .map(|remote| remote.host.clone())
-                .collect();
+            let stop_hosts =
+                crate::app::ssh::config_adapter::master_targets(&self.state.config_remotes);
             self.reconfigure_ssh_if_needed(&config, stop_hosts);
             // Keep the injected backends and the model's materialized section
             // definitions aligned with an in-app remote/forward edit before the
@@ -83,7 +79,7 @@ impl App {
     pub(super) fn reconfigure_ssh_if_needed(
         &mut self,
         config: &crate::config::Config,
-        stop_hosts: Vec<String>,
+        stop_hosts: Vec<crate::app::ssh::port_forward_task::MasterTarget>,
     ) -> bool {
         let old_settings = crate::ssh::connection_settings();
         // Downgrade to no reuse rather than publish a ControlPath ssh cannot
@@ -102,12 +98,10 @@ impl App {
 
         crate::ssh::configure_connection(new_settings.clone());
 
-        let forward_hosts = if new_settings.enabled {
-            self.state
-                .config_remotes
-                .iter()
-                .filter(|remote| !remote.forwards.is_empty())
-                .map(|remote| (remote.host.clone(), remote.forwards.clone()))
+        let forward_lanes = if new_settings.enabled {
+            crate::app::ssh::config_adapter::forward_lanes(&self.state.config_remotes)
+                .into_iter()
+                .filter(|(_, forwards)| !forwards.is_empty())
                 .collect()
         } else {
             Vec::new()
@@ -117,7 +111,7 @@ impl App {
             .send(crate::app::ssh::port_forward_task::Op::Reconfigure {
                 settings: new_settings,
                 stop_hosts,
-                forward_hosts,
+                forward_lanes,
             });
         rebuilds
     }

@@ -32,6 +32,19 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
 
         // These three need the open overlay and nothing else; one guard for all.
         PfAction::FocusUp | PfAction::AddOpen | PfAction::AddCancel => {
+            // Read before the mutable borrow: what a new form asks for is the
+            // lane's own declaration, never something inferred from its id.
+            let (endpoint_kind, lane_label) = state
+                .overlay
+                .port_forward
+                .as_ref()
+                .map(|overlay| {
+                    (
+                        state.lane_capabilities(&overlay.lane).forward_endpoint,
+                        state.section_title(&overlay.lane),
+                    )
+                })
+                .unwrap_or_default();
             let Some(o) = state.overlay.port_forward.as_mut() else {
                 return fx;
             };
@@ -40,7 +53,11 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
                 // the whole story, so this stays inline rather than faking a `len`.
                 PfAction::FocusUp => o.selected = o.selected.saturating_sub(1),
                 PfAction::AddOpen => {
-                    o.add_form = Some(PfAddForm::default_for(ForwardMode::Local));
+                    o.add_form = Some(PfAddForm::default_for(
+                        ForwardMode::Local,
+                        endpoint_kind,
+                        &lane_label,
+                    ));
                     o.status = None;
                 }
                 _ => o.add_form = None,
@@ -100,7 +117,7 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
                     } else {
                         1
                     };
-                    f.focus = cycle_option(pf_field_order(f.mode), f.focus, delta);
+                    f.focus = cycle_option(pf_field_order(f), f.focus, delta);
                 }
                 PfAction::AddModeLeft => set_mode(f, -1),
                 PfAction::AddModeRight => set_mode(f, 1),
@@ -113,23 +130,33 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
 }
 
 fn forwards_len(state: &AppState, lane: &crate::lane::LaneId) -> usize {
-    crate::app::ssh::config_adapter::remote_for_lane(&state.config_remotes, lane)
-        .map_or(0, |remote| remote.forwards.len())
+    crate::app::ssh::config_adapter::forwards_for_lane(&state.config_remotes, lane)
+        .map_or(0, Vec::len)
 }
 
 /// Field navigation order for the port-forward add form. Dynamic mode
 /// omits the target host/port, so it stops after the listen port.
-fn pf_field_order(mode: ForwardMode) -> &'static [PfField] {
-    match mode {
-        ForwardMode::Dynamic => &[PfField::Mode, PfField::BindAddr, PfField::ListenPort],
-        _ => &[
-            PfField::Mode,
-            PfField::BindAddr,
-            PfField::ListenPort,
-            PfField::TargetHost,
-            PfField::TargetPort,
-        ],
+fn pf_field_order(form: &PfAddForm) -> &'static [PfField] {
+    // A lane that is its own endpoint skips the target host: there is nothing
+    // to type there, so stepping onto it would be a dead stop in the cycle.
+    if !form.asks_target_host() {
+        return match form.mode {
+            ForwardMode::Dynamic => &[PfField::Mode, PfField::BindAddr, PfField::ListenPort],
+            _ => &[
+                PfField::Mode,
+                PfField::BindAddr,
+                PfField::ListenPort,
+                PfField::TargetPort,
+            ],
+        };
     }
+    &[
+        PfField::Mode,
+        PfField::BindAddr,
+        PfField::ListenPort,
+        PfField::TargetHost,
+        PfField::TargetPort,
+    ]
 }
 
 /// The add form, if the port-forward overlay is open with one.
@@ -138,12 +165,7 @@ fn pf_add_form(state: &mut AppState) -> Option<&mut PfAddForm> {
 }
 
 fn set_mode(f: &mut PfAddForm, delta: i32) {
-    let modes = [
-        ForwardMode::Local,
-        ForwardMode::Remote,
-        ForwardMode::Dynamic,
-    ];
-    f.mode = cycle_option(&modes, f.mode, delta);
+    f.mode = cycle_option(f.modes(), f.mode, delta);
     if matches!(f.mode, ForwardMode::Dynamic)
         && matches!(f.focus, PfField::TargetHost | PfField::TargetPort)
     {
@@ -236,12 +258,12 @@ fn apply_pf_task_result(
     // --- Side effects independent of overlay state ---
     match op {
         PfTaskKind::Forward(spec) if ok => {
-            if let Some(remote) = crate::app::ssh::config_adapter::remote_for_lane_mut(
+            if let Some(forwards) = crate::app::ssh::config_adapter::forwards_for_lane_mut(
                 &mut state.config_remotes,
                 lane,
             ) {
-                if !remote.forwards.contains(spec) {
-                    remote.forwards.push(spec.clone());
+                if !forwards.contains(spec) {
+                    forwards.push(spec.clone());
                 }
             }
             fx.save_config();

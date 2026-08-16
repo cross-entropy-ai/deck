@@ -971,6 +971,7 @@ fn ta(text: &str) -> TextArea<'static> {
 
 fn blank_form() -> PfAddForm {
     PfAddForm {
+        endpoint: crate::system::ForwardEndpointKind::Explicit,
         mode: ForwardMode::Local,
         focus: PfField::ListenPort,
         bind_addr: ta(""),
@@ -1161,6 +1162,7 @@ fn state_with_containers(containers: &[&str]) -> AppState {
                 name: (*name).to_string(),
                 engine: "docker".into(),
                 agent_sock: None,
+                forwards: vec![],
             })
             .collect(),
     }];

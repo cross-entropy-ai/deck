@@ -62,6 +62,16 @@ pub struct ContainerConfig {
     /// — that host path stays valid across reconnects, see `forward_agent`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_sock: Option<String>,
+    /// Forwards into this container, `-L` only: the listener is local, and the
+    /// endpoint is a port *inside* the container.
+    ///
+    /// `target_host` stays `None` on every one of them — where the container
+    /// answers is not a setting. A published port and a container IP both
+    /// change when the container restarts, so the address is resolved on the
+    /// host each time the forward is applied and never written down; what is
+    /// remembered is the port the user asked for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forwards: Vec<crate::forwards::ForwardSpec>,
 }
 
 pub const DEFAULT_CONTAINER_ENGINE: &str = "docker";

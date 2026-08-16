@@ -78,3 +78,51 @@ fn diff_forwards_mixed() {
         .iter()
         .any(|o| matches!(o, ForwardOp::Add(s) if s.listen_port == 7070)));
 }
+
+#[test]
+fn a_lane_that_is_its_own_endpoint_asks_for_a_port_and_nothing_else() {
+    use crate::forwards::{PfAddForm, PfField};
+    use crate::system::ForwardEndpointKind;
+
+    let mut form =
+        PfAddForm::default_for(ForwardMode::Local, ForwardEndpointKind::Lane, "devbox/dev");
+    // `-R` puts the listener on the far side and `-D` picks a destination per
+    // connection; neither one would ever reach this lane, so neither is
+    // offered rather than offered and then rejected.
+    assert_eq!(form.modes(), &[ForwardMode::Local]);
+    assert!(!form.asks_target_host());
+    // The field is seeded with the lane's own name so the flow sketch reads as
+    // the user thinks of it, and is never edited.
+    assert_eq!(form.field_text(PfField::TargetHost), "devbox/dev");
+
+    form.listen_port = crate::new_session::make_textarea("9000");
+    form.target_port = crate::new_session::make_textarea("8080");
+    let spec = form.validate().expect("valid");
+    assert_eq!(spec.mode, ForwardMode::Local);
+    assert_eq!(spec.listen_port, 9000);
+    assert_eq!(spec.target_port, Some(8080));
+    // No address is stored: a container's changes when it restarts, so the
+    // worker resolves one on every apply instead.
+    assert_eq!(spec.target_host, None);
+
+    // A host lane is the other way round — every mode, and an address it must
+    // be given.
+    let host = PfAddForm::default_for(ForwardMode::Local, ForwardEndpointKind::Explicit, "devbox");
+    assert_eq!(host.modes().len(), 3);
+    assert!(host.asks_target_host());
+    assert_eq!(host.field_text(PfField::TargetHost), "127.0.0.1");
+}
+
+#[test]
+fn a_lane_endpoint_form_cannot_open_in_a_mode_it_does_not_offer() {
+    use crate::forwards::PfAddForm;
+    use crate::system::ForwardEndpointKind;
+
+    // Whatever the caller asks for, only `-L` exists here.
+    let form = PfAddForm::default_for(
+        ForwardMode::Dynamic,
+        ForwardEndpointKind::Lane,
+        "devbox/dev",
+    );
+    assert_eq!(form.mode, ForwardMode::Local);
+}

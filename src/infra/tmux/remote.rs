@@ -530,6 +530,108 @@ fn parse_discovered_containers(raw: &str) -> Vec<DiscoveredContainer> {
     out
 }
 
+/// Separates the published-port answer from the container-IP answer in the
+/// combined forward-target probe. Same rules as [`ENGINE_PROBE_MARKER`].
+const FORWARD_PROBE_MARKER: &str = "__DECK_FORWARD_PROBE__";
+
+/// Go template for the container's addresses, one per network, space-separated.
+/// Single-quoted into the remote shell: `{`/`}` are safe but `#`-free quoting
+/// keeps it of a piece with the other formats here.
+const CONTAINER_IP_FORMAT: &str = "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}";
+
+/// Where a `-L` forward into `container` should point, as an `addr:port` the
+/// *host* can reach. Resolved on every apply and never persisted: both answers
+/// below change when the container restarts, so a stored one is a forward that
+/// silently points at nothing.
+///
+/// Two answers, in order:
+/// 1. The port the container **publishes**, if it publishes this one. Reaching a
+///    published port needs nothing of the host's network but a loopback hop, so
+///    it works everywhere — including a Docker Desktop host, where containers
+///    live in a VM the host cannot route to at all.
+/// 2. The container's **own address**, otherwise. The host has to be able to
+///    route to the container network for this; a Linux bridge can, and so can
+///    OrbStack on macOS, by design.
+///
+/// Neither is an error the user has to see rather than a forward that appears
+/// to work: `ssh -O forward` reports success as soon as the *local* listener
+/// binds, so an unreachable endpoint would surface only as a connection that
+/// hangs later, with nothing pointing back here.
+pub fn container_forward_target(
+    host: &str,
+    engine: &str,
+    container: &str,
+    port: u16,
+) -> Result<String, String> {
+    container_forward_target_with(default_runner(), host, engine, container, port)
+}
+
+fn container_forward_target_with(
+    runner: &dyn CommandRunner,
+    host: &str,
+    engine: &str,
+    container: &str,
+    port: u16,
+) -> Result<String, String> {
+    // The probe addresses the host, never the container: both answers are the
+    // *engine's*, and the engine runs on the host.
+    let host = parse_remote_id(host).host;
+    let engine_q = shell_single_quote(engine);
+    let name_q = shell_single_quote(container);
+    // One hop for both questions, marker-separated so an engine that answers
+    // neither yields two empty blocks instead of failing the call. Ends in
+    // `true` so the compound's status is the probe's, not the last command's.
+    let script = format!(
+        "{engine_q} port {name_q} {port} 2>/dev/null ; echo {FORWARD_PROBE_MARKER} ; \
+         {engine_q} inspect -f {format} {name_q} 2>/dev/null ; true",
+        format = shell_single_quote(CONTAINER_IP_FORMAT),
+    );
+    let raw = run_ssh(runner, host, &[script.as_str()])
+        .map_err(|error| format!("could not ask {host} where {container} answers: {error}"))?;
+    parse_forward_target(&raw, port).ok_or_else(|| {
+        format!(
+            "{container} does not publish port {port}, and {host} cannot see the container's own \
+             address — publish the port, or use a host whose network reaches the container"
+        )
+    })
+}
+
+/// Pick a target out of the two probe blocks. Published wins; the container's
+/// own address is the fallback.
+fn parse_forward_target(raw: &str, port: u16) -> Option<String> {
+    let (published, addresses) = raw.split_once(FORWARD_PROBE_MARKER)?;
+    if let Some(mapping) = published
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+    {
+        if let Some(target) = published_target(mapping) {
+            return Some(target);
+        }
+    }
+    let address = addresses.split_whitespace().find(|ip| !ip.is_empty())?;
+    Some(format!("{address}:{port}"))
+}
+
+/// Turn one `<engine> port` mapping line into an `addr:port` the host can dial.
+///
+/// A wildcard bind is rewritten to loopback: `0.0.0.0` is where the container
+/// *accepts*, not an address to connect to. Any other address is kept as
+/// published — a port bound to one interface is not reachable on loopback, and
+/// substituting one there would produce a forward that never connects.
+fn published_target(mapping: &str) -> Option<String> {
+    let (addr, port) = mapping.rsplit_once(':')?;
+    if port.is_empty() || port.parse::<u16>().is_err() {
+        return None;
+    }
+    let addr = addr.trim();
+    let addr = match addr.trim_start_matches('[').trim_end_matches(']') {
+        "0.0.0.0" | "::" | "" => "127.0.0.1",
+        _ => addr,
+    };
+    Some(format!("{addr}:{port}"))
+}
+
 /// Start a stopped container so Deck can `exec` into it. Returns the engine's
 /// own message on failure, which is what the user needs to see (permission
 /// denied, no such container, daemon down).

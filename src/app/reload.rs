@@ -117,13 +117,12 @@ impl App {
         // diff below needs the old list before the new one is committed.)
         let old_remotes = std::mem::take(&mut self.state.config_remotes);
         let new_remotes = remotes.clone();
-        let mut stop_hosts: Vec<String> = old_remotes
-            .iter()
-            .chain(new_remotes.iter())
-            .map(|remote| remote.host.clone())
-            .collect();
-        stop_hosts.sort();
-        stop_hosts.dedup();
+        let mut stop_hosts = crate::app::ssh::config_adapter::master_targets(&old_remotes);
+        stop_hosts.extend(crate::app::ssh::config_adapter::master_targets(
+            &new_remotes,
+        ));
+        stop_hosts.sort_by(|a, b| a.host.cmp(&b.host));
+        stop_hosts.dedup_by(|a, b| a.host == b.host);
         // True only when the worker is rebuilding every forward from scratch
         // (socket replaced, or reuse just came on). A ControlPersist-only edit
         // leaves the live masters alone, so the per-rule diff below must still
@@ -143,7 +142,10 @@ impl App {
                 let _ =
                     self.port_forward_tx
                         .send(crate::app::ssh::port_forward_task::Op::StopHost {
-                            host: old.host.clone(),
+                            target: crate::app::ssh::port_forward_task::MasterTarget {
+                                lane: crate::system::tmux::TmuxSystem::host_lane(&old.host),
+                                host: old.host.clone(),
+                            },
                         });
             }
         }
@@ -172,24 +174,28 @@ impl App {
         // A socket replacement is handled as one Reconfigure op above, so don't
         // race it with per-rule operations against the old socket.
         if !ssh_forwards_rebuilt && cfg.ssh_connection_reuse {
-            for n in &new_remotes {
+            // Per lane, not per host: a container's rules live under its host
+            // and would otherwise never be diffed at all.
+            let was = crate::app::ssh::config_adapter::forward_lanes(&old_remotes);
+            for (endpoint, forwards) in crate::app::ssh::config_adapter::forward_lanes(&new_remotes)
+            {
                 let empty = Vec::new();
-                let old_fwds: &[crate::forwards::ForwardSpec] = old_remotes
+                let old_fwds: &[crate::forwards::ForwardSpec] = was
                     .iter()
-                    .find(|o| o.host == n.host)
-                    .map(|o| o.forwards.as_slice())
+                    .find(|(was, _)| was.lane == endpoint.lane)
+                    .map(|(_, forwards)| forwards.as_slice())
                     .unwrap_or(&empty);
-                for op in crate::forwards::diff_forwards(old_fwds, &n.forwards) {
+                for op in crate::forwards::diff_forwards(old_fwds, &forwards) {
                     let msg = match op {
                         crate::forwards::ForwardOp::Add(spec) => {
                             crate::app::ssh::port_forward_task::Op::AddForward {
-                                host: n.host.clone(),
+                                endpoint: endpoint.clone(),
                                 spec,
                             }
                         }
                         crate::forwards::ForwardOp::Cancel(spec) => {
                             crate::app::ssh::port_forward_task::Op::CancelForward {
-                                host: n.host.clone(),
+                                endpoint: endpoint.clone(),
                                 spec,
                             }
                         }

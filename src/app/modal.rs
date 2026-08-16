@@ -164,11 +164,11 @@ pub(super) fn draw_active_modal(
         Modal::PortForward => {
             if let Some(overlay) = state.overlay.port_forward.as_ref() {
                 let lane_title = state.section_title(&overlay.lane);
-                let forwards = crate::app::ssh::config_adapter::remote_for_lane(
+                let forwards = crate::app::ssh::config_adapter::forwards_for_lane(
                     &state.config_remotes,
                     &overlay.lane,
                 )
-                .map_or(&[][..], |remote| remote.forwards.as_slice());
+                .map_or(&[][..], Vec::as_slice);
                 rendered.port_forward = crate::ui::overlays::port_forward::draw_port_forward(
                     frame,
                     full,

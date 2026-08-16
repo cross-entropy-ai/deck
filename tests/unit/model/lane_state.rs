@@ -15,6 +15,7 @@ fn remote(host: &str, containers: &[&str]) -> RemoteConfig {
                 name: (*name).to_string(),
                 engine: "podman".to_string(),
                 agent_sock: None,
+                forwards: vec![],
             })
             .collect(),
     }
@@ -273,4 +274,41 @@ fn a_broken_state_file_is_kept_aside_and_rebuilt_from_the_config() {
 
     let _ = fs::remove_file(&path);
     let _ = fs::remove_file(&kept);
+}
+
+#[test]
+fn a_containers_forwards_survive_the_round_trip_through_the_state_file() {
+    // The rules a user set on a container are Deck's record, like the mount
+    // itself — losing them on restart would leave a lane whose forwards the
+    // user believes are configured and whose listeners never come back.
+    let path = std::env::temp_dir().join("deck-lane-state-container-forwards.yaml");
+    let _ = fs::remove_file(&path);
+
+    let mut remotes = vec![remote("box", &["web"])];
+    remotes[0].forwards = vec![crate::forwards::ForwardSpec {
+        mode: crate::forwards::ForwardMode::Local,
+        bind_addr: None,
+        listen_port: 8080,
+        target_host: Some("127.0.0.1".into()),
+        target_port: Some(80),
+    }];
+    remotes[0].containers[0].forwards = vec![crate::forwards::ForwardSpec {
+        mode: crate::forwards::ForwardMode::Local,
+        bind_addr: None,
+        listen_port: 9000,
+        // No address: a container's is resolved on every apply, never stored.
+        target_host: None,
+        target_port: Some(8080),
+    }];
+
+    let mut state = LaneState::default();
+    state.set_remote_configs(&remotes);
+    state.save_to(&path).expect("save");
+
+    let (reloaded, warning) = LaneState::load_from(&path, &Config::default());
+    assert_eq!(warning, None);
+    let back = reloaded.to_remote_configs();
+    assert_eq!(back, remotes, "the whole tree, rules included");
+    assert_eq!(back[0].containers[0].forwards[0].listen_port, 9000);
+    assert_eq!(back[0].containers[0].forwards[0].target_host, None);
 }

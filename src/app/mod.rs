@@ -296,26 +296,27 @@ impl App {
 
         if ssh_settings.enabled {
             // Establish ControlMasters and launch configured forwards eagerly.
-            let hosts: Vec<(String, Vec<crate::forwards::ForwardSpec>)> = remotes
-                .iter()
-                .filter(|r| !r.forwards.is_empty())
-                .map(|r| (r.host.clone(), r.forwards.clone()))
+            // Container lanes come through the same enumeration as their hosts;
+            // each rides its host's master, so bringing that up covers both.
+            let lanes: Vec<_> = crate::app::ssh::config_adapter::forward_lanes(&remotes)
+                .into_iter()
+                .filter(|(_, forwards)| !forwards.is_empty())
                 .collect();
-            if !hosts.is_empty() {
+            if !lanes.is_empty() {
                 let _ = app
                     .port_forward_tx
-                    .send(crate::app::ssh::port_forward_task::Op::Bootstrap { hosts });
+                    .send(crate::app::ssh::port_forward_task::Op::Bootstrap { lanes });
             }
         } else {
             // Idempotently close any Deck-owned persistent sockets left by an
             // earlier run, then lock the worker in its disabled state.
-            let stop_hosts = remotes.iter().map(|remote| remote.host.clone()).collect();
+            let stop_hosts = crate::app::ssh::config_adapter::master_targets(&remotes);
             let _ = app
                 .port_forward_tx
                 .send(crate::app::ssh::port_forward_task::Op::Reconfigure {
                     settings: ssh_settings,
                     stop_hosts,
-                    forward_hosts: Vec::new(),
+                    forward_lanes: Vec::new(),
                 });
         }
 

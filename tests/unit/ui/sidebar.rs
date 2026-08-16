@@ -801,6 +801,7 @@ fn container_dividers_render_as_a_branch_under_their_host() {
                 name: name.into(),
                 engine: "docker".into(),
                 agent_sock: None,
+                forwards: vec![],
             })
             .collect(),
     }];
@@ -901,6 +902,7 @@ fn the_tree_line_reaches_a_container_on_the_agents_tab_too() {
             name: "dev".into(),
             engine: "docker".into(),
             agent_sock: None,
+            forwards: vec![],
         }],
     }];
     mount_tmux_sections(&mut state);
