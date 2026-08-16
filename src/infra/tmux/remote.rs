@@ -163,11 +163,20 @@ pub(crate) fn base_ssh_args(host: &str) -> Vec<String> {
 /// the promise this constant exists to make: Deck does not depend on the remote's
 /// startup files, which may not exist, may not be zsh, and may print banners into
 /// output Deck parses.
+///
+/// `$HOME/.orbstack/bin` comes last, as a fallback rather than a preference: it
+/// is where OrbStack — a container engine on macOS — keeps its `docker`, and it
+/// reaches a normal shell only through `~/.zprofile`, which a login shell reads
+/// and `ssh host cmd` does not. OrbStack usually also symlinks `docker` into
+/// `/usr/local/bin` (already above), so this only carries a Mac remote whose
+/// user declined that step — the difference between discovering its containers
+/// and Deck reporting the host has no engine at all.
 pub(crate) const REMOTE_PATH_PREFIX: &str = concat!(
     "PATH=$HOME/.local/bin",
     ":/opt/homebrew/bin",
     ":/usr/local/bin",
     ":/home/linuxbrew/.linuxbrew/bin",
+    ":$HOME/.orbstack/bin",
     ":$PATH"
 );
 
