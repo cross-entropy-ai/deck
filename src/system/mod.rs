@@ -341,11 +341,29 @@ pub struct SessionCapabilities {
     pub kill: bool,
 }
 
+/// Where a forward on a lane points — and therefore what the form has to ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ForwardEndpointKind {
+    /// The user names the endpoint. Every ssh mode is available and the target
+    /// host and port are typed in: the lane is the *route*, not the destination.
+    #[default]
+    Explicit,
+    /// The lane itself is the endpoint, and its address is the owning system's
+    /// to resolve. Only a local forward means anything — `-R` and `-D` put the
+    /// listener on the far side and the destination somewhere else entirely, so
+    /// neither one would reach this lane at all — and the user is asked for a
+    /// port, never an address: a container's changes when it restarts.
+    Lane,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LaneCapabilities {
     pub create_session: bool,
     pub reorder_sessions: bool,
     pub actions: bool,
+    /// What a forward on this lane points at. Only meaningful while
+    /// [`port_forwards`](Self::port_forwards) is set.
+    pub forward_endpoint: ForwardEndpointKind,
     /// Whether this lane can carry port forwards right now. The owning system
     /// decides — for tmux that means the lane has a connection of its own AND
     /// Deck's connection reuse is on, since the forward commands are `ssh -O`
@@ -638,6 +656,7 @@ mod tests {
                         reorder_sessions: false,
                         actions: true,
                         port_forwards: false,
+                        forward_endpoint: crate::system::ForwardEndpointKind::Explicit,
                         mounts: false,
                     },
                 )
@@ -799,6 +818,7 @@ mod tests {
                 name: "dev".into(),
                 engine: "docker".into(),
                 agent_sock: None,
+                forwards: vec![],
             }],
             forwards: vec![],
         }];
@@ -908,6 +928,51 @@ mod tests {
     }
 
     #[test]
+    fn a_containers_divider_counts_its_own_forwards() {
+        let _serial = serial();
+        let system = tmux::TmuxSystem::default();
+        let forward = |port| crate::forwards::ForwardSpec {
+            mode: crate::forwards::ForwardMode::Local,
+            bind_addr: None,
+            listen_port: port,
+            target_host: None,
+            target_port: Some(80),
+        };
+        let remotes = vec![crate::config::RemoteConfig {
+            host: "devbox".into(),
+            forward_agent: true,
+            forwards: vec![forward(8080)],
+            containers: vec![crate::config::ContainerConfig {
+                name: "dev".into(),
+                engine: "docker".into(),
+                agent_sock: None,
+                forwards: vec![forward(9000), forward(9001)],
+            }],
+        }];
+        system.configure(&Config::default(), &remotes);
+
+        let badge = |lane: &LaneId| {
+            system
+                .section_for(lane)
+                .expect("section")
+                .buttons
+                .first()
+                .map(|button| button.glyph.clone())
+        };
+        // Each divider counts its own rules. The container's live nested inside
+        // its host's entry, so a lookup keyed on the host — which is what this
+        // was — found none and drew no badge at all.
+        assert_eq!(
+            badge(&tmux::TmuxSystem::host_lane("devbox")).as_deref(),
+            Some("⇄1")
+        );
+        assert_eq!(
+            badge(&tmux::TmuxSystem::container_lane("devbox", "dev")).as_deref(),
+            Some("⇄2")
+        );
+    }
+
+    #[test]
     fn a_mounted_container_goes_when_its_host_does() {
         let _serial = serial();
         let system = tmux::TmuxSystem::default();
@@ -1006,11 +1071,13 @@ mod tests {
                     name: "dev".into(),
                     engine: "docker".into(),
                     agent_sock: None,
+                    forwards: vec![],
                 },
                 crate::config::ContainerConfig {
                     name: "build".into(),
                     engine: "docker".into(),
                     agent_sock: None,
+                    forwards: vec![],
                 },
             ],
             forwards: vec![],
@@ -1061,7 +1128,7 @@ mod tests {
     }
 
     #[test]
-    fn only_lanes_owning_a_connection_advertise_port_forwards() {
+    fn every_remote_lane_forwards_but_only_a_host_names_its_own_target() {
         let _serial = serial();
         let system = tmux::TmuxSystem::default();
         let mut config = Config::default();
@@ -1072,31 +1139,41 @@ mod tests {
                 name: "dev".into(),
                 engine: "docker".into(),
                 agent_sock: None,
+                forwards: vec![],
             }],
             forwards: vec![],
         }];
         system.configure(&Config::default(), &remotes);
 
-        let caps = |lane: &LaneId| {
-            system
-                .runtime(lane)
-                .expect("runtime")
-                .lane_capabilities
-                .port_forwards
-        };
-        // The local lane has no ssh connection at all.
+        let lane_caps = |lane: &LaneId| system.runtime(lane).expect("runtime").lane_capabilities;
+        let caps = |lane: &LaneId| lane_caps(lane).port_forwards;
+        // The local lane has no ssh connection anywhere in reach.
         assert!(!caps(&tmux::TmuxSystem::local_lane()));
         assert!(caps(&tmux::TmuxSystem::host_lane("devbox")));
-        // A container rides its host's master and owns no RemoteConfig, so it
-        // has nowhere to put a forward rule and its id is not an ssh
-        // destination — the shell greys the affordance out from this flag.
-        assert!(!caps(&tmux::TmuxSystem::container_lane("devbox", "dev")));
+        // A container rides its host's master, which is the connection the `-O`
+        // commands address either way, so it forwards too — its rules live in
+        // its own config entry.
+        let container = tmux::TmuxSystem::container_lane("devbox", "dev");
+        assert!(caps(&container));
+
+        // What differs is what a forward points at. A host is a route to
+        // wherever the user names; a container is the destination, and where it
+        // answers is this system's to resolve on every apply.
+        assert_eq!(
+            lane_caps(&tmux::TmuxSystem::host_lane("devbox")).forward_endpoint,
+            ForwardEndpointKind::Explicit
+        );
+        assert_eq!(
+            lane_caps(&container).forward_endpoint,
+            ForwardEndpointKind::Lane
+        );
 
         // Reuse off takes the capability away everywhere: the forward commands
         // are `ssh -O` against the socket it provides.
         config.ssh_connection_reuse = false;
         system.configure(&config, &remotes);
         assert!(!caps(&tmux::TmuxSystem::host_lane("devbox")));
+        assert!(!caps(&container));
     }
 
     #[test]
@@ -1113,16 +1190,19 @@ mod tests {
                     name: String::new(),
                     engine: "docker".into(),
                     agent_sock: None,
+                    forwards: vec![],
                 },
                 crate::config::ContainerConfig {
                     name: "dev".into(),
                     engine: "sudo docker".into(),
                     agent_sock: None,
+                    forwards: vec![],
                 },
                 crate::config::ContainerConfig {
                     name: "good".into(),
                     engine: "podman".into(),
                     agent_sock: None,
+                    forwards: vec![],
                 },
             ],
             forwards: vec![],

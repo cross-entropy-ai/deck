@@ -181,13 +181,24 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId, ssh_connection_reuse: bo
         Some(remote_id) => {
             // ssh registers the remote-only buttons (the ⇄N forward count,
             // reconnect); the menu button is appended last (rightmost), the
-            // order the divider hit-tester zips against. A container id never
-            // matches a RemoteConfig host, so its divider gets no ⇄ badge —
-            // container forwards aren't a feature yet.
-            let mut buttons =
-                crate::ssh::divider::divider(remotes, remote_id, ssh_connection_reuse);
-            buttons.push(menu_button());
+            // order the divider hit-tester zips against.
             let target = crate::remote_tmux::parse_remote_id(remote_id);
+            // This system owns the config shape, so it resolves the lane's own
+            // rules — a container's live nested inside its host's entry.
+            let forwards = remotes
+                .iter()
+                .find(|remote| remote.host == target.host)
+                .map(|remote| match target.container {
+                    None => remote.forwards.as_slice(),
+                    Some(name) => remote
+                        .containers
+                        .iter()
+                        .find(|container| container.name == name)
+                        .map_or(&[][..], |container| container.forwards.as_slice()),
+                })
+                .unwrap_or(&[]);
+            let mut buttons = crate::ssh::divider::divider(forwards, ssh_connection_reuse);
+            buttons.push(menu_button());
             // A container hangs under the host it runs on: the shell indents it
             // there and folds it away when the host folds. Its full title still
             // names the host, because everywhere *else* the label appears — an
@@ -230,10 +241,8 @@ fn tmux_session_capabilities() -> SessionCapabilities {
 /// ControlMaster via `ssh -O`, so they exist only while connection reuse is on;
 /// the local lane has no ssh connection at all.
 fn tmux_lane_capabilities(lane: &LaneId, ssh_connection_reuse: bool) -> LaneCapabilities {
-    // Only a lane owning its own ssh connection can carry forwards: the local
-    // lane has none, and a container lane rides its *host's* master with no
-    // RemoteConfig of its own, so a rule would have nowhere to live and its
-    // remote id is not a resolvable ssh destination.
+    // A lane with an ssh connection of its own — a host, not the local lane and
+    // not a container, which rides its host's master.
     let owns_connection = TmuxSystem::host_of(lane).is_some_and(|remote_id| {
         crate::remote_tmux::parse_remote_id(remote_id)
             .container
@@ -243,7 +252,18 @@ fn tmux_lane_capabilities(lane: &LaneId, ssh_connection_reuse: bool) -> LaneCapa
         create_session: true,
         reorder_sessions: true,
         actions: true,
-        port_forwards: ssh_connection_reuse && owns_connection,
+        // Any remote lane can carry forwards, container included: the commands
+        // are `ssh -O` against its *host's* master either way, and a container's
+        // rules live in its own config entry. Only the local lane, with no ssh
+        // connection anywhere in reach, has none.
+        port_forwards: ssh_connection_reuse && TmuxSystem::host_of(lane).is_some(),
+        // A host is a route to wherever the user names; a container is the
+        // destination itself, and where it answers is this system's to find.
+        forward_endpoint: if owns_connection {
+            crate::system::ForwardEndpointKind::Explicit
+        } else {
+            crate::system::ForwardEndpointKind::Lane
+        },
         // Only a host lane can mount containers: the local lane has no engine
         // Deck talks to (local Docker is out of scope), and a container cannot
         // mount further containers.
@@ -470,6 +490,7 @@ impl LaneMountProvider for TmuxSystem {
                 // it — and the transport needs it on every later run.
                 engine: engine.to_string(),
                 agent_sock: None,
+                forwards: vec![],
             });
         }
         // Publish into this system's own list as well, so the lane exists the
@@ -491,6 +512,7 @@ impl LaneMountProvider for TmuxSystem {
                         name: name.to_string(),
                         engine: engine.to_string(),
                         agent_sock: None,
+                        forwards: vec![],
                     });
                 }
             }

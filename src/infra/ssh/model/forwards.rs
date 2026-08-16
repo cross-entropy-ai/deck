@@ -6,6 +6,7 @@ use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
 use crate::new_session::{make_textarea, textarea_line};
+use crate::system::ForwardEndpointKind;
 
 // --- Persisted forward rule ---
 
@@ -124,6 +125,10 @@ pub enum PfField {
 #[derive(Debug, Clone)]
 pub struct PfAddForm {
     pub mode: ForwardMode,
+    /// What this lane's forwards point at, from its own capabilities. Decides
+    /// which modes the form offers and whether it asks for a target address at
+    /// all — see [`ForwardEndpointKind`].
+    pub endpoint: ForwardEndpointKind,
     pub focus: PfField,
     pub bind_addr: TextArea<'static>,
     pub listen_port: TextArea<'static>,
@@ -153,16 +158,48 @@ impl PfFormError {
 }
 
 impl PfAddForm {
-    pub fn default_for(mode: ForwardMode) -> Self {
+    /// A fresh form for `lane_label`'s lane. On a lane that *is* the endpoint
+    /// the target-host field is seeded with the lane's own name and never
+    /// edited: it is there so the flow sketch reads as the user thinks of it
+    /// ("to the container"), not as something to fill in.
+    pub fn default_for(mode: ForwardMode, endpoint: ForwardEndpointKind, lane_label: &str) -> Self {
+        let mode = match endpoint {
+            ForwardEndpointKind::Explicit => mode,
+            ForwardEndpointKind::Lane => ForwardMode::Local,
+        };
         Self {
             mode,
+            endpoint,
             focus: PfField::ListenPort,
             bind_addr: make_textarea("0.0.0.0"),
             listen_port: make_textarea(""),
-            target_host: make_textarea("127.0.0.1"),
+            target_host: make_textarea(match endpoint {
+                ForwardEndpointKind::Explicit => "127.0.0.1",
+                ForwardEndpointKind::Lane => lane_label,
+            }),
             target_port: make_textarea(""),
             submitting: false,
         }
+    }
+
+    /// The modes this form offers, in picker order.
+    pub fn modes(&self) -> &'static [ForwardMode] {
+        match self.endpoint {
+            ForwardEndpointKind::Explicit => &[
+                ForwardMode::Local,
+                ForwardMode::Remote,
+                ForwardMode::Dynamic,
+            ],
+            ForwardEndpointKind::Lane => &[ForwardMode::Local],
+        }
+    }
+
+    /// Whether the user names the target address. False when the lane is the
+    /// endpoint: the address is resolved at apply time, so a typed one would be
+    /// wrong the first time the container restarted.
+    pub fn asks_target_host(&self) -> bool {
+        matches!(self.endpoint, ForwardEndpointKind::Explicit)
+            && !matches!(self.mode, ForwardMode::Dynamic)
     }
 
     /// Read the current text of a field. Returns `""` for `Mode`.
@@ -188,6 +225,29 @@ impl PfAddForm {
     }
 
     pub fn validate(&self) -> Result<ForwardSpec, PfFormError> {
+        // A lane that is its own endpoint takes the port and nothing else: the
+        // address is not the user's to give, so `target_host` stays `None` and
+        // the worker fills it in from the lane each time the rule is applied.
+        if matches!(self.endpoint, ForwardEndpointKind::Lane) {
+            let listen_port: u16 = self
+                .field_text(PfField::ListenPort)
+                .trim()
+                .parse()
+                .map_err(|_| PfFormError::ListenPortRange)?;
+            let target_port: u16 = self
+                .field_text(PfField::TargetPort)
+                .trim()
+                .parse()
+                .map_err(|_| PfFormError::TargetPortRange)?;
+            let bind_raw = self.field_text(PfField::BindAddr).trim();
+            return Ok(ForwardSpec {
+                mode: ForwardMode::Local,
+                bind_addr: (!bind_raw.is_empty()).then(|| bind_raw.to_string()),
+                listen_port,
+                target_host: None,
+                target_port: Some(target_port),
+            });
+        }
         // Trim defensively even though input filtering already blocks
         // whitespace, so any value is persisted clean. `u16::parse` enforces
         // the 0..=65535 range; port 0 ("let kernel pick") is accepted.

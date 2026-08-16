@@ -889,6 +889,7 @@ impl AppState {
                     reorder_sessions: true,
                     actions: true,
                     port_forwards: true,
+                    forward_endpoint: crate::system::ForwardEndpointKind::Explicit,
                     mounts: false,
                 },
                 |section| section.lane_capabilities,

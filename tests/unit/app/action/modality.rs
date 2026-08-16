@@ -189,9 +189,12 @@ fn escape_cancels_nested_modal_edits_before_closing_the_surface() {
 
     let mut forward = make_state();
     open_modal(&mut forward, Modal::PortForward);
-    forward.overlay.port_forward.as_mut().unwrap().add_form = Some(
-        crate::forwards::PfAddForm::default_for(crate::forwards::ForwardMode::Local),
-    );
+    forward.overlay.port_forward.as_mut().unwrap().add_form =
+        Some(crate::forwards::PfAddForm::default_for(
+            crate::forwards::ForwardMode::Local,
+            crate::system::ForwardEndpointKind::Explicit,
+            "h1",
+        ));
     assert!(matches!(
         key_to_action(&esc, &forward),
         Action::Pf(super::PfAction::AddCancel)

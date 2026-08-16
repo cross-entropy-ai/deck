@@ -558,6 +558,7 @@ fn container_config_roundtrips_engine_and_agent_sock() {
             name: "dev".into(),
             engine: "podman".into(),
             agent_sock: Some("/ssh-agent".into()),
+            forwards: vec![],
         }],
         forwards: vec![],
     };

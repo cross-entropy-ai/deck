@@ -751,10 +751,9 @@ impl App {
         // Not `state.remote_config()` — `overlay` holds a live &mut
         // into `self.state`, so only a disjoint field borrow compiles here.
         let already_exists =
-            crate::app::ssh::config_adapter::remote_for_lane(&self.state.config_remotes, &lane)
-                .is_some_and(|remote| {
-                    remote
-                        .forwards
+            crate::app::ssh::config_adapter::forwards_for_lane(&self.state.config_remotes, &lane)
+                .is_some_and(|forwards| {
+                    forwards
                         .iter()
                         .any(|forward| forward.same_listen_identity(&spec))
                 });
@@ -767,7 +766,12 @@ impl App {
         }
         form.submitting = true;
         overlay.status = Some("applying...".into());
-        crate::app::ssh::port_forward_task::add_for_lane(&self.port_forward_tx, &lane, spec);
+        let Some(endpoint) =
+            crate::app::ssh::config_adapter::forward_endpoint(&self.state.config_remotes, &lane)
+        else {
+            return;
+        };
+        crate::app::ssh::port_forward_task::add_for_lane(&self.port_forward_tx, endpoint, spec);
     }
 
     /// Cancel-then-remove. Spec semantics: remove from config regardless
@@ -780,27 +784,28 @@ impl App {
             };
             let lane = overlay.lane.clone();
             let idx = overlay.selected;
-            let Some(spec) =
-                crate::app::ssh::config_adapter::remote_for_lane(&self.state.config_remotes, &lane)
-                    .and_then(|remote| remote.forwards.get(idx))
-                    .cloned()
-            else {
+            let Some(spec) = crate::app::ssh::config_adapter::forwards_for_lane(
+                &self.state.config_remotes,
+                &lane,
+            )
+            .and_then(|forwards| forwards.get(idx))
+            .cloned() else {
                 return;
             };
             (lane, spec)
         };
 
-        if let Some(remote) = crate::app::ssh::config_adapter::remote_for_lane_mut(
+        if let Some(forwards) = crate::app::ssh::config_adapter::forwards_for_lane_mut(
             &mut self.state.config_remotes,
             &lane,
         ) {
-            remote.forwards.retain(|candidate| *candidate != spec);
+            forwards.retain(|candidate| *candidate != spec);
         }
         self.save_config();
 
         let new_len =
-            crate::app::ssh::config_adapter::remote_for_lane(&self.state.config_remotes, &lane)
-                .map_or(0, |remote| remote.forwards.len());
+            crate::app::ssh::config_adapter::forwards_for_lane(&self.state.config_remotes, &lane)
+                .map_or(0, Vec::len);
         if let Some(overlay) = self.state.overlay.port_forward.as_mut() {
             if overlay.selected >= new_len {
                 overlay.selected = new_len.saturating_sub(1);
@@ -808,6 +813,14 @@ impl App {
             overlay.status = Some("cancelling...".into());
         }
 
-        crate::app::ssh::port_forward_task::cancel_for_lane(&self.port_forward_tx, &lane, spec);
+        if let Some(endpoint) =
+            crate::app::ssh::config_adapter::forward_endpoint(&self.state.config_remotes, &lane)
+        {
+            crate::app::ssh::port_forward_task::cancel_for_lane(
+                &self.port_forward_tx,
+                endpoint,
+                spec,
+            );
+        }
     }
 }

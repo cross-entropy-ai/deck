@@ -46,6 +46,7 @@ fn make_test_state(n: usize) -> AppState {
             reorder_sessions: true,
             actions: true,
             port_forwards: true,
+            forward_endpoint: crate::system::ForwardEndpointKind::Explicit,
             mounts: false,
         },
     );
@@ -98,6 +99,7 @@ fn mount_remote_lane(state: &mut AppState, host: &str) {
             reorder_sessions: true,
             actions: true,
             port_forwards: true,
+            forward_endpoint: crate::system::ForwardEndpointKind::Explicit,
             mounts: true,
         },
     });
@@ -170,6 +172,7 @@ fn unsupported_session_mutations_are_disabled_and_reducer_guarded() {
             reorder_sessions: true,
             actions: false,
             port_forwards: false,
+            forward_endpoint: crate::system::ForwardEndpointKind::Explicit,
             mounts: false,
         },
     );
@@ -1989,6 +1992,7 @@ fn open_form_with_focus(
         lane: crate::system::tmux::TmuxSystem::host_lane("h"),
         selected: 0,
         add_form: Some(crate::forwards::PfAddForm {
+            endpoint: crate::system::ForwardEndpointKind::Explicit,
             mode: crate::forwards::ForwardMode::Local,
             focus: field,
             bind_addr: if matches!(field, crate::forwards::PfField::BindAddr) {
@@ -2172,6 +2176,7 @@ fn divider_menu_greys_port_forward_for_a_lane_without_its_own_connection() {
             reorder_sessions: true,
             actions: true,
             port_forwards: false,
+            forward_endpoint: crate::system::ForwardEndpointKind::Explicit,
             mounts: false,
         },
     });

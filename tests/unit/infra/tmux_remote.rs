@@ -823,6 +823,12 @@ fn every_assembled_remote_command_is_valid_shell() {
                 let _ = wait_for_client_marker_with(r, id, 7);
             }),
         ),
+        (
+            "container_forward_target",
+            Box::new(|r: &FakeRunner, id: &str| {
+                let _ = container_forward_target_with(r, id, "docker", "dev", 8080);
+            }),
+        ),
     ];
 
     // Both spellings of every call: on the host, and wrapped in `<engine>
@@ -851,6 +857,71 @@ fn every_assembled_remote_command_is_valid_shell() {
             }
         }
     }
+}
+
+#[test]
+fn forward_target_prefers_a_published_port_over_the_container_address() {
+    // Published first: reaching it needs nothing of the host's network but a
+    // loopback hop, so it works even where the container network doesn't (a
+    // Docker Desktop host, whose containers live in a VM it cannot route to).
+    let published = format!("0.0.0.0:32768\n{FORWARD_PROBE_MARKER}\n172.17.0.2 \n");
+    assert_eq!(
+        parse_forward_target(&published, 8080).as_deref(),
+        Some("127.0.0.1:32768"),
+        "a wildcard bind is where the container accepts, not an address to dial"
+    );
+
+    // No publish: the container's own address, with the port the user asked
+    // for — the host has to be able to route to the container network, which a
+    // Linux bridge and OrbStack both can.
+    let unpublished = format!("{FORWARD_PROBE_MARKER}\n172.17.0.2 \n");
+    assert_eq!(
+        parse_forward_target(&unpublished, 8080).as_deref(),
+        Some("172.17.0.2:8080")
+    );
+
+    // A port bound to one interface is not reachable on loopback, so that
+    // address is kept as published rather than substituted.
+    let specific = format!("192.168.1.5:32768\n{FORWARD_PROBE_MARKER}\n172.17.0.2 \n");
+    assert_eq!(
+        parse_forward_target(&specific, 8080).as_deref(),
+        Some("192.168.1.5:32768")
+    );
+
+    // IPv6 wildcard, as `docker port` spells it.
+    let v6 = format!("[::]:32768\n{FORWARD_PROBE_MARKER}\n");
+    assert_eq!(
+        parse_forward_target(&v6, 8080).as_deref(),
+        Some("127.0.0.1:32768")
+    );
+
+    // Neither answer is an error the user sees, not a forward that binds and
+    // then never connects: `ssh -O forward` succeeds as soon as the *local*
+    // listener is up, so nothing later would point back at this.
+    let neither = format!("{FORWARD_PROBE_MARKER}\n");
+    assert_eq!(parse_forward_target(&neither, 8080), None);
+    // A probe that produced no marker at all (ssh itself failed) is not an
+    // answer either.
+    assert_eq!(parse_forward_target("", 8080), None);
+}
+
+#[test]
+fn forward_target_asks_the_host_not_the_container() {
+    let runner = FakeRunner::new(ok(""));
+    let _ = container_forward_target_with(&runner, "box#dev", "docker", "dev", 8080);
+    let call = &runner.calls()[0];
+
+    // Both answers are the engine's, and the engine runs on the host — so this
+    // must not be wrapped in `<engine> exec` the way a container's tmux calls
+    // are.
+    assert!(call.contains(" box PATH="), "host arg mangled: {call}");
+    assert!(!call.contains(" exec "), "probe must not exec: {call}");
+    // One hop for both questions, marker-separated so an engine that answers
+    // neither yields empty blocks instead of failing the call.
+    assert!(call.contains("'docker' port 'dev' 8080"), "{call}");
+    assert!(call.contains("'docker' inspect -f"), "{call}");
+    assert!(call.contains(FORWARD_PROBE_MARKER), "{call}");
+    assert!(call.trim_end().ends_with("; true"), "{call}");
 }
 
 #[test]

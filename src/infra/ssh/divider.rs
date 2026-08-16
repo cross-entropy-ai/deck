@@ -4,7 +4,7 @@
 //! hardcodes which buttons a remote host has, because they're ssh features
 //! (port forwards, connection reconnect).
 
-use crate::config::RemoteConfig;
+use crate::forwards::ForwardSpec;
 use crate::geometry::SectionButton;
 use crate::system::{LaneActionId, LaneShellIntent};
 
@@ -15,26 +15,22 @@ pub mod cmd {
     pub const FORWARDS: &str = "forwards";
 }
 
-/// Count of forwards configured for `host`, or `None` when it has none (no
-/// `⇄N` button is drawn then).
-fn forward_count(remotes: &[RemoteConfig], host: &str) -> Option<usize> {
-    let n = remotes.iter().find(|r| r.host == host)?.forwards.len();
-    (n > 0).then_some(n)
-}
-
-/// The buttons ssh puts on a remote host's divider, left→right: the `⇄N`
-/// forward button (a count of configured forwards; only when the host has
+/// The buttons ssh puts on a remote lane's divider, left→right: the `⇄N`
+/// forward button (a count of that lane's configured forwards; only when it has
 /// any), then reconnect. The count is the only forward feedback on the
 /// divider — deck doesn't probe per-forward liveness.
-pub fn divider(remotes: &[RemoteConfig], host: &str, connection_reuse: bool) -> Vec<SectionButton> {
+///
+/// The caller passes the lane's own rules rather than the whole remote list and
+/// an id to look itself up by. A container's rules live nested inside its host's
+/// entry, so the lookup was never ssh's to do — and doing it here meant a
+/// container divider silently never grew a badge.
+pub fn divider(forwards: &[ForwardSpec], connection_reuse: bool) -> Vec<SectionButton> {
     let mut buttons = Vec::with_capacity(2);
-    if connection_reuse {
-        if let Some(n) = forward_count(remotes, host) {
-            buttons.push(SectionButton {
-                glyph: format!("⇄{}", n),
-                action: LaneActionId::from(cmd::FORWARDS),
-            });
-        }
+    if connection_reuse && !forwards.is_empty() {
+        buttons.push(SectionButton {
+            glyph: format!("⇄{}", forwards.len()),
+            action: LaneActionId::from(cmd::FORWARDS),
+        });
     }
     buttons.push(SectionButton {
         glyph: "⟳".to_string(),
@@ -57,27 +53,21 @@ mod tests {
     use super::*;
     use crate::forwards::{ForwardMode, ForwardSpec};
 
-    fn remote(host: &str, forwards: usize) -> RemoteConfig {
-        RemoteConfig {
-            host: host.to_string(),
-            containers: vec![],
-            forward_agent: true,
-            forwards: (0..forwards)
-                .map(|i| ForwardSpec {
-                    mode: ForwardMode::Local,
-                    bind_addr: None,
-                    listen_port: 8000 + i as u16,
-                    target_host: Some("localhost".into()),
-                    target_port: Some(80),
-                })
-                .collect(),
-        }
+    fn forwards(count: usize) -> Vec<ForwardSpec> {
+        (0..count)
+            .map(|i| ForwardSpec {
+                mode: ForwardMode::Local,
+                bind_addr: None,
+                listen_port: 8000 + i as u16,
+                target_host: Some("localhost".into()),
+                target_port: Some(80),
+            })
+            .collect()
     }
 
     #[test]
     fn forwards_present_yields_count_button_then_reconnect() {
-        let remotes = vec![remote("h", 2)];
-        let buttons = divider(&remotes, "h", true);
+        let buttons = divider(&forwards(2), true);
         let cmds: Vec<&str> = buttons.iter().map(|b| b.action.as_str()).collect();
         assert_eq!(cmds, [cmd::FORWARDS, cmd::RECONNECT]);
         // The forward button is the count of configured forwards.
@@ -86,16 +76,14 @@ mod tests {
 
     #[test]
     fn no_forwards_yields_only_reconnect() {
-        let remotes = vec![remote("h", 0)];
-        let buttons = divider(&remotes, "h", true);
+        let buttons = divider(&forwards(0), true);
         let cmds: Vec<&str> = buttons.iter().map(|b| b.action.as_str()).collect();
         assert_eq!(cmds, [cmd::RECONNECT]);
     }
 
     #[test]
     fn disabled_reuse_hides_saved_forward_button() {
-        let remotes = vec![remote("h", 2)];
-        let buttons = divider(&remotes, "h", false);
+        let buttons = divider(&forwards(2), false);
         let cmds: Vec<&str> = buttons.iter().map(|b| b.action.as_str()).collect();
         assert_eq!(cmds, [cmd::RECONNECT]);
     }

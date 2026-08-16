@@ -513,9 +513,12 @@ fn a_click_past_the_end_of_the_forward_list_clamps() {
 #[test]
 fn the_wheel_is_inert_while_the_add_form_covers_the_forward_list() {
     let mut state = state_with_port_forwards();
-    state.overlay.port_forward.as_mut().unwrap().add_form = Some(
-        crate::forwards::PfAddForm::default_for(crate::forwards::ForwardMode::Local),
-    );
+    state.overlay.port_forward.as_mut().unwrap().add_form =
+        Some(crate::forwards::PfAddForm::default_for(
+            crate::forwards::ForwardMode::Local,
+            crate::system::ForwardEndpointKind::Explicit,
+            "h1",
+        ));
 
     let action = mouse_to_action(&ev(MouseEventKind::ScrollDown, 22, 12), &state);
     assert!(

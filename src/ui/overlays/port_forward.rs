@@ -49,7 +49,7 @@ pub fn draw_port_forward(
         ModalFrame::centered(OVERLAY_WIDTH, total_height, Some(&title), theme).render(buf, area);
 
     match &overlay.add_form {
-        None => draw_list(buf, inner, forwards, overlay, theme),
+        None => draw_list(buf, inner, forwards, overlay, lane_title, theme),
         Some(form) => {
             // The form replaces the list, so the list's targets must not
             // survive into a frame that no longer paints them.
@@ -64,6 +64,7 @@ fn draw_list(
     area: Rect,
     forwards: &[ForwardSpec],
     overlay: &PortForwardOverlay,
+    lane_title: &str,
     theme: &Theme,
 ) -> PfHits {
     let mut lines: Vec<Line> = Vec::new();
@@ -85,7 +86,7 @@ fn draw_list(
                     theme,
                     selected,
                     format!("  {marker} "),
-                    format_forward(f),
+                    format_forward(f, lane_title),
                     area.width as usize,
                 )
             },
@@ -164,13 +165,21 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
             }),
         )
     };
-    Paragraph::new(Line::from(vec![
-        Span::raw("  mode:        "),
-        mode_text(ForwardMode::Local, "local"),
-        mode_text(ForwardMode::Remote, "remote"),
-        mode_text(ForwardMode::Dynamic, "dynamic"),
-    ]))
-    .render(rows[1], buf);
+    // Only the modes this lane offers. A lane that is its own endpoint has one,
+    // and listing the other two greyed would advertise a choice that does not
+    // exist rather than explain the one that does.
+    let mut mode_line = vec![Span::raw("  mode:        ")];
+    for mode in form.modes() {
+        mode_line.push(mode_text(
+            *mode,
+            match mode {
+                ForwardMode::Local => "local",
+                ForwardMode::Remote => "remote",
+                ForwardMode::Dynamic => "dynamic",
+            },
+        ));
+    }
+    Paragraph::new(Line::from(mode_line)).render(rows[1], buf);
 
     let target_active = !matches!(form.mode, ForwardMode::Dynamic);
     for (row, field, label, textarea, enabled) in [
@@ -193,7 +202,10 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
             PfField::TargetHost,
             "  target host: ",
             &form.target_host,
-            target_active,
+            // Shown, never edited, when the lane is its own endpoint: it names
+            // where this goes so the row above reads in context, and the
+            // address behind it is resolved fresh on every apply.
+            target_active && form.asks_target_host(),
         ),
         (
             6,
@@ -326,7 +338,10 @@ fn flow_line<'a>(form: &PfAddForm, theme: &Theme) -> Line<'a> {
     )
 }
 
-fn format_forward(f: &ForwardSpec) -> String {
+/// One saved rule as a line in the list. A rule with no target address is one
+/// whose lane *is* the target, so it reads as the lane's own name — the address
+/// behind it is resolved on each apply and is deliberately not stored.
+fn format_forward(f: &ForwardSpec, lane_title: &str) -> String {
     let bind = f
         .bind_addr
         .as_deref()
@@ -341,7 +356,7 @@ fn format_forward(f: &ForwardSpec) -> String {
         f.mode.flag(),
         bind,
         f.listen_port,
-        f.target_host.as_deref().unwrap_or(""),
+        f.target_host.as_deref().unwrap_or(lane_title),
         f.target_port.unwrap_or(0)
     )
 }
