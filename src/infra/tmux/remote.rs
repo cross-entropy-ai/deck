@@ -541,24 +541,38 @@ const FORWARD_PROBE_MARKER: &str = "__DECK_FORWARD_PROBE__";
 /// keeps it of a piece with the other formats here.
 const CONTAINER_IP_FORMAT: &str = "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}";
 
+/// Go template for the container's network mode. Read to recognize the one
+/// case with no address of its own to find — see [`HOST_NETWORK_MODE`].
+const CONTAINER_NETWORK_MODE_FORMAT: &str = "{{.HostConfig.NetworkMode}}";
+
+/// The network mode that puts a container on the host's own stack. Such a
+/// container has no address and publishes no ports — both of the other answers
+/// are empty *by design* — and its services are reachable on the host's
+/// loopback at the very port they bind.
+const HOST_NETWORK_MODE: &str = "host";
+
 /// Where a `-L` forward into `container` should point, as an `addr:port` the
 /// *host* can reach. Resolved on every apply and never persisted: both answers
 /// below change when the container restarts, so a stored one is a forward that
 /// silently points at nothing.
 ///
-/// Two answers, in order:
+/// Three answers, in order:
 /// 1. The port the container **publishes**, if it publishes this one. Reaching a
 ///    published port needs nothing of the host's network but a loopback hop, so
 ///    it works everywhere — including a Docker Desktop host, where containers
 ///    live in a VM the host cannot route to at all.
-/// 2. The container's **own address**, otherwise. The host has to be able to
+/// 2. The **host's own loopback**, when the container runs on the host's network
+///    stack (`--network host`). It has no address and publishes nothing, so
+///    both other answers are empty and it would read as unreachable — while in
+///    fact it is the *most* reachable case: the port it binds is the host's.
+/// 3. The container's **own address**, otherwise. The host has to be able to
 ///    route to the container network for this; a Linux bridge can, and so can
 ///    OrbStack on macOS, by design.
 ///
-/// Neither is an error the user has to see rather than a forward that appears
-/// to work: `ssh -O forward` reports success as soon as the *local* listener
-/// binds, so an unreachable endpoint would surface only as a connection that
-/// hangs later, with nothing pointing back here.
+/// None of them is an error the user has to see rather than a forward that
+/// appears to work: `ssh -O forward` reports success as soon as the *local*
+/// listener binds, so an unreachable endpoint would surface only as a
+/// connection that hangs later, with nothing pointing back here.
 pub fn container_forward_target(
     host: &str,
     engine: &str,
@@ -580,34 +594,41 @@ fn container_forward_target_with(
     let host = parse_remote_id(host).host;
     let engine_q = shell_single_quote(engine);
     let name_q = shell_single_quote(container);
-    // One hop for both questions, marker-separated so an engine that answers
-    // neither yields two empty blocks instead of failing the call. Ends in
+    // One hop for all three questions, marker-separated so an engine that
+    // answers none yields empty blocks instead of failing the call. Ends in
     // `true` so the compound's status is the probe's, not the last command's.
     // `export PATH`, not `run_ssh`'s leading `PATH=…` assignment: that form
     // attaches to one *simple command*, so everything after the first `;` — the
-    // inspect, here — would run with only the login shell's PATH and quietly
+    // inspects, here — would run with only the login shell's PATH and quietly
     // find no engine. Mirrors `capture_panes`, which takes the same care.
     let script = format!(
         "export {prefix} ; {engine_q} port {name_q} {port} 2>/dev/null ; \
          echo {FORWARD_PROBE_MARKER} ; \
-         {engine_q} inspect -f {format} {name_q} 2>/dev/null ; true",
+         {engine_q} inspect -f {mode} {name_q} 2>/dev/null ; \
+         echo {FORWARD_PROBE_MARKER} ; \
+         {engine_q} inspect -f {ips} {name_q} 2>/dev/null ; true",
         prefix = REMOTE_PATH_PREFIX,
-        format = shell_single_quote(CONTAINER_IP_FORMAT),
+        mode = shell_single_quote(CONTAINER_NETWORK_MODE_FORMAT),
+        ips = shell_single_quote(CONTAINER_IP_FORMAT),
     );
     let raw = run_ssh(runner, host, &[script.as_str()])
         .map_err(|error| format!("could not ask {host} where {container} answers: {error}"))?;
     parse_forward_target(&raw, port).ok_or_else(|| {
         format!(
-            "{container} does not publish port {port}, and {host} cannot see the container's own \
-             address — publish the port, or use a host whose network reaches the container"
+            "{container} does not publish port {port}, is not on {host}'s own network, and has no \
+             address {host} can see — publish the port, or use a host whose network reaches the \
+             container"
         )
     })
 }
 
-/// Pick a target out of the two probe blocks. Published wins; the container's
-/// own address is the fallback.
+/// Pick a target out of the three probe blocks — published, network mode, then
+/// the container's addresses. See [`container_forward_target`] for why the
+/// order is what it is.
 fn parse_forward_target(raw: &str, port: u16) -> Option<String> {
-    let (published, addresses) = raw.split_once(FORWARD_PROBE_MARKER)?;
+    let mut blocks = raw.split(FORWARD_PROBE_MARKER);
+    let (published, mode, addresses) = (blocks.next()?, blocks.next()?, blocks.next()?);
+
     if let Some(mapping) = published
         .lines()
         .map(str::trim)
@@ -616,6 +637,12 @@ fn parse_forward_target(raw: &str, port: u16) -> Option<String> {
         if let Some(target) = published_target(mapping) {
             return Some(target);
         }
+    }
+    // On the host's own stack a container binds the *host's* ports, so the port
+    // asked for is the port to dial — there is no translation, and no address
+    // of its own to go looking for.
+    if mode.trim() == HOST_NETWORK_MODE {
+        return Some(format!("127.0.0.1:{port}"));
     }
     let address = addresses.split_whitespace().find(|ip| !ip.is_empty())?;
     Some(format!("{address}:{port}"))

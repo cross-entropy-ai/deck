@@ -861,12 +861,17 @@ fn every_assembled_remote_command_is_valid_shell() {
 
 #[test]
 fn forward_target_prefers_a_published_port_over_the_container_address() {
+    // The probe's three blocks: what the container publishes, its network mode,
+    // and its own addresses.
+    let probe = |published: &str, mode: &str, ips: &str| {
+        format!("{published}\n{FORWARD_PROBE_MARKER}\n{mode}\n{FORWARD_PROBE_MARKER}\n{ips}\n")
+    };
+
     // Published first: reaching it needs nothing of the host's network but a
     // loopback hop, so it works even where the container network doesn't (a
     // Docker Desktop host, whose containers live in a VM it cannot route to).
-    let published = format!("0.0.0.0:32768\n{FORWARD_PROBE_MARKER}\n172.17.0.2 \n");
     assert_eq!(
-        parse_forward_target(&published, 8080).as_deref(),
+        parse_forward_target(&probe("0.0.0.0:32768", "bridge", "172.17.0.2 "), 8080).as_deref(),
         Some("127.0.0.1:32768"),
         "a wildcard bind is where the container accepts, not an address to dial"
     );
@@ -874,35 +879,50 @@ fn forward_target_prefers_a_published_port_over_the_container_address() {
     // No publish: the container's own address, with the port the user asked
     // for — the host has to be able to route to the container network, which a
     // Linux bridge and OrbStack both can.
-    let unpublished = format!("{FORWARD_PROBE_MARKER}\n172.17.0.2 \n");
     assert_eq!(
-        parse_forward_target(&unpublished, 8080).as_deref(),
+        parse_forward_target(&probe("", "bridge", "172.17.0.2 "), 8080).as_deref(),
         Some("172.17.0.2:8080")
     );
 
     // A port bound to one interface is not reachable on loopback, so that
     // address is kept as published rather than substituted.
-    let specific = format!("192.168.1.5:32768\n{FORWARD_PROBE_MARKER}\n172.17.0.2 \n");
     assert_eq!(
-        parse_forward_target(&specific, 8080).as_deref(),
+        parse_forward_target(&probe("192.168.1.5:32768", "bridge", "172.17.0.2 "), 8080).as_deref(),
         Some("192.168.1.5:32768")
     );
 
     // IPv6 wildcard, as `docker port` spells it.
-    let v6 = format!("[::]:32768\n{FORWARD_PROBE_MARKER}\n");
     assert_eq!(
-        parse_forward_target(&v6, 8080).as_deref(),
+        parse_forward_target(&probe("[::]:32768", "bridge", ""), 8080).as_deref(),
         Some("127.0.0.1:32768")
     );
 
     // Neither answer is an error the user sees, not a forward that binds and
     // then never connects: `ssh -O forward` succeeds as soon as the *local*
     // listener is up, so nothing later would point back at this.
-    let neither = format!("{FORWARD_PROBE_MARKER}\n");
-    assert_eq!(parse_forward_target(&neither, 8080), None);
-    // A probe that produced no marker at all (ssh itself failed) is not an
+    assert_eq!(parse_forward_target(&probe("", "none", ""), 8080), None);
+    // A probe that produced no markers at all (ssh itself failed) is not an
     // answer either.
     assert_eq!(parse_forward_target("", 8080), None);
+}
+
+#[test]
+fn a_host_network_container_answers_on_the_hosts_loopback() {
+    // `--network host` shares the host's stack: the container publishes nothing
+    // and has no address of its own, so both other answers are empty *by
+    // design* — and it is in fact the most reachable case, on the very port it
+    // binds. Reported from a real GPU box, where the whole feature read as
+    // "cannot see the container's own address".
+    let probe = format!("\n{FORWARD_PROBE_MARKER}\nhost\n{FORWARD_PROBE_MARKER}\n\n");
+    assert_eq!(
+        parse_forward_target(&probe, 8080).as_deref(),
+        Some("127.0.0.1:8080"),
+        "no translation: the port asked for is the port the host is listening on"
+    );
+
+    // And it does not swallow the other modes.
+    let bridged = format!("\n{FORWARD_PROBE_MARKER}\nbridge\n{FORWARD_PROBE_MARKER}\n\n");
+    assert_eq!(parse_forward_target(&bridged, 8080), None);
 }
 
 #[test]
