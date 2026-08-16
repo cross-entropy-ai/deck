@@ -100,6 +100,18 @@ pub const TAB_SEPARATOR: &str = "│";
 pub const MENU_LABEL: &str = "≡ menu";
 /// Overflow marker shown at either edge of a windowed vertical tab run.
 pub const TAB_OVERFLOW_MARKER: &str = "…";
+
+/// Connector prefixed to a nested section's divider label: `TREE_BRANCH` while
+/// siblings follow, `TREE_BRANCH_LAST` on the one that closes the run.
+///
+/// Both are exactly two cells, which is what lets the renderer trade them with
+/// the collapse chevron so the connector leads the divider (see
+/// `ui::sidebar::sessions::lead_with_branch`). The line is what says this
+/// section hangs off the one above; the chevron is a control on it, and reads
+/// as one only after the relationship is established.
+pub const TREE_BRANCH: &str = "├ ";
+/// See [`TREE_BRANCH`].
+pub const TREE_BRANCH_LAST: &str = "└ ";
 const TAB_OVERFLOW_RUN_WIDTH: u16 = 2; // marker + one separating space
 
 /// Minimum sidebar content width before the update banner renders at all.

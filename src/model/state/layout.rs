@@ -78,9 +78,12 @@ impl AppState {
     }
 
     /// The text on one section's own divider. A top-level section draws its
-    /// title; a nested one draws a branch glyph plus its short label, so the
-    /// sidebar reads as a tree without spending scarce width repeating the
-    /// parent's name. `├` continues a run of siblings, `└` closes it.
+    /// title; a nested one is prefixed with the connector that ties it to the
+    /// group above, and drops the parent's name from the label — the divider
+    /// one row up already carries it, and sidebar width is scarce.
+    ///
+    /// The connector leads the *label*; the renderer then hoists it ahead of
+    /// the collapse chevron, which is where it has to be read.
     fn divider_label(
         &self,
         def: &crate::system::SectionDef,
@@ -95,7 +98,12 @@ impl AppState {
             .and_then(|next| self.parent_lane(next))
             .is_some_and(|next_parent| next_parent == parent);
         let label = def.divider_title.as_deref().unwrap_or(&def.title);
-        format!("{} {label}", if more_siblings { "├" } else { "└" })
+        let branch = if more_siblings {
+            crate::geometry::TREE_BRANCH
+        } else {
+            crate::geometry::TREE_BRANCH_LAST
+        };
+        format!("{branch}{label}")
     }
 
     /// Shared skeleton behind both sidebar tabs: a local section then one per

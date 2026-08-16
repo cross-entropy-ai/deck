@@ -90,6 +90,43 @@ fn unbold(mut text: Text<'static>) -> Text<'static> {
     text
 }
 
+/// Hoist a nested divider's connector ahead of the collapse chevron, so the
+/// bar reads `├ ▾ name` rather than `▾ ├ name`. The line is what says which
+/// group this section hangs off; it has to land before anything else, and the
+/// chevron — a control on the section, not part of its address — follows it.
+///
+/// The preset paints the chevron first and the label second, and the model puts
+/// the connector at the head of the label, so this *trades* the two two-cell
+/// prefixes instead of inserting anything. Same spans, same widths: the
+/// right-aligned button rects `header_button_ranges` publishes stay put, the
+/// same invariant [`unbold`] documents. Run it after `unbold`, which is what
+/// moves the label's leading space and leaves the connector flush at its start.
+fn lead_with_branch(mut text: Text<'static>) -> Text<'static> {
+    for line in &mut text.lines {
+        if line.spans.len() < 2 {
+            continue;
+        }
+        let chevron = line.spans[0].content.to_string();
+        // No chevron (collapsing off) means no slot to trade with, and a
+        // truncated one must not be resized into place.
+        if chevron.width() != crate::geometry::TREE_BRANCH.width() {
+            continue;
+        }
+        let label = line.spans[1].content.to_string();
+        let Some((branch, rest)) = [
+            crate::geometry::TREE_BRANCH,
+            crate::geometry::TREE_BRANCH_LAST,
+        ]
+        .into_iter()
+        .find_map(|branch| Some((branch, label.strip_prefix(branch)?))) else {
+            continue;
+        };
+        line.spans[0].content = branch.into();
+        line.spans[1].content = format!("{chevron}{rest}").into();
+    }
+    text
+}
+
 /// Paint a fixed-width marker into the preset's two-cell row gutter. The
 /// grabbed source stays marked with `↕`; once the pointer visits another row,
 /// that prospective drop target gets `▸` while the normal focus background
@@ -198,7 +235,7 @@ pub(super) fn draw_sessions(
             }
         }
         if matches!(item.kind, ItemKind::Header) {
-            return unbold(text);
+            return lead_with_branch(unbold(text));
         }
         text
     })
