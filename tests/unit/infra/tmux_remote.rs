@@ -262,7 +262,12 @@ fn stopped_or_missing_container_reads_as_unreachable() {
 fn container_engine_cannot_smuggle_a_second_command_onto_the_host() {
     // Unquoted, this ran on the remote host on every refresh tick — the exact
     // shape CLAUDE.md's remote-shell section forbids for config values.
-    let argv = container_exec_argv("docker ; id > /tmp/x ; true", "dev", &["tmux", "ls"]);
+    let argv = container_exec_argv(
+        "docker ; id > /tmp/x ; true",
+        "dev",
+        &["tmux", "ls"],
+        ContainerStdin::Detached,
+    );
     assert_eq!(argv[0], "'docker ; id > /tmp/x ; true'");
     // Single-quoted, so the remote shell reads it as ONE word: the `;` is data,
     // not a command separator. `shell_single_quote` has no escape hatch — a `'`
@@ -388,7 +393,12 @@ fn every_remote_tmux_call_forces_the_utf8_flag() {
 
 #[test]
 fn container_exec_argv_respects_the_engine() {
-    let argv = container_exec_argv("podman", "dev", &["tmux", "kill-server"]);
+    let argv = container_exec_argv(
+        "podman",
+        "dev",
+        &["tmux", "kill-server"],
+        ContainerStdin::Detached,
+    );
     assert_eq!(argv[0], "'podman'");
     assert_eq!(argv[1], "exec");
     // The engine does not carry the caller's TERM into the container, and a
@@ -400,6 +410,28 @@ fn container_exec_argv_respects_the_engine() {
     assert_eq!(argv[6], "-c");
     assert!(argv[7].starts_with("'PATH="));
     assert!(argv[7].contains("tmux kill-server"));
+}
+
+/// An argv-only call runs with stdin at `/dev/null`, so asking the engine to
+/// hold a stream would only give it one that never closes; a call that streams
+/// bytes must ask, or the command inside the container reads EOF before its
+/// first byte.
+#[test]
+fn only_a_streaming_container_exec_attaches_stdin() {
+    let probe = container_exec_argv("docker", "dev", &["tmux", "ls"], ContainerStdin::Detached);
+    assert!(!probe.contains(&"-i".to_string()), "argv: {probe:?}");
+
+    let staging = container_exec_argv(
+        "docker",
+        "dev",
+        &["cat", ">", "x"],
+        ContainerStdin::Attached,
+    );
+    assert_eq!(staging[1], "exec");
+    // Ahead of `-e`, where the engines' own docs put it and where the attach
+    // path's `-it` already sits.
+    assert_eq!(staging[2], "-i");
+    assert_eq!(staging[3], "-e");
 }
 
 #[test]
@@ -1119,11 +1151,47 @@ fn upload_writes_through_a_part_file_and_reports_the_remote_path() {
             .contains("mv \"$HOME/.cache/deck/paste\"/'1234-a.png.part' \"$HOME/.cache/deck/paste\"/'1234-a.png' &&"),
         "command: {command}"
     );
-    // The remote reports where it wrote, so Deck never guesses a remote home.
+    // The remote reports where it wrote, so Deck never guesses a remote home,
+    // and how much arrived, which is the only signal a stream that ended early
+    // leaves behind — every step of this chain exits 0 either way.
     assert!(
-        command.ends_with("printf '%s' \"$HOME/.cache/deck/paste\"/'1234-a.png'"),
+        command.contains("printf '%s\\n' \"$HOME/.cache/deck/paste\"/'1234-a.png' &&"),
         "command: {command}"
     );
+    assert!(
+        command.ends_with("wc -c < \"$HOME/.cache/deck/paste\"/'1234-a.png'"),
+        "command: {command}"
+    );
+}
+
+/// The count and the path are both read off one blob of remote stdout, whose
+/// shape Deck does not fully control: `wc` pads on BSD, a remote `$HOME` may
+/// hold a space, and a login shell may have printed a banner first.
+#[test]
+fn a_staged_report_yields_the_path_and_the_size_it_landed_at() {
+    assert_eq!(
+        parse_staged_report("/home/me/.cache/deck/paste/1234-a.png\n110001"),
+        Some(("/home/me/.cache/deck/paste/1234-a.png".to_string(), 110001))
+    );
+    // BSD `wc` pads its number; the count is the last token either way.
+    assert_eq!(
+        parse_staged_report("/home/me/x.png\n     42"),
+        Some(("/home/me/x.png".to_string(), 42))
+    );
+    // A home with a space in it keeps its space: only the last token is a count.
+    assert_eq!(
+        parse_staged_report("/Users/me/My Home/x.png\n7"),
+        Some(("/Users/me/My Home/x.png".to_string(), 7))
+    );
+    // A banner ahead of the answer is not part of the path Deck pastes.
+    assert_eq!(
+        parse_staged_report("Welcome to prod!\n/home/me/x.png\n7"),
+        Some(("/home/me/x.png".to_string(), 7))
+    );
+    // Nothing usable: no count, or no path in front of one.
+    assert_eq!(parse_staged_report(""), None);
+    assert_eq!(parse_staged_report("/home/me/x.png"), None);
+    assert_eq!(parse_staged_report("\n7"), None);
 }
 
 #[test]
@@ -1138,8 +1206,12 @@ fn upload_to_a_container_stages_inside_it_not_on_its_host() {
     );
     // ...and the write happens through the container's own sh, so the file
     // lands on the filesystem the agent in that lane actually reads.
+    //
+    // `-i` is what carries the stream past the engine: without it the `cat`
+    // inside the container starts at EOF and stages a 0-byte file, and the pane
+    // gets a path to nothing.
     assert!(
-        call.contains("'docker' exec -e 'TERM=xterm-256color' 'dev' sh -c '"),
+        call.contains("'docker' exec -i -e 'TERM=xterm-256color' 'dev' sh -c '"),
         "missing exec wrap: {call}"
     );
     assert!(call.contains("mkdir -p"), "command lost: {call}");
@@ -1199,8 +1271,10 @@ fn staged_upload_command_writes_the_file_and_prints_where() {
         "staging failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    // What `upload_file` hands back, and what gets pasted into the pane.
-    let reported = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    // What `upload_file` hands back, and what gets pasted into the pane — read
+    // out of the real shell's output by the parser production uses.
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let (reported, staged_len) = parse_staged_report(&stdout).expect("staging reported its answer");
     assert_eq!(
         reported,
         home.join(".cache/deck/paste").join(&name).to_string_lossy()
@@ -1209,6 +1283,9 @@ fn staged_upload_command_writes_the_file_and_prints_where() {
         std::fs::read(&reported).expect("staged file"),
         b"\x89PNG\r\n\x1a\nfake"
     );
+    // The count the shell reports is the one `upload_file` compares against the
+    // local size, so a stream that ended early cannot pass as a staged image.
+    assert_eq!(staged_len, b"\x89PNG\r\n\x1a\nfake".len() as u64);
     // The `.part` the write went through is gone, not left beside it.
     assert!(!std::path::Path::new(&format!("{reported}.part")).exists());
 
