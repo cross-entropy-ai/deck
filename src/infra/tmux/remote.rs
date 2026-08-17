@@ -219,6 +219,7 @@ pub(crate) fn run_ssh(
             &container_opts(remote_id).engine,
             container,
             remote_argv,
+            ContainerStdin::Detached,
         )),
     }
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -242,9 +243,14 @@ pub(crate) fn run_ssh(
 /// substitutes its own for the caller's, and tmux believes it (see
 /// [`crate::pty::CHILD_TERM`]). It costs nothing here and keeps the two exec
 /// spellings from drifting apart again.
-fn container_exec_argv(engine: &str, container: &str, remote_argv: &[&str]) -> Vec<String> {
+fn container_exec_argv(
+    engine: &str,
+    container: &str,
+    remote_argv: &[&str],
+    stdin: ContainerStdin,
+) -> Vec<String> {
     let inner = format!("{REMOTE_PATH_PREFIX} {}", remote_argv.join(" "));
-    vec![
+    let mut args = vec![
         // Quoted like every other config value that reaches a remote shell (see
         // CLAUDE.md). Unquoted, `engine: "docker ; id > /tmp/x ; true"` ran on
         // the host every refresh tick — and it also disagreed with the attach
@@ -253,13 +259,35 @@ fn container_exec_argv(engine: &str, container: &str, remote_argv: &[&str]) -> V
         // value to one command, so quoting costs nothing legitimate.
         shell_single_quote(engine),
         "exec".to_string(),
+    ];
+    if stdin == ContainerStdin::Attached {
+        args.push("-i".to_string());
+    }
+    args.extend([
         "-e".to_string(),
         shell_single_quote(&format!("TERM={}", crate::pty::CHILD_TERM)),
         shell_single_quote(container),
         "sh".to_string(),
         "-c".to_string(),
         shell_single_quote(&inner),
-    ]
+    ]);
+    args
+}
+
+/// Whether the container `exec` keeps the caller's stdin attached.
+///
+/// Both engines detach stdin unless asked. Without `-i` the command inside the
+/// container starts with its stdin already at EOF, so the staging `cat >` wrote
+/// a 0-byte file while `cat`, `mv` and `printf` each still exited 0: Deck
+/// reported the upload as done and pasted a path to nothing, and the agent in
+/// the pane quietly dropped it back to text. Only a call that streams bytes asks
+/// for `Attached`; every argv-only call runs with stdin at `/dev/null`
+/// ([`crate::infra::command::RealRunner::run`]) and must not ask the engine to
+/// hold a stream nothing writes to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ContainerStdin {
+    Detached,
+    Attached,
 }
 
 /// List tmux sessions on `host`.
@@ -1230,11 +1258,34 @@ pub fn upload_file(remote_id: &str, local_path: &std::path::Path) -> Result<Stri
 
     // The remote shell reports the path it wrote, so `$HOME` is expanded by the
     // side that owns it — Deck never has to guess a remote home directory.
-    let path = raw.stdout_trimmed();
-    if path.is_empty() {
-        return Err("host did not report where the file landed".to_string());
+    let (path, staged_len) = parse_staged_report(&raw.stdout_trimmed())
+        .ok_or_else(|| "host did not report where the file landed".to_string())?;
+    // ...and how much of the stream it actually got. Every step of the staging
+    // chain exits 0 on a stream that ended early, so the size read back is the
+    // only thing that separates a staged image from a path to nothing.
+    if staged_len != meta.len() {
+        return Err(format!("host stored {staged_len} of {} bytes", meta.len()));
     }
     Ok(path)
+}
+
+/// Split the staging command's answer into the path it wrote and the byte count
+/// it read back.
+///
+/// The count is the last whitespace-separated token, and the path everything
+/// before it: `wc -c` pads its number on some hosts, and a remote `$HOME` may
+/// itself contain a space, so neither can be found by splitting forwards. Only
+/// the path's last line is kept, so a login shell that printed a banner ahead of
+/// the answer cannot end up inside the path Deck pastes.
+fn parse_staged_report(stdout: &str) -> Option<(String, u64)> {
+    let (head, size) = stdout.trim_end().rsplit_once(char::is_whitespace)?;
+    // `trim_end` before `lines`, or `wc`'s padding *is* the last line and the
+    // path looks empty. Interior spaces are left alone: they may be the home's.
+    let path = head.trim_end().lines().next_back()?.trim();
+    if path.is_empty() {
+        return None;
+    }
+    Some((path.to_string(), size.trim().parse().ok()?))
 }
 
 /// Full `ssh` argv for staging one file, mirroring [`run_ssh`]'s assembly so a
@@ -1256,6 +1307,8 @@ fn upload_argv(remote_id: &str, staged_name: &str) -> Vec<String> {
                 &container_opts(remote_id).engine,
                 container,
                 &refs,
+                // The one call whose payload is a stream rather than argv.
+                ContainerStdin::Attached,
             ));
         }
     }
@@ -1264,12 +1317,19 @@ fn upload_argv(remote_id: &str, staged_name: &str) -> Vec<String> {
 
 /// The remote-shell command that receives the bytes: create the staging
 /// directory, write the stream beside the final name, rename it into place,
-/// then print where it went.
+/// then print where it went and how much of it arrived.
 ///
 /// The write goes to a `.part` first so a connection that dies mid-transfer
 /// leaves no half-image under the name Deck is about to paste — `cat` reports
 /// success on a truncated stream, but a broken connection kills the remote
 /// shell before the `mv` can run.
+///
+/// The `wc -c` is the other half of that guarantee, for the stream that ends
+/// early without killing anything: a container `exec` that forgot to attach
+/// stdin wrote 0 bytes through this exact chain and every step still exited 0.
+/// Comparing against the local size is [`upload_file`]'s job — the shell only
+/// has to report, which keeps the arithmetic out of a command four different
+/// remote shells re-parse.
 fn stage_command(staged_name: &str) -> Vec<String> {
     let part = format!(
         "{STAGING_DIR}/{}",
@@ -1290,7 +1350,14 @@ fn stage_command(staged_name: &str) -> Vec<String> {
         final_path.clone(),
         "&&".to_string(),
         "printf".to_string(),
-        "'%s'".to_string(),
+        // Newline-terminated: the byte count follows on its own line, and
+        // `parse_staged_report` reads the two apart.
+        "'%s\\n'".to_string(),
+        final_path.clone(),
+        "&&".to_string(),
+        "wc".to_string(),
+        "-c".to_string(),
+        "<".to_string(),
         final_path,
     ]
 }
