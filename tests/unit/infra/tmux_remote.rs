@@ -839,23 +839,25 @@ fn every_assembled_remote_command_is_valid_shell() {
         for id in ["box", "box#dev"] {
             let runner = FakeRunner::new(ok(""));
             run(&runner, id);
-            let command = remote_command_of(&runner.calls()[0]);
-            // `-n` parses without executing. bash is the common remote login
-            // shell; sh covers the stricter POSIX reading (and is what a
-            // container gets).
-            for shell in ["bash", "sh"] {
-                let status = std::process::Command::new(shell)
-                    .arg("-n")
-                    .arg("-c")
-                    .arg(&command)
-                    .status()
-                    .expect("spawn shell");
-                assert!(
-                    status.success(),
-                    "{name} on {id} produced a command {shell} cannot parse:\n{command}"
-                );
-            }
+            assert_remote_shells_parse(name, id, &remote_command_of(&runner.calls()[0]));
         }
+    }
+}
+
+/// `-n` parses without executing. bash is the common remote login shell; sh
+/// covers the stricter POSIX reading (and is what a container gets).
+fn assert_remote_shells_parse(name: &str, id: &str, command: &str) {
+    for shell in ["bash", "sh"] {
+        let status = std::process::Command::new(shell)
+            .arg("-n")
+            .arg("-c")
+            .arg(command)
+            .status()
+            .expect("spawn shell");
+        assert!(
+            status.success(),
+            "{name} on {id} produced a command {shell} cannot parse:\n{command}"
+        );
     }
 }
 
@@ -1021,4 +1023,158 @@ fn parse_dir_listing_keeps_dirs_drops_files() {
     let mut got = parse_dir_listing(raw);
     got.sort();
     assert_eq!(got, vec![".config", "src", "tests"]);
+}
+
+/// The staged name is pasted into an agent's prompt and re-parsed by a remote
+/// shell, so it may not carry a space or a metacharacter — and a macOS
+/// screenshot's name is nothing but spaces and colons.
+#[test]
+fn staged_name_survives_a_prompt_and_a_shell() {
+    assert_eq!(
+        sanitized_base_name(std::path::Path::new(
+            "/Users/me/Screen Shot 2026-08-17 at 09.41.02.png"
+        )),
+        "Screen_Shot_2026-08-17_at_09.41.02.png"
+    );
+    // Shell metacharacters and quotes go the same way as spaces.
+    assert_eq!(
+        sanitized_base_name(std::path::Path::new("/tmp/a;rm -rf $HOME'.png")),
+        "a_rm_-rf__HOME_.png"
+    );
+    // A name Deck cannot transliterate still produces something openable; the
+    // stamp `staged_file_name` prepends is what keeps it unique.
+    assert_eq!(
+        sanitized_base_name(std::path::Path::new("/tmp/截屏.png")),
+        "image.png"
+    );
+    // The extension is what an agent reads the type from, so a long name loses
+    // its stem, never its suffix.
+    let long = format!("/tmp/{}.png", "n".repeat(100));
+    let staged = sanitized_base_name(std::path::Path::new(&long));
+    assert!(staged.ends_with(".png"), "extension dropped: {staged}");
+    assert!(staged.len() <= 44, "stem not truncated: {staged}");
+}
+
+#[test]
+fn staged_name_is_stamped_so_two_drops_cannot_collide() {
+    let name = staged_file_name(std::path::Path::new("/tmp/a.png"));
+    let (stamp, rest) = name.split_once('-').expect("stamped name");
+    assert!(stamp.chars().all(|c| c.is_ascii_digit()), "name: {name}");
+    assert_eq!(rest, "a.png");
+}
+
+#[test]
+fn upload_writes_through_a_part_file_and_reports_the_remote_path() {
+    let command = stage_command("1234-a.png").join(" ");
+    // `$HOME` is expanded by the side that owns it, and stays one word even on
+    // a host whose home has a space in it.
+    assert!(
+        command.starts_with("mkdir -p \"$HOME/.cache/deck/paste\" &&"),
+        "command: {command}"
+    );
+    // The stream lands beside the final name, so a connection that dies
+    // mid-transfer leaves no half-image under the name Deck pastes.
+    assert!(
+        command.contains("cat > \"$HOME/.cache/deck/paste\"/'1234-a.png.part' &&"),
+        "command: {command}"
+    );
+    assert!(
+        command
+            .contains("mv \"$HOME/.cache/deck/paste\"/'1234-a.png.part' \"$HOME/.cache/deck/paste\"/'1234-a.png' &&"),
+        "command: {command}"
+    );
+    // The remote reports where it wrote, so Deck never guesses a remote home.
+    assert!(
+        command.ends_with("printf '%s' \"$HOME/.cache/deck/paste\"/'1234-a.png'"),
+        "command: {command}"
+    );
+}
+
+#[test]
+fn upload_to_a_container_stages_inside_it_not_on_its_host() {
+    let call = upload_argv("box#dev", "1234-a.png").join(" ");
+
+    // ssh still targets the bare host, exactly as every other remote call does.
+    assert!(call.contains(" box "), "host arg mangled: {call}");
+    assert!(
+        !call.contains("box#dev"),
+        "container leaked into ssh destination: {call}"
+    );
+    // ...and the write happens through the container's own sh, so the file
+    // lands on the filesystem the agent in that lane actually reads.
+    assert!(
+        call.contains("'docker' exec -e 'TERM=xterm-256color' 'dev' sh -c '"),
+        "missing exec wrap: {call}"
+    );
+    assert!(call.contains("mkdir -p"), "command lost: {call}");
+
+    // The host spelling stays free of any exec wrap.
+    let host_call = upload_argv("box", "1234-a.png").join(" ");
+    assert!(
+        !host_call.contains(" exec "),
+        "host upload must not exec: {host_call}"
+    );
+}
+
+/// The staging command is assembled outside `run_ssh` (it needs a stdin
+/// stream), so it misses the table in `every_assembled_remote_command_is_valid
+/// _shell` and gets the same guarantee here — including for a name that is
+/// nothing but shell metacharacters before sanitizing.
+#[test]
+fn staged_upload_command_is_valid_shell() {
+    for id in ["box", "box#dev"] {
+        let args = upload_argv(
+            id,
+            &staged_file_name(std::path::Path::new("/tmp/a b';.png")),
+        );
+        let host = parse_remote_id(id).host;
+        let start = args
+            .iter()
+            .position(|arg| arg == host)
+            .expect("ssh argv names its destination");
+        // Everything past the destination is what the remote shell re-parses.
+        assert_remote_shells_parse("upload_file", id, &args[start + 1..].join(" "));
+    }
+}
+
+/// Parsing is not enough: run the staging command through a real shell and
+/// check the bytes land, under the name Deck is about to paste, at the path
+/// the command prints back. Hermetic — a temporary `$HOME` stands in for the
+/// remote's, which is the only thing ssh would have contributed here.
+#[test]
+fn staged_upload_command_writes_the_file_and_prints_where() {
+    let home = std::env::temp_dir().join(format!("deck-test-stage-{}", std::process::id()));
+    let source = home.join("source.png");
+    std::fs::create_dir_all(&home).expect("temp home");
+    std::fs::write(&source, b"\x89PNG\r\n\x1a\nfake").expect("source file");
+
+    let name = sanitized_base_name(std::path::Path::new("/tmp/Screen Shot at 09.41.02.png"));
+    let command = stage_command(&name).join(" ");
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&command)
+        .env("HOME", &home)
+        .stdin(std::fs::File::open(&source).expect("open source"))
+        .output()
+        .expect("run staging command");
+
+    assert!(
+        output.status.success(),
+        "staging failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // What `upload_file` hands back, and what gets pasted into the pane.
+    let reported = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    assert_eq!(
+        reported,
+        home.join(".cache/deck/paste").join(&name).to_string_lossy()
+    );
+    assert_eq!(
+        std::fs::read(&reported).expect("staged file"),
+        b"\x89PNG\r\n\x1a\nfake"
+    );
+    // The `.part` the write went through is gone, not left beside it.
+    assert!(!std::path::Path::new(&format!("{reported}.part")).exists());
+
+    let _ = std::fs::remove_dir_all(&home);
 }

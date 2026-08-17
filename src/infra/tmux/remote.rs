@@ -1178,6 +1178,201 @@ fn dir_error_message(err: &CommandError) -> String {
     }
 }
 
+/// Directory a staged file lands in on the remote side, as the remote shell
+/// spells it. Under `$HOME` rather than `/tmp`: `/tmp` is shared by every user
+/// on the host (a fixed name there is another user's to collide with), and a
+/// cache directory is the conventional home for bytes Deck can re-send at any
+/// time. Emitted double-quoted so `$HOME` expands and a home with a space in it
+/// still arrives as one word.
+const STAGING_DIR: &str = "\"$HOME/.cache/deck/paste\"";
+
+/// Ceiling on one staged file. Screenshots — the case this exists for — run a
+/// few MB; well past that the paste is more likely a mis-drop than an image to
+/// show an agent, and the transfer would hold this lane's FIFO worker (see
+/// [`UPLOAD_TIMEOUT`]) for the whole upload.
+const MAX_STAGED_BYTES: u64 = 20 * 1024 * 1024;
+
+/// Budget for one staged upload. Far beyond [`REMOTE_TIMEOUT`]'s 5s, which
+/// sizes a control command: this one streams megabytes, and on a slow link the
+/// difference is a working paste rather than a timeout. It is a ceiling on the
+/// *stall*, not the expected cost — a screenshot over a warm ControlMaster is
+/// well under a second.
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// Copy `local_path` to the remote id's own filesystem and return the absolute
+/// path it landed at, as that side spells it.
+///
+/// The bytes go over stdin of the same multiplexed ssh connection every other
+/// remote call uses — no second authentication, and no argv, which could not
+/// carry a megabyte anyway. `Err` is a short user-facing line, like
+/// [`list_dir`]'s: it ends up in a warning, not a log.
+pub fn upload_file(remote_id: &str, local_path: &std::path::Path) -> Result<String, String> {
+    let meta = std::fs::metadata(local_path).map_err(|error| {
+        crate::infra::io_error_label(error.kind())
+            .unwrap_or("cannot read file")
+            .to_string()
+    })?;
+    if !meta.is_file() {
+        return Err("not a file".to_string());
+    }
+    if meta.len() > MAX_STAGED_BYTES {
+        return Err(format!(
+            "file is larger than {} MB",
+            MAX_STAGED_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let args = upload_argv(remote_id, &staged_file_name(local_path));
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let raw =
+        crate::infra::command::run_with_stdin_file("ssh", &arg_refs, local_path, UPLOAD_TIMEOUT)
+            .map_err(|error| upload_error_message(&error))?;
+
+    // The remote shell reports the path it wrote, so `$HOME` is expanded by the
+    // side that owns it — Deck never has to guess a remote home directory.
+    let path = raw.stdout_trimmed();
+    if path.is_empty() {
+        return Err("host did not report where the file landed".to_string());
+    }
+    Ok(path)
+}
+
+/// Full `ssh` argv for staging one file, mirroring [`run_ssh`]'s assembly so a
+/// container id lands inside the container rather than on its host.
+///
+/// No `PATH` prefix, unlike [`run_ssh`]: every command here (`mkdir`, `cat`,
+/// `mv`, `printf`) is a system binary or shell builtin, and a leading
+/// assignment would in any case attach only to the first of the four.
+fn upload_argv(remote_id: &str, staged_name: &str) -> Vec<String> {
+    let target = parse_remote_id(remote_id);
+    let mut args = base_ssh_args(target.host);
+    args.push(target.host.to_string());
+    let command = stage_command(staged_name);
+    match target.container {
+        None => args.extend(command),
+        Some(container) => {
+            let refs: Vec<&str> = command.iter().map(String::as_str).collect();
+            args.extend(container_exec_argv(
+                &container_opts(remote_id).engine,
+                container,
+                &refs,
+            ));
+        }
+    }
+    args
+}
+
+/// The remote-shell command that receives the bytes: create the staging
+/// directory, write the stream beside the final name, rename it into place,
+/// then print where it went.
+///
+/// The write goes to a `.part` first so a connection that dies mid-transfer
+/// leaves no half-image under the name Deck is about to paste — `cat` reports
+/// success on a truncated stream, but a broken connection kills the remote
+/// shell before the `mv` can run.
+fn stage_command(staged_name: &str) -> Vec<String> {
+    let part = format!(
+        "{STAGING_DIR}/{}",
+        shell_single_quote(&format!("{staged_name}.part"))
+    );
+    let final_path = format!("{STAGING_DIR}/{}", shell_single_quote(staged_name));
+    vec![
+        "mkdir".to_string(),
+        "-p".to_string(),
+        STAGING_DIR.to_string(),
+        "&&".to_string(),
+        "cat".to_string(),
+        ">".to_string(),
+        part.clone(),
+        "&&".to_string(),
+        "mv".to_string(),
+        part,
+        final_path.clone(),
+        "&&".to_string(),
+        "printf".to_string(),
+        "'%s'".to_string(),
+        final_path,
+    ]
+}
+
+/// Name the file takes on the remote side: a millisecond stamp (two drops of
+/// the same screenshot must not collide) plus a sanitized original name.
+fn staged_file_name(local_path: &std::path::Path) -> String {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis());
+    format!("{stamp}-{}", sanitized_base_name(local_path))
+}
+
+/// A remote-safe spelling of the dropped file's name. This string is pasted
+/// into an agent's prompt, where a space would end the path — and macOS names
+/// its screenshots `Screen Shot 2026-08-17 at 09.41.02.png`, so spaces are the
+/// common case, not the exotic one. Anything outside `[A-Za-z0-9._-]` (a CJK
+/// screenshot name, a shell metacharacter) becomes `_`; the stamp in
+/// [`staged_file_name`] keeps the result unique either way.
+fn sanitized_base_name(local_path: &std::path::Path) -> String {
+    let raw = local_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (stem, extension) = match raw.rsplit_once('.') {
+        Some((stem, extension)) => (stem, extension),
+        None => (raw.as_str(), ""),
+    };
+
+    // `.` is kept: it needs no quoting anywhere, and dropping it would mangle
+    // the timestamps macOS puts in a screenshot's name. It cannot open the
+    // result — `staged_file_name` always prefixes a stamp — so no staged file
+    // turns into a dotfile.
+    let safe = |s: &str, limit: usize| -> String {
+        s.chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.') {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .take(limit)
+            .collect()
+    };
+
+    // The extension is what an agent reads the file type from, so it is kept
+    // whole and the stem is what gets truncated.
+    let stem = safe(stem, 40);
+    let stem = if stem.trim_matches(['_', '.']).is_empty() {
+        "image".to_string()
+    } else {
+        stem
+    };
+    let extension = safe(extension, 8);
+    if extension.is_empty() {
+        stem
+    } else {
+        format!("{stem}.{extension}")
+    }
+}
+
+/// Short, one-line reason a staged upload failed, for the warning line.
+/// Same split as [`dir_error_message`]: a host Deck could not reach reads
+/// differently from one whose shell rejected the write.
+fn upload_error_message(error: &CommandError) -> String {
+    match error {
+        CommandError::NonZero { status, stderr, .. } if status.code() != Some(255) => {
+            let msg = String::from_utf8_lossy(stderr).to_lowercase();
+            if msg.contains("no space left") {
+                "no space left on the host".to_string()
+            } else if msg.contains("permission denied") {
+                "permission denied".to_string()
+            } else {
+                "host could not store the file".to_string()
+            }
+        }
+        CommandError::Timeout { .. } => "timed out sending the file".to_string(),
+        _ => "host unreachable".to_string(),
+    }
+}
+
 #[cfg(test)]
 #[path = "../../../tests/unit/infra/tmux_remote.rs"]
 mod tests;

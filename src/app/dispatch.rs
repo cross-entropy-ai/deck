@@ -41,6 +41,10 @@ impl App {
                 self.state.focus_mode = FocusMode::Main;
                 false
             }
+            Action::PasteImagePath { path, raw } => {
+                self.paste_image_path(&path, raw);
+                false
+            }
             Action::SidebarClickSession(idx) | Action::NumberKeyJump(idx) => {
                 let fx = self.apply_all([Action::FocusIndex(idx), Action::SwitchProject]);
                 self.execute_side_effects(&fx);
@@ -233,6 +237,29 @@ impl App {
             .map(|control| control.control(lane, &ctx))
     }
 
+    /// A file was dropped on Deck's window: put it where the pane on screen can
+    /// read it, then paste that path.
+    ///
+    /// The staging runs on the lane's executor worker — it may be an upload —
+    /// so this returns immediately and `apply_session_outcome` does the pasting.
+    /// Existence and file-type checks live here rather than in the paste parser
+    /// because they touch the filesystem, the same reason `CreateIn` resolves
+    /// its `fs::metadata` question in dispatch.
+    fn paste_image_path(&mut self, path: &str, raw: String) {
+        let local_path = expand_home(path);
+        // A path that isn't a readable file (a stale drop, a directory, prose
+        // that happened to parse) is just text, and text pastes as itself.
+        if self.state.main_view != MainView::Terminal || !local_path.is_file() {
+            self.write_to_active_pty(&action::bracketed_paste(&raw));
+            return;
+        }
+        let lane = self.attachments.active_lane().clone();
+        self.submit_session(
+            lane,
+            crate::session::executor::SessionOp::StageFile { local_path, raw },
+        );
+    }
+
     /// Build the backend for `host` and hand `op` to the executor's per-host
     /// FIFO worker. Fire-and-forget from the UI thread: the op runs off-thread
     /// and any completion effect drains back through `apply_session_outcome`.
@@ -332,6 +359,28 @@ impl App {
                         ns.refilter();
                     }
                 }
+            }
+            OpOutcome::FileStaged { raw, staged } => {
+                // Staging took a moment, and the user may have moved on. A path
+                // pasted into whatever pane happens to be on screen now would be
+                // worse than not pasting it at all.
+                if self.attachments.active_lane() != &lane
+                    || self.state.main_view != MainView::Terminal
+                {
+                    self.state
+                        .show_warning("dropped file: the pane moved on before it arrived");
+                    return;
+                }
+                let text = match staged {
+                    // Nothing moved, so the pane reads the path the user
+                    // dropped: paste exactly what the terminal sent, escaping
+                    // and all, and this is indistinguishable from a plain paste.
+                    crate::session::StagedFile::InPlace => raw,
+                    // The trailing space is what a terminal's own drag-and-drop
+                    // leaves behind, so the user can type straight on.
+                    crate::session::StagedFile::At(path) => format!("{path} "),
+                };
+                self.write_to_active_pty(&action::bracketed_paste(&text));
             }
             OpOutcome::Focused {
                 target,
@@ -822,5 +871,14 @@ impl App {
                 spec,
             );
         }
+    }
+}
+
+/// Resolve a leading `~/` against Deck's own home, the one spelling a dropped
+/// path can carry that `Path` does not understand.
+fn expand_home(path: &str) -> std::path::PathBuf {
+    match path.strip_prefix("~/") {
+        Some(rest) => crate::config::home_dir().join(rest),
+        None => std::path::PathBuf::from(path),
     }
 }

@@ -16,7 +16,8 @@ thread:
 - kill;
 - create;
 - persist display order;
-- list directories for the new-session picker.
+- list directories for the new-session picker;
+- stage a local file so the lane can read it (a file dropped on Deck's window).
 
 PTY creation, resize, drain/write, SSH reconnect state, and attachment recovery
 are lifecycle services, not session-control methods. Keeping that distinction
@@ -33,6 +34,7 @@ pub trait SessionControl {
     fn create(&self, name: &str, dir: &str) -> SessionControlResult;
     fn persist_order(&self, order: &[String]) -> SessionControlResult;
     fn list_dir(&self, path: &str) -> SessionControlResult<DirListing>;
+    fn stage_file(&self, local_path: &Path) -> SessionControlResult<StagedFile>;
 }
 ```
 
@@ -40,6 +42,12 @@ All methods return `SessionControlResult<T>`. A backend failure is never
 encoded as `false`, an empty tuple, or a successful executor outcome.
 `DirListing` is a named DTO, leaving room to extend directory metadata without
 changing tuple conventions.
+
+`StagedFile` is the same idea applied to a file the user dropped on Deck's
+window: `InPlace` when the lane already reads Deck's filesystem, `At(path)`
+when the bytes had to travel and the lane knows them under another name. The
+caller pastes whichever it gets, so "is this lane remote?" never reaches the
+paste path.
 
 ## Execution and causality
 
@@ -53,8 +61,8 @@ Effect -> App::submit_session
        -> registry.for_lane(lane)
        -> System::control(lane, ControlCtx)
        -> per-lane FIFO worker
-       -> OpOutcome::{Created, Renamed, Killed, DirListed, Switched,
-                      OrderPersisted, Failed}
+       -> OpOutcome::{Created, Renamed, Killed, DirListed, FileStaged,
+                      Switched, OrderPersisted, Failed}
        -> App reconciliation
 ```
 

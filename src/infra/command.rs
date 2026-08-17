@@ -17,6 +17,7 @@
 //! which is suspect by then.
 
 use std::io;
+use std::path::Path;
 use std::process::ExitStatus;
 use std::sync::OnceLock;
 use std::thread;
@@ -120,41 +121,77 @@ impl CommandRunner for RealRunner {
                 program: program.to_string(),
                 source,
             })?;
+        wait_bounded(handle, program, timeout)
+    }
+}
 
-        let deadline = Instant::now() + timeout;
-        loop {
-            match handle.try_wait() {
-                Ok(Some(out)) => {
-                    return if out.status.success() {
-                        Ok(Output {
-                            stdout: out.stdout.clone(),
-                        })
-                    } else {
-                        Err(CommandError::NonZero {
-                            program: program.to_string(),
-                            status: out.status,
-                            stderr: out.stderr.clone(),
-                        })
-                    };
-                }
-                Ok(None) => {
-                    if Instant::now() >= deadline {
-                        // Best-effort process-group kill; ignore errors
-                        // (most likely the child raced us to exit).
-                        let _ = handle.kill();
-                        return Err(CommandError::Timeout {
-                            program: program.to_string(),
-                            elapsed: timeout,
-                        });
-                    }
-                    thread::sleep(POLL_INTERVAL);
-                }
-                Err(source) => {
-                    return Err(CommandError::Spawn {
+/// Run `program` with its stdin fed from `stdin_file`, bounded exactly like
+/// [`RealRunner::run`].
+///
+/// Deliberately a free function rather than a [`CommandRunner`] method: the
+/// trait stays argv-only (see this module's docs), and streaming a file in is
+/// what one caller needs — staging a dropped file onto a lane, where the bytes
+/// are far too large to survive as an argv token.
+pub(crate) fn run_with_stdin_file(
+    program: &str,
+    args: &[&str],
+    stdin_file: &Path,
+    timeout: Duration,
+) -> Result<Output, CommandError> {
+    let handle = duct::cmd(program, args.iter().copied())
+        .stdin_path(stdin_file)
+        .stdout_capture()
+        .stderr_capture()
+        .unchecked()
+        .start()
+        .map_err(|source| CommandError::Spawn {
+            program: program.to_string(),
+            source,
+        })?;
+    wait_bounded(handle, program, timeout)
+}
+
+/// Wait for `handle` up to `timeout`, classifying the exit like every other
+/// bounded call: success, `NonZero`, or a killed straggler whose partial
+/// stdout is discarded.
+fn wait_bounded(
+    handle: duct::Handle,
+    program: &str,
+    timeout: Duration,
+) -> Result<Output, CommandError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match handle.try_wait() {
+            Ok(Some(out)) => {
+                return if out.status.success() {
+                    Ok(Output {
+                        stdout: out.stdout.clone(),
+                    })
+                } else {
+                    Err(CommandError::NonZero {
                         program: program.to_string(),
-                        source,
+                        status: out.status,
+                        stderr: out.stderr.clone(),
+                    })
+                };
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    // Best-effort process-group kill; ignore errors
+                    // (most likely the child raced us to exit).
+                    let _ = handle.kill();
+                    return Err(CommandError::Timeout {
+                        program: program.to_string(),
+                        elapsed: timeout,
                     });
                 }
+                thread::sleep(POLL_INTERVAL);
+            }
+            Err(source) => {
+                return Err(CommandError::Spawn {
+                    program: program.to_string(),
+                    source,
+                });
             }
         }
     }

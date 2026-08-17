@@ -481,3 +481,27 @@ fn no_modal_leaks_a_forbidden_mouse_action() {
         }
     }
 }
+
+/// A dropped image path is still a paste: same modal gate, same warning
+/// policy. Only what dispatch does with it differs.
+#[test]
+fn dropped_image_path_is_a_paste_under_the_same_policy() {
+    let mut state = make_state();
+    state.focus_mode = FocusMode::Main;
+
+    let action = paste_to_action("/Users/me/shot.png", &state);
+
+    assert!(matches!(
+        &action,
+        Action::PasteImagePath { path, raw }
+            if path == "/Users/me/shot.png" && raw == "/Users/me/shot.png"
+    ));
+    assert!(crate::app::App::warning_blocks_action(&action));
+
+    // A modal owns every key, drop included.
+    open_modal(&mut state, Modal::Help);
+    assert!(matches!(
+        paste_to_action("/Users/me/shot.png", &state),
+        Action::None
+    ));
+}
