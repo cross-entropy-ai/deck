@@ -179,6 +179,47 @@ jobs:
           echo "aarch64_linux=$(sha256sum deck-${{ github.ref_name }}-aarch64-unknown-linux-musl.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "armv7_linux=$(sha256sum deck-${{ github.ref_name }}-armv7-unknown-linux-musleabihf.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
+      # Repackage the same binaries into Homebrew bottle layout so `brew install`
+      # pours instead of "building from source". A source install triggers
+      # brew's fatal Xcode-version check, which fails on prerelease macOS.
+      # A bottle is just <name>/<version>/bin/<bin> in a tarball -- no `brew bottle` needed.
+      - name: Build bottles
+        id: bottle
+        env:
+          VERSION: ${{ github.ref_name }}
+          FORMULA_NAME: ${{ needs.meta.outputs.formula_name }}
+          BIN_NAME: ${{ needs.meta.outputs.bin_name }}
+        run: |
+          FORMULA_VERSION="${VERSION#v}"
+
+          # $1 = release target, $2 = bottle tag. Prints the bottle's sha256.
+          # Use the OLDEST macOS you support as the tag: brew falls back to an
+          # older-macOS bottle on newer macOS, so one tag per arch covers all
+          # future releases (see Homebrew's find_older_compatible_tag).
+          make_bottle() {
+            rm -rf stage pkg
+            mkdir -p stage "pkg/${FORMULA_NAME}/${FORMULA_VERSION}/bin"
+            tar xzf "deck-${VERSION}-$1.tar.gz" -C stage
+            cp "stage/deck-${VERSION}-$1/deck" "pkg/${FORMULA_NAME}/${FORMULA_VERSION}/bin/${BIN_NAME}"
+            chmod +x "pkg/${FORMULA_NAME}/${FORMULA_VERSION}/bin/${BIN_NAME}"
+            # Filename must be <name>-<version>.<tag>.bottle.tar.gz for a
+            # non-ghcr.io root_url (Bottle::Filename#url_encode).
+            tar czf "${FORMULA_NAME}-${FORMULA_VERSION}.$2.bottle.tar.gz" -C pkg "${FORMULA_NAME}"
+            sha256sum "${FORMULA_NAME}-${FORMULA_VERSION}.$2.bottle.tar.gz" | cut -d' ' -f1
+          }
+
+          {
+            echo "arm64_darwin=$(make_bottle aarch64-apple-darwin arm64_ventura)"
+            echo "x86_64_darwin=$(make_bottle x86_64-apple-darwin ventura)"
+            echo "arm64_linux=$(make_bottle aarch64-unknown-linux-musl arm64_linux)"
+            echo "x86_64_linux=$(make_bottle x86_64-unknown-linux-musl x86_64_linux)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload bottles to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.ref_name }}" ./*.bottle.tar.gz --repo "${REPO_SLUG}" --clobber
+
       - name: Update Homebrew formula
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -191,6 +232,10 @@ jobs:
           SHA_X86_64_LINUX: ${{ steps.sha.outputs.x86_64_linux }}
           SHA_AARCH64_LINUX: ${{ steps.sha.outputs.aarch64_linux }}
           SHA_ARMV7_LINUX: ${{ steps.sha.outputs.armv7_linux }}
+          SHA_BOTTLE_ARM64_DARWIN: ${{ steps.bottle.outputs.arm64_darwin }}
+          SHA_BOTTLE_X86_64_DARWIN: ${{ steps.bottle.outputs.x86_64_darwin }}
+          SHA_BOTTLE_ARM64_LINUX: ${{ steps.bottle.outputs.arm64_linux }}
+          SHA_BOTTLE_X86_64_LINUX: ${{ steps.bottle.outputs.x86_64_linux }}
         run: |
           FORMULA_VERSION="${VERSION#v}"
           BASE_URL="https://github.com/${REPO_SLUG}/releases/download/${VERSION}"
@@ -224,6 +269,14 @@ jobs:
                 url "${BASE_URL}/deck-${VERSION}-x86_64-unknown-linux-musl.tar.gz"
                 sha256 "${SHA_X86_64_LINUX}"
               end
+            end
+
+            bottle do
+              root_url "${BASE_URL}"
+              sha256 cellar: :any_skip_relocation, arm64_ventura: "${SHA_BOTTLE_ARM64_DARWIN}"
+              sha256 cellar: :any_skip_relocation, ventura:       "${SHA_BOTTLE_X86_64_DARWIN}"
+              sha256 cellar: :any_skip_relocation, arm64_linux:   "${SHA_BOTTLE_ARM64_LINUX}"
+              sha256 cellar: :any_skip_relocation, x86_64_linux:  "${SHA_BOTTLE_X86_64_LINUX}"
             end
 
             depends_on "tmux"
