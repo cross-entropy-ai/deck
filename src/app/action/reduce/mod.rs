@@ -593,6 +593,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         // Handled entirely in dispatch (needs App-level access to raw
         // keybindings, PTY, etc.).
         Action::ReloadConfig => {}
+        // Same: staging a dropped file needs the filesystem and the lane the
+        // pane on screen belongs to, neither of which is `AppState`.
+        Action::PasteImagePath { .. } => {}
 
         Action::InvokeLane {
             lane,

@@ -11,6 +11,10 @@ impl App {
                 | Action::ToggleFocus
                 | Action::ForwardKey(_)
                 | Action::ForwardMouse(_)
+                // A dropped file is a paste, and it reaches the pane the same
+                // way — so a warning has to hold it back too, all the more
+                // because letting it through would also start an upload.
+                | Action::PasteImagePath { .. }
         )
     }
 

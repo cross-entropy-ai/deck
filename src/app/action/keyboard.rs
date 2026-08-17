@@ -55,6 +55,10 @@ pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 
 /// Turn terminal paste into the same PTY-forwarding action used by typed input,
 /// so warnings and modal/view policy are applied before dispatch writes bytes.
+///
+/// A paste that is only the path of a local image gets its own action: a file
+/// dropped on the window means "show this to what's in the pane", which for a
+/// pane that isn't on this machine takes more than forwarding the bytes.
 pub fn paste_to_action(text: &str, state: &AppState) -> Action {
     if state.focus_mode != FocusMode::Main
         || state.main_view == MainView::Settings
@@ -63,11 +67,25 @@ pub fn paste_to_action(text: &str, state: &AppState) -> Action {
         return Action::None;
     }
 
+    if let Some(path) = super::paste::image_path_from_paste(text) {
+        return Action::PasteImagePath {
+            path,
+            raw: text.to_string(),
+        };
+    }
+
+    Action::ForwardKey(bracketed_paste(text))
+}
+
+/// Wrap `text` in the bracketed-paste markers, so the program in the pane can
+/// tell pasted text from typed keys. Shared with dispatch, which pastes a
+/// staged path the same way the terminal would have pasted the original.
+pub fn bracketed_paste(text: &str) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(text.len() + 12);
     bytes.extend_from_slice(b"\x1b[200~");
     bytes.extend_from_slice(text.as_bytes());
     bytes.extend_from_slice(b"\x1b[201~");
-    Action::ForwardKey(bytes)
+    bytes
 }
 
 /// Map a zero-based *visible* slot to its underlying flat focus index. Hidden

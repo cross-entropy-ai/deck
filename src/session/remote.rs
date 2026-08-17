@@ -4,7 +4,7 @@
 
 use crate::remote_tmux;
 
-use super::{DirListing, SessionControl, SessionControlError, SessionControlResult};
+use super::{DirListing, SessionControl, SessionControlError, SessionControlResult, StagedFile};
 
 /// Remote control-plane backend for a single remote tmux server.
 pub struct RemoteControl {
@@ -57,5 +57,13 @@ impl SessionControl for RemoteControl {
             Some(error) => Err(SessionControlError::new(error)),
             None => Ok(DirListing { entries }),
         }
+    }
+
+    fn stage_file(&self, local_path: &std::path::Path) -> SessionControlResult<StagedFile> {
+        // Nothing on the far side can open a path on Deck's machine, so the
+        // bytes go across and the answer is where they landed there.
+        remote_tmux::upload_file(&self.host, local_path)
+            .map(StagedFile::At)
+            .map_err(SessionControlError::new)
     }
 }

@@ -17,7 +17,7 @@ use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
-use super::{DirListing, SessionControl, SessionControlError};
+use super::{DirListing, SessionControl, SessionControlError, StagedFile};
 use crate::lane::LaneId;
 
 /// What to run on a worker. Built on the UI thread; the backend that runs
@@ -45,6 +45,14 @@ pub enum SessionOp {
     },
     ListDir {
         path: String,
+    },
+    /// Put a file dropped on Deck's window within reach of this lane.
+    StageFile {
+        /// Path on the machine Deck runs on.
+        local_path: std::path::PathBuf,
+        /// Exactly what the terminal pasted. Carried through so the completion
+        /// can fall back to an ordinary paste when nothing had to move.
+        raw: String,
     },
     /// Display mutation: focus one pane after switching its lane's client.
     /// It shares this executor with `Switch`, so activation and pane focus for
@@ -119,6 +127,12 @@ pub enum OpOutcome {
         path: String,
         result: Result<DirListing, SessionControlError>,
     },
+    FileStaged {
+        /// The paste that started this, verbatim.
+        raw: String,
+        /// Where the lane can read it now.
+        staged: StagedFile,
+    },
     Focused {
         target: crate::geometry::AgentTarget,
         result: crate::tmux::PaneFocus,
@@ -135,6 +149,7 @@ pub enum SessionOperation {
     Create,
     PersistOrder,
     Focus,
+    StageFile,
 }
 
 impl std::fmt::Display for SessionOperation {
@@ -146,6 +161,7 @@ impl std::fmt::Display for SessionOperation {
             Self::Create => "create session",
             Self::PersistOrder => "save session order",
             Self::Focus => "focus pane",
+            Self::StageFile => "send the dropped file",
         })
     }
 }
@@ -316,6 +332,7 @@ impl PanicOutcome {
             SessionOp::NewSession { .. } => Self::Operation(SessionOperation::Create),
             SessionOp::PersistOrder { .. } => Self::Operation(SessionOperation::PersistOrder),
             SessionOp::ListDir { path } => Self::DirectoryListing(path.clone()),
+            SessionOp::StageFile { .. } => Self::Operation(SessionOperation::StageFile),
             SessionOp::Focus(_) => Self::Operation(SessionOperation::Focus),
         }
     }
@@ -381,6 +398,15 @@ fn run(backend: Box<dyn SessionControl + Send>, op: SessionOp) -> OpOutcome {
             result: backend.list_dir(&path),
             path,
         },
+        // `raw` is moved into whichever arm wins, so this stays a `match`
+        // rather than the `map_or_else` the other ops use.
+        SessionOp::StageFile { local_path, raw } => match backend.stage_file(&local_path) {
+            Ok(staged) => OpOutcome::FileStaged { raw, staged },
+            Err(error) => OpOutcome::Failed {
+                operation: SessionOperation::StageFile,
+                error,
+            },
+        },
         SessionOp::Focus(task) => OpOutcome::Focused {
             target: task.target,
             result: (task.run)(),
@@ -442,6 +468,12 @@ mod tests {
                 entries: Vec::new(),
             })
         }
+        fn stage_file(
+            &self,
+            _local_path: &std::path::Path,
+        ) -> super::super::SessionControlResult<StagedFile> {
+            Ok(StagedFile::InPlace)
+        }
     }
 
     struct FailingBackend;
@@ -465,6 +497,12 @@ mod tests {
             &self,
             _path: &str,
         ) -> super::super::SessionControlResult<super::super::DirListing> {
+            Err(SessionControlError::new("backend unavailable"))
+        }
+        fn stage_file(
+            &self,
+            _local_path: &std::path::Path,
+        ) -> super::super::SessionControlResult<StagedFile> {
             Err(SessionControlError::new("backend unavailable"))
         }
     }
@@ -491,6 +529,12 @@ mod tests {
             _path: &str,
         ) -> super::super::SessionControlResult<super::super::DirListing> {
             Ok(super::super::DirListing { entries: vec![] })
+        }
+        fn stage_file(
+            &self,
+            _local_path: &std::path::Path,
+        ) -> super::super::SessionControlResult<StagedFile> {
+            Ok(StagedFile::InPlace)
         }
     }
 

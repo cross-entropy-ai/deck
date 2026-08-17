@@ -1,8 +1,9 @@
 mod keyboard;
 mod mouse;
+mod paste;
 mod reduce;
 
-pub use keyboard::{key_to_action, paste_to_action};
+pub use keyboard::{bracketed_paste, key_to_action, paste_to_action};
 pub use mouse::mouse_to_action;
 pub use reduce::apply_action;
 
@@ -77,6 +78,16 @@ pub enum Action {
 
     ForwardKey(Vec<u8>),
     ForwardMouse(Vec<u8>),
+
+    /// A paste that is nothing but the path of a local image file — what a
+    /// terminal sends when a file is dropped on Deck's window. Staged for the
+    /// lane on screen before it is pasted, so the path reaches an agent in a
+    /// form that agent can open. `raw` is the untouched paste, which dispatch
+    /// falls back to when the path turns out not to be a readable file.
+    PasteImagePath {
+        path: String,
+        raw: String,
+    },
 
     /// A divider button declared by a System was clicked. Routed to that
     /// System through `Effect::InvokeLaneAction`; the shell doesn't interpret

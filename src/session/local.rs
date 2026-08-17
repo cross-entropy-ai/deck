@@ -4,7 +4,7 @@
 
 use crate::tmux;
 
-use super::{DirListing, SessionControl, SessionControlError, SessionControlResult};
+use super::{DirListing, SessionControl, SessionControlError, SessionControlResult, StagedFile};
 
 /// Local control-plane backend.
 pub struct LocalControl {
@@ -74,6 +74,20 @@ impl SessionControl for LocalControl {
                 );
                 Err(SessionControlError::new(msg))
             }
+        }
+    }
+
+    fn stage_file(&self, local_path: &std::path::Path) -> SessionControlResult<StagedFile> {
+        // The local tmux server reads the same filesystem Deck does, so there
+        // is nothing to move: confirm the file is still there and let the
+        // caller keep the path the user gave it. Remote counterpart:
+        // `remote_tmux::upload_file`.
+        match std::fs::metadata(local_path) {
+            Ok(meta) if meta.is_file() => Ok(StagedFile::InPlace),
+            Ok(_) => Err(SessionControlError::new("not a file")),
+            Err(e) => Err(SessionControlError::new(
+                crate::infra::io_error_label(e.kind()).unwrap_or("cannot read file"),
+            )),
         }
     }
 }
