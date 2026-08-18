@@ -1302,13 +1302,19 @@ fn parse_staged_report(stdout: &str) -> Option<(String, u64)> {
 /// Full `ssh` argv for staging one file, mirroring [`run_ssh`]'s assembly so a
 /// container id lands inside the container rather than on its host.
 ///
-/// No `PATH` prefix, unlike [`run_ssh`]: every command here (`mkdir`, `cat`,
-/// `mv`, `printf`) is a system binary or shell builtin, and a leading
-/// assignment would in any case attach only to the first of the four.
+/// Including the [`REMOTE_PATH_EXPORT`] prelude. The staging command needs
+/// nothing from it — `mkdir`, `cat`, `mv`, `printf` and `wc` are system binaries
+/// — but the *container* spelling puts `<engine> exec` on the host shell in front
+/// of it, and an engine that lives where the prelude exists to reach is
+/// otherwise invisible: dropping a file on a container lane could not find
+/// `docker` at all on a Mac remote that has it from OrbStack or Homebrew. One
+/// prelude for both spellings, rather than one that depends on which half of the
+/// `match` below ran.
 fn upload_argv(remote_id: &str, staged_name: &str) -> Vec<String> {
     let target = parse_remote_id(remote_id);
     let mut args = base_ssh_args(target.host);
     args.push(target.host.to_string());
+    args.push(format!("{REMOTE_PATH_EXPORT} ;"));
     let command = stage_command(staged_name);
     match target.container {
         None => args.extend(command),

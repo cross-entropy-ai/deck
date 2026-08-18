@@ -1306,6 +1306,28 @@ fn upload_to_a_container_stages_inside_it_not_on_its_host() {
     );
 }
 
+/// The engine that runs the `exec` is a command on the *host*, so the staging
+/// call needs the PATH prelude every other remote call gets. It used to go
+/// without one — the staging command itself only uses system binaries — which
+/// left the drop unable to find `docker` at all on a Mac remote that has it from
+/// OrbStack or Homebrew, the exact hosts the prelude exists for.
+#[test]
+fn staged_upload_reaches_the_engine_through_the_path_prelude() {
+    for id in ["box", "box#dev"] {
+        let command = remote_command_of(id, &upload_argv(id, "1234-a.png").join(" "));
+        assert!(
+            command.starts_with(REMOTE_PATH_EXPORT),
+            "{id} stages without the PATH prelude: {command}"
+        );
+    }
+    // On the container spelling the engine is the first thing after it.
+    let command = remote_command_of("box#dev", &upload_argv("box#dev", "1234-a.png").join(" "));
+    assert!(
+        command.contains(&format!("{REMOTE_PATH_EXPORT} ; 'docker' exec -i")),
+        "the engine does not follow the prelude: {command}"
+    );
+}
+
 /// The staging command is assembled outside `run_ssh` (it needs a stdin
 /// stream), so it misses the table in `every_assembled_remote_command_is_valid
 /// _shell` and gets the same guarantee here — including for a name that is
