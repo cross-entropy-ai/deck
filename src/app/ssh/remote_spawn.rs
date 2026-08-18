@@ -192,6 +192,11 @@ impl RemoteSpawner {
 /// two Deck instances sharing one remote account detach each other; a stale
 /// client only clamps the window size, which is the lesser harm.
 ///
+/// Opens with the [`crate::remote_tmux::REMOTE_PATH_EXPORT`] prelude, so every
+/// `tmux` below finds a Homebrew or per-user install — one statement rather than
+/// an assignment prefix on each, which could not reach the one inside the
+/// `[ -n "$t" ] &&` chain without changing what that chain guards.
+///
 /// POSIX-sh only, and no token starts with `=`/`-`/`#` (see CLAUDE.md on remote
 /// shells re-parsing argv). `while read` rather than `for m in $(find …)`: the
 /// cache directory sits under the remote `$HOME`, which Deck does not get to
@@ -202,19 +207,20 @@ fn attach_command(remote_id: &str, marker_id: u64) -> String {
     let marker = crate::remote_tmux::client_marker_token(remote_id, marker_id);
     let agent = crate::remote_tmux::agent_socket_token();
     format!(
-        "mkdir -p {dir} 2>/dev/null ; \
+        "{path} ; \
+         mkdir -p {dir} 2>/dev/null ; \
          find {dir} -type f -name '{marker_pattern}' 2>/dev/null | while IFS= read -r m ; do \
          t=$(cat \"$m\" 2>/dev/null) ; \
-         [ -n \"$t\" ] && {path} {tmux} detach-client -t \"$t\" 2>/dev/null ; \
+         [ -n \"$t\" ] && {tmux} detach-client -t \"$t\" 2>/dev/null ; \
          rm -f -- \"$m\" 2>/dev/null ; \
          done ; \
          tty > {marker} 2>/dev/null ; \
          if [ -S \"${{SSH_AUTH_SOCK-}}\" ] && (umask 077 && mkdir -p \"$HOME/.ssh\") 2>/dev/null \
          && ln -sf \"$SSH_AUTH_SOCK\" {agent} 2>/dev/null ; then \
          SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK ; \
-         {path} {tmux} set-environment -g SSH_AUTH_SOCK {agent} 2>/dev/null ; \
-         fi ; {path} {tmux} attach",
-        path = crate::remote_tmux::REMOTE_PATH_PREFIX,
+         {tmux} set-environment -g SSH_AUTH_SOCK {agent} 2>/dev/null ; \
+         fi ; {tmux} attach",
+        path = crate::remote_tmux::REMOTE_PATH_EXPORT,
         // The attached client renders the user's panes, so a container's
         // locale-less tmux would draw every non-ASCII byte in them as `_`.
         tmux = crate::remote_tmux::REMOTE_TMUX,
@@ -262,8 +268,8 @@ fn attach_shell_command_with(
         })
         .unwrap_or_default();
     format!(
-        "{path} {engine} exec -it -e {term} {agent_env}{name} sh -c {script}",
-        path = crate::remote_tmux::REMOTE_PATH_PREFIX,
+        "{path} ; {engine} exec -it -e {term} {agent_env}{name} sh -c {script}",
+        path = crate::remote_tmux::REMOTE_PATH_EXPORT,
         term = crate::remote_tmux::shell_single_quote(&format!("TERM={}", crate::pty::CHILD_TERM)),
         engine = crate::remote_tmux::shell_single_quote(&opts.engine),
         name = crate::remote_tmux::shell_single_quote(container),
@@ -403,9 +409,9 @@ mod tests {
         let opts = crate::remote_tmux::ContainerOpts::default();
         let command = attach_shell_command_with("web.prod#dev", 17, &opts);
 
-        // Engine resolved on the host via the PATH prefix; TTY through the
+        // Engine resolved on the host via the PATH prelude; TTY through the
         // exec; the whole prelude as ONE sh -c word.
-        assert!(command.starts_with("PATH="));
+        assert!(command.starts_with("export PATH="));
         assert!(command.contains("'docker' exec -it -e 'TERM=xterm-256color' 'dev' sh -c '"));
         // The engine substitutes its own TERM for the caller's, and the tmux
         // client inside believes it — left alone it reported 8 colors and
@@ -458,13 +464,25 @@ mod tests {
                 "web.prod#dev"
             };
             let command = attach_shell_command_with(remote_id, 17, &opts);
-            for shell in ["bash", "sh"] {
-                let status = std::process::Command::new(shell)
-                    .arg("-n")
-                    .arg("-c")
-                    .arg(&command)
+            // One PATH statement up front, so every `tmux` in the prelude
+            // resolves — including the one guarded by `[ -n "$t" ] &&`, which an
+            // assignment prefix could not reach without changing that guard.
+            assert!(
+                command.starts_with("export PATH="),
+                "{name} does not open with the PATH prelude:\n{command}"
+            );
+            // zsh is the default login shell on macOS remotes; sh is the
+            // stricter POSIX reading, and what a container's `exec` gets. A
+            // shell this machine doesn't have is skipped, not failed.
+            for shell in ["sh", "bash", "zsh"] {
+                let status = match std::process::Command::new(shell)
+                    .args(["-n", "-c", &command])
                     .status()
-                    .expect("spawn shell");
+                {
+                    Ok(status) => status,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => panic!("spawn {shell}: {error}"),
+                };
                 assert!(
                     status.success(),
                     "{name} produced a command {shell} cannot parse:\n{command}"

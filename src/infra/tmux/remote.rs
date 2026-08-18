@@ -149,11 +149,27 @@ pub(crate) fn base_ssh_args(host: &str) -> Vec<String> {
     args
 }
 
-/// Path prefix prepended to every remote command. SSH's non-interactive shell
-/// skips `~/.zshrc` / `~/.profile`, so non-default installs (Homebrew, linuxbrew,
-/// per-user) are invisible. Prepending these paths via `PATH=... cmd ...` makes
-/// deck work without editing remote startup files. The trailing `$PATH`
-/// (expanded by the remote shell) keeps the user's existing path intact.
+/// PATH prelude prepended to every remote command, as its own `export`
+/// statement. SSH's non-interactive shell skips `~/.zshrc` / `~/.profile`, so
+/// non-default installs (Homebrew, linuxbrew, per-user) are invisible. Exporting
+/// these paths ahead of the command makes deck work without editing remote
+/// startup files. The trailing `$PATH` (expanded by the remote shell) keeps the
+/// user's existing path intact.
+///
+/// An `export` statement, never the `PATH=… cmd` assignment-prefix spelling —
+/// each of those two facts shipped as a bug:
+///
+/// - A prefix attaches to one *simple command*, so everything past the first
+///   `;` runs with the login shell's PATH alone, and ahead of a compound (`if`,
+///   `for`, `while`) the shell reads the reserved word as the command name and
+///   dies with a syntax error.
+/// - zsh — the default login shell on macOS — *restores* what a prefix
+///   assignment set once the prefixed command returns, and does so even when
+///   that command was `export`. `PATH=… export PATH=…`, which is what a leading
+///   prefix plus a script's own export assembled to, therefore left PATH exactly
+///   as zsh found it: `tmux` a few `;` later was `command not found` (exit 127)
+///   on a Mac remote, while every bash host was fine (POSIX has assignments
+///   before a special builtin persist, and bash obliges).
 ///
 /// `$HOME/.local/bin` leads because it is the most specific: a user who put tmux
 /// there meant that one. It matters most inside a container, where `sh -c` reads
@@ -171,8 +187,8 @@ pub(crate) fn base_ssh_args(host: &str) -> Vec<String> {
 /// `/usr/local/bin` (already above), so this only carries a Mac remote whose
 /// user declined that step — the difference between discovering its containers
 /// and Deck reporting the host has no engine at all.
-pub(crate) const REMOTE_PATH_PREFIX: &str = concat!(
-    "PATH=$HOME/.local/bin",
+pub(crate) const REMOTE_PATH_EXPORT: &str = concat!(
+    "export PATH=$HOME/.local/bin",
     ":/opt/homebrew/bin",
     ":/usr/local/bin",
     ":/home/linuxbrew/.linuxbrew/bin",
@@ -204,6 +220,11 @@ pub(crate) const REMOTE_TMUX: &str = "tmux -u";
 
 /// Run `remote_argv` on the remote id's tmux server: on the host itself, or —
 /// for a container id — inside the container via [`container_exec_argv`].
+///
+/// The [`REMOTE_PATH_EXPORT`] prelude goes first, as its own statement, so
+/// callers hand over their command without one — a plain argv or a whole
+/// `;`-separated script, either way every command in it resolves against the
+/// same PATH.
 pub(crate) fn run_ssh(
     runner: &dyn CommandRunner,
     remote_id: &str,
@@ -212,7 +233,7 @@ pub(crate) fn run_ssh(
     let target = parse_remote_id(remote_id);
     let mut args = base_ssh_args(target.host);
     args.push(target.host.to_string());
-    args.push(REMOTE_PATH_PREFIX.to_string());
+    args.push(format!("{REMOTE_PATH_EXPORT} ;"));
     match target.container {
         None => args.extend(remote_argv.iter().map(|s| s.to_string())),
         Some(container) => args.extend(container_exec_argv(
@@ -229,11 +250,13 @@ pub(crate) fn run_ssh(
 }
 
 /// Wrap a remote command for execution inside a container. The host shell
-/// runs `<engine> exec <name> sh -c '<PATH prefix + command>'`: the inner
+/// runs `<engine> exec <name> sh -c '<PATH prelude + command>'`: the inner
 /// command is single-quoted into ONE host-shell word, so the container's
 /// `sh` re-parses exactly the string the host shell would have — same PATH
-/// prefix, same `;`/redirect semantics — and the marker/switch/capture
-/// snippets work unchanged against the container's own filesystem.
+/// prelude, same `;`/redirect semantics — and the marker/switch/capture
+/// snippets work unchanged against the container's own filesystem. The engine
+/// carries none of the host shell's environment through the `exec`, so the
+/// prelude has to be stated again on the inside.
 ///
 /// Container-bound commands must stay POSIX-sh clean: `sh` in slim images is
 /// dash, which has no `$'…'` ANSI-C quoting — that's why `list_sessions` and
@@ -249,7 +272,7 @@ fn container_exec_argv(
     remote_argv: &[&str],
     stdin: ContainerStdin,
 ) -> Vec<String> {
-    let inner = format!("{REMOTE_PATH_PREFIX} {}", remote_argv.join(" "));
+    let inner = format!("{REMOTE_PATH_EXPORT} ; {}", remote_argv.join(" "));
     let mut args = vec![
         // Quoted like every other config value that reaches a remote shell (see
         // CLAUDE.md). Unquoted, `engine: "docker ; id > /tmp/x ; true"` ran on
@@ -504,14 +527,11 @@ fn list_containers_with(runner: &dyn CommandRunner, host: &str) -> Vec<Discovere
     // One hop for both engines, blocks separated by the marker so a missing
     // engine yields an empty block instead of failing the call, ending in `true`
     // so the compound's exit status is the probe's, not the last engine's.
-    // `export PATH` rather than `run_ssh`'s leading assignment, which attaches
-    // to the first simple command only — the second engine would otherwise be
-    // looked up with the login shell's PATH alone.
     //
     // `join`, not push-if-not-first: the separator goes *between* engine blocks
     // and nowhere else. Deriving "not first" from the buffer instead put one
     // ahead of `docker` once the buffer stopped starting out empty, leaving an
-    // empty command (`export PATH=… ;  ; echo …`) that every POSIX shell
+    // empty command (`… ;  ; echo …`) that every POSIX shell
     // rejects outright — so the probe exited 2 and the `Err` arm below read it
     // as "this host has no engine", on every host.
     let probes: Vec<String> = CONTAINER_ENGINES
@@ -524,7 +544,7 @@ fn list_containers_with(runner: &dyn CommandRunner, host: &str) -> Vec<Discovere
         })
         .collect();
     let script = format!(
-        "export {REMOTE_PATH_PREFIX} ; {} ; true",
+        "{} ; true",
         probes.join(&format!(" ; echo {ENGINE_PROBE_MARKER} ; "))
     );
 
@@ -634,17 +654,12 @@ fn container_forward_target_with(
     // One hop for all three questions, marker-separated so an engine that
     // answers none yields empty blocks instead of failing the call. Ends in
     // `true` so the compound's status is the probe's, not the last command's.
-    // `export PATH`, not `run_ssh`'s leading `PATH=…` assignment: that form
-    // attaches to one *simple command*, so everything after the first `;` — the
-    // inspects, here — would run with only the login shell's PATH and quietly
-    // find no engine. Mirrors `capture_panes`, which takes the same care.
     let script = format!(
-        "export {prefix} ; {engine_q} port {name_q} {port} 2>/dev/null ; \
+        "{engine_q} port {name_q} {port} 2>/dev/null ; \
          echo {FORWARD_PROBE_MARKER} ; \
          {engine_q} inspect -f {mode} {name_q} 2>/dev/null ; \
          echo {FORWARD_PROBE_MARKER} ; \
          {engine_q} inspect -f {ips} {name_q} 2>/dev/null ; true",
-        prefix = REMOTE_PATH_PREFIX,
         mode = shell_single_quote(CONTAINER_NETWORK_MODE_FORMAT),
         ips = shell_single_quote(CONTAINER_IP_FORMAT),
     );
@@ -744,25 +759,21 @@ pub(crate) fn capture_panes(host: &str, pane_ids: &[String]) -> HashMap<String, 
         return HashMap::new();
     }
     let runner = default_runner();
-    // One remote command: `export PATH` (a `for` loop can't take a leading
-    // `PATH=…` assignment, so it goes inside; mirrors `run_ssh`'s prefix so
-    // a brew tmux resolves), then loop panes printing a marker line + each
-    // buffer.
+    // One remote command: loop the panes, printing a marker line + each buffer.
     let ids = pane_ids
         .iter()
         .map(|p| shell_single_quote(p))
         .collect::<Vec<_>>()
         .join(" ");
     let script = format!(
-        "export {prefix}; for p in {ids}; do echo {marker} \"$p\"; \
+        "for p in {ids}; do echo {marker} \"$p\"; \
          {tmux} capture-pane -p -J -t \"$p\" 2>/dev/null; done",
-        prefix = REMOTE_PATH_PREFIX,
         marker = CAPTURE_MARKER,
         tmux = REMOTE_TMUX,
     );
-    // Through `run_ssh` so a container id gets the exec wrapping. Its PATH
-    // prefix lands ahead of the script's own `export` (which a `for` loop
-    // needs internally anyway); the doubled prefix entries are harmless.
+    // Through `run_ssh` so a container id gets the exec wrapping, and so the
+    // PATH export lands ahead of the loop — a `for` cannot take a leading
+    // assignment at all, which is half of why the prelude is a statement.
     let Ok(out) = run_ssh(runner, host, &[script.as_str()]) else {
         return HashMap::new();
     };
@@ -1135,19 +1146,10 @@ fn new_session_with(
     // left with a dead agent forever. A later attach repairs the session entry
     // but not an already-spawned pane.
     let agent = agent_socket_token();
-    // Leads with `export {prefix}` rather than the `if`: `run_ssh` prepends
-    // `PATH=…:$PATH` as an argv prefix, and a variable-assignment prefix only
-    // attaches to a SIMPLE command. Ahead of a reserved word the remote shell
-    // reads `if` as the command name and dies with "syntax error near
-    // unexpected token `then'", so the session is never created. Same reason
-    // `capture_panes` exports the prefix before its `for` loop; the resulting
-    // duplicate PATH entries are harmless.
     let script = format!(
-        "export {prefix} ; \
-         if [ -S {agent} ]; then SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK ; \
+        "if [ -S {agent} ]; then SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK ; \
          else unset SSH_AUTH_SOCK ; fi ; \
          {tmux} new-session -d -s {name} -c {dir}",
-        prefix = REMOTE_PATH_PREFIX,
         tmux = REMOTE_TMUX,
     );
     run_ssh(runner, host, &[script.as_str()]).map(|_| ())
@@ -1300,13 +1302,19 @@ fn parse_staged_report(stdout: &str) -> Option<(String, u64)> {
 /// Full `ssh` argv for staging one file, mirroring [`run_ssh`]'s assembly so a
 /// container id lands inside the container rather than on its host.
 ///
-/// No `PATH` prefix, unlike [`run_ssh`]: every command here (`mkdir`, `cat`,
-/// `mv`, `printf`) is a system binary or shell builtin, and a leading
-/// assignment would in any case attach only to the first of the four.
+/// Including the [`REMOTE_PATH_EXPORT`] prelude. The staging command needs
+/// nothing from it — `mkdir`, `cat`, `mv`, `printf` and `wc` are system binaries
+/// — but the *container* spelling puts `<engine> exec` on the host shell in front
+/// of it, and an engine that lives where the prelude exists to reach is
+/// otherwise invisible: dropping a file on a container lane could not find
+/// `docker` at all on a Mac remote that has it from OrbStack or Homebrew. One
+/// prelude for both spellings, rather than one that depends on which half of the
+/// `match` below ran.
 fn upload_argv(remote_id: &str, staged_name: &str) -> Vec<String> {
     let target = parse_remote_id(remote_id);
     let mut args = base_ssh_args(target.host);
     args.push(target.host.to_string());
+    args.push(format!("{REMOTE_PATH_EXPORT} ;"));
     let command = stage_command(staged_name);
     match target.container {
         None => args.extend(command),
