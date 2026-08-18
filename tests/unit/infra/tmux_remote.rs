@@ -136,23 +136,24 @@ fn remote_id_parses_host_and_container_halves() {
 }
 
 #[test]
-fn the_path_prefix_covers_per_user_installs() {
+fn the_path_prelude_covers_per_user_installs() {
     // A container's `sh -c` reads no startup file and the image's PATH is only
     // system directories, so a tmux in ~/.local/bin was invisible and the lane
     // failed with `tmux: not found`. Verified against a real container.
-    assert!(REMOTE_PATH_PREFIX.starts_with("PATH=$HOME/.local/bin:"));
+    assert!(REMOTE_PATH_EXPORT.starts_with("export PATH=$HOME/.local/bin:"));
     // $PATH stays last so the target's own entries survive.
-    assert!(REMOTE_PATH_PREFIX.ends_with(":$PATH"));
+    assert!(REMOTE_PATH_EXPORT.ends_with(":$PATH"));
     // A Mac remote running OrbStack keeps its `docker` here, reachable from a
     // login shell only — which `ssh host cmd` is not. Last of the explicit
     // entries: a fallback for a host that would otherwise read as having no
     // container engine, never a preference over one already found.
-    assert!(REMOTE_PATH_PREFIX.ends_with(":$HOME/.orbstack/bin:$PATH"));
-    // It has to reach the container path too, not just the host one.
+    assert!(REMOTE_PATH_EXPORT.ends_with(":$HOME/.orbstack/bin:$PATH"));
+    // It has to reach the container path too, not just the host one: the engine
+    // carries nothing of the host shell's environment through the `exec`.
     let runner = FakeRunner::new(ok(""));
     let _ = list_sessions_with(&runner, "box#dev");
     assert!(
-        runner.calls()[0].contains("sh -c 'PATH=$HOME/.local/bin:"),
+        runner.calls()[0].contains("sh -c 'export PATH=$HOME/.local/bin:"),
         "call: {}",
         runner.calls()[0]
     );
@@ -165,9 +166,12 @@ fn container_run_wraps_command_in_engine_exec_on_the_host() {
     let call = &runner.calls()[0];
 
     // ssh still targets the bare host, with its ForwardAgent answer.
-    assert!(call.contains(" box PATH="), "host arg mangled: {call}");
     assert!(
-        !call.contains("box#dev PATH="),
+        call.contains(" box export PATH="),
+        "host arg mangled: {call}"
+    );
+    assert!(
+        !call.contains("box#dev export PATH="),
         "container leaked into ssh destination: {call}"
     );
     // The command runs inside the container through one sh -c word.
@@ -175,10 +179,10 @@ fn container_run_wraps_command_in_engine_exec_on_the_host() {
         call.contains("'docker' exec -e 'TERM=xterm-256color' 'dev' sh -c '"),
         "missing exec wrap: {call}"
     );
-    // The inner command keeps the PATH prefix contract run_ssh promises.
+    // The inner command keeps the PATH prelude contract run_ssh promises.
     assert!(
-        call.contains("sh -c 'PATH="),
-        "inner PATH prefix missing: {call}"
+        call.contains("sh -c 'export PATH="),
+        "inner PATH prelude missing: {call}"
     );
 }
 
@@ -408,7 +412,7 @@ fn container_exec_argv_respects_the_engine() {
     assert_eq!(argv[4], "'dev'");
     assert_eq!(argv[5], "sh");
     assert_eq!(argv[6], "-c");
-    assert!(argv[7].starts_with("'PATH="));
+    assert!(argv[7].starts_with("'export PATH="));
     assert!(argv[7].contains("tmux kill-server"));
 }
 
@@ -800,23 +804,27 @@ fn new_session_never_bakes_this_calls_own_agent_socket_into_the_session() {
 }
 
 /// The remote command `run_ssh` assembled, as the remote login shell will see it
-/// (ssh re-joins argv into one string). Reconstructed from the recorded call by
-/// cutting at the PATH prefix `run_ssh` always emits first.
-fn remote_command_of(call: &str) -> String {
-    let (_, rest) = call
-        .split_once(REMOTE_PATH_PREFIX)
-        .expect("run_ssh always emits the PATH prefix");
-    format!("{REMOTE_PATH_PREFIX}{rest}")
+/// (ssh re-joins argv into one string). Cut from the recorded call right after
+/// the ssh options and the host argument, so *everything* the remote shell reads
+/// is included: an earlier version cut at the PATH prelude instead, which made
+/// the harness skip any fragment emitted ahead of it — the exact shape of the
+/// bug the tests below exist to catch.
+fn remote_command_of(remote_id: &str, call: &str) -> String {
+    let host = parse_remote_id(remote_id).host;
+    let head = format!("{} {host} ", base_ssh_args(host).join(" "));
+    call.strip_prefix(&head)
+        .unwrap_or_else(|| panic!("call is not ssh options + host + command:\n{call}"))
+        .to_string()
 }
 
 #[test]
 fn every_assembled_remote_command_is_valid_shell() {
-    // Guards a whole class rather than one call site. `run_ssh` prepends
-    // `PATH=…:$PATH` as an argv prefix, and a variable-assignment prefix only
-    // attaches to a SIMPLE command — put a compound statement (`if`, `for`,
-    // `while`, `{ }`) first and the remote shell reads the reserved word as a
-    // command name and dies with a syntax error. That shipped once, in
-    // `new_session`, and only showed up against a real host.
+    // Guards a whole class rather than one call site: every one of these
+    // commands is assembled from fragments and re-parsed by a shell Deck never
+    // sees, and a quoting or reserved-word slip shows up only against a real
+    // host. It shipped twice — a compound statement behind what used to be an
+    // argv-prefix assignment (`new_session`), and an empty command between two
+    // probe blocks (`list_containers`).
     type Invoke = Box<dyn Fn(&FakeRunner, &str)>;
     let cases: Vec<(&str, Invoke)> = vec![
         (
@@ -880,25 +888,96 @@ fn every_assembled_remote_command_is_valid_shell() {
         for id in ["box", "box#dev"] {
             let runner = FakeRunner::new(ok(""));
             run(&runner, id);
-            assert_remote_shells_parse(name, id, &remote_command_of(&runner.calls()[0]));
+            assert_remote_shells_parse(name, id, &remote_command_of(id, &runner.calls()[0]));
         }
     }
 }
 
-/// `-n` parses without executing. bash is the common remote login shell; sh
-/// covers the stricter POSIX reading (and is what a container gets).
+/// `-n` parses without executing. bash and zsh are the common remote login
+/// shells; sh covers the stricter POSIX reading (and is what a container gets).
+/// A shell that isn't installed here is skipped rather than failed — this is a
+/// unit test, and the set of shells on the machine running it is not the point.
 fn assert_remote_shells_parse(name: &str, id: &str, command: &str) {
-    for shell in ["bash", "sh"] {
-        let status = std::process::Command::new(shell)
-            .arg("-n")
-            .arg("-c")
-            .arg(command)
-            .status()
-            .expect("spawn shell");
+    for shell in REMOTE_SHELLS {
+        let Some(status) = shell_status(shell, &["-n", "-c", command]) else {
+            continue;
+        };
         assert!(
             status.success(),
             "{name} on {id} produced a command {shell} cannot parse:\n{command}"
         );
+    }
+}
+
+/// The login shells a remote host is likely to hand Deck's command to.
+const REMOTE_SHELLS: [&str; 3] = ["sh", "bash", "zsh"];
+
+/// Run `shell` with `args`, or `None` when this machine has no such shell.
+fn shell_status(shell: &str, args: &[&str]) -> Option<std::process::ExitStatus> {
+    match std::process::Command::new(shell).args(args).status() {
+        Ok(status) => Some(status),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => panic!("spawn {shell}: {error}"),
+    }
+}
+
+/// Stands in for the PATH a remote login shell hands Deck's command — enough to
+/// find the shell's own tools, and none of the entries the prelude adds.
+const TARGET_PATH: &str = "/usr/bin:/bin";
+
+/// `shell -c script`'s stdout, run in a *bare* environment: inheriting this
+/// machine's own PATH would pass whether or not the prelude did anything, since
+/// a dev Mac already has the entries it adds. `HOME` is a sentinel the prelude
+/// has to expand itself. `None` when this machine has no such shell.
+fn shell_stdout(shell: &str, script: &str, home: &str) -> Option<String> {
+    let output = std::process::Command::new(shell)
+        .args(["-c", script])
+        .env_clear()
+        .env("HOME", home)
+        .env("PATH", TARGET_PATH)
+        .output();
+    match output {
+        Ok(output) => Some(String::from_utf8_lossy(&output.stdout).to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => panic!("spawn {shell}: {error}"),
+    }
+}
+
+#[test]
+fn the_path_prelude_reaches_every_command_of_a_remote_script() {
+    // zsh — the macOS default login shell — *restores* what a variable-assignment
+    // prefix set once the prefixed command returns, and does it even when that
+    // command was `export`. `run_ssh`'s old leading `PATH=…` prefix plus a
+    // script's own `export PATH=…` therefore assembled to a no-op on a Mac
+    // remote: creating a session there died with `zsh:1: command not found:
+    // tmux` (exit 127), while bash hosts were fine (POSIX has assignments before
+    // a special builtin persist). Parsing tests cannot see this — the command is
+    // valid shell in both, it just means different things — so run the prelude
+    // and read back what PATH became for the commands after it.
+    let home = "/deck-test-home";
+    for id in ["box", "box#dev"] {
+        let runner = FakeRunner::new(ok(""));
+        // A script-shaped call: the `if` is exactly what cannot take a prefix.
+        let _ = new_session_with(&runner, id, "work", "~/proj");
+        let command = remote_command_of(id, &runner.calls()[0]);
+        let (prelude, _) = command
+            .split_once(';')
+            .expect("the prelude is the first statement of every remote command");
+
+        for shell in REMOTE_SHELLS {
+            let probe = format!("{prelude} ; printf %s \"$PATH\"");
+            let Some(path) = shell_stdout(shell, &probe, home) else {
+                continue;
+            };
+            assert!(
+                path.starts_with(&format!("{home}/.local/bin:")),
+                "{shell} lost the prelude's PATH on {id}: {path}\n{command}"
+            );
+            assert!(
+                path.ends_with(&format!(":{TARGET_PATH}")),
+                "{shell} dropped the target's own PATH on {id}: {path}\n{command}"
+            );
+        }
     }
 }
 
@@ -977,7 +1056,10 @@ fn forward_target_asks_the_host_not_the_container() {
     // Both answers are the engine's, and the engine runs on the host — so this
     // must not be wrapped in `<engine> exec` the way a container's tmux calls
     // are.
-    assert!(call.contains(" box PATH="), "host arg mangled: {call}");
+    assert!(
+        call.contains(" box export PATH="),
+        "host arg mangled: {call}"
+    );
     assert!(!call.contains(" exec "), "probe must not exec: {call}");
     // One hop for both questions, marker-separated so an engine that answers
     // neither yields empty blocks instead of failing the call.

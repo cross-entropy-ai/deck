@@ -84,7 +84,7 @@ When adding any per-session/per-lane feature:
 ### Remote ssh commands: mind the remote shell
 
 `remote_tmux` sends commands as ssh argv that the **remote login shell
-re-parses** (argv boundaries are lost). Two recurring traps:
+re-parses** (argv boundaries are lost). Three recurring traps:
 
 - **Shell-special leading characters.** A separator/marker token must not
   start with `=` (zsh *equals-expansion* `=word` → command path — it ate
@@ -93,6 +93,14 @@ re-parses** (argv boundaries are lost). Two recurring traps:
   `$'#{…}'` so they aren't read as comments; single-quote user values
   (`shell_single_quote`); to pass a literal `;` to *tmux* (not the shell)
   single-quote it, but leave `;` bare when you *want* a shell separator.
+- **Never set a variable with an assignment *prefix*.** `run_ssh` opens every
+  command with the `REMOTE_PATH_EXPORT` statement, and new commands must not
+  add a `PATH=… cmd` prefix of their own: a prefix reaches one *simple
+  command* only, and zsh (the macOS default login shell) *restores* what a
+  prefix set as soon as that command returns — even `export`, so
+  `PATH=… export PATH=…` is a no-op there and `tmux` a few `;` later is
+  `command not found`. bash hides it (POSIX persists assignments before a
+  special builtin).
 - **Test against more than one host.** Remote shells differ (bash vs zsh,
   macOS vs Linux `ps`). A probe that works on one host can silently
   return nothing on another — verify across the configured hosts.
