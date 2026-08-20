@@ -872,11 +872,16 @@ pub(crate) fn read_client_tty(host: &str, marker_id: u64) -> String {
 }
 
 /// Sanitized `host` component for the marker filename: keep it shell-safe
-/// (alphanumerics, `-`, `_`), everything else → `_`.
+/// (alphanumerics and `_`), everything else → `_`.
+///
+/// `-` is folded away with the rest because the sweep pattern spells the pid
+/// as a `*` (see [`client_marker_sweep_pattern`]): left in, a host id could
+/// straddle the wildcard, so sweeping `prod` would also name the client of a
+/// live `web-prod` lane.
 fn marker_host_part(host: &str) -> String {
     host.chars()
         .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            if c.is_ascii_alphanumeric() || c == '_' {
                 c
             } else {
                 '_'
@@ -885,21 +890,87 @@ fn marker_host_part(host: &str) -> String {
         .collect()
 }
 
+/// Stable per-(machine, user) token that opens every client-marker name.
+///
+/// The attach sweep has to decide, from a filename alone on a remote home it
+/// may be sharing, whether a recorded client is a leftover it may detach.
+/// Deck holds a single-instance lock per machine and uid
+/// ([`crate::infra::guards::instance_guard`]), so *within one token* any pid
+/// that is not this process belongs to a Deck that has already exited — and
+/// whatever clients it left are leftovers, whatever pid wrote them. Another
+/// machine's or another user's Deck lands under a different token and is never
+/// named by the sweep, which is what keeps two people decking into one shared
+/// account from detaching each other.
+///
+/// Hostname + euid, hashed: it keeps the name short and free of whatever a
+/// hostname may carry. The scoping is only as good as that pair is unique — two
+/// machines that share a hostname *and* a uid *and* a remote account would see
+/// each other's markers, and a hostname change orphans the previous run's
+/// markers, which then linger exactly as every leftover did before this
+/// existed.
+fn machine_token() -> &'static str {
+    static TOKEN: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let uid = unsafe { libc::geteuid() };
+        format!(
+            "{:016x}",
+            fnv1a(format!("{}\u{1f}{uid}", hostname()).as_bytes())
+        )
+    });
+    &TOKEN
+}
+
+/// This machine's hostname, or an empty string if the OS won't say. Empty is
+/// fine: the uid still separates users, and a host that cannot name itself is
+/// no worse off than one whose name changed.
+fn hostname() -> String {
+    let mut buf = [0 as libc::c_char; 256];
+    // SAFETY: `buf` is a live, writable array and we pass its true length.
+    if unsafe { libc::gethostname(buf.as_mut_ptr(), buf.len()) } != 0 {
+        return String::new();
+    }
+    // POSIX leaves truncation's terminator unspecified, so plant one.
+    buf[buf.len() - 1] = 0;
+    // SAFETY: `buf` is NUL-terminated by the line above.
+    unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// FNV-1a, spelled out rather than taken from `DefaultHasher`: the token has to
+/// come out identical in every Deck build that ever reads these filenames, and
+/// std makes no such promise about its default hasher across releases.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
 /// Logical remote path of the per-*connection* file where Deck's attach
 /// wrapper records the tty of *its* tmux client (the `ssh -tt` pty =
 /// tmux's `#{client_tty}`). `switch-client` calls read it back as an
 /// explicit `-c` target so they re-point Deck's own client, not whatever
 /// tmux treats as current when several clients are attached.
 ///
-/// Keyed by Deck's local pid + host + per-spawn `marker_id`. The id makes
-/// it connection-scoped: each (re)connect allocates a fresh id, so a
-/// switch/focus during the reconnect race reads the *new* path (absent
-/// until the wrapper writes it → empty → safe fallback) and never picks up
-/// the previous connection's stale tty. Lives under `~/.cache` (disposable).
+/// Keyed by [`machine_token`] + Deck's local pid + host + per-spawn
+/// `marker_id`. The id makes it connection-scoped: each (re)connect allocates a
+/// fresh id, so a switch/focus during the reconnect race reads the *new* path
+/// (absent until the wrapper writes it → empty → safe fallback) and never picks
+/// up the previous connection's stale tty. Lives under `~/.cache` (disposable).
 fn client_marker_path(host: &str, marker_id: u64) -> String {
-    let pid = std::process::id();
     format!(
-        "~/.cache/deck/client-{pid}-{}-{marker_id}",
+        "~/.cache/deck/{}",
+        client_marker_name(machine_token(), std::process::id(), host, marker_id)
+    )
+}
+
+/// Pure spelling of one marker's filename, so the sweep pattern and the writer
+/// are checked against each other without reaching for the live pid.
+fn client_marker_name(machine: &str, pid: u32, host: &str, marker_id: u64) -> String {
+    format!(
+        "client-{machine}-{pid}-{}-{marker_id}",
         marker_host_part(host)
     )
 }
@@ -911,16 +982,27 @@ pub(crate) fn client_marker_token(host: &str, marker_id: u64) -> String {
     shell_quote_remote_path(&client_marker_path(host, marker_id))
 }
 
-/// `find -name` pattern matching all of this Deck process's marker files for
-/// `host` (any `marker_id`). The attach wrapper passes this as a quoted `find`
-/// argument instead of exposing a bare shell glob: zsh treats an unmatched
-/// glob as a fatal expansion error before `rm -f` or its redirection can run.
-/// The returned pattern is safe to single-quote (digits + sanitized host +
-/// `*`; no quotes or shell metacharacters other than the wildcard interpreted
-/// by `find`, not the login shell).
+/// `find -name` pattern matching every marker file left for `host` by a Deck
+/// on this machine and uid — this process's own earlier connections and, by way
+/// of the `*` where the pid goes, the ones a Deck that has since exited never
+/// got to clean up. See [`machine_token`] for why widening past our own pid is
+/// safe, and `app::ssh::remote_spawn::attach_command` for what the sweep does
+/// with the names.
+///
+/// The attach wrapper passes this as a quoted `find` argument instead of
+/// exposing a bare shell glob: zsh treats an unmatched glob as a fatal
+/// expansion error before `rm -f` or its redirection can run. The returned
+/// pattern is safe to single-quote (hex + digits + sanitized host + `*`; no
+/// quotes or shell metacharacters other than the wildcards interpreted by
+/// `find`, not the login shell).
 pub(crate) fn client_marker_name_pattern(host: &str) -> String {
-    let pid = std::process::id();
-    format!("client-{pid}-{}-*", marker_host_part(host))
+    client_marker_sweep_pattern(machine_token(), host)
+}
+
+/// Pure core of [`client_marker_name_pattern`]. The `*` standing in for the pid
+/// is why [`marker_host_part`] may not keep `-`.
+fn client_marker_sweep_pattern(machine: &str, host: &str) -> String {
+    format!("client-{machine}-*-{}-*", marker_host_part(host))
 }
 
 /// The `~/.cache/deck` directory token the attach wrapper `mkdir -p`s

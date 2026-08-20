@@ -1395,3 +1395,90 @@ fn staged_upload_command_writes_the_file_and_prints_where() {
 
     let _ = std::fs::remove_dir_all(&home);
 }
+
+/// Names `find` selects for `pattern` in `dir`, as bare filenames.
+fn swept_names(dir: &std::path::Path, pattern: &str) -> Vec<String> {
+    let output = std::process::Command::new("find")
+        .arg(dir)
+        .args(["-type", "f", "-name", pattern])
+        .output()
+        .expect("run find");
+    assert!(
+        output.status.success(),
+        "find failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.rsplit('/').next().map(str::to_string))
+        .collect()
+}
+
+fn marker_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("deck-test-marker-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create marker dir");
+    dir
+}
+
+/// The sweep must name every client a Deck on *this* machine left attached —
+/// including one written under a pid that is gone, which is the crash (or
+/// `--force` takeover) case that used to leave a container's window clamped to
+/// a dead client's size — and must name nothing belonging to another machine's
+/// Deck or to a different lane. Run through the real `find`, because the
+/// pattern is interpreted by the remote's `find`, not by us.
+#[test]
+fn the_sweep_names_this_machines_leftovers_and_nobody_elses() {
+    let dir = marker_dir("sweep");
+    let mine = "aaaaaaaaaaaaaaaa";
+    let theirs = "bbbbbbbbbbbbbbbb";
+
+    let swept = [
+        // A Deck that exited without cleaning up: the whole point of widening
+        // past our own pid.
+        client_marker_name(mine, 4242, "web.prod", 1),
+        // This process's own earlier connection to the same lane.
+        client_marker_name(mine, std::process::id(), "web.prod", 9),
+    ];
+    let kept = [
+        // Another machine's (or user's) Deck — possibly live, never ours to
+        // detach.
+        client_marker_name(theirs, 4242, "web.prod", 1),
+        // The container lane on the same host is a different client.
+        client_marker_name(mine, 4242, "web.prod#dev", 1),
+        // A host id ending in ours. It only stays out because
+        // `marker_host_part` folds `-` away: spelled `staging-web_prod`, the
+        // `*` standing in for the pid would swallow `4242-staging` and this
+        // live lane's client would be detached.
+        client_marker_name(mine, 4242, "staging-web.prod", 1),
+    ];
+    for name in swept.iter().chain(kept.iter()) {
+        std::fs::write(dir.join(name), "/dev/ttys001\n").expect("write marker");
+    }
+
+    let named = swept_names(&dir, &client_marker_sweep_pattern(mine, "web.prod"));
+
+    for name in &swept {
+        assert!(named.contains(name), "sweep missed {name}: {named:?}");
+    }
+    for name in &kept {
+        assert!(!named.contains(name), "sweep claimed {name}: {named:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Writer and sweep have to agree on the live spelling too — drift between them
+/// disables the cleanup silently, and every client Deck opens becomes a
+/// leftover the next attach sits behind.
+#[test]
+fn a_connections_own_marker_is_named_by_the_sweep_that_follows_it() {
+    let dir = marker_dir("agree");
+    let path = client_marker_path("web.prod", 17);
+    let name = path.rsplit('/').next().expect("marker file name");
+    std::fs::write(dir.join(name), "/dev/ttys001\n").expect("write marker");
+
+    let named = swept_names(&dir, &client_marker_name_pattern("web.prod"));
+
+    assert_eq!(named, vec![name.to_string()]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

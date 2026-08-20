@@ -202,10 +202,16 @@ impl RemoteSpawner {
 /// client Deck attached, so detaching exactly those ttys fixes Deck's own
 /// accumulation and touches nobody else's client.
 ///
-/// The pattern is scoped to this Deck process (`client-{pid}-…`), so a Deck
-/// that died leaves a client this sweep cannot name. Broadening it would let
-/// two Deck instances sharing one remote account detach each other; a stale
-/// client only clamps the window size, which is the lesser harm.
+/// The pattern is scoped to this machine and uid (`client-{machine}-…`) rather
+/// than to this pid. Deck holds a single-instance lock per machine and uid, so
+/// any *other* pid under our own token belongs to a Deck that has already
+/// exited, and the clients it left are leftovers by definition. Pid scoping
+/// could not name those: a Deck that crashed — or that `--force` took over —
+/// left a client inside the container that its successor then sat behind, with
+/// the window clamped to a dead client's size. A Deck on another machine, or
+/// another user's on this one, carries a different token and is never named
+/// here, so a shared remote account is still safe. See
+/// [`crate::remote_tmux::client_marker_name_pattern`].
 ///
 /// Opens with the [`crate::remote_tmux::REMOTE_PATH_EXPORT`] prelude, so every
 /// `tmux` below finds a Homebrew or per-user install — one statement rather than
@@ -373,9 +379,15 @@ mod tests {
     #[test]
     fn attach_cleanup_uses_find_pattern_not_a_shell_glob() {
         let command = attach_command("web.prod", 17);
-        let expected_pattern = format!("client-{}-web_prod-*", std::process::id());
+        let expected_pattern = crate::remote_tmux::client_marker_name_pattern("web.prod");
 
         assert!(command.contains(&format!("-name '{expected_pattern}'")));
+        // Every Deck this machine ran, not only this pid — a crashed Deck's
+        // client has to be nameable too.
+        assert!(
+            expected_pattern.ends_with("-*-web_prod-*"),
+            "sweep is pid-scoped again: {expected_pattern}"
+        );
         assert!(!command.contains("rm -f \"$HOME\"/.cache/deck/client-"));
         assert!(command.contains("tty > \"$HOME\"/'.cache/deck/client-"));
         assert!(command.ends_with("tmux -u attach"));
