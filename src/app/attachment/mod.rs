@@ -31,6 +31,10 @@ pub(crate) struct AttachmentManager {
     primary: LaneId,
     active: LaneId,
     remote: RemoteConnManager,
+    /// The main pane's current geometry. Held here because a lane that is
+    /// still `Connecting` owns no `TerminalSurface` for `resize_all` to reach,
+    /// so the size has to be waiting for it when its PTY lands.
+    pty_size: PtySize,
 }
 
 pub(crate) struct AttachmentEvents {
@@ -74,6 +78,7 @@ impl AttachmentManager {
             active: primary.clone(),
             primary,
             remote,
+            pty_size,
         }
     }
 
@@ -239,8 +244,7 @@ impl AttachmentManager {
                 Some(RemoteConnStatus::Connected) => {
                     if let Some(host) = Self::remote_host(&lane) {
                         if let Some(pane) = self.remote.take_pane(host) {
-                            self.states
-                                .insert(lane.clone(), AttachmentState::Connected(pane));
+                            self.adopt(&lane, pane);
                         }
                     }
                 }
@@ -333,10 +337,32 @@ impl AttachmentManager {
         tick.newly_stuck
     }
 
+    /// Apply the main pane's geometry to every live attachment, and record it
+    /// for the ones that aren't live yet — both the lanes mid-handshake (see
+    /// [`Self::adopt`]) and the PTYs a later spawn will open.
     pub(crate) fn resize_all(&mut self, rows: u16, cols: u16) {
+        self.pty_size = crate::app::terminal::pty_size(rows, cols);
+        self.remote.set_pty_size(self.pty_size);
         for (_, pane) in self.panes_mut() {
             pane.resize(rows, cols);
         }
+    }
+
+    /// Take ownership of a freshly-spawned pane at the main pane's *current*
+    /// size.
+    ///
+    /// The PTY was opened at whatever the main pane measured when the spawn was
+    /// kicked off, and a remote handshake takes seconds — a host-terminal
+    /// resize, a sidebar drag, or a layout toggle in that window leaves the
+    /// pane stale, because `resize_all` can only reach lanes that already own a
+    /// surface. Nothing else would ever correct it: the renderer clips the
+    /// vt100 screen to the pane rect (`ui::bridge::render_screen`), so an
+    /// oversized screen simply loses its bottom rows — the remote tmux status
+    /// line among them — until the next real resize.
+    fn adopt(&mut self, lane: &LaneId, mut pane: TerminalSurface) {
+        pane.resize(self.pty_size.rows, self.pty_size.cols);
+        self.states
+            .insert(lane.clone(), AttachmentState::Connected(pane));
     }
 
     /// tmux/SSH adapter boundary. Generic App callers pass only a LaneId.
@@ -380,6 +406,46 @@ mod tests {
         assert!(detached.was_active);
         assert_eq!(manager.active_lane(), &primary);
         assert_eq!(manager.failure(&remote), Some("terminal exited"));
+    }
+
+    /// A remote handshake takes seconds, and `resize_all` cannot reach a lane
+    /// that owns no surface yet. Left at the size its spawn was kicked off at,
+    /// the pane renders through `ui::bridge::render_screen`, which clips the
+    /// vt100 screen to the pane rect — the bottom rows, remote tmux's status
+    /// line among them, stay invisible until the host terminal happens to
+    /// resize.
+    #[test]
+    fn a_pane_that_lands_after_a_resize_adopts_the_current_size() {
+        let primary = crate::system::tmux::TmuxSystem::local_lane();
+        let remote = crate::system::tmux::TmuxSystem::host_lane("example");
+        let mut manager = AttachmentManager::start(primary, pane(), &[], size());
+
+        manager.resize_all(40, 100);
+        // Spawned at the pre-resize geometry, as an in-flight connection is.
+        manager.adopt(&remote, pane());
+
+        assert_eq!(
+            manager
+                .terminal(&remote)
+                .expect("adopted pane")
+                .screen()
+                .size(),
+            (40, 100),
+        );
+    }
+
+    /// The twin hole: a reconnect, an auto-recovery, or a host onboarded by
+    /// hot-reload opens a brand-new PTY, and it must not open at the geometry
+    /// deck measured at startup.
+    #[test]
+    fn a_resize_moves_the_size_later_spawns_open_at() {
+        let primary = crate::system::tmux::TmuxSystem::local_lane();
+        let mut manager = AttachmentManager::start(primary, pane(), &[], size());
+
+        manager.resize_all(40, 100);
+
+        let spawn_size = manager.remote.spawner_size();
+        assert_eq!((spawn_size.rows, spawn_size.cols), (40, 100));
     }
 
     #[test]

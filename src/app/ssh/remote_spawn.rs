@@ -101,6 +101,10 @@ pub(in crate::app) struct RemoteSpawner {
     /// spawned post-startup. Cloned per spawn so worker threads outlive
     /// `tx` going out of scope on `RemoteSpawner` drop.
     tx: Sender<RemoteSpawnEvent>,
+    /// Size every new attach PTY opens at. Tracks the *current* main pane, not
+    /// the one deck measured at startup: a reconnect or a host onboarded after
+    /// the window changed size would otherwise open its tmux client at a size
+    /// nothing corrects until the host terminal happens to resize again.
     size: PtySize,
 }
 
@@ -108,6 +112,17 @@ impl RemoteSpawner {
     pub fn new(size: PtySize) -> Self {
         let (tx, rx) = mpsc::channel();
         Self { rx, tx, size }
+    }
+
+    /// Move the size future spawns open at. Fed from the main pane's geometry
+    /// on every resize.
+    pub fn set_size(&mut self, size: PtySize) {
+        self.size = size;
+    }
+
+    #[cfg(test)]
+    pub fn size(&self) -> PtySize {
+        self.size
     }
 
     /// Spawn a PTY for a host (startup, hot-reload, reconnect, or
@@ -187,10 +202,28 @@ impl RemoteSpawner {
 /// client Deck attached, so detaching exactly those ttys fixes Deck's own
 /// accumulation and touches nobody else's client.
 ///
-/// The pattern is scoped to this Deck process (`client-{pid}-…`), so a Deck
-/// that died leaves a client this sweep cannot name. Broadening it would let
-/// two Deck instances sharing one remote account detach each other; a stale
-/// client only clamps the window size, which is the lesser harm.
+/// The pattern is scoped to this machine and uid (`client-{machine}-…`) rather
+/// than to this pid. Deck holds a single-instance lock per machine and uid, so
+/// any *other* pid under our own token belongs to a Deck that has already
+/// exited, and the clients it left are leftovers by definition. Pid scoping
+/// could not name those: a Deck that crashed — or that `--force` took over —
+/// left a client inside the container that its successor then sat behind, with
+/// the window clamped to a dead client's size. A Deck on another machine, or
+/// another user's on this one, carries a different token and is never named
+/// here, so a shared remote account is still safe. See
+/// [`crate::remote_tmux::client_marker_name_pattern`].
+///
+/// The second sweep clears the agent links themselves. The symlink block below
+/// leaves one `~/.ssh/deck-agent-{pid}-….sock` on the remote for every deck
+/// that ever attached, dangling from the moment that deck exits, and nothing
+/// ever collected them. Only the ones whose target is gone are removed, which
+/// needs no ownership scoping at all — a dangling link is dead for whoever left
+/// it, and its owner re-points it on their next attach — so this reaches a
+/// crashed deck's links, and another user's, without ever taking away a working
+/// agent. Ours is excluded by name even so: on a *reconnect* it is dangling too
+/// (the previous connection's `$SSH_AUTH_SOCK` is gone), and re-creating it a
+/// few words later would open a window where a pane resolves it and finds
+/// nothing.
 ///
 /// Opens with the [`crate::remote_tmux::REMOTE_PATH_EXPORT`] prelude, so every
 /// `tmux` below finds a Homebrew or per-user install — one statement rather than
@@ -215,12 +248,18 @@ fn attach_command(remote_id: &str, marker_id: u64) -> String {
          rm -f -- \"$m\" 2>/dev/null ; \
          done ; \
          tty > {marker} 2>/dev/null ; \
+         find \"$HOME\"/.ssh -maxdepth 1 -type l -name '{agent_pattern}' \
+         '!' -name '{agent_name}' 2>/dev/null | while IFS= read -r l ; do \
+         [ -e \"$l\" ] || rm -f -- \"$l\" 2>/dev/null ; \
+         done ; \
          if [ -S \"${{SSH_AUTH_SOCK-}}\" ] && (umask 077 && mkdir -p \"$HOME/.ssh\") 2>/dev/null \
          && ln -sf \"$SSH_AUTH_SOCK\" {agent} 2>/dev/null ; then \
          SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK ; \
          {tmux} set-environment -g SSH_AUTH_SOCK {agent} 2>/dev/null ; \
          fi ; {tmux} attach",
         path = crate::remote_tmux::REMOTE_PATH_EXPORT,
+        agent_pattern = crate::remote_tmux::AGENT_SOCKET_NAME_PATTERN,
+        agent_name = crate::remote_tmux::agent_socket_name(),
         // The attached client renders the user's panes, so a container's
         // locale-less tmux would draw every non-ASCII byte in them as `_`.
         tmux = crate::remote_tmux::REMOTE_TMUX,
@@ -358,9 +397,15 @@ mod tests {
     #[test]
     fn attach_cleanup_uses_find_pattern_not_a_shell_glob() {
         let command = attach_command("web.prod", 17);
-        let expected_pattern = format!("client-{}-web_prod-*", std::process::id());
+        let expected_pattern = crate::remote_tmux::client_marker_name_pattern("web.prod");
 
         assert!(command.contains(&format!("-name '{expected_pattern}'")));
+        // Every Deck this machine ran, not only this pid — a crashed Deck's
+        // client has to be nameable too.
+        assert!(
+            expected_pattern.ends_with("-*-web_prod-*"),
+            "sweep is pid-scoped again: {expected_pattern}"
+        );
         assert!(!command.contains("rm -f \"$HOME\"/.cache/deck/client-"));
         assert!(command.contains("tty > \"$HOME\"/'.cache/deck/client-"));
         assert!(command.ends_with("tmux -u attach"));
@@ -489,6 +534,106 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn attach_clears_dead_agent_links_but_never_its_own() {
+        let command = attach_command("web.prod", 17);
+        let ours = crate::remote_tmux::agent_socket_name();
+
+        assert!(command.contains(&format!("-name 'deck-agent-*.sock' '!' -name '{ours}'")));
+        // Only the dead ones: a link that resolves is somebody's working agent.
+        assert!(command.contains("[ -e \"$l\" ] || rm -f -- \"$l\""));
+        // And the sweep runs before the link is (re)created, so a reconnect
+        // ends with ours in place either way.
+        let sweep = command.find("deck-agent-*.sock").expect("agent sweep");
+        let create = command.find("ln -sf").expect("link created");
+        assert!(sweep < create, "the sweep runs after the link: {command}");
+    }
+
+    /// Every attach that reaches a forwarded agent leaves one link in the
+    /// remote `~/.ssh`, dangling from the moment that deck exits — one per run,
+    /// accumulating forever. Run the real prelude against a temporary `$HOME`
+    /// (the only thing ssh would have contributed) and check exactly which
+    /// links survive it.
+    ///
+    /// Once per shell a remote login might be: parsing a clause is not running
+    /// it, and this one is a `find`-into-`while` pipe, the shape shells disagree
+    /// about. A shell this machine does not have is skipped, not failed.
+    #[test]
+    fn the_prelude_clears_dead_agent_links_and_leaves_live_ones_alone() {
+        for shell in ["sh", "bash", "zsh"] {
+            if std::process::Command::new(shell)
+                .args(["-c", ":"])
+                .status()
+                .is_err()
+            {
+                continue;
+            }
+            prelude_agent_sweep_case(shell);
+        }
+    }
+
+    fn prelude_agent_sweep_case(shell: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home =
+            std::env::temp_dir().join(format!("deck-test-agent-{shell}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let ssh = home.join(".ssh");
+        let bin = home.join(".local/bin");
+        std::fs::create_dir_all(&ssh).expect("temp ~/.ssh");
+        std::fs::create_dir_all(&bin).expect("temp ~/.local/bin");
+        // The PATH prelude puts `$HOME/.local/bin` first, so a stub stands in
+        // for every tmux call the prelude makes.
+        std::fs::write(bin.join("tmux"), "#!/bin/sh\nexit 0\n").expect("stub tmux");
+        std::fs::set_permissions(bin.join("tmux"), std::fs::Permissions::from_mode(0o755))
+            .expect("stub executable");
+
+        let live = home.join("agent.live");
+        let gone = home.join("agent.gone");
+        std::fs::write(&live, b"").expect("live target");
+        let link = |name: &str, target: &std::path::Path| {
+            std::os::unix::fs::symlink(target, ssh.join(name)).expect("plant link");
+        };
+        let ours = crate::remote_tmux::agent_socket_name();
+        link("deck-agent-4242-aaaaaaaa.sock", &gone); // a deck that exited
+        link("deck-agent-4243-bbbbbbbb.sock", &live); // somebody still connected
+        link(ours, &gone); // ours, as a reconnect finds it
+        link("id_ed25519_elsewhere", &gone); // dangling, but not deck's
+        std::fs::write(ssh.join("authorized_keys"), b"").expect("regular file");
+
+        let status = std::process::Command::new(shell)
+            .arg("-c")
+            .arg(attach_command("web.prod", 17))
+            .env("HOME", &home)
+            // No forwarded agent here, so the prelude does not re-create ours:
+            // it survives on the `!` exclusion alone, which is the point.
+            .env("SSH_AUTH_SOCK", "")
+            .status()
+            .expect("run the prelude");
+        assert!(status.success(), "{shell}: prelude failed: {status}");
+
+        let present = |name: &str| ssh.join(name).symlink_metadata().is_ok();
+        assert!(
+            !present("deck-agent-4242-aaaaaaaa.sock"),
+            "{shell}: dead link kept"
+        );
+        assert!(
+            present("deck-agent-4243-bbbbbbbb.sock"),
+            "{shell}: live link removed"
+        );
+        assert!(present(ours), "{shell}: our own link removed mid-reconnect");
+        assert!(
+            present("id_ed25519_elsewhere"),
+            "{shell}: not deck's to remove"
+        );
+        assert!(
+            present("authorized_keys"),
+            "{shell}: not a link, not deck's"
+        );
+
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
