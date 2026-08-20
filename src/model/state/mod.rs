@@ -78,6 +78,42 @@ pub enum ViewMode {
     Compact,
 }
 
+/// How the sidebar paints the focused session/agent row. Two candidates, both
+/// full-row: `Solid` fills it with the theme's selection pair (a strong block
+/// that reads at a glance); `Subtle` tints it with the raised surface color and
+/// keeps the preset's accent bar plus each glyph's own color (quieter, closer
+/// to the rest of the list). Persisted to config, switched from Settings.
+///
+/// The serialized names are part of `config.yaml`, so keep them stable even if
+/// the labels shown in Settings change later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionHighlight {
+    #[default]
+    Solid,
+    Subtle,
+}
+
+impl SessionHighlight {
+    pub const ALL: [Self; 2] = [Self::Solid, Self::Subtle];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Solid => "Solid",
+            Self::Subtle => "Subtle",
+        }
+    }
+
+    /// One-line description of what the row looks like, shown as the settings
+    /// row's help so the choice is legible before committing to it.
+    pub fn help(self) -> &'static str {
+        match self {
+            Self::Solid => "Focused row fills with the theme's selection color",
+            Self::Subtle => "Focused row tints with a surface wash and an accent bar",
+        }
+    }
+}
+
 /// Active sidebar tab. `Projects` lists tmux sessions (default); `Agents`
 /// lists detected coding agents as the navigable list. Persisted to config.
 /// Agent detection in the refresh worker runs only while `Agents` is active
@@ -426,6 +462,8 @@ pub struct Prefs {
     pub sidebar_height: u16,
     pub sidebar_collapsed: bool,
     pub view_mode: ViewMode,
+    /// How the focused sidebar row is painted; see [`SessionHighlight`].
+    pub session_highlight: SessionHighlight,
     pub frame_rate_limit: u16,
     pub exclude_patterns: Vec<String>,
     pub update_check_mode: UpdateCheckMode,
@@ -481,6 +519,7 @@ impl Prefs {
             sidebar_height: cfg.sidebar_height,
             sidebar_collapsed: cfg.sidebar_collapsed,
             view_mode: cfg.view_mode,
+            session_highlight: cfg.session_highlight,
             frame_rate_limit: normalize_frame_rate_limit(cfg.frame_rate_limit),
             exclude_patterns: cfg.exclude_patterns.clone(),
             update_check_mode: cfg.update_check,
@@ -521,6 +560,7 @@ impl Prefs {
             sidebar_height: self.sidebar_height,
             sidebar_collapsed: self.sidebar_collapsed,
             view_mode: self.view_mode,
+            session_highlight: self.session_highlight,
             frame_rate_limit: self.frame_rate_limit,
             exclude_patterns: self.exclude_patterns.clone(),
             keybindings,
@@ -937,6 +977,14 @@ impl AppState {
         );
         self.prefs.agents_probe_interval_secs =
             cycle_option(&AGENTS_PROBE_INTERVAL_OPTIONS, cur, direction).0;
+    }
+
+    pub fn cycle_session_highlight(&mut self, direction: i32) {
+        self.prefs.session_highlight = cycle_option(
+            &SessionHighlight::ALL,
+            self.prefs.session_highlight,
+            direction,
+        );
     }
 
     pub fn cycle_summary_agent(&mut self, direction: i32) {

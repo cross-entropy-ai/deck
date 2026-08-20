@@ -5,7 +5,7 @@ use ratatui::Terminal;
 
 use crate::geometry::{banner_visible, sidebar_footer_height, SIDEBAR_HEADER_HEIGHT};
 use crate::geometry::{HitKind, HitRegions};
-use crate::state::SidebarTab;
+use crate::state::{SessionHighlight, SidebarTab};
 use crate::summary_card::SummaryState;
 use crate::update::UpdateStatus;
 
@@ -32,6 +32,7 @@ fn sidebar_props<'a>(
         rename_input: None,
         show_borders: true,
         sidebar_tab: SidebarTab::Projects,
+        session_highlight: SessionHighlight::Solid,
         agent_entries: &[],
         summary: &IDLE_SUMMARY,
         summary_age: None,
@@ -825,8 +826,13 @@ fn container_dividers_render_as_a_branch_under_their_host() {
 
     let built = state.sidebar_layout(ViewMode::Expanded);
     let sessions = state.entries.clone();
+    // `Subtle`, so the focused row still carries its own gutter mark: this
+    // test is about the run being continuous, and the other candidate answers
+    // the focused row differently (see
+    // `a_solid_selection_block_occludes_the_trunk_it_covers`).
     let props = SidebarProps {
         focus_target: state.focus_target(),
+        session_highlight: SessionHighlight::Subtle,
         ..sidebar_props(&sessions, &built, theme, &keybindings)
     };
     let (terminal, _) = render_sidebar(32, 24, None, props);
@@ -879,6 +885,95 @@ fn container_dividers_render_as_a_branch_under_their_host() {
     for row in build + 1..lines.len() {
         assert_ne!(gutter(row), '│', "trunk outlives the branch: {lines:#?}");
     }
+}
+
+#[test]
+fn a_solid_selection_block_occludes_the_trunk_it_covers() {
+    // The `Solid` candidate paints the focused row as one filled block, and
+    // anything drawn in its gutter — the trunk included — would be a dark mark
+    // punched out of that block. So the line passes behind the selection: the
+    // focused row's gutter is blank, and the run resumes on the row below.
+    use crate::config::{ContainerConfig, RemoteConfig};
+    use crate::state::{AppState, SidebarTab, ViewMode};
+    use crate::system::tmux::TmuxSystem;
+
+    let theme = &crate::theme::THEMES[0];
+    let keybindings = Keybindings::default();
+
+    let mut state = AppState::new(100, 24);
+    state.prefs.sidebar_tab = SidebarTab::Projects;
+    state.prefs.sidebar_width = 32;
+    state.config_remotes = vec![RemoteConfig {
+        host: "devbox".into(),
+        forward_agent: true,
+        forwards: vec![],
+        containers: vec![ContainerConfig {
+            name: "dev".into(),
+            engine: "docker".into(),
+            agent_sock: None,
+            forwards: vec![],
+        }],
+    }];
+    mount_tmux_sections(&mut state);
+    for lane in [
+        TmuxSystem::host_lane("devbox"),
+        TmuxSystem::container_lane("devbox", "dev"),
+    ] {
+        state.entries.push(crate::state::SessionEntry {
+            lane,
+            name: "s".to_string(),
+            dir: String::new(),
+            kind: crate::state::SessionEntryKind::Live { is_current: false },
+        });
+    }
+    state.clamp_projects_focus();
+
+    let built = state.sidebar_layout(ViewMode::Expanded);
+    let sessions = state.entries.clone();
+    let focus_target = state.focus_target();
+    let props = SidebarProps {
+        focus_target,
+        session_highlight: SessionHighlight::Solid,
+        ..sidebar_props(&sessions, &built, theme, &keybindings)
+    };
+    let (terminal, _) = render_sidebar(32, 24, None, props);
+
+    let buf = terminal.backend().buffer();
+    let lines: Vec<String> = (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect();
+    let row_of = |needle: &str| {
+        lines
+            .iter()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("{needle} not drawn in {lines:#?}"))
+    };
+    // The focused row is the host's own session, between the `devbox` divider
+    // and the container's elbow — exactly the stretch the trunk runs down.
+    let host = row_of(" devbox ");
+    let container = row_of("└ ▾ dev ");
+    // Both of the Expanded row's lines are covered, so the whole stretch
+    // between the two dividers is block, not line.
+    let focused = host + 1;
+    assert!(focused < container, "{lines:#?}");
+    for y in focused..container {
+        for x in 1..3 {
+            let cell = &buf[(x as u16, y as u16)];
+            assert_eq!(
+                cell.symbol(),
+                " ",
+                "gutter cell ({x}, {y}) must be blank: {lines:#?}"
+            );
+            assert_eq!(cell.bg, theme.selection_bg);
+        }
+    }
+    // The elbow the trunk was joining is still drawn: the line is hidden by
+    // the block, not dropped from the layout.
+    assert_eq!(lines[container].chars().nth(1), Some('└'), "{lines:#?}");
 }
 
 #[test]

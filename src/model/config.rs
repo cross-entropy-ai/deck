@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::forwards::ForwardSpec;
 use crate::keybindings::migrate_keybindings;
 
-use crate::state::{LayoutMode, SidebarTab, ViewMode, SIDEBAR_HEIGHT};
+use crate::state::{LayoutMode, SessionHighlight, SidebarTab, ViewMode, SIDEBAR_HEIGHT};
 use crate::summary_card::SummaryAgent;
 use crate::update::UpdateCheckMode;
 
@@ -248,6 +248,8 @@ pub struct Config {
     /// Whether the horizontal sidebar starts in its narrow collapsed rail.
     pub sidebar_collapsed: bool,
     pub view_mode: ViewMode,
+    /// Which of the two focused-row highlight styles the sidebar draws.
+    pub session_highlight: SessionHighlight,
     /// Render cap in FPS. Omitted from the file when it equals the default
     /// (`DEFAULT_FRAME_RATE_LIMIT`); a missing key loads as that default.
     #[serde(skip_serializing_if = "is_default_frame_rate")]
@@ -334,6 +336,7 @@ impl Default for Config {
             sidebar_height: SIDEBAR_HEIGHT,
             sidebar_collapsed: false,
             view_mode: ViewMode::Expanded,
+            session_highlight: SessionHighlight::default(),
             frame_rate_limit: crate::state::DEFAULT_FRAME_RATE_LIMIT,
             exclude_patterns: vec!["_*".to_string()],
             keybindings: BTreeMap::new(),

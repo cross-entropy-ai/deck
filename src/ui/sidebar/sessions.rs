@@ -15,7 +15,7 @@ use crate::ui::icons::{icon, Icon};
 use crate::geometry::{
     AgentEntry, AgentHit, AgentTarget, BuiltLayout, DividerHit, SummaryHits, TREE_TRUNK,
 };
-use crate::state::FocusTarget;
+use crate::state::{FocusTarget, SessionHighlight};
 use crate::summary_card::SummaryState;
 
 /// Braille spinner frames for the Summary card's "Generating…" state.
@@ -60,6 +60,34 @@ fn recolor_agent_dot(
         Span::styled(glyph.to_string(), style.fg(color)),
         Span::styled(rest, style),
     ];
+    text
+}
+
+/// The `basic_style` preset's focused-row marker: a left half block plus a
+/// space, occupying the row's two-cell gutter.
+const FOCUS_MARKER: &str = "\u{258c} ";
+
+/// Square off the top-left corner of a [`SessionHighlight::Solid`] row. The
+/// preset's marker is a *left half* block, so painted in the selection
+/// foreground it fills half of the row's first cell with the text color —
+/// a notch cut out of the corner of an otherwise unbroken block. The filled
+/// block is already what says "focused", leaving the marker nothing to add,
+/// so blank its cells and let the background through.
+///
+/// Only the untouched marker is cleared: a drag indicator (`↕`/`▸`) sits in
+/// the same cells and is meaning, not decoration. `Subtle` rows keep the
+/// marker — there the wash alone is quiet enough to need the bar.
+fn square_off_focus_marker(mut text: Text<'static>) -> Text<'static> {
+    let Some(span) = text
+        .lines
+        .first_mut()
+        .and_then(|line| line.spans.first_mut())
+    else {
+        return text;
+    };
+    if span.content == FOCUS_MARKER {
+        span.content = " ".repeat(FOCUS_MARKER.width()).into();
+    }
     text
 }
 
@@ -217,6 +245,8 @@ pub(super) struct SessionsProps<'a> {
     /// Flattened agent list; an agent entry's focus index maps into this.
     /// Empty on the Projects tab.
     pub agent_entries: &'a [AgentEntry],
+    /// Which of the two focused-row highlight styles to paint.
+    pub highlight: SessionHighlight,
 }
 
 /// Draw the sectioned list with the crate's `basic` preset, then walk the
@@ -257,6 +287,7 @@ pub(super) fn draw_sessions(
     let agents_tab = props.agents_tab;
     let agent_entries = props.agent_entries;
     let project_drag = props.project_drag;
+    let highlight = props.highlight;
     let tree_rows = props.built.tree_rows.as_slice();
     let widget = SectionedListWidget::new(layout, move |item, item_ctx| {
         let mut text = basic_style(item, item_ctx);
@@ -276,26 +307,35 @@ pub(super) fn draw_sessions(
             text = mark_project_drag(text, row_idx, source, target, theme);
         }
         // Last, so the line only ever fills a gutter the markers above left
-        // blank — and so it reaches rows on both tabs.
-        if item_ctx
-            .row_idx
-            .is_some_and(|row| tree_rows.get(row).copied().unwrap_or(false))
+        // blank — and so it reaches rows on both tabs. A `Solid` focused row
+        // is the exception: it is a filled block, and any glyph in its gutter
+        // is a dark mark punched out of that block, so the line passes behind
+        // the selection instead of through it. `Subtle` keeps the run going.
+        let occluded = item_ctx.focused && highlight == SessionHighlight::Solid;
+        if !occluded
+            && item_ctx
+                .row_idx
+                .is_some_and(|row| tree_rows.get(row).copied().unwrap_or(false))
         {
             text = mark_tree_line(text, theme);
         }
-        // Last of all: per-span colors from the preset, status dots, tree
-        // lines, or drag markers must not defeat the focused row's readable
-        // selection foreground. Status/drag meaning remains encoded by glyph.
-        if item_ctx.focused {
-            text = apply_selection_foreground(text, theme);
+        // Last of all, the focused row's own treatment. `Solid` fills the row,
+        // so per-span colors from the preset, status dots, tree lines, or drag
+        // markers must not defeat its readable selection foreground (status and
+        // drag meaning remains encoded by glyph), and the marker gives way to
+        // the block. `Subtle` is a wash the preset's own colors read against
+        // unchanged, marker included.
+        if item_ctx.focused && highlight == SessionHighlight::Solid {
+            text = apply_selection_foreground(square_off_focus_marker(text), theme);
         }
         text
     })
-    .highlight_style(
-        Style::default()
+    .highlight_style(match props.highlight {
+        SessionHighlight::Solid => Style::default()
             .fg(ctx.theme.selection_fg)
             .bg(ctx.theme.selection_bg),
-    );
+        SessionHighlight::Subtle => Style::default().bg(ctx.theme.surface),
+    });
     frame.render_stateful_widget(widget, area, &mut state);
 
     // Recompute the scroll the widget used (same formula) to walk visible
@@ -643,6 +683,7 @@ mod tests {
                         project_drag: None,
                         agents_tab: false,
                         agent_entries: &[],
+                        highlight: SessionHighlight::Solid,
                     },
                 );
             })
@@ -657,6 +698,68 @@ mod tests {
         assert_eq!(detail.fg, theme.selection_fg);
         assert_eq!(title.bg, theme.selection_bg);
         assert_eq!(detail.bg, theme.selection_bg);
+    }
+
+    /// Render a single focused two-line row under `highlight` and hand back
+    /// the buffer, so the two candidates are compared on identical input.
+    fn focused_row_buffer(theme: &Theme, highlight: SessionHighlight) -> ratatui::buffer::Buffer {
+        let mut built = BuiltLayout::default();
+        built.layout.push_row_auto(
+            BasicItem::new("alpha")
+                .line("~")
+                .color(Color::Rgb(90, 91, 92)),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(20, 3)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw_sessions(
+                    frame,
+                    frame.area(),
+                    &SidebarRenderCtx { theme },
+                    SessionsProps {
+                        built: &built,
+                        focus_target: Some(FocusTarget(0)),
+                        project_drag: None,
+                        agents_tab: false,
+                        agent_entries: &[],
+                        highlight,
+                    },
+                );
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    #[test]
+    fn solid_highlight_leaves_no_notch_in_the_rows_top_left_corner() {
+        let theme = &crate::theme::THEMES[0];
+        let buffer = focused_row_buffer(theme, SessionHighlight::Solid);
+
+        // The gutter is blank on both lines, so every cell of the block —
+        // corner included — is pure selection background.
+        for y in 0..2 {
+            for x in 0..2 {
+                let cell = &buffer[(x, y)];
+                assert_eq!(cell.symbol(), " ", "gutter cell ({x}, {y}) must be blank");
+                assert_eq!(cell.bg, theme.selection_bg);
+            }
+        }
+    }
+
+    #[test]
+    fn subtle_highlight_keeps_the_accent_bar_over_a_surface_wash() {
+        let theme = &crate::theme::THEMES[0];
+        let buffer = focused_row_buffer(theme, SessionHighlight::Subtle);
+
+        let marker = &buffer[(0, 0)];
+        assert_eq!(marker.symbol(), "\u{258c}");
+        assert_eq!(marker.bg, theme.surface);
+        // The row keeps its own foreground rather than the selection color:
+        // the wash is quiet enough to read the list's colors against.
+        let title = &buffer[(2, 0)];
+        assert_eq!(title.symbol(), "a");
+        assert_eq!(title.fg, Color::Rgb(90, 91, 92));
+        assert_eq!(title.bg, theme.surface);
     }
 
     #[test]
@@ -681,6 +784,7 @@ mod tests {
                         project_drag: Some((0, 2)),
                         agents_tab: false,
                         agent_entries: &[],
+                        highlight: SessionHighlight::Solid,
                     },
                 );
             })

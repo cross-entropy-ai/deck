@@ -172,6 +172,7 @@ impl App {
                         rename_input,
                         show_borders,
                         sidebar_tab,
+                        session_highlight: self.state.prefs.session_highlight,
                         agent_entries,
                         summary: &self.state.summary.state,
                         summary_age: summary_age.as_deref(),

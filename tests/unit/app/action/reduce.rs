@@ -1266,6 +1266,7 @@ fn root_and_appearance_pages_group_rows_as_requested() {
         "Sidebar",
         "Borders",
         "View",
+        "Highlight",
         "Frame rate",
         "Agents probe",
         "Summary",
@@ -1292,6 +1293,7 @@ fn root_and_appearance_pages_group_rows_as_requested() {
             "Sidebar",
             "Borders",
             "View",
+            "Highlight",
             "Frame rate"
         ]
     );

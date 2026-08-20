@@ -133,6 +133,13 @@ const VIEW_ROW: SettingRow = SettingRow {
     adjust: || Action::ToggleViewMode,
 };
 
+const HIGHLIGHT_ROW: SettingRow = SettingRow {
+    label: "Highlight",
+    value: |s| s.prefs.session_highlight.label().to_string(),
+    help: |s| s.prefs.session_highlight.help().to_string(),
+    adjust: || Action::Settings(SettingsAction::CycleSessionHighlight(1)),
+};
+
 const FRAME_RATE_ROW: SettingRow = SettingRow {
     label: "Frame rate",
     value: |s| crate::state::frame_rate_limit_label(s.prefs.frame_rate_limit).to_string(),
@@ -328,6 +335,7 @@ pub fn setting_rows(state: &AppState) -> Vec<&'static SettingRow> {
             &SIDEBAR_ROW,
             &BORDERS_ROW,
             &VIEW_ROW,
+            &HIGHLIGHT_ROW,
             &FRAME_RATE_ROW,
         ],
         SettingsPage::Theme => theme_setting_rows(state),
