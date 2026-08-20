@@ -9,7 +9,7 @@ use crate::geometry::{
     SummaryHits, SIDEBAR_HEADER_HEIGHT,
 };
 use crate::keybindings::Keybindings;
-use crate::state::{FocusTarget, SidebarTab};
+use crate::state::{FocusTarget, SessionHighlight, SidebarTab};
 use crate::theme::Theme;
 use crate::update::UpdateStatus;
 use ratatui_textarea::TextArea;
@@ -51,6 +51,8 @@ pub struct SidebarProps<'a> {
     pub rename_input: Option<&'a TextArea<'static>>,
     pub show_borders: bool,
     pub sidebar_tab: SidebarTab,
+    /// Which focused-row highlight style the session list paints.
+    pub session_highlight: SessionHighlight,
     /// Flattened agent list for the Agents tab (see `AppState::agent_entries`).
     pub agent_entries: &'a [AgentEntry],
     /// State of the Agents-tab Summary card.
@@ -372,6 +374,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
                 project_drag: props.project_drag,
                 agents_tab,
                 agent_entries: props.agent_entries,
+                highlight: props.session_highlight,
             },
         );
         (divider_hits, agent_hits, summary_hits)

@@ -1305,6 +1305,20 @@ fn step_clamped_covers_movement_boundaries_and_degenerate_lists() {
 }
 
 #[test]
+fn cycling_walks_both_highlight_candidates_and_wraps() {
+    // The settings row cycles in one direction, so with two candidates each
+    // press has to land on the other one and come back.
+    let mut state = AppState::new(80, 24);
+    assert_eq!(state.prefs.session_highlight, SessionHighlight::Solid);
+    state.cycle_session_highlight(1);
+    assert_eq!(state.prefs.session_highlight, SessionHighlight::Subtle);
+    state.cycle_session_highlight(1);
+    assert_eq!(state.prefs.session_highlight, SessionHighlight::Solid);
+    state.cycle_session_highlight(-1);
+    assert_eq!(state.prefs.session_highlight, SessionHighlight::Subtle);
+}
+
+#[test]
 fn prefs_config_round_trip_is_identity() {
     // Phase-7 invariant: `from_config(to_config(p)) == p` on the prefs.
     // Start from a Config carrying already-normalized, non-default values
@@ -1323,6 +1337,7 @@ fn prefs_config_round_trip_is_identity() {
         sidebar_height: 3,
         sidebar_collapsed: true,
         view_mode: ViewMode::Compact,
+        session_highlight: SessionHighlight::Subtle,
         frame_rate_limit: 30,
         exclude_patterns: vec!["foo*".to_string(), "/bar/".to_string()],
         keybindings: std::collections::BTreeMap::new(),

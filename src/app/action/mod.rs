@@ -156,6 +156,8 @@ pub enum SettingsAction {
     CycleFrameRateLimit(i32),
     /// Cycle the Agents-tab probe interval (settings, left/right).
     CycleAgentsProbeInterval(i32),
+    /// Cycle the sidebar's focused-row highlight style.
+    CycleSessionHighlight(i32),
     /// Cycle the headless CLI used for generated summaries.
     CycleSummaryAgent(i32),
     /// Toggle the inline Summary card on/off (settings, left/right/Enter).
