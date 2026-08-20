@@ -1026,7 +1026,16 @@ pub(crate) fn client_cache_dir_token() -> String {
 /// point — a pane keeps working across them), while a deck restart mints a new
 /// one, and panes from the previous run had a dead agent the moment that
 /// process's ssh connection went away regardless.
+///
+/// Which is also why every run leaves one behind. The attach prelude clears the
+/// dead ones out — see [`AGENT_SOCKET_NAME_PATTERN`].
 pub(crate) fn agent_socket_token() -> String {
+    shell_quote_remote_path(&format!("~/.ssh/{}", agent_socket_name()))
+}
+
+/// Bare filename of this process's agent link, for the `find` clause that has
+/// to leave *ours* alone while it clears the rest.
+pub(crate) fn agent_socket_name() -> &'static str {
     static NAME: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         // Two processes could share a pid across two machines reaching the same
         // account, so mix in a clock reading. Sanitized by construction: digits
@@ -1035,12 +1044,22 @@ pub(crate) fn agent_socket_token() -> String {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |since| since.subsec_nanos());
         format!(
-            "~/.ssh/deck-agent-{pid}-{nanos:08x}.sock",
+            "deck-agent-{pid}-{nanos:08x}.sock",
             pid = std::process::id(),
         )
     });
-    shell_quote_remote_path(&NAME)
+    &NAME
 }
+
+/// `find -name` pattern for every deck agent link in a remote `~/.ssh`,
+/// whoever left it.
+///
+/// The sweep that uses it removes only the ones whose target is gone, so it
+/// needs no ownership scoping at all: a dangling link is useless to its owner
+/// too, and the owner re-points it on their next attach. That keeps it safe on
+/// a shared account, where the pile is not all ours to reason about — and it
+/// reaches the links of a deck that crashed, which is most of the pile.
+pub(crate) const AGENT_SOCKET_NAME_PATTERN: &str = "deck-agent-*.sock";
 
 /// Confirm out of band (not via the PTY stream) that this connection's
 /// client-tty marker got written, so switch/focus commit only once their
