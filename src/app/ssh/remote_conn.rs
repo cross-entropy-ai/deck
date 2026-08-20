@@ -318,7 +318,19 @@ impl RemoteConnManager {
         }
     }
 
+    /// Move the size future spawns open at (reconnect, auto-recovery, a host
+    /// onboarded by hot-reload). Called on every main-pane resize; without it
+    /// every spawn after the first keeps opening at deck's startup geometry.
+    pub(crate) fn set_pty_size(&mut self, size: portable_pty::PtySize) {
+        self.spawner.set_size(size);
+    }
+
     // --- accessors ---
+
+    #[cfg(test)]
+    pub(crate) fn spawner_size(&self) -> portable_pty::PtySize {
+        self.spawner.size()
+    }
 
     #[cfg(test)]
     pub(crate) fn active(&self) -> Option<&String> {

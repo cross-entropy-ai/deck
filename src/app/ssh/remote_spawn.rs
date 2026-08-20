@@ -101,6 +101,10 @@ pub(in crate::app) struct RemoteSpawner {
     /// spawned post-startup. Cloned per spawn so worker threads outlive
     /// `tx` going out of scope on `RemoteSpawner` drop.
     tx: Sender<RemoteSpawnEvent>,
+    /// Size every new attach PTY opens at. Tracks the *current* main pane, not
+    /// the one deck measured at startup: a reconnect or a host onboarded after
+    /// the window changed size would otherwise open its tmux client at a size
+    /// nothing corrects until the host terminal happens to resize again.
     size: PtySize,
 }
 
@@ -108,6 +112,17 @@ impl RemoteSpawner {
     pub fn new(size: PtySize) -> Self {
         let (tx, rx) = mpsc::channel();
         Self { rx, tx, size }
+    }
+
+    /// Move the size future spawns open at. Fed from the main pane's geometry
+    /// on every resize.
+    pub fn set_size(&mut self, size: PtySize) {
+        self.size = size;
+    }
+
+    #[cfg(test)]
+    pub fn size(&self) -> PtySize {
+        self.size
     }
 
     /// Spawn a PTY for a host (startup, hot-reload, reconnect, or
