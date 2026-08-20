@@ -265,7 +265,7 @@ pub fn draw_summary_popup(
         content_w,
         theme,
         theme.text,
-        theme.surface,
+        theme.elevated,
     );
     let lines: Vec<Line> = row_spans.into_iter().map(Line::from).collect();
 

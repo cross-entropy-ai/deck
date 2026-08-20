@@ -62,10 +62,10 @@ pub fn draw_mount_picker(
         frame.buffer_mut(),
         rows[0],
         " ",
-        Style::default().bg(theme.surface),
+        Style::default().bg(theme.elevated),
         &picker.picker.input,
         true,
-        TextAreaColors::field(theme, theme.accent, theme.surface),
+        TextAreaColors::field(theme, theme.accent, theme.input_bg),
     );
 
     // One row carries the whole "why is the list not what you expected" story:
@@ -88,7 +88,7 @@ pub fn draw_mount_picker(
         ratatui::widgets::Widget::render(
             ratatui::widgets::Paragraph::new(Line::from(Span::styled(
                 text,
-                Style::default().fg(theme.muted).bg(theme.surface),
+                Style::default().fg(theme.muted).bg(theme.elevated),
             ))),
             rows[2],
             frame.buffer_mut(),
@@ -156,24 +156,24 @@ pub fn draw_mount_picker(
             Line::from(vec![
                 Span::styled(
                     "  start ",
-                    Style::default().fg(theme.yellow).bg(theme.surface),
+                    Style::default().fg(theme.yellow).bg(theme.elevated),
                 ),
                 Span::styled(
                     pending.label.clone(),
                     Style::default()
                         .fg(theme.yellow)
-                        .bg(theme.surface)
+                        .bg(theme.elevated)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
                     "? Enter to confirm",
-                    Style::default().fg(theme.yellow).bg(theme.surface),
+                    Style::default().fg(theme.yellow).bg(theme.elevated),
                 ),
             ])
         } else {
             Line::from(Span::styled(
                 format!("  {}", picker.picker.error.clone().unwrap_or_default()),
-                Style::default().fg(theme.error).bg(theme.surface),
+                Style::default().fg(theme.error).bg(theme.elevated),
             ))
         };
         ratatui::widgets::Widget::render(

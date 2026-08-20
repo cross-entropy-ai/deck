@@ -34,8 +34,9 @@ pub fn field_row(
 }
 
 /// Render a `label` + `textarea` row with the filter-picker forms' styling:
-/// label `accent` when focused else `dim`, modal-surface field background,
-/// accent block cursor. Used by the filter picker (new-session and add-remote).
+/// label `accent` when focused else `input_border`, recessed field background,
+/// semantic selection-colored block cursor. Used by the filter picker
+/// (new-session and add-remote).
 pub fn labeled_field(
     buf: &mut Buffer,
     area: Rect,
@@ -47,7 +48,7 @@ pub fn labeled_field(
     let label_style = if focused {
         Style::default().fg(theme.accent)
     } else {
-        Style::default().fg(theme.dim)
+        Style::default().fg(theme.input_border)
     };
     field_row(
         buf,
@@ -56,6 +57,27 @@ pub fn labeled_field(
         label_style,
         textarea,
         focused,
-        TextAreaColors::field(theme, theme.text, theme.surface),
+        TextAreaColors::field(theme, theme.text, theme.input_bg),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Color;
+
+    #[test]
+    fn labeled_field_uses_semantic_input_colors() {
+        let area = Rect::new(0, 0, 12, 1);
+        let mut buf = Buffer::empty(area);
+        let mut theme = crate::theme::THEMES[0];
+        theme.input_bg = Color::Rgb(1, 2, 3);
+        theme.input_border = Color::Rgb(4, 5, 6);
+        let input = TextArea::default();
+
+        labeled_field(&mut buf, area, "Name ", &input, false, &theme);
+
+        assert_eq!(buf[(0, 0)].fg, theme.input_border);
+        assert_eq!(buf[(5, 0)].bg, theme.input_bg);
+    }
 }

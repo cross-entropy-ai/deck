@@ -283,7 +283,7 @@ fn render_field_row(
             .fg(theme.accent)
             .add_modifier(Modifier::BOLD)
     } else if row.enabled {
-        Style::default().fg(theme.text)
+        Style::default().fg(theme.input_border)
     } else {
         Style::default().fg(theme.dim)
     };
@@ -297,7 +297,7 @@ fn render_field_row(
         label_style,
         row.textarea,
         focused,
-        TextAreaColors::field(theme, fg, theme.surface),
+        TextAreaColors::field(theme, fg, theme.input_bg),
     );
 }
 

@@ -34,14 +34,14 @@ pub fn draw_context_menu(
             // Greyed-out items are shown for context but not selectable, so
             // they never take the accent highlight even at `selected`.
             let style = if disabled.contains(item) {
-                Style::default().fg(theme.dim).bg(theme.surface)
+                Style::default().fg(theme.dim).bg(theme.elevated)
             } else if i == selected {
                 Style::default()
                     .fg(modal_selection_foreground(theme))
-                    .bg(theme.accent)
+                    .bg(theme.selection_bg)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme.secondary).bg(theme.surface)
+                Style::default().fg(theme.secondary).bg(theme.elevated)
             };
             full_width_row(item.label(), inner_w, style)
         },
@@ -85,7 +85,7 @@ mod tests {
             .iter()
             .find(|cell| cell.symbol() == "R")
             .expect("selected Rename label must be rendered");
-        assert_eq!(selected_cell.bg, theme.accent);
+        assert_eq!(selected_cell.bg, theme.selection_bg);
         assert_eq!(selected_cell.fg, modal_selection_foreground(theme));
     }
 }

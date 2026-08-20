@@ -97,10 +97,14 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
         let value = &row.value;
         let help = &row.help;
         let selected = idx == settings.selected;
-        let row_bg = if selected { theme.surface } else { theme.bg };
+        let row_bg = if selected {
+            theme.selection_bg
+        } else {
+            theme.bg
+        };
         let label_style = if selected {
             Style::default()
-                .fg(theme.text)
+                .fg(theme.selection_fg)
                 .bg(row_bg)
                 .add_modifier(Modifier::BOLD)
         } else {
@@ -108,17 +112,25 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
         };
         let value_style = if selected {
             Style::default()
-                .fg(theme.bg)
-                .bg(theme.accent)
+                .fg(theme.selection_fg)
+                .bg(theme.selection_bg)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.teal).bg(row_bg)
         };
         let help_style = Style::default()
-            .fg(if selected { theme.subtle } else { theme.dim })
+            .fg(if selected {
+                theme.selection_fg
+            } else {
+                theme.dim
+            })
             .bg(row_bg);
         let marker_style = Style::default()
-            .fg(if selected { theme.accent } else { theme.bg })
+            .fg(if selected {
+                theme.selection_fg
+            } else {
+                theme.bg
+            })
             .bg(row_bg);
 
         lines.push(Line::from(vec![
@@ -215,7 +227,7 @@ pub fn draw_keybindings_view(
     }
     lines.push(Line::raw(""));
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(theme.surface)),
+        Paragraph::new(lines).style(Style::default().bg(theme.elevated)),
         inner,
     );
     let footer_rows = Layout::vertical([
@@ -274,10 +286,10 @@ pub fn draw_theme_picker(
             let style = if idx == selected_idx {
                 Style::default()
                     .fg(modal_selection_foreground(theme))
-                    .bg(theme.accent)
+                    .bg(theme.selection_bg)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme.text).bg(theme.surface)
+                Style::default().fg(theme.text).bg(theme.elevated)
             };
             full_width_row(name, inner_w, style)
         },
@@ -306,16 +318,16 @@ pub fn draw_summary_language_editor(
     ])
     .split(inner);
 
-    // A 1-wide empty label over the modal surface leaves that
+    // A 1-wide empty label over the elevated modal surface leaves that
     // leading cell unchanged while indenting the field by one column.
     field_row(
         frame.buffer_mut(),
         rows[0],
         " ",
-        Style::default().bg(theme.surface),
+        Style::default().bg(theme.elevated),
         input,
         true,
-        TextAreaColors::field(theme, theme.accent, theme.surface),
+        TextAreaColors::field(theme, theme.accent, theme.input_bg),
     );
 
     modal_footer(
@@ -358,16 +370,16 @@ pub fn draw_ssh_setting_editor(
     ])
     .split(inner);
 
-    // A 1-wide empty label over the modal surface leaves that leading cell
+    // A 1-wide empty label over the elevated modal surface leaves that leading cell
     // unchanged while indenting the field by one column.
     field_row(
         frame.buffer_mut(),
         rows[0],
         " ",
-        Style::default().bg(theme.surface),
+        Style::default().bg(theme.elevated),
         editor.input,
         true,
-        TextAreaColors::field(theme, theme.accent, theme.surface),
+        TextAreaColors::field(theme, theme.accent, theme.input_bg),
     );
 
     modal_footer(frame.buffer_mut(), rows[2], hint, theme);
@@ -375,7 +387,7 @@ pub fn draw_ssh_setting_editor(
     if let Some(error) = editor.error {
         Paragraph::new(Line::from(Span::styled(
             format!(" {error}"),
-            Style::default().fg(theme.error).bg(theme.surface),
+            Style::default().fg(theme.error).bg(theme.elevated),
         )))
         .render(rows[3], frame.buffer_mut());
     }
@@ -457,7 +469,7 @@ pub fn draw_exclude_editor(
         let cols = Layout::horizontal([Constraint::Length(4), Constraint::Min(0)]).split(ta_row);
         Paragraph::new(Span::styled(
             "  ▸ ",
-            Style::default().fg(theme.green).bg(theme.surface),
+            Style::default().fg(theme.green).bg(theme.elevated),
         ))
         .render(cols[0], frame.buffer_mut());
 
@@ -465,7 +477,7 @@ pub fn draw_exclude_editor(
         style_textarea(
             &mut ta,
             true,
-            TextAreaColors::field(theme, theme.text, theme.surface),
+            TextAreaColors::field(theme, theme.text, theme.input_bg),
         );
         ta.render(cols[1], frame.buffer_mut());
         row_idx += 1;

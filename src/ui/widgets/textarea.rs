@@ -18,14 +18,14 @@ pub struct TextAreaColors {
 }
 
 impl TextAreaColors {
-    /// Field colors with the standard focused-cursor block (theme `bg` on
-    /// `accent`), which every field shares; only `fg`/`bg` vary per site.
+    /// Field colors with the standard semantic selection-colored cursor block,
+    /// which every field shares; only `fg`/`bg` vary per site.
     pub fn field(theme: &Theme, fg: Color, bg: Color) -> Self {
         Self {
             fg,
             bg,
-            cursor_fg: theme.bg,
-            cursor_bg: theme.accent,
+            cursor_fg: theme.selection_fg,
+            cursor_bg: theme.selection_bg,
         }
     }
 }
@@ -40,5 +40,23 @@ pub fn style_textarea(ta: &mut TextArea<'static>, focused: bool, c: TextAreaColo
         ta.set_cursor_style(Style::default().bg(c.cursor_bg).fg(c.cursor_fg));
     } else {
         ta.set_cursor_style(base);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Color;
+
+    #[test]
+    fn field_cursor_uses_semantic_selection_colors() {
+        let mut theme = crate::theme::THEMES[0];
+        theme.selection_fg = Color::Rgb(1, 2, 3);
+        theme.selection_bg = Color::Rgb(4, 5, 6);
+
+        let colors = TextAreaColors::field(&theme, theme.text, theme.input_bg);
+
+        assert_eq!(colors.cursor_fg, theme.selection_fg);
+        assert_eq!(colors.cursor_bg, theme.selection_bg);
     }
 }

@@ -33,9 +33,9 @@ pub(super) struct PickerViewport {
     pub pinned: usize,
 }
 
-/// Foreground that maintains readable contrast over the theme's accent fill.
+/// Foreground chosen by the theme for its semantic selection fill.
 pub fn modal_selection_foreground(theme: &Theme) -> ratatui::style::Color {
-    contrasting_foreground(theme, theme.accent)
+    theme.selection_fg
 }
 
 /// Foreground that maintains readable contrast over an arbitrary semantic
@@ -94,7 +94,7 @@ fn contrast_with(base: f64, color: ratatui::style::Color) -> f64 {
 }
 
 /// One full-width selectable modal row. Unselected rows use the modal surface;
-/// selected rows use an accent fill with a contrast-safe foreground.
+/// selected rows use the theme's semantic selection colors.
 pub fn list_item_line<'a>(
     theme: &Theme,
     selected: bool,
@@ -107,16 +107,20 @@ pub fn list_item_line<'a>(
     let used = marker.as_ref().width() + content.as_ref().width();
     let padding = " ".repeat(width.saturating_sub(used));
     let row_bg = if selected {
-        theme.accent
+        theme.selection_bg
     } else {
-        theme.surface
+        theme.elevated
     };
     let content_fg = if selected {
         modal_selection_foreground(theme)
     } else {
         theme.text
     };
-    let marker_fg = if selected { content_fg } else { theme.surface };
+    let marker_fg = if selected {
+        theme.selection_fg
+    } else {
+        theme.elevated
+    };
     let row_style = |fg| {
         let style = Style::default().fg(fg).bg(row_bg);
         if selected {
@@ -234,7 +238,7 @@ pub fn draw_picker_list(
         if let Some(glyph) = bar {
             line.spans.push(Span::styled(
                 glyph,
-                Style::default().fg(theme.dim).bg(theme.surface),
+                Style::default().fg(theme.scrollbar).bg(theme.elevated),
             ));
         }
         line
@@ -259,8 +263,8 @@ mod tests {
     #[test]
     fn modal_selection_foreground_is_readable_for_every_theme() {
         for theme in crate::theme::THEMES {
-            let accent = relative_luminance(theme.accent).unwrap();
-            let contrast = contrast_with(accent, modal_selection_foreground(theme));
+            let selection = relative_luminance(theme.selection_bg).unwrap();
+            let contrast = contrast_with(selection, modal_selection_foreground(theme));
             assert!(
                 contrast >= 4.5,
                 "{} modal selection contrast is only {contrast:.2}:1",
@@ -278,21 +282,25 @@ mod tests {
     }
 
     #[test]
-    fn modal_list_rows_use_surface_and_full_width_accent_selection() {
-        let theme = &crate::theme::THEMES[0];
-        let unselected = list_item_line(theme, false, "    ", "entry", 12);
-        let selected = list_item_line(theme, true, "  ▸ ", "entry", 12);
+    fn modal_list_rows_use_elevated_and_full_width_semantic_selection() {
+        let mut theme = crate::theme::THEMES[0];
+        theme.elevated = ratatui::style::Color::Rgb(1, 2, 3);
+        theme.selection_bg = ratatui::style::Color::Rgb(4, 5, 6);
+        theme.selection_fg = ratatui::style::Color::Rgb(7, 8, 9);
+        let unselected = list_item_line(&theme, false, "    ", "entry", 12);
+        let selected = list_item_line(&theme, true, "  ▸ ", "entry", 12);
 
         assert_eq!(unselected.width(), 12);
         assert!(unselected
             .spans
             .iter()
-            .all(|span| span.style.bg == Some(theme.surface)));
+            .all(|span| span.style.bg == Some(theme.elevated)));
         assert_eq!(selected.width(), 12);
         assert!(selected
             .spans
             .iter()
-            .all(|span| span.style.bg == Some(theme.accent)));
+            .all(|span| span.style.bg == Some(theme.selection_bg)));
+        assert_eq!(selected.spans[1].style.fg, Some(theme.selection_fg));
     }
 
     #[test]
@@ -303,7 +311,8 @@ mod tests {
 
     #[test]
     fn picker_list_highlights_selection_and_draws_scrollbar_at_right_edge() {
-        let theme = &crate::theme::THEMES[0];
+        let mut theme = crate::theme::THEMES[0];
+        theme.scrollbar = ratatui::style::Color::Rgb(1, 2, 3);
         let area = Rect::new(0, 0, 12, 3);
         let rows = [
             Rect::new(0, 0, 12, 1),
@@ -316,7 +325,7 @@ mod tests {
         draw_picker_list(
             &mut top,
             &rows,
-            theme,
+            &theme,
             &filtered,
             PickerViewport {
                 selected: 0,
@@ -328,14 +337,15 @@ mod tests {
             |idx| format!("dir-{idx}/"),
         );
         assert_eq!(top[(11, 0)].symbol(), "█");
+        assert_eq!(top[(11, 0)].fg, theme.scrollbar);
         assert_eq!(top[(11, 1)].symbol(), "░");
-        assert_eq!(top[(1, 0)].bg, theme.accent);
+        assert_eq!(top[(1, 0)].bg, theme.selection_bg);
 
         let mut bottom = Buffer::empty(area);
         draw_picker_list(
             &mut bottom,
             &rows,
-            theme,
+            &theme,
             &filtered,
             PickerViewport {
                 selected: 4,
@@ -348,7 +358,7 @@ mod tests {
         );
         assert_eq!(bottom[(11, 0)].symbol(), "░");
         assert_eq!(bottom[(11, 2)].symbol(), "█");
-        assert_eq!(bottom[(1, 2)].bg, theme.accent);
+        assert_eq!(bottom[(1, 2)].bg, theme.selection_bg);
     }
 
     #[test]

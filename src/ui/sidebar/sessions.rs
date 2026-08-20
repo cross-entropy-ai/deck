@@ -271,7 +271,11 @@ pub(super) fn draw_sessions(
         }
         text
     })
-    .highlight_style(Style::default().bg(ctx.theme.surface));
+    .highlight_style(
+        Style::default()
+            .fg(ctx.theme.selection_fg)
+            .bg(ctx.theme.selection_bg),
+    );
     frame.render_stateful_widget(widget, area, &mut state);
 
     // Recompute the scroll the widget used (same formula) to walk visible

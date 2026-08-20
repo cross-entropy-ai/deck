@@ -37,7 +37,7 @@ pub(super) fn scrollbar_cells(
 ///
 /// Wraps `text` to `content_w`, windows lines around `scroll` for `rows` rows,
 /// renders each row's runs (`**bold**` etc.) over `bg`, pads short lines to
-/// `content_w`, and appends the scrollbar glyph (in `theme.dim`). Returns
+/// `content_w`, and appends the scrollbar glyph (in `theme.scrollbar`). Returns
 /// `rows` span lists plus clamped `max_scroll` — callers add their own
 /// indent/`pad_line` and clamp scroll. Shared by the Summary card and popup so
 /// windowing/padding/scrollbar can't diverge.
@@ -71,7 +71,10 @@ pub fn markdown_window(
             )
             .spans;
             if let Some(glyph) = bar.get(i).copied().flatten() {
-                spans.push(Span::styled(glyph, Style::default().fg(theme.dim).bg(bg)));
+                spans.push(Span::styled(
+                    glyph,
+                    Style::default().fg(theme.scrollbar).bg(bg),
+                ));
             }
             spans
         })
@@ -90,14 +93,15 @@ mod tests {
 
     #[test]
     fn markdown_window_pads_rows_and_appends_scrollbar() {
-        let theme = &THEMES[0];
+        let mut theme = THEMES[0];
+        theme.scrollbar = ratatui::style::Color::Rgb(1, 2, 3);
         // Five wrapped words at width 5 give 5 lines; window to 3 rows so
         // the content overflows and a scrollbar must appear on every row.
         let text = "aaaa bbbb cccc dddd eeee";
         let content_w = 5;
         let rows = 3;
         let (out, max_scroll) =
-            markdown_window(text, rows, 0, content_w, theme, theme.text, theme.bg);
+            markdown_window(text, rows, 0, content_w, &theme, theme.text, theme.bg);
 
         assert_eq!(out.len(), rows, "one span list per row");
         // 5 wrapped lines, 3-row window -> 2 lines of slack.
@@ -113,6 +117,7 @@ mod tests {
                 last.content
             );
             assert_eq!(text.chars().count(), content_w + 1);
+            assert_eq!(last.style.fg, Some(theme.scrollbar));
         }
     }
 

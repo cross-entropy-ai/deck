@@ -188,7 +188,7 @@ pub fn draw_rename_popup(
     let height = area.height.clamp(1, 8);
     let inner = ModalFrame::centered(width, height, Some("Rename session"), theme)
         .render(frame.buffer_mut(), area);
-    draw_rename_input(frame, inner, theme, textarea, theme.surface, false);
+    draw_rename_input(frame, inner, theme, textarea, theme.elevated, false);
 }
 
 /// Draw sidebar-only help as a centered modal when the vertical one-row tab
@@ -199,7 +199,7 @@ pub fn draw_help_popup(frame: &mut Frame, area: Rect, theme: &Theme, keybindings
         .max(5);
     let inner =
         ModalFrame::centered(64, height, Some("Help"), theme).render(frame.buffer_mut(), area);
-    draw_help(frame, inner, theme, keybindings, theme.surface);
+    draw_help(frame, inner, theme, keybindings, theme.elevated);
 }
 
 /// Draw the destructive close confirmation as a centered modal in vertical
@@ -212,7 +212,7 @@ pub fn draw_confirm_kill_popup(
 ) -> Option<KillConfirmHits> {
     let inner = ModalFrame::warning_centered(48, 9, Some("Close session"), theme)
         .render(frame.buffer_mut(), area);
-    draw_confirm_kill(frame, inner, theme, name, theme.surface)
+    draw_confirm_kill(frame, inner, theme, name, theme.elevated)
 }
 
 /// Draw the sidebar and return the frame's clickable regions for mouse

@@ -51,16 +51,16 @@ impl<'a> ModalStyle<'a> {
     fn standard(theme: &Theme, title: Option<&'a str>) -> Self {
         Self {
             title,
-            border_fg: theme.accent,
-            bg: theme.surface,
+            border_fg: theme.focus_border,
+            bg: theme.elevated,
         }
     }
 
     fn subtle(theme: &Theme, title: Option<&'a str>) -> Self {
         Self {
             title,
-            border_fg: theme.dim,
-            bg: theme.surface,
+            border_fg: theme.border,
+            bg: theme.elevated,
         }
     }
 
@@ -68,7 +68,7 @@ impl<'a> ModalStyle<'a> {
         Self {
             title,
             border_fg: theme.yellow,
-            bg: theme.surface,
+            bg: theme.elevated,
         }
     }
 }
@@ -161,11 +161,11 @@ fn modal_bounds(bounds: Rect) -> Rect {
     )
 }
 
-/// Draw a modal's one-line command hint with the standard muted surface style.
+/// Draw a modal's one-line command hint with the standard elevated style.
 pub fn modal_footer(buf: &mut Buffer, area: Rect, text: &str, theme: &Theme) {
     Paragraph::new(Span::styled(
         text,
-        Style::default().fg(theme.muted).bg(theme.surface),
+        Style::default().fg(theme.muted).bg(theme.elevated),
     ))
     .render(area, buf);
 }
@@ -247,10 +247,10 @@ mod tests {
         // Centered width 6 in width 12 occupies x=3..9, so x=2 and x=9
         // are the shared one-cell horizontal margins.
         assert_eq!(buf[(2, 2)].symbol(), " ");
-        assert_eq!(buf[(2, 2)].bg, theme.surface);
+        assert_eq!(buf[(2, 2)].bg, theme.elevated);
         assert_eq!(buf[(3, 2)].symbol(), "│");
         assert_eq!(buf[(9, 2)].symbol(), " ");
-        assert_eq!(buf[(9, 2)].bg, theme.surface);
+        assert_eq!(buf[(9, 2)].bg, theme.elevated);
     }
 
     #[test]
@@ -267,7 +267,7 @@ mod tests {
     }
 
     #[test]
-    fn modal_frame_normalizes_title_padding_and_surface_color() {
+    fn modal_frame_normalizes_title_padding_and_elevated_color() {
         let bounds = Rect::new(0, 0, 16, 5);
         let mut buf = Buffer::empty(bounds);
         let theme = &crate::theme::THEMES[0];
@@ -276,6 +276,25 @@ mod tests {
 
         let top: String = (2..14).map(|x| buf[(x, 1)].symbol()).collect();
         assert!(top.contains(" Title "));
-        assert_eq!(buf[(3, 2)].bg, theme.surface);
+        assert_eq!(buf[(3, 2)].bg, theme.elevated);
+    }
+
+    #[test]
+    fn modal_frame_uses_semantic_surface_and_border_roles() {
+        let bounds = Rect::new(0, 0, 12, 5);
+        let mut theme = crate::theme::THEMES[0];
+        theme.elevated = Color::Rgb(1, 2, 3);
+        theme.focus_border = Color::Rgb(4, 5, 6);
+        theme.border = Color::Rgb(7, 8, 9);
+
+        let mut standard = Buffer::empty(bounds);
+        ModalFrame::centered(8, 3, None, &theme).render(&mut standard, bounds);
+        assert_eq!(standard[(3, 2)].bg, theme.elevated);
+        assert_eq!(standard[(2, 2)].fg, theme.focus_border);
+
+        let mut subtle = Buffer::empty(bounds);
+        ModalFrame::subtle_exact(Rect::new(2, 1, 8, 3), None, &theme).render(&mut subtle, bounds);
+        assert_eq!(subtle[(3, 2)].bg, theme.elevated);
+        assert_eq!(subtle[(2, 2)].fg, theme.border);
     }
 }
