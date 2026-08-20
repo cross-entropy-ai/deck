@@ -319,6 +319,8 @@ pub struct SettingsState {
 
     /// Theme picker overlay (open inside the settings page).
     pub theme_picker_open: bool,
+    /// Cursor within the list filtered for `theme_picker_slot` (not a global
+    /// `THEMES` index).
     pub theme_picker_selected: usize,
     /// Which theme the open picker is choosing: the fixed one, or the
     /// dark/light slot "follow terminal" mode picks from.

@@ -672,6 +672,60 @@ fn theme_picker_next_previews_theme_immediately() {
 }
 
 #[test]
+fn dark_and_light_theme_pickers_only_navigate_matching_themes() {
+    use crate::theme::{indices_for_slot, ThemeSlot, THEMES};
+
+    let dark: Vec<usize> = indices_for_slot(ThemeSlot::Dark).collect();
+    let light: Vec<usize> = indices_for_slot(ThemeSlot::Light).collect();
+    assert!(dark.len() > 1);
+    assert!(light.len() > 1);
+    assert!(dark.iter().all(|&index| THEMES[index].is_dark()));
+    assert!(light.iter().all(|&index| !THEMES[index].is_dark()));
+    assert_eq!(dark.len() + light.len(), THEMES.len());
+
+    let mut state = make_test_state(1);
+    state.prefs.dark_theme_index = dark[0];
+    apply_action(
+        &mut state,
+        Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Dark)),
+    );
+    apply_action(
+        &mut state,
+        Action::Settings(SettingsAction::ThemePickerNext),
+    );
+    assert_eq!(state.settings.theme_picker_selected, 1);
+    assert_eq!(state.prefs.dark_theme_index, dark[1]);
+
+    state.prefs.light_theme_index = light[0];
+    apply_action(
+        &mut state,
+        Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Light)),
+    );
+    apply_action(
+        &mut state,
+        Action::Settings(SettingsAction::ThemePickerNext),
+    );
+    assert_eq!(state.settings.theme_picker_selected, 1);
+    assert_eq!(state.prefs.light_theme_index, light[1]);
+}
+
+#[test]
+fn filtered_theme_picker_restores_the_saved_theme_cursor() {
+    use crate::theme::{indices_for_slot, ThemeSlot};
+
+    let light: Vec<usize> = indices_for_slot(ThemeSlot::Light).collect();
+    let mut state = make_test_state(1);
+    state.prefs.light_theme_index = light[2];
+
+    apply_action(
+        &mut state,
+        Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Light)),
+    );
+
+    assert_eq!(state.settings.theme_picker_selected, 2);
+}
+
+#[test]
 fn theme_picker_next_at_end_still_saves() {
     // Next is intentionally asymmetric: even pinned at the last theme it
     // re-applies + persists (so a repeat at the end isn't a silent no-op),

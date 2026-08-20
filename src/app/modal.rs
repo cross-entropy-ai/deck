@@ -12,7 +12,7 @@ use crate::action::{
 use crate::geometry::KillConfirmHits;
 use crate::overlay::Modal;
 use crate::state::{AppState, LayoutMode};
-use crate::theme::{Theme, THEMES};
+use crate::theme::{indices_for_slot, Theme, THEMES};
 use crate::ui;
 
 #[derive(Default)]
@@ -180,7 +180,9 @@ pub(super) fn draw_active_modal(
             }
         }
         Modal::ThemePicker => {
-            let theme_names: Vec<&str> = THEMES.iter().map(|candidate| candidate.name).collect();
+            let theme_names: Vec<&str> = indices_for_slot(state.settings.theme_picker_slot)
+                .map(|index| THEMES[index].name)
+                .collect();
             ui::draw_theme_picker(
                 frame,
                 main,

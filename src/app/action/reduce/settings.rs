@@ -5,7 +5,7 @@
 use crate::app::settings::setting_rows;
 use crate::effects::{Effect, SideEffect};
 use crate::state::{step_clamped, AppState, FocusMode, MainView};
-use crate::theme::THEMES;
+use crate::theme::indices_for_slot;
 
 use super::{apply_action, SettingsAction};
 
@@ -133,10 +133,10 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             // closing the picker return to wherever it was opened from.
             state.settings.theme_picker_open = true;
             state.settings.theme_picker_slot = slot;
-            state.settings.theme_picker_selected = state
-                .prefs
-                .theme_slot(slot)
-                .min(THEMES.len().saturating_sub(1));
+            let current = state.prefs.theme_slot(slot);
+            state.settings.theme_picker_selected = indices_for_slot(slot)
+                .position(|index| index == current)
+                .unwrap_or(0);
         }
         SettingsAction::ToggleThemeAuto => {
             state.prefs.theme_auto = !state.prefs.theme_auto;
@@ -152,12 +152,13 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             state.settings.theme_picker_open = false;
         }
         SettingsAction::ThemePickerNext => {
+            let slot = state.settings.theme_picker_slot;
+            let available: Vec<usize> = indices_for_slot(slot).collect();
             state.settings.theme_picker_selected =
-                step_clamped(state.settings.theme_picker_selected, THEMES.len(), 1);
-            state.prefs.set_theme_slot(
-                state.settings.theme_picker_slot,
-                state.settings.theme_picker_selected,
-            );
+                step_clamped(state.settings.theme_picker_selected, available.len(), 1);
+            if let Some(&theme_index) = available.get(state.settings.theme_picker_selected) {
+                state.prefs.set_theme_slot(slot, theme_index);
+            }
             fx.save_config();
             fx.push(Effect::ApplyTmuxTheme);
         }
@@ -165,12 +166,13 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             // Side effects only fire when the cursor actually moves (unlike
             // Next, which always re-applies) — preserve that asymmetry.
             if state.settings.theme_picker_selected > 0 {
+                let slot = state.settings.theme_picker_slot;
+                let available: Vec<usize> = indices_for_slot(slot).collect();
                 state.settings.theme_picker_selected =
-                    step_clamped(state.settings.theme_picker_selected, THEMES.len(), -1);
-                state.prefs.set_theme_slot(
-                    state.settings.theme_picker_slot,
-                    state.settings.theme_picker_selected,
-                );
+                    step_clamped(state.settings.theme_picker_selected, available.len(), -1);
+                if let Some(&theme_index) = available.get(state.settings.theme_picker_selected) {
+                    state.prefs.set_theme_slot(slot, theme_index);
+                }
                 fx.save_config();
                 fx.push(Effect::ApplyTmuxTheme);
             }

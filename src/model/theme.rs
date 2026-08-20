@@ -419,6 +419,21 @@ pub enum ThemeSlot {
     Light,
 }
 
+/// Global theme indices available to a picker for `slot`. The fixed-theme
+/// picker can choose any theme, while Auto theme's dark/light slots only show
+/// palettes matching the appearance they will be used for.
+pub fn indices_for_slot(slot: ThemeSlot) -> impl Iterator<Item = usize> {
+    THEMES
+        .iter()
+        .enumerate()
+        .filter(move |(_, theme)| match slot {
+            ThemeSlot::Fixed => true,
+            ThemeSlot::Dark => theme.is_dark(),
+            ThemeSlot::Light => !theme.is_dark(),
+        })
+        .map(|(index, _)| index)
+}
+
 /// Index of the theme named `name`, falling back to the first theme (the
 /// default) when a config names one that no longer exists.
 pub fn index_of(name: &str) -> usize {
