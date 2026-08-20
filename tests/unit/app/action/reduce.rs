@@ -2143,6 +2143,28 @@ fn pf_add_input_rejects_out_of_range_ports() {
 }
 
 #[test]
+fn editing_a_port_forward_clears_stale_validation_feedback() {
+    use crossterm::event::KeyCode;
+    let mut state = make_test_state(0);
+    open_form_with_focus(&mut state, crate::forwards::PfField::ListenPort, "8");
+    state.overlay.port_forward.as_mut().unwrap().status =
+        Some("Listen port must be a number".to_string());
+
+    crate::action::apply_action(
+        &mut state,
+        Action::Pf(PfAction::AddInputKey(key(KeyCode::Char('0')))),
+    );
+
+    assert!(state
+        .overlay
+        .port_forward
+        .as_ref()
+        .unwrap()
+        .status
+        .is_none());
+}
+
+#[test]
 fn remove_lane_emits_one_runtime_owned_mutation() {
     let mut state = make_test_state(0);
     state.config_remotes = vec![

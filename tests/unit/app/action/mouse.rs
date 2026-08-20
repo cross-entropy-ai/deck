@@ -301,7 +301,7 @@ fn add_remote_footer_hints_are_buttons() {
             add,
             Action::AddRemote(crate::action::AddRemoteAction::Confirm)
         ),
-        "`⏎ add` must be clickable, got {add:?}"
+        "`[Enter] Add` must be clickable, got {add:?}"
     );
     let cancel = mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 42, 20), &state);
     assert!(
@@ -309,7 +309,7 @@ fn add_remote_footer_hints_are_buttons() {
             cancel,
             Action::AddRemote(crate::action::AddRemoteAction::Close)
         ),
-        "`⎋ cancel` must be clickable, or a mouse-only user cannot back out, got {cancel:?}"
+        "`[Esc] Cancel` must be clickable, or a mouse-only user cannot back out, got {cancel:?}"
     );
 }
 

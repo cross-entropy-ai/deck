@@ -788,6 +788,7 @@ impl App {
         let spec = match form.validate() {
             Ok(s) => s,
             Err(e) => {
+                form.focus = e.field();
                 overlay.status = Some(e.message().to_string());
                 return;
             }

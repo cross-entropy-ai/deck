@@ -11,16 +11,18 @@ use crate::forwards::{PfAddForm, PfField, PortForwardOverlay};
 use crate::geometry::{ListItemHit, PfHits};
 use crate::theme::Theme;
 use crate::ui::widgets::{
-    field_row, hint_rect, list_item_line, modal_footer, modal_list_lines, ListViewport, ModalFrame,
-    TextAreaColors,
+    form_field_row, form_label_span, hint_rect, list_item_line, modal_footer, modal_list_lines,
+    FormFieldState, ListViewport, ModalFrame,
 };
 
 const OVERLAY_WIDTH: u16 = 64;
+const FORM_LABEL_WIDTH: usize = 12;
+const FORM_CONTENT_OFFSET: u16 = FORM_LABEL_WIDTH as u16 + 5;
 /// The list footer, whose hints double as its buttons.
-const ADD_HINT: &str = "[a] add";
-const DELETE_HINT: &str = "[d] delete";
-const CLOSE_HINT: &str = "[esc] close";
-const LIST_FOOTER: &str = "  [a] add   [d] delete   [esc] close";
+const ADD_HINT: &str = "[A] Add";
+const DELETE_HINT: &str = "[D] Delete";
+const CLOSE_HINT: &str = "[Esc] Close";
+const LIST_FOOTER: &str = "  [A] Add   [D] Delete   [Esc] Close";
 
 pub fn draw_port_forward(
     frame: &mut Frame,
@@ -42,7 +44,7 @@ pub fn draw_port_forward(
     };
     let total_height = body_height + 4;
     let title = match &overlay.add_form {
-        Some(_) => format!("Port Forward — {lane_title}  \u{25b8} add"),
+        Some(_) => format!("Port Forward — {lane_title} · Add"),
         None => format!("Port Forward — {lane_title}"),
     };
     let inner =
@@ -154,21 +156,37 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
     ])
     .split(area);
 
+    let mode_focused = form.focus == PfField::Mode;
     let mode_text = |m: ForwardMode, label: &str| -> Span {
-        let marker = if form.mode == m { "(\u{2022})" } else { "( )" };
+        let marker = if form.mode == m { "(●)" } else { "( )" };
+        let selected = form.mode == m;
+        let style = Style::default().fg(if mode_focused && selected {
+            theme.accent
+        } else {
+            theme.text
+        });
         Span::styled(
             format!("{} {}  ", marker, label),
-            Style::default().fg(if form.focus == PfField::Mode && form.mode == m {
-                theme.accent
+            if mode_focused && selected {
+                style.add_modifier(Modifier::BOLD)
             } else {
-                theme.text
-            }),
+                style
+            },
         )
     };
     // Only the modes this lane offers. A lane that is its own endpoint has one,
     // and listing the other two greyed would advertise a choice that does not
     // exist rather than explain the one that does.
-    let mut mode_line = vec![Span::raw("  mode:        ")];
+    let mut mode_line = vec![form_label_span(
+        "Mode",
+        FORM_LABEL_WIDTH,
+        if mode_focused {
+            FormFieldState::Focused
+        } else {
+            FormFieldState::Enabled
+        },
+        theme,
+    )];
     for mode in form.modes() {
         mode_line.push(mode_text(
             *mode,
@@ -183,24 +201,18 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
 
     let target_active = !matches!(form.mode, ForwardMode::Dynamic);
     for (row, field, label, textarea, enabled) in [
-        (
-            3,
-            PfField::BindAddr,
-            "  bind addr:   ",
-            &form.bind_addr,
-            true,
-        ),
+        (3, PfField::BindAddr, "Bind address", &form.bind_addr, true),
         (
             4,
             PfField::ListenPort,
-            "  listen port: ",
+            "Listen port",
             &form.listen_port,
             true,
         ),
         (
             5,
             PfField::TargetHost,
-            "  target host: ",
+            "Target host",
             &form.target_host,
             // Shown, never edited, when the lane is its own endpoint: it names
             // where this goes so the row above reads in context, and the
@@ -210,7 +222,7 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
         (
             6,
             PfField::TargetPort,
-            "  target port: ",
+            "Target port",
             &form.target_port,
             target_active,
         ),
@@ -235,27 +247,37 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
     // failure, so this row is the only place the user sees why.
     if let Some(s) = status {
         // "applying..." is in-progress; everything else is an error/rejection.
-        // Inset the rect 2 cells from each border so the message (and wrapped
-        // lines) lines up with the form fields' indent, not the frame.
+        // Align feedback with the input column so the error reads as part of
+        // the field grid rather than as a detached footer message.
         let fg = if s.starts_with("applying") {
             theme.yellow
         } else {
             theme.error
         };
         let inset = Rect {
-            x: rows[9].x + 2,
+            x: rows[9].x + FORM_CONTENT_OFFSET,
             y: rows[9].y,
-            width: rows[9].width.saturating_sub(4),
+            width: rows[9]
+                .width
+                .saturating_sub(FORM_CONTENT_OFFSET.saturating_add(2)),
             height: rows[9].height,
         };
-        Paragraph::new(Line::styled(s, Style::default().fg(fg)))
-            .wrap(Wrap { trim: true })
-            .render(inset, buf);
+        let status_label = if s.starts_with("applying") {
+            "Working"
+        } else {
+            "Error"
+        };
+        Paragraph::new(Line::styled(
+            format!("{status_label}  {s}"),
+            Style::default().fg(fg),
+        ))
+        .wrap(Wrap { trim: true })
+        .render(inset, buf);
     }
     modal_footer(
         buf,
         rows[10],
-        "  [tab] next   [enter] save   [esc] cancel",
+        "  [Tab] Next   [Enter] Add forward   [Esc] Cancel",
         theme,
     );
 }
@@ -278,26 +300,21 @@ fn render_field_row(
     row: FieldRow<'_>,
 ) {
     let focused = form.focus == row.field && row.enabled;
-    let label_style = if focused {
-        Style::default()
-            .fg(theme.accent)
-            .add_modifier(Modifier::BOLD)
+    let state = if focused {
+        FormFieldState::Focused
     } else if row.enabled {
-        Style::default().fg(theme.input_border)
+        FormFieldState::Enabled
     } else {
-        Style::default().fg(theme.dim)
+        FormFieldState::Disabled
     };
-    // Disabled fields render dim with no cursor; enabled use the modal
-    // surface as the field background.
-    let fg = if row.enabled { theme.text } else { theme.dim };
-    field_row(
+    form_field_row(
         buf,
         area,
         row.label,
-        label_style,
+        FORM_LABEL_WIDTH,
         row.textarea,
-        focused,
-        TextAreaColors::field(theme, fg, theme.input_bg),
+        state,
+        theme,
     );
 }
 
@@ -317,25 +334,26 @@ fn flow_line<'a>(form: &PfAddForm, theme: &Theme) -> Line<'a> {
     let listen = read(PfField::ListenPort);
     let thost = read(PfField::TargetHost);
     let tport = read(PfField::TargetPort);
-    Line::styled(
-        match form.mode {
-            // -L: local listener forwards through ssh to the server's view of target.
-            ForwardMode::Local => format!(
-                "  you {}:{} -- ssh --> server --> {}:{}",
-                bind, listen, thost, tport
-            ),
-            // -R: remote listener tunnels back to client, which delivers to target.
-            ForwardMode::Remote => format!(
-                "  server {}:{} -- ssh --> you --> {}:{}",
-                bind, listen, thost, tport
-            ),
-            // -D: local SOCKS proxy; client picks destination per connection.
-            ForwardMode::Dynamic => {
-                format!("  you {}:{} (SOCKS) -- ssh --> *", bind, listen)
-            }
-        },
-        Style::default().fg(theme.muted),
-    )
+    let route = match form.mode {
+        // -L: local listener forwards through ssh to the server's view of target.
+        ForwardMode::Local => format!(
+            "you {}:{} -- ssh --> server --> {}:{}",
+            bind, listen, thost, tport
+        ),
+        // -R: remote listener tunnels back to client, which delivers to target.
+        ForwardMode::Remote => format!(
+            "server {}:{} -- ssh --> you --> {}:{}",
+            bind, listen, thost, tport
+        ),
+        // -D: local SOCKS proxy; client picks destination per connection.
+        ForwardMode::Dynamic => {
+            format!("you {}:{} (SOCKS) -- ssh --> *", bind, listen)
+        }
+    };
+    Line::from(vec![
+        form_label_span("Route", FORM_LABEL_WIDTH, FormFieldState::Disabled, theme),
+        Span::styled(route, Style::default().fg(theme.muted)),
+    ])
 }
 
 /// One saved rule as a line in the list. A rule with no target address is one
@@ -359,4 +377,62 @@ fn format_forward(f: &ForwardSpec, lane_title: &str) -> String {
         f.target_host.as_deref().unwrap_or(lane_title),
         f.target_port.unwrap_or(0)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    fn rows(buf: &Buffer) -> Vec<String> {
+        (0..buf.area.height)
+            .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn add_form_uses_one_field_grid_and_semantic_status_actions() {
+        let mut form = PfAddForm::default_for(
+            ForwardMode::Local,
+            crate::system::ForwardEndpointKind::Explicit,
+            "devbox",
+        );
+        form.focus = PfField::ListenPort;
+        let overlay = PortForwardOverlay {
+            lane: crate::system::tmux::TmuxSystem::host_lane("devbox"),
+            selected: 0,
+            add_form: Some(form),
+            status: Some("Listen port must be a number".to_string()),
+        };
+        let theme = &crate::theme::THEMES[0];
+        let mut terminal = Terminal::new(TestBackend::new(90, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw_port_forward(frame, frame.area(), &overlay, "devbox", &[], theme);
+            })
+            .unwrap();
+
+        let lines = rows(terminal.backend().buffer());
+        let bind_y = lines
+            .iter()
+            .position(|line| line.contains("Bind address"))
+            .unwrap();
+        let listen_y = lines
+            .iter()
+            .position(|line| line.contains("Listen port"))
+            .unwrap();
+        let target_y = lines
+            .iter()
+            .position(|line| line.contains("Target host"))
+            .unwrap();
+        assert_eq!(listen_y, bind_y + 1);
+        assert_eq!(target_y, listen_y + 1);
+        assert!(lines[listen_y].contains('▌'));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("Error  Listen port must be a number")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("[Enter] Add forward")));
+    }
 }

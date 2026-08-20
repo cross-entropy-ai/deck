@@ -10,7 +10,7 @@ mod popup;
 mod scroll;
 mod textarea;
 
-pub use field::field_row;
+pub use field::{field_row, form_field_row, form_label_span, FormFieldState};
 pub use list::{
     contrasting_foreground, full_width_row, list_item_line, modal_list_lines,
     modal_list_lines_windowed, modal_selection_foreground, scroll_window, ListViewport,

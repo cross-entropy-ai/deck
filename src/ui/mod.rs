@@ -1,10 +1,12 @@
 pub mod bridge;
+mod icons;
 mod menu;
 pub mod overlays;
 mod popups;
 mod reload;
 mod settings;
 mod sidebar;
+mod style;
 mod text;
 pub mod widgets;
 

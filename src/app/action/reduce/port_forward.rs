@@ -107,9 +107,19 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
 
         // Every remaining action edits the open add form; one guard for all.
         other => {
-            let Some(f) = pf_add_form(state) else {
+            let Some(overlay) = state.overlay.port_forward.as_mut() else {
                 return fx;
             };
+            let Some(f) = overlay.add_form.as_mut() else {
+                return fx;
+            };
+            if f.submitting {
+                return fx;
+            }
+            // Once the user acts on the form, an earlier validation message is
+            // stale. Clear it immediately so feedback always describes the
+            // values currently on screen.
+            overlay.status = None;
             match other {
                 PfAction::AddFieldNext | PfAction::AddFieldPrev => {
                     let delta = if matches!(other, PfAction::AddFieldPrev) {
@@ -157,11 +167,6 @@ fn pf_field_order(form: &PfAddForm) -> &'static [PfField] {
         PfField::TargetHost,
         PfField::TargetPort,
     ]
-}
-
-/// The add form, if the port-forward overlay is open with one.
-fn pf_add_form(state: &mut AppState) -> Option<&mut PfAddForm> {
-    state.overlay.port_forward.as_mut()?.add_form.as_mut()
 }
 
 fn set_mode(f: &mut PfAddForm, delta: i32) {

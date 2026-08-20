@@ -8,6 +8,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::keybindings::{format_key, Command, Keybindings};
 use crate::state::SidebarTab;
 use crate::theme::Theme;
+use crate::ui::style::{text_style, TextRole};
 use crate::update::UpdateStatus;
 
 use super::{menu_span, SidebarRenderCtx, MENU_LABEL};
@@ -170,10 +171,7 @@ pub(super) fn draw_footer(
         if cursor + width <= hints_limit {
             hint_spans.push(Span::styled(
                 focus,
-                Style::default()
-                    .fg(theme.accent)
-                    .bg(theme.bg)
-                    .add_modifier(Modifier::BOLD),
+                text_style(theme, TextRole::NavigationActive).bg(theme.bg),
             ));
             cursor += width;
         }
@@ -194,14 +192,11 @@ pub(super) fn draw_footer(
         }
         hint_spans.push(Span::styled(
             action.key,
-            Style::default()
-                .fg(theme.accent)
-                .bg(theme.bg)
-                .add_modifier(Modifier::BOLD),
+            text_style(theme, TextRole::Shortcut).bg(theme.bg),
         ));
         hint_spans.push(Span::styled(
             format!(" {}", action.label),
-            Style::default().fg(theme.muted).bg(theme.bg),
+            text_style(theme, TextRole::Hint).bg(theme.bg),
         ));
         cursor += needed;
     }

@@ -673,9 +673,9 @@ pub enum HitKind {
     NewSessionCreate,
     /// A visible host row in the add-remote picker.
     AddRemoteHost(usize),
-    /// The add-remote picker's footer `⏎ add` hint.
+    /// The add-remote picker's footer `[Enter] Add` hint.
     AddRemoteAdd,
-    /// The add-remote picker's footer `⎋ cancel` hint.
+    /// The add-remote picker's footer `[Esc] Cancel` hint.
     AddRemoteCancel,
     /// A visible name row in the hidden-session restore picker.
     HiddenRow(usize),
@@ -693,11 +693,11 @@ pub enum HitKind {
     MountCancel,
     /// A visible forward row in the port-forward list.
     PfRow(usize),
-    /// The port-forward list's `[a] add` hint.
+    /// The port-forward list's `[A] Add` hint.
     PfAdd,
-    /// The port-forward list's `[d] delete` hint.
+    /// The port-forward list's `[D] Delete` hint.
     PfDelete,
-    /// The port-forward list's `[esc] close` hint.
+    /// The port-forward list's `[Esc] Close` hint.
     PfClose,
     /// Collapse or expand the whole horizontal sidebar.
     SidebarToggle,

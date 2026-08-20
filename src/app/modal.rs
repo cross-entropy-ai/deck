@@ -358,7 +358,7 @@ mod tests {
     }
 
     /// The add-remote picker shares the New Session widget, so the same proof
-    /// applies: rows resolve to the host under the cursor, and `⏎ add` — the
+    /// applies: rows resolve to the host under the cursor, and `[Enter] Add` — the
     /// mouse's only way to commit a typed hostname — sits on its own text.
     #[test]
     fn add_remote_rows_and_add_button_land_on_what_was_painted() {
@@ -398,12 +398,51 @@ mod tests {
         }
         assert_eq!(
             painted(buffer, hits.add.expect("add button published")),
-            "\u{23ce} add"
+            "[Enter] Add"
         );
         assert_eq!(
             painted(buffer, hits.cancel.expect("cancel button published")),
-            "\u{238b} cancel"
+            "[Esc] Cancel"
         );
+    }
+
+    #[test]
+    fn add_remote_error_stays_with_the_host_field_before_the_candidates() {
+        let mut state = AppState::new(100, 30);
+        let mut add_remote = crate::add_remote::AddRemoteState::new(
+            crate::app::ssh::config_adapter::owner(),
+            vec!["devbox".to_string()],
+        );
+        add_remote.picker.error = Some("Host is already configured".to_string());
+        state.overlay.add_remote = Some(add_remote);
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        let mut rendered = RenderedModal::default();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                rendered = draw_active_modal(
+                    frame,
+                    &state,
+                    area,
+                    area,
+                    LayoutMode::Horizontal,
+                    &THEMES[0],
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let error_y = (0..buffer.area.height)
+            .find(|&y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .contains("Error  Host is already configured")
+            })
+            .unwrap();
+        let first_candidate_y = rendered.add_remote.hosts[0].rect.y;
+        assert!(error_y < first_candidate_y);
     }
 
     #[test]

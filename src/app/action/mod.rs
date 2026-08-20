@@ -261,7 +261,7 @@ pub enum PfAction {
     FocusUp,
     FocusDown,
     /// Move focus to a clicked row. Click only focuses: deleting a forward is
-    /// destructive and stays behind the explicit `[d] delete` button.
+    /// destructive and stays behind the explicit `[D] Delete` button.
     FocusRow(usize),
     Delete,
     AddOpen,

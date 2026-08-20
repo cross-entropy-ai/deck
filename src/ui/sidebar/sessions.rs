@@ -10,6 +10,7 @@ use ratatui_sectioned_list::ItemKind;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
+use crate::ui::icons::{icon, Icon};
 
 use crate::geometry::{
     AgentEntry, AgentHit, AgentTarget, BuiltLayout, DividerHit, SummaryHits, TREE_TRUNK,
@@ -59,6 +60,19 @@ fn recolor_agent_dot(
         Span::styled(glyph.to_string(), style.fg(color)),
         Span::styled(rest, style),
     ];
+    text
+}
+
+/// A focused row is one visual state: every glyph must use the theme's
+/// contrast-safe selection foreground. `SectionedListWidget` paints its
+/// highlight before rendering text, while `basic_style` gives the title and
+/// secondary lines explicit foregrounds that would otherwise win over it.
+fn apply_selection_foreground(mut text: Text<'static>, theme: &Theme) -> Text<'static> {
+    for line in &mut text.lines {
+        for span in &mut line.spans {
+            span.style = span.style.fg(theme.selection_fg);
+        }
+    }
     text
 }
 
@@ -269,6 +283,12 @@ pub(super) fn draw_sessions(
         {
             text = mark_tree_line(text, theme);
         }
+        // Last of all: per-span colors from the preset, status dots, tree
+        // lines, or drag markers must not defeat the focused row's readable
+        // selection foreground. Status/drag meaning remains encoded by glyph.
+        if item_ctx.focused {
+            text = apply_selection_foreground(text, theme);
+        }
         text
     })
     .highlight_style(
@@ -421,11 +441,12 @@ pub(super) fn draw_summary_card(
 
     // Title row: "Summary", plus a right-aligned Generate button (and the
     // text's "Xm ago" age + a popup button once Ready).
-    let left = " \u{f0eb} Summary";
+    let summary_icon = icon(Icon::Summary);
+    let left = format!(" {summary_icon} Summary");
     let mut title_spans = vec![
         Span::styled(" ", Style::default().bg(theme.bg)),
         Span::styled(
-            "\u{f0eb} Summary",
+            format!("{summary_icon} Summary"),
             Style::default()
                 .fg(theme.accent)
                 .bg(theme.bg)
@@ -436,7 +457,7 @@ pub(super) fn draw_summary_card(
         let is_ready = matches!(props.summary, SummaryState::Ready { .. });
         let gen_label = " \u{21bb} Generate ";
         let gen_w = gen_label.width();
-        let popup_label = " \u{f065} ";
+        let popup_label = format!(" {} ", icon(Icon::Open));
         let popup_w = if is_ready { popup_label.width() } else { 0 };
         let age = if is_ready {
             props.summary_age.unwrap_or("")
@@ -597,6 +618,48 @@ mod tests {
     }
 
     #[test]
+    fn focused_session_title_and_detail_use_selection_foreground() {
+        let mut theme = crate::theme::THEMES[0];
+        theme.selection_fg = Color::Rgb(251, 252, 253);
+        theme.selection_bg = Color::Rgb(1, 2, 3);
+        let mut built = BuiltLayout::default();
+        built.layout.push_row_auto(
+            BasicItem::new("alpha")
+                .line("~")
+                .color(Color::Rgb(90, 91, 92)),
+        );
+
+        let backend = TestBackend::new(20, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                draw_sessions(
+                    frame,
+                    frame.area(),
+                    &SidebarRenderCtx { theme: &theme },
+                    SessionsProps {
+                        built: &built,
+                        focus_target: Some(FocusTarget(0)),
+                        project_drag: None,
+                        agents_tab: false,
+                        agent_entries: &[],
+                    },
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let title = &buffer[(2, 0)];
+        let detail = &buffer[(4, 1)];
+        assert_eq!(title.symbol(), "a");
+        assert_eq!(detail.symbol(), "~");
+        assert_eq!(title.fg, theme.selection_fg);
+        assert_eq!(detail.fg, theme.selection_fg);
+        assert_eq!(title.bg, theme.selection_bg);
+        assert_eq!(detail.bg, theme.selection_bg);
+    }
+
+    #[test]
     fn project_drag_renders_source_and_target_indicators() {
         let theme = &crate::theme::THEMES[0];
         let mut built = BuiltLayout::default();
@@ -635,6 +698,7 @@ mod tests {
             .find(|cell| cell.symbol() == "▸")
             .expect("drop target marker must render");
         assert_eq!(source.fg, theme.accent);
-        assert_eq!(target.fg, theme.accent);
+        assert_eq!(target.fg, theme.selection_fg);
+        assert_eq!(target.bg, theme.selection_bg);
     }
 }

@@ -41,10 +41,15 @@ pub const DEFAULT_SUMMARY_PROMPT_VERSION: u32 = 3;
 pub const PROMPT_PLACEHOLDER: &str = "{{SESSIONS}}";
 
 /// Markers that a captured pane is showing deck's own UI (nested deck), not
-/// agent work: the sidebar's Projects glyph and the footer's "[$ deck v…]"
-/// label. The footer label is plain ASCII, so it survives `capture-pane` even
-/// where the glyph doesn't. Such a pane is marked nested and omitted.
-const DECK_UI_MARKERS: &[&str] = &["\u{e795}", "[$ deck v"];
+/// agent work: any supported Sessions header or the legacy footer version
+/// label. Keep all icon styles here because this module intentionally does not
+/// depend on the UI layer. Such a pane is marked nested and omitted.
+const DECK_UI_MARKERS: &[&str] = &[
+    "▤ Sessions",        // default Unicode icon style
+    "# Sessions",        // strict ASCII fallback
+    "\u{e795} Sessions", // opt-in Nerd Font style
+    "[$ deck v",         // legacy footer marker
+];
 
 fn is_nested_deck(buffer: &str) -> bool {
     DECK_UI_MARKERS.iter().any(|m| buffer.contains(m))

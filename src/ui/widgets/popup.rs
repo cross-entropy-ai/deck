@@ -8,6 +8,7 @@ use ratatui::text::Span;
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget};
 
 use crate::theme::Theme;
+use crate::ui::style::{text_style, TextRole};
 
 /// Center a `width` x `height` rect inside `area`, clamping each
 /// dimension to `area` so the popup never overflows its bounds.
@@ -165,7 +166,7 @@ fn modal_bounds(bounds: Rect) -> Rect {
 pub fn modal_footer(buf: &mut Buffer, area: Rect, text: &str, theme: &Theme) {
     Paragraph::new(Span::styled(
         text,
-        Style::default().fg(theme.muted).bg(theme.elevated),
+        text_style(theme, TextRole::Hint).bg(theme.elevated),
     ))
     .render(area, buf);
 }

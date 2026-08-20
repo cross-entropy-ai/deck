@@ -1,4 +1,11 @@
-use crate::forwards::{diff_forwards, ForwardMode, ForwardOp, ForwardSpec};
+use crate::forwards::{diff_forwards, ForwardMode, ForwardOp, ForwardSpec, PfField, PfFormError};
+
+#[test]
+fn form_errors_point_to_the_field_that_resolves_them() {
+    assert_eq!(PfFormError::ListenPortRange.field(), PfField::ListenPort);
+    assert_eq!(PfFormError::TargetPortRange.field(), PfField::TargetPort);
+    assert_eq!(PfFormError::TargetHostRequired.field(), PfField::TargetHost);
+}
 
 #[test]
 fn forward_spec_local_to_flag_no_bind() {

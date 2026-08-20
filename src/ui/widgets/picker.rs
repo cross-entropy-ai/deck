@@ -8,11 +8,12 @@ use ratatui::text::Span;
 use ratatui::widgets::{Paragraph, Widget};
 use ratatui::Frame;
 use ratatui_textarea::TextArea;
+use unicode_width::UnicodeWidthStr;
 
 use crate::geometry::ListItemHit;
 use crate::theme::Theme;
 
-use super::field::labeled_field;
+use super::field::{form_field_row, FormFieldState};
 use super::list::{draw_picker_list, PickerViewport};
 use super::popup::{modal_footer, popup_rect, ModalFrame};
 
@@ -93,12 +94,14 @@ pub fn draw_filter_picker(
     let inner =
         ModalFrame::exact(popup, Some(picker.title), theme).render(frame.buffer_mut(), area);
 
-    // fields + blank + list rows (all single-row), then blank/[error]/footer.
-    let mut constraints = vec![Constraint::Length(1); picker.fields.len() + 1 + list_rows];
-    constraints.push(Constraint::Length(1)); // blank
+    // Fields and any field-level error stay together, then the list and footer.
+    let mut constraints = vec![Constraint::Length(1); picker.fields.len()];
     if picker.error.is_some() {
         constraints.push(Constraint::Length(1));
     }
+    constraints.push(Constraint::Length(1)); // blank
+    constraints.extend(std::iter::repeat_n(Constraint::Length(1), list_rows));
+    constraints.push(Constraint::Length(1)); // blank
     constraints.extend(std::iter::repeat_n(
         Constraint::Length(1),
         picker.footer.len(),
@@ -107,15 +110,36 @@ pub fn draw_filter_picker(
     let rows = Layout::vertical(constraints).split(inner);
 
     let mut idx = 0;
+    let label_width = picker
+        .fields
+        .iter()
+        .map(|field| field.label.width())
+        .max()
+        .unwrap_or(0)
+        .max(4);
     for field in picker.fields {
-        labeled_field(
+        form_field_row(
             frame.buffer_mut(),
             rows[idx],
             field.label,
+            label_width,
             field.textarea,
-            field.focused,
+            if field.focused {
+                FormFieldState::Focused
+            } else {
+                FormFieldState::Enabled
+            },
             theme,
         );
+        idx += 1;
+    }
+
+    if let Some(err) = picker.error {
+        Paragraph::new(Span::styled(
+            format!("{}Error  {err}", " ".repeat(label_width + 5)),
+            Style::default().fg(theme.error),
+        ))
+        .render(rows[idx], frame.buffer_mut());
         idx += 1;
     }
     idx += 1; // blank
@@ -167,15 +191,6 @@ pub fn draw_filter_picker(
     }
     idx += list_rows; // reserve the whole list block (rendered + padding)
     idx += 1; // blank
-
-    if let Some(err) = picker.error {
-        Paragraph::new(Span::styled(
-            format!("  \u{26a0} {err}"),
-            Style::default().fg(theme.error),
-        ))
-        .render(rows[idx], frame.buffer_mut());
-        idx += 1;
-    }
 
     let footer_top = rows[idx];
     let (offset, block) = footer_block(inner.width, picker.footer);

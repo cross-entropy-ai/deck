@@ -53,6 +53,14 @@ fn language_label_shows_default_for_empty() {
 }
 
 #[test]
+fn nested_deck_detection_covers_every_icon_compatibility_style() {
+    for header in ["▤ Sessions 4", "# Sessions 4", "\u{e795} Sessions 4"] {
+        assert!(is_nested_deck(header), "missing marker for {header:?}");
+    }
+    assert!(!is_nested_deck("ordinary agent output"));
+}
+
+#[test]
 fn summary_commands_match_each_agent_cli() {
     use crate::summary_card::SummaryAgent;
 

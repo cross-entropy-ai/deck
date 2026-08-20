@@ -1,5 +1,5 @@
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
@@ -8,9 +8,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::geometry::TabRects;
 use crate::state::SidebarTab;
 use crate::theme::Theme;
-
-const PROJECTS_ICON: &str = "\u{e795}";
-const AGENTS_ICON: &str = "\u{f085}";
+use crate::ui::icons::{icon, Icon};
+use crate::ui::style::{text_style, TextRole};
 
 /// Click regions published by the responsive sidebar Header.
 pub(super) struct HeaderHits {
@@ -33,10 +32,12 @@ impl HeaderLayout {
 /// Choose the richest Header that fits, progressively dropping decoration
 /// without ever clipping the two tab hit targets.
 fn responsive_layout(width: u16, projects: usize, agents: usize) -> HeaderLayout {
+    let sessions_icon = icon(Icon::Sessions);
+    let agents_icon = icon(Icon::Agents);
     let candidates = [
         HeaderLayout {
-            projects: format!("{PROJECTS_ICON} Sessions {projects}"),
-            agents: format!("{AGENTS_ICON} Agents {agents}"),
+            projects: format!("{sessions_icon} Sessions {projects}"),
+            agents: format!("{agents_icon} Agents {agents}"),
             gap: "   ",
         },
         HeaderLayout {
@@ -45,13 +46,13 @@ fn responsive_layout(width: u16, projects: usize, agents: usize) -> HeaderLayout
             gap: "  ",
         },
         HeaderLayout {
-            projects: format!("{PROJECTS_ICON} {projects}"),
-            agents: format!("{AGENTS_ICON} {agents}"),
+            projects: format!("{sessions_icon} {projects}"),
+            agents: format!("{agents_icon} {agents}"),
             gap: "  ",
         },
         HeaderLayout {
-            projects: PROJECTS_ICON.to_string(),
-            agents: AGENTS_ICON.to_string(),
+            projects: sessions_icon.to_string(),
+            agents: agents_icon.to_string(),
             gap: " ",
         },
     ];
@@ -60,7 +61,7 @@ fn responsive_layout(width: u16, projects: usize, agents: usize) -> HeaderLayout
         .into_iter()
         .find(|layout| layout.width() <= width as usize)
         .unwrap_or(HeaderLayout {
-            projects: PROJECTS_ICON.to_string(),
+            projects: sessions_icon.to_string(),
             agents: String::new(),
             gap: "",
         })
@@ -84,12 +85,9 @@ pub(super) fn draw_header(
 
     let tab_style = |is_active: bool| {
         if is_active {
-            Style::default()
-                .fg(theme.accent)
-                .bg(theme.bg)
-                .add_modifier(Modifier::BOLD)
+            text_style(theme, TextRole::NavigationActive).bg(theme.bg)
         } else {
-            Style::default().fg(theme.dim).bg(theme.bg)
+            text_style(theme, TextRole::NavigationInactive).bg(theme.bg)
         }
     };
 
@@ -115,10 +113,7 @@ pub(super) fn draw_header(
     ));
     spans.push(Span::styled(
         "‹",
-        Style::default()
-            .fg(theme.accent)
-            .bg(theme.bg)
-            .add_modifier(Modifier::BOLD),
+        text_style(theme, TextRole::NavigationActive).bg(theme.bg),
     ));
 
     frame.render_widget(
@@ -170,8 +165,8 @@ mod tests {
     #[test]
     fn narrow_width_uses_icons_and_counts() {
         let layout = responsive_layout(14, 8, 3);
-        assert_eq!(layout.projects, format!("{PROJECTS_ICON} 8"));
-        assert_eq!(layout.agents, format!("{AGENTS_ICON} 3"));
+        assert_eq!(layout.projects, format!("{} 8", icon(Icon::Sessions)));
+        assert_eq!(layout.agents, format!("{} 3", icon(Icon::Agents)));
         assert!(!layout.projects.contains("Sessions"));
         assert!(!layout.agents.contains("Agents"));
     }
@@ -179,7 +174,7 @@ mod tests {
     #[test]
     fn very_narrow_width_keeps_only_tab_icons() {
         let layout = responsive_layout(6, 128, 64);
-        assert_eq!(layout.projects, PROJECTS_ICON);
-        assert_eq!(layout.agents, AGENTS_ICON);
+        assert_eq!(layout.projects, icon(Icon::Sessions));
+        assert_eq!(layout.agents, icon(Icon::Agents));
     }
 }

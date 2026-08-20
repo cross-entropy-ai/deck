@@ -155,6 +155,15 @@ impl PfFormError {
             PfFormError::TargetHostRequired => "Target host is required for -L and -R forwards.",
         }
     }
+
+    /// The field the user can act on to resolve this validation error.
+    pub fn field(&self) -> PfField {
+        match self {
+            PfFormError::ListenPortRange => PfField::ListenPort,
+            PfFormError::TargetPortRange => PfField::TargetPort,
+            PfFormError::TargetHostRequired => PfField::TargetHost,
+        }
+    }
 }
 
 impl PfAddForm {

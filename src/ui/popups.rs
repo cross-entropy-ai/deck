@@ -10,6 +10,7 @@ use ratatui::Frame;
 use crate::add_remote::AddRemoteState;
 use crate::theme::Theme;
 
+use super::icons::{icon, Icon};
 use super::widgets::{
     draw_filter_picker, hint_rect, markdown_window, FilterPickerView, ModalFrame, PickerField,
 };
@@ -19,14 +20,8 @@ use super::NewSessionView;
 /// open with it at the same offset, so the click target is the same rect
 /// whichever field has focus.
 const CREATE_HINT: &str = "⏎ create";
-/// Row markers: which input device the row's hints are for. Nerd Font glyphs,
-/// like the sidebar's icons — plain Unicode's `\u{2328}`/`\u{1f5b1}` are absent
-/// from the monospace fonts terminals actually ship with, so a fallback font
-/// draws them at a weight that does not match the rest of the row.
-const KEYS_ICON: &str = "\u{f030c}"; // md-keyboard
-const MOUSE_ICON: &str = "\u{f037d}"; // md-mouse
 /// The two mouse buttons: a filled half-disc, flat side inward, which is the
-/// outline of one button on the `md-mouse` glyph leading the row.
+/// outline of one button on the mouse icon leading the row.
 const LEFT_CLICK: &str = "\u{25d6}";
 const RIGHT_CLICK: &str = "\u{25d7}";
 
@@ -73,8 +68,14 @@ pub fn draw_new_session(
         unicode_width::UnicodeWidthStr::width(alternate)
             .saturating_sub(unicode_width::UnicodeWidthStr::width(hints)),
     );
-    let keys = format!("{KEYS_ICON} {CREATE_HINT} · {hints} · ⎋ cancel{pad}");
-    let mouse = format!("{MOUSE_ICON} {LEFT_CLICK} folder · {RIGHT_CLICK} create");
+    let keys = format!(
+        "{} {CREATE_HINT} · {hints} · ⎋ cancel{pad}",
+        icon(Icon::Keyboard)
+    );
+    let mouse = format!(
+        "{} {LEFT_CLICK} folder · {RIGHT_CLICK} create",
+        icon(Icon::Mouse)
+    );
     let footer = [keys.as_str(), mouse.as_str()];
 
     let hits = draw_filter_picker(
@@ -88,12 +89,12 @@ pub fn draw_new_session(
             max_visible: crate::new_session::DIRECTORY_VIEW_ROWS,
             fields: &[
                 PickerField {
-                    label: "  Name: ",
+                    label: "Name",
                     textarea: view.name,
                     focused: view.focus_name,
                 },
                 PickerField {
-                    label: "  Path: ",
+                    label: "Path",
                     textarea: view.input,
                     focused: !view.focus_name,
                 },
@@ -130,9 +131,9 @@ pub fn draw_new_session(
 }
 
 /// The add-remote footer, whose hints double as its buttons.
-const ADD_HINT: &str = "\u{23ce} add";
-const CANCEL_HINT: &str = "\u{238b} cancel";
-const ADD_REMOTE_FOOTER: &str = "\u{23ce} add   \u{2191}\u{2193} select   \u{238b} cancel";
+const ADD_HINT: &str = "[Enter] Add";
+const CANCEL_HINT: &str = "[Esc] Cancel";
+const ADD_REMOTE_FOOTER: &str = "[Enter] Add   [↑↓] Select   [Esc] Cancel";
 
 pub fn draw_add_remote(
     frame: &mut Frame,
@@ -144,7 +145,7 @@ pub fn draw_add_remote(
     let empty_msg = if p.items.is_empty() {
         "    (no ~/.ssh/config hosts \u{2014} type a hostname)"
     } else {
-        "    (no matches \u{2014} press \u{23ce} to add typed host)"
+        "    (no matches — press Enter to add the typed host)"
     };
 
     let hits = draw_filter_picker(
@@ -152,12 +153,12 @@ pub fn draw_add_remote(
         area,
         theme,
         FilterPickerView {
-            title: "Add Remote Host",
+            title: "Add Remote",
             width: 56,
             min_height: 7,
             max_visible: 8,
             fields: &[PickerField {
-                label: "  host: ",
+                label: "Host",
                 textarea: &p.input,
                 focused: true,
             }],
@@ -213,7 +214,7 @@ pub fn draw_hidden_sessions(
             min_height: 7,
             max_visible: 8,
             fields: &[PickerField {
-                label: "  filter: ",
+                label: "Filter",
                 textarea: &p.input,
                 focused: true,
             }],

@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Widget};
+use ratatui::widgets::{Block, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
@@ -9,17 +9,27 @@ use crate::keybindings::{Command, Keybindings};
 use crate::state::SettingsPage;
 use crate::theme::Theme;
 use crate::ui::widgets::{
-    clamp_popup_height, field_row, full_width_row, list_item_line, modal_footer, modal_list_lines,
-    modal_selection_foreground, scroll_window, style_textarea, ListViewport, ModalFrame,
-    TextAreaColors,
+    clamp_popup_height, field_row, form_field_row, full_width_row, list_item_line, modal_footer,
+    modal_list_lines, modal_selection_foreground, scroll_window, style_textarea, FormFieldState,
+    ListViewport, ModalFrame, TextAreaColors,
 };
 
-use super::text::format_keys_for;
+use super::style::{text_style, TextRole};
+use super::text::{format_keys_for, pad_line};
 use super::{ExcludeEditorView, SettingsView, SshSettingEditorView};
 
 /// Widest display width in `it`, never below `floor`.
 fn max_width<'a>(it: impl Iterator<Item = &'a str>, floor: usize) -> usize {
     it.map(UnicodeWidthStr::width).max().unwrap_or(0).max(floor)
+}
+
+/// Clip and pad a label to one display-width column. `format!` width counts
+/// characters rather than terminal cells, so do the display-width accounting
+/// explicitly even though today's setting labels are ASCII.
+fn label_cell(label: &str, width: usize) -> String {
+    let clipped = crate::geometry::truncate(label, width);
+    let padding = width.saturating_sub(clipped.width());
+    format!("{clipped}{}", " ".repeat(padding))
 }
 
 pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView, theme: &Theme) {
@@ -57,13 +67,13 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
         Line::from(vec![
             Span::styled(
                 format!("  {title}"),
-                Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+                text_style(theme, TextRole::ScreenTitle),
             ),
-            Span::styled(format!("  {context}"), Style::default().fg(theme.dim)),
+            Span::styled(format!("  {context}"), text_style(theme, TextRole::Context)),
         ]),
         Line::from(Span::styled(
             format!("  {description}"),
-            Style::default().fg(theme.subtle),
+            text_style(theme, TextRole::Description),
         )),
         Line::raw(""),
     ];
@@ -72,7 +82,7 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
     } else {
         "  j/k move  Enter select  Esc close"
     };
-    let footer = Line::from(Span::styled(footer_text, Style::default().fg(theme.muted)));
+    let footer = Line::from(Span::styled(footer_text, text_style(theme, TextRole::Hint)));
 
     // Window the entries so the selected row stays visible on a short terminal
     // (#15). Each entry is variable-height; size the window by how many *whole*
@@ -90,6 +100,18 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
     let start = scroll_window(settings.selected, entries.len(), visible);
     let end = (start + visible).min(entries.len());
 
+    // All values on one page share a column. Keep enough room for a useful
+    // value on narrow panes and truncate the label column before it can push
+    // values off-screen.
+    const LABEL_FLOOR: usize = 10;
+    const VALUE_MIN: usize = 8;
+    const PRIMARY_ROW_CHROME: usize = 6; // "  " + marker + gap + value gap
+    let preferred_label_width = max_width(entries.iter().map(|row| row.label), LABEL_FLOOR);
+    let max_label_width = usize::from(area.width)
+        .saturating_sub(PRIMARY_ROW_CHROME + VALUE_MIN)
+        .max(1);
+    let label_width = preferred_label_width.min(max_label_width);
+
     let mut lines = header;
     for (offset, row) in entries[start..end].iter().enumerate() {
         let idx = start + offset;
@@ -97,52 +119,46 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
         let value = &row.value;
         let help = &row.help;
         let selected = idx == settings.selected;
-        let row_bg = if selected {
+        let primary_bg = if selected {
             theme.selection_bg
         } else {
             theme.bg
         };
         let label_style = if selected {
-            Style::default()
-                .fg(theme.selection_fg)
-                .bg(row_bg)
-                .add_modifier(Modifier::BOLD)
+            text_style(theme, TextRole::Selection).bg(primary_bg)
         } else {
-            Style::default().fg(theme.secondary).bg(row_bg)
+            text_style(theme, TextRole::Item).bg(primary_bg)
         };
         let value_style = if selected {
-            Style::default()
-                .fg(theme.selection_fg)
-                .bg(theme.selection_bg)
-                .add_modifier(Modifier::BOLD)
+            text_style(theme, TextRole::Selection).bg(primary_bg)
         } else {
-            Style::default().fg(theme.teal).bg(row_bg)
+            text_style(theme, TextRole::Value).bg(primary_bg)
         };
-        let help_style = Style::default()
-            .fg(if selected {
-                theme.selection_fg
-            } else {
-                theme.dim
-            })
-            .bg(row_bg);
-        let marker_style = Style::default()
-            .fg(if selected {
-                theme.selection_fg
-            } else {
-                theme.bg
-            })
-            .bg(row_bg);
+        // Help remains secondary even for the focused setting. The blue bar
+        // identifies the actionable primary line; extending it through the
+        // explanation would flatten both lines into the same visual weight.
+        let help_style = text_style(theme, TextRole::Help).bg(theme.bg);
+        let marker_style = if selected {
+            text_style(theme, TextRole::Selection).bg(primary_bg)
+        } else {
+            Style::default().fg(theme.bg).bg(primary_bg)
+        };
 
-        lines.push(Line::from(vec![
-            Span::styled("  ", Style::default().bg(row_bg)),
-            Span::styled(if selected { "▌" } else { " " }, marker_style),
-            Span::styled(format!(" {:<10}", label), label_style),
-            Span::styled(" ", Style::default().bg(row_bg)),
-            Span::styled(format!(" {} ", value), value_style),
-        ]));
+        lines.push(pad_line(
+            vec![
+                Span::styled("  ", Style::default().bg(primary_bg)),
+                Span::styled(if selected { "▌" } else { " " }, marker_style),
+                Span::styled(" ", Style::default().bg(primary_bg)),
+                Span::styled(label_cell(label, label_width), label_style),
+                Span::styled("  ", Style::default().bg(primary_bg)),
+                Span::styled(value.clone(), value_style),
+            ],
+            primary_bg,
+            usize::from(area.width),
+        ));
         for help_line in help.lines() {
             lines.push(Line::from(vec![
-                Span::styled("      ", Style::default().bg(row_bg)),
+                Span::styled("      ", Style::default().bg(theme.bg)),
                 Span::styled(help_line.to_string(), help_style),
             ]));
         }
@@ -344,53 +360,75 @@ pub fn draw_ssh_setting_editor(
     editor: &SshSettingEditorView<'_>,
     theme: &Theme,
 ) {
-    let (title, hint, desired_width) = match editor.field {
+    const LABEL_WIDTH: usize = 14;
+    const CONTENT_OFFSET: usize = LABEL_WIDTH + 5;
+    let (title, label, description, desired_width) = match editor.field {
         crate::overlay::SshSettingField::ControlPath => (
             "SSH Control Path",
-            " e.g. ~/.ssh/socks/cm-%r@%h:%p · Enter save / Esc cancel",
-            72,
+            "Control path",
+            "Socket path template; supports %r, %h, and %p.",
+            76,
         ),
         crate::overlay::SshSettingField::ControlPersist => (
             "SSH Reuse Duration",
-            " ControlPersist idle time: 10m, 1h30m, yes, or no · Enter save / Esc cancel",
-            82,
+            "Reuse duration",
+            "Idle lifetime: 10m, 1h30m, yes, or no.",
+            70,
         ),
     };
-    let height = if editor.error.is_some() { 7 } else { 6 };
+    let height = if editor.error.is_some() { 11 } else { 9 };
     let width = desired_width.min(area.width.saturating_sub(4));
     let inner =
         ModalFrame::centered(width, height, Some(title), theme).render(frame.buffer_mut(), area);
 
-    let rows = Layout::vertical([
-        Constraint::Length(1), // field
+    let mut constraints = vec![
+        Constraint::Length(1), // description
         Constraint::Length(1), // pad
-        Constraint::Length(1), // hint
-        Constraint::Length(u16::from(editor.error.is_some())),
+        Constraint::Length(1), // field
+    ];
+    if editor.error.is_some() {
+        constraints.push(Constraint::Length(2));
+    }
+    constraints.extend([
+        Constraint::Length(1), // pad
+        Constraint::Length(1), // commands
         Constraint::Min(0),
-    ])
-    .split(inner);
+    ]);
+    let rows = Layout::vertical(constraints).split(inner);
 
-    // A 1-wide empty label over the elevated modal surface leaves that leading cell
-    // unchanged while indenting the field by one column.
-    field_row(
+    Paragraph::new(Span::styled(
+        format!("    {description}"),
+        text_style(theme, TextRole::Description).bg(theme.elevated),
+    ))
+    .render(rows[0], frame.buffer_mut());
+
+    form_field_row(
         frame.buffer_mut(),
-        rows[0],
-        " ",
-        Style::default().bg(theme.elevated),
+        rows[2],
+        label,
+        LABEL_WIDTH,
         editor.input,
-        true,
-        TextAreaColors::field(theme, theme.accent, theme.input_bg),
+        FormFieldState::Focused,
+        theme,
     );
 
-    modal_footer(frame.buffer_mut(), rows[2], hint, theme);
-
+    let mut next = 3;
     if let Some(error) = editor.error {
         Paragraph::new(Line::from(Span::styled(
-            format!(" {error}"),
+            format!("{}Error  {error}", " ".repeat(CONTENT_OFFSET)),
             Style::default().fg(theme.error).bg(theme.elevated),
         )))
-        .render(rows[3], frame.buffer_mut());
+        .wrap(Wrap { trim: true })
+        .render(rows[next], frame.buffer_mut());
+        next += 1;
     }
+    next += 1; // pad
+    modal_footer(
+        frame.buffer_mut(),
+        rows[next],
+        "    [Enter] Save   [Esc] Cancel",
+        theme,
+    );
 }
 
 pub fn draw_exclude_editor(
@@ -506,7 +544,20 @@ pub fn draw_exclude_editor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::buffer::Buffer;
     use ratatui::{backend::TestBackend, Terminal};
+
+    fn cell_x(buf: &Buffer, y: u16, symbol: &str) -> u16 {
+        (0..buf.area.width)
+            .find(|&x| buf[(x, y)].symbol() == symbol)
+            .unwrap()
+    }
+
+    fn buffer_lines(buf: &Buffer) -> Vec<String> {
+        (0..buf.area.height)
+            .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect())
+            .collect()
+    }
 
     fn sample_rows() -> Vec<super::super::SettingRowView> {
         // Representative rows with long help text to exercise the windowing
@@ -570,5 +621,114 @@ mod tests {
             "selected (last) setting {last_label:?} must be visible on a short \
              terminal; screen was: {text:?}"
         );
+    }
+
+    #[test]
+    fn setting_values_align_to_the_pages_longest_label() {
+        let theme = &crate::theme::THEMES[0];
+        let rows = vec![
+            super::super::SettingRowView {
+                label: "Theme",
+                value: "111".to_string(),
+                help: "short explanation".to_string(),
+            },
+            super::super::SettingRowView {
+                label: "Transparent background",
+                value: "222".to_string(),
+                help: "another explanation".to_string(),
+            },
+        ];
+
+        let backend = TestBackend::new(72, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let view = SettingsView {
+                    selected: 0,
+                    rows,
+                    page: SettingsPage::Theme,
+                };
+                super::draw_settings_page(frame, frame.area(), &view, theme);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let first_x = cell_x(buf, 4, "1");
+        let second_x = cell_x(buf, 7, "2");
+        assert_eq!(first_x, second_x);
+    }
+
+    #[test]
+    fn selected_setting_highlights_only_its_primary_line() {
+        let mut theme = crate::theme::THEMES[0];
+        theme.selection_bg = ratatui::style::Color::Rgb(1, 2, 3);
+        theme.selection_fg = ratatui::style::Color::Rgb(250, 251, 252);
+        let rows = vec![super::super::SettingRowView {
+            label: "Theme",
+            value: "value".to_string(),
+            help: "explanation".to_string(),
+        }];
+
+        let backend = TestBackend::new(48, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let view = SettingsView {
+                    selected: 0,
+                    rows,
+                    page: SettingsPage::Theme,
+                };
+                super::draw_settings_page(frame, frame.area(), &view, &theme);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        assert_eq!(buf[(4, 4)].bg, theme.selection_bg);
+        assert_eq!(buf[(4, 4)].fg, theme.selection_fg);
+        assert_eq!(buf[(47, 4)].bg, theme.selection_bg);
+        assert_eq!(buf[(6, 5)].symbol(), "e");
+        assert_eq!(buf[(6, 5)].bg, theme.bg);
+        assert_eq!(buf[(6, 5)].fg, theme.dim);
+    }
+
+    #[test]
+    fn ssh_editor_keeps_context_field_error_and_actions_in_reading_order() {
+        let theme = &crate::theme::THEMES[0];
+        let input = ratatui_textarea::TextArea::default();
+        let backend = TestBackend::new(90, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let view = SshSettingEditorView {
+                    field: crate::overlay::SshSettingField::ControlPath,
+                    input: &input,
+                    error: Some("Path is not usable"),
+                };
+                super::draw_ssh_setting_editor(frame, frame.area(), &view, theme);
+            })
+            .unwrap();
+
+        let lines = buffer_lines(terminal.backend().buffer());
+        let context_y = lines
+            .iter()
+            .position(|line| line.contains("Socket path template"))
+            .unwrap();
+        let field_y = lines
+            .iter()
+            .position(|line| line.contains("Control path"))
+            .unwrap();
+        let error_y = lines
+            .iter()
+            .position(|line| line.contains("Error  Path is not usable"))
+            .unwrap();
+        let actions_y = lines
+            .iter()
+            .position(|line| line.contains("[Enter] Save   [Esc] Cancel"))
+            .unwrap();
+
+        assert!(context_y < field_y);
+        assert_eq!(error_y, field_y + 1);
+        assert!(error_y < actions_y);
+        assert!(lines[field_y].contains('▌'));
     }
 }

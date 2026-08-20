@@ -59,6 +59,7 @@ macro_rules! theme {
         secondary: $secondary:expr,
         text: $text:expr,
         accent: $accent:expr,
+        $(selection_bg: $selection_bg:expr,)?
         selection_fg: $selection_fg:expr,
         green: $green:expr,
         teal: $teal:expr,
@@ -78,7 +79,7 @@ macro_rules! theme {
             accent: $accent,
             border: $dim,
             focus_border: $accent,
-            selection_bg: $accent,
+            selection_bg: theme_selection_bg!($accent $(, $selection_bg)?),
             selection_fg: $selection_fg,
             input_bg: $bg,
             input_border: $dim,
@@ -88,6 +89,15 @@ macro_rules! theme {
             yellow: $yellow,
             error: $error,
         }
+    };
+}
+
+macro_rules! theme_selection_bg {
+    ($accent:expr) => {
+        $accent
+    };
+    ($accent:expr, $selection_bg:expr) => {
+        $selection_bg
     };
 }
 
@@ -358,7 +368,8 @@ pub const THEMES: &[Theme] = &[
         secondary: Color::Rgb(74, 74, 68),
         text: Color::Rgb(45, 45, 43),
         accent: Color::Rgb(204, 125, 94),
-        selection_fg: Color::Rgb(0, 0, 0),
+        selection_bg: Color::Rgb(155, 93, 69),
+        selection_fg: Color::Rgb(255, 255, 255),
         green: Color::Rgb(0, 200, 83),
         teal: Color::Rgb(47, 144, 128),
         yellow: Color::Rgb(176, 120, 24),
@@ -390,7 +401,8 @@ pub const THEMES: &[Theme] = &[
         secondary: Color::Rgb(58, 58, 58),
         text: Color::Rgb(3, 3, 3),
         accent: Color::Rgb(255, 99, 99),
-        selection_fg: Color::Rgb(3, 3, 3),
+        selection_bg: Color::Rgb(199, 62, 73),
+        selection_fg: Color::Rgb(255, 255, 255),
         green: Color::Rgb(0, 107, 79),
         teal: Color::Rgb(14, 138, 150),
         yellow: Color::Rgb(176, 125, 16),
@@ -406,7 +418,8 @@ pub const THEMES: &[Theme] = &[
         secondary: Color::Rgb(104, 99, 134),
         text: Color::Rgb(87, 82, 121),
         accent: Color::Rgb(215, 130, 126),
-        selection_fg: Color::Rgb(0, 0, 0),
+        selection_bg: Color::Rgb(170, 86, 110),
+        selection_fg: Color::Rgb(255, 255, 255),
         green: Color::Rgb(86, 148, 159),
         teal: Color::Rgb(40, 105, 131),
         yellow: Color::Rgb(234, 157, 52),
@@ -454,7 +467,8 @@ pub const THEMES: &[Theme] = &[
         secondary: Color::Rgb(95, 96, 103),
         text: Color::Rgb(56, 58, 66),
         accent: Color::Rgb(82, 111, 255),
-        selection_fg: Color::Rgb(0, 0, 0),
+        selection_bg: Color::Rgb(69, 99, 230),
+        selection_fg: Color::Rgb(255, 255, 255),
         green: Color::Rgb(59, 186, 84),
         teal: Color::Rgb(14, 130, 150),
         yellow: Color::Rgb(160, 110, 16),
@@ -523,4 +537,25 @@ pub fn indices_for_slot(slot: ThemeSlot) -> impl Iterator<Item = usize> {
 /// default) when a config names one that no longer exists.
 pub fn index_of(name: &str) -> usize {
     THEMES.iter().position(|t| t.name == name).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn colored_light_theme_selections_use_white_text() {
+        for name in [
+            "Absolutely (Light)",
+            "Raycast (Light)",
+            "Rose Pine (Light)",
+            "One (Light)",
+        ] {
+            assert_eq!(
+                THEMES[index_of(name)].selection_fg,
+                Color::Rgb(255, 255, 255),
+                "{name}"
+            );
+        }
+    }
 }
