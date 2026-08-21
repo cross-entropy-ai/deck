@@ -86,15 +86,9 @@ jobs:
               cargo build --release --target "$target" -p agent-relay --bin deck-agent-relay
           done
 
+      # Through the script, not a copy of its pipeline: the two spellings
+      # disagreed once already (macOS ships a `sha256` whose output format is
+      # not `sha256sum`'s), and a staleness guard that cannot be reproduced
+      # locally is worse than none.
       - name: Refuse artifacts older than the source they came from
-        run: |
-          have=$(cat assets/agent-relay/SOURCE.sha256)
-          want=$(find crates/agent-relay -type f \( -name '*.rs' -o -name 'Cargo.toml' \) \
-            | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
-          if [ "$have" != "$want" ]; then
-            echo "assets/agent-relay/ is stale: crates/agent-relay has changed since it was built."
-            echo "Rerun scripts/build-agent-relay.sh and commit what it writes."
-            echo "  committed: $have"
-            echo "  source:    $want"
-            exit 1
-          fi
+        run: scripts/build-agent-relay.sh --check
