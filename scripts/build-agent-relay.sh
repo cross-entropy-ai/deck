@@ -90,9 +90,13 @@ cp -R "$ROOT/crates/agent-relay/." "$STAGE/agent-relay/"
 
 # The size profile lives here rather than in the committed manifest: as a
 # workspace member its own [profile] would be ignored, with a warning on every
-# deck build. Copied out of the workspace, the crate is its own root and the
-# profile applies — which is also what makes LTO available.
+# deck build. The staged copy declares itself a workspace root instead, which is
+# what makes the profile apply — and what keeps cargo from refusing to build it
+# at all, since the staging directory sits under deck's own workspace and cargo
+# reads that as a member nobody declared.
 cat >> "$STAGE/agent-relay/Cargo.toml" <<'PROFILE'
+
+[workspace]
 
 [profile.release]
 opt-level = "z"
