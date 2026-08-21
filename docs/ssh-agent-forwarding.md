@@ -108,18 +108,41 @@ cross-toolchain — or even rustup — on every machine that builds deck is too 
 to ask for one 440 KB helper.
 
 ```bash
+scripts/build-agent-relay.sh --check                          # are they current?
 scripts/build-agent-relay.sh                                  # local engine
 DECK_RELAY_ENGINE="docker -H ssh://devbox" scripts/build-agent-relay.sh
 ```
 
-The build runs in a `rust:alpine` container, so it needs no local toolchain at
-all, and works against a remote engine — which is how it is done on a Mac with no
-Linux in sight. Commit what it writes, including `SOURCE.sha256`: CI recomputes
-that hash over `crates/agent-relay` and fails if the artifacts predate a source
-edit. CI also compiles the crate for both targets, and the `test` job runs the
+**Ordinary builds need none of this.** `cargo build` only reads the committed
+files — there is no `build.rs`, nothing is cross-compiled, and no container is
+started. The engine is needed only when `crates/agent-relay` changes and the
+artifacts have to be regenerated; `--check` answers whether that is the case and
+needs neither an engine nor a toolchain (CI runs exactly that, so a guard that
+fails in CI can always be reproduced locally).
+
+The build itself runs in a `rust:alpine` container, so it needs no local
+toolchain and works against a remote engine — which is how it is done on a Mac
+with no Linux in sight. Commit what it writes, including `SOURCE.sha256`.
+
+CI also compiles the crate for both targets, and the `test` job runs the
 committed artifact matching its own architecture through the wire protocol —
 byte-comparing a rebuild would be meaningless, since Rust output is not
 reproducible across compiler versions.
+
+## Debugging the relay itself
+
+It is a normal workspace member, so the host build is the fast path — no
+container, no musl:
+
+```bash
+cargo build -p agent-relay
+sleep 60 | ./target/debug/deck-agent-relay /tmp/relay.sock > mux.out   # give it a stdin
+./target/debug/deck-agent-relay --probe /tmp/relay.sock                # a pane's view
+od -An -tx1 mux.out    # 00000001 00000005 00 00 00 01 0b — id, length, request
+```
+
+`sleep 60 |` matters: the relay exits the moment its stdin closes, which is the
+whole shutdown design, and a background job's stdin is `/dev/null`.
 
 ## Debugging
 

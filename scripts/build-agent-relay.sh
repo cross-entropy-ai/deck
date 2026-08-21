@@ -23,18 +23,44 @@ ENGINE=${DECK_RELAY_ENGINE:-docker}
 IMAGE=${DECK_RELAY_IMAGE:-rust:alpine}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 OUT="$ROOT/assets/agent-relay"
-STAGE=$(mktemp -d)
-trap 'rm -rf "$STAGE"' EXIT
 
-# A command, not a shell function: this has to be spelled identically here and
-# in CI, and it is handed to `xargs`, which cannot call a function. macOS also
-# ships a `sha256` that prints BSD-style `SHA256 (path) = hash` — picking that up
-# by accident produced a hash CI could never reproduce.
+# A command, not a shell function: it is handed to `xargs`, which cannot call a
+# function. macOS also ships a `sha256` that prints BSD-style
+# `SHA256 (path) = hash` — picking that up by accident produced a hash CI could
+# never reproduce.
 if command -v sha256sum >/dev/null 2>&1; then
     HASH="sha256sum"
 else
     HASH="shasum -a 256"
 fi
+
+# Hash of everything the artifacts are built from. One implementation, used to
+# write SOURCE.sha256 and to check it, so the two can never disagree — which they
+# did, once, when CI spelled the pipeline itself.
+source_hash() {
+    cd "$ROOT"
+    find crates/agent-relay -type f \( -name '*.rs' -o -name 'Cargo.toml' \) \
+        | LC_ALL=C sort | xargs $HASH | $HASH | cut -d' ' -f1
+}
+
+# `--check` verifies without building, so it needs no engine and no toolchain:
+# CI runs it, and it is worth running by hand after editing the relay.
+if [ "${1:-}" = "--check" ]; then
+    have=$(cat "$OUT/SOURCE.sha256" 2>/dev/null || echo none)
+    want=$(source_hash)
+    if [ "$have" = "$want" ]; then
+        echo "assets/agent-relay is current ($want)"
+        exit 0
+    fi
+    echo "assets/agent-relay is stale: crates/agent-relay has changed since it was built." >&2
+    echo "Rerun scripts/build-agent-relay.sh and commit what it writes." >&2
+    echo "  committed: $have" >&2
+    echo "  source:    $want" >&2
+    exit 1
+fi
+
+STAGE=$(mktemp -d)
+trap 'rm -rf "$STAGE"' EXIT
 
 mkdir -p "$STAGE/agent-relay" "$OUT"
 cp -R "$ROOT/crates/agent-relay/." "$STAGE/agent-relay/"
@@ -82,11 +108,7 @@ for pair in "x86_64:target/release" "aarch64:target/aarch64-unknown-linux-musl/r
         "$(wc -c < "$OUT/deck-agent-relay-$arch-linux.gz" | tr -d ' ')"
 done
 
-# Staleness guard: CI recomputes this over the same file set and fails if the
-# committed artifacts predate a source edit.
-(
-    cd "$ROOT"
-    find crates/agent-relay -type f \( -name '*.rs' -o -name 'Cargo.toml' \) \
-        | LC_ALL=C sort | xargs $HASH | $HASH | cut -d' ' -f1
-) > "$OUT/SOURCE.sha256"
+# Staleness guard: `--check` (and CI) recompute this and fail if the committed
+# artifacts predate a source edit.
+source_hash > "$OUT/SOURCE.sha256"
 echo "source hash: $(cat "$OUT/SOURCE.sha256")"
