@@ -679,6 +679,17 @@ impl SessionCatalog for TmuxSystem {
         }
     }
 
+    /// Only the local tmux server is fast enough to read on the drawing path.
+    ///
+    /// A container on this machine looks like it belongs there too — one
+    /// `<engine> exec` costs about 60 ms, and measured against a live Apple
+    /// container its lane paints 1.7 s after launch and picks up a new session
+    /// in 1.1 s, against 0.7 s for the local lane. Roughly one tick apart, for
+    /// a foreground slot that would cost far more than it buys: a foreground
+    /// lane is collected *synchronously*, so a container that is stopped or
+    /// paused would stall the sidebar on that exec's timeout every tick, and
+    /// the local lane's own sessions with it. Background is what keeps a lane
+    /// that has gone away from taking the ones that have not with it.
     fn snapshot_mode(&self, lane: &LaneId) -> SnapshotMode {
         if Self::host_of(lane).is_none() {
             SnapshotMode::Foreground
