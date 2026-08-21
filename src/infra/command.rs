@@ -151,6 +151,30 @@ pub(crate) fn run_with_stdin_file(
     wait_bounded(handle, program, timeout)
 }
 
+/// Run `program` with its stdin fed from memory, bounded exactly like
+/// [`run_with_stdin_file`].
+///
+/// The second streaming caller: installing the container-side agent relay, whose
+/// bytes deck carries embedded rather than reading off disk.
+pub(crate) fn run_with_stdin_bytes(
+    program: &str,
+    args: &[&str],
+    stdin_bytes: Vec<u8>,
+    timeout: Duration,
+) -> Result<Output, CommandError> {
+    let handle = duct::cmd(program, args.iter().copied())
+        .stdin_bytes(stdin_bytes)
+        .stdout_capture()
+        .stderr_capture()
+        .unchecked()
+        .start()
+        .map_err(|source| CommandError::Spawn {
+            program: program.to_string(),
+            source,
+        })?;
+    wait_bounded(handle, program, timeout)
+}
+
 /// Wait for `handle` up to `timeout`, classifying the exit like every other
 /// bounded call: success, `NonZero`, or a killed straggler whose partial
 /// stdout is discarded.

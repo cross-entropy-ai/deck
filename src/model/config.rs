@@ -63,10 +63,11 @@ pub struct ContainerConfig {
     /// Path *inside the container* of an ssh-agent socket, exported as
     /// `SSH_AUTH_SOCK` when attaching. An **override**: leave it unset and deck
     /// relays your local agent into the container itself
-    /// (`crate::ssh::agent_relay`, no mount and no root required, but it needs a
-    /// python in the image). Set it when the container was started with a socket
-    /// of its own bind-mounted and you want that one used instead — deck then
-    /// starts no relay and takes the path on trust.
+    /// (`crate::ssh::agent_relay` — no mount, no root, and nothing required of
+    /// the image, since deck ships the relay it runs in there). Set it when the
+    /// container was started with a socket of its own bind-mounted and you want
+    /// that one used instead — deck then starts no relay and takes the path on
+    /// trust.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_sock: Option<String>,
     /// Forwards into this container, `-L` only: the listener is local, and the

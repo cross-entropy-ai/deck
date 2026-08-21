@@ -1,0 +1,18 @@
+[package]
+name = "agent-relay"
+version = "0.1.0"
+edition = "2021"
+description = "Wire format for deck's ssh-agent relay, and the relay binary that runs inside a container"
+
+# No dependencies, deliberately. The binary is shipped inside deck and run in
+# other people's containers, so its whole content should be reviewable here, and
+# every crate it pulled in would grow what deck embeds.
+[dependencies]
+
+[lib]
+name = "agent_relay"
+path = "src/lib.rs"
+
+[[bin]]
+name = "deck-agent-relay"
+path = "src/main.rs"

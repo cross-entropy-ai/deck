@@ -57,3 +57,44 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --all-features
+
+  agent-relay:
+    name: agent-relay
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The committed artifacts under assets/agent-relay/ are built by
+      # scripts/build-agent-relay.sh, not by CI: they are not byte-reproducible
+      # across rustc versions, so there is nothing to diff against. What CI can
+      # check is that the source still compiles for both container
+      # architectures, and that nobody edited it without rerunning the script.
+      # (Whether the *committed* binary works is checked by the `test` job,
+      # which runs the one matching its own architecture.)
+      - name: Build the relay for both container architectures
+        run: |
+          LLD="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/rust-lld"
+          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            RUSTFLAGS="-C linker=$LLD -C link-self-contained=yes" \
+              cargo build --release --target "$target" -p agent-relay --bin deck-agent-relay
+          done
+
+      - name: Refuse artifacts older than the source they came from
+        run: |
+          have=$(cat assets/agent-relay/SOURCE.sha256)
+          want=$(find crates/agent-relay -type f \( -name '*.rs' -o -name 'Cargo.toml' \) \
+            | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+          if [ "$have" != "$want" ]; then
+            echo "assets/agent-relay/ is stale: crates/agent-relay has changed since it was built."
+            echo "Rerun scripts/build-agent-relay.sh and commit what it writes."
+            echo "  committed: $have"
+            echo "  source:    $want"
+            exit 1
+          fi
