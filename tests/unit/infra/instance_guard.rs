@@ -80,6 +80,7 @@ fn permission_denied_remove(_path: &Path) -> io::Result<()> {
 fn lock_path_prefers_a_suitable_xdg_runtime_directory() {
     let runtime_dir = Path::new("/run/user/501");
     let path = InstanceGuard::lock_path_for(
+        None,
         Some(runtime_dir),
         Path::new("/isolated-temp"),
         501,
@@ -92,8 +93,8 @@ fn lock_path_prefers_a_suitable_xdg_runtime_directory() {
 #[test]
 fn fallback_lock_path_is_scoped_by_user_id() {
     let temp_dir = Path::new("/isolated-temp");
-    let first = InstanceGuard::lock_path_for(None, temp_dir, 501, |_, _| false);
-    let second = InstanceGuard::lock_path_for(None, temp_dir, 502, |_, _| false);
+    let first = InstanceGuard::lock_path_for(None, None, temp_dir, 501, |_, _| false);
+    let second = InstanceGuard::lock_path_for(None, None, temp_dir, 502, |_, _| false);
 
     assert_eq!(first, temp_dir.join("deck-501.lock"));
     assert_eq!(second, temp_dir.join("deck-502.lock"));
@@ -103,10 +104,13 @@ fn fallback_lock_path_is_scoped_by_user_id() {
 #[test]
 fn unsuitable_xdg_runtime_directory_uses_per_user_fallback() {
     let temp_dir = Path::new("/isolated-temp");
-    let path =
-        InstanceGuard::lock_path_for(Some(Path::new("/shared-runtime")), temp_dir, 501, |_, _| {
-            false
-        });
+    let path = InstanceGuard::lock_path_for(
+        None,
+        Some(Path::new("/shared-runtime")),
+        temp_dir,
+        501,
+        |_, _| false,
+    );
 
     assert_eq!(path, temp_dir.join("deck-501.lock"));
 }
@@ -334,4 +338,61 @@ fn force_surfaces_permission_denied() {
     let _ = child.wait();
     let _ = fs::remove_dir_all(&bindir);
     let _ = fs::remove_file(path);
+}
+
+/// Two decks at once is exactly what the guard exists to prevent, so the way to
+/// ask for it is explicit and absolute: a named lock file, which wins over both
+/// the runtime directory and the temp fallback.
+///
+/// Without this there is no way to run a build under test beside the deck you
+/// are working in — launching one kills the other (takeover is the default), and
+/// `--no-force` only turns that into a refusal to start. Sandboxing `HOME` and
+/// `XDG_STATE_HOME` does not reach the lock.
+#[test]
+fn a_named_lock_path_wins_over_the_shared_ones() {
+    let named = Path::new("/tmp/deck-under-test.lock");
+
+    assert_eq!(
+        InstanceGuard::lock_path_for(
+            Some(named),
+            Some(Path::new("/shared-runtime")),
+            Path::new("/isolated-temp"),
+            501,
+            |_, _| true,
+        ),
+        named,
+    );
+
+    // Relative would name a different lock depending on where deck was started,
+    // and blank is an unset variable rather than the current directory — both
+    // fall back to the shared answer.
+    for ignored in ["relative/deck.lock", ""] {
+        assert_eq!(
+            InstanceGuard::lock_path_for(
+                Some(Path::new(ignored)),
+                None,
+                Path::new("/isolated-temp"),
+                501,
+                |_, _| false,
+            ),
+            Path::new("/isolated-temp/deck-501.lock"),
+            "{ignored:?} must not be taken for a lock path"
+        );
+    }
+}
+
+/// The point of the override is a lock nobody else is holding, so a directory
+/// that does not exist yet is made rather than refused.
+#[test]
+fn a_named_lock_path_can_name_a_directory_that_is_not_there_yet() {
+    let dir = std::env::temp_dir().join(format!("deck-lock-test-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let path = dir.join("nested/deck.lock");
+
+    let guard = InstanceGuard::acquire_at(path.clone(), 4242).expect("acquire");
+    assert!(path.exists(), "no lock at {path:?}");
+    drop(guard);
+    assert!(!path.exists(), "lock outlived its guard");
+
+    let _ = fs::remove_dir_all(&dir);
 }
