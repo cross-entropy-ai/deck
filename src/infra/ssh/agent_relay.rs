@@ -76,7 +76,11 @@ const RELAY_AARCH64: &[u8] =
 ///
 /// `None` for anything else, which is honest rather than hopeful: sending an
 /// ELF for the wrong machine would fail at `exec` with a message nobody can act
-/// on, and the two architectures here are the ones Linux containers run on.
+/// on.
+///
+/// 64-bit only, deliberately — deck does not support 32-bit systems, so an
+/// `armv7l` or `i686` container gets no agent rather than a third artifact to
+/// build, ship and keep current.
 pub fn relay_binary(arch: &str) -> Option<Vec<u8>> {
     let compressed = match arch.trim() {
         "x86_64" | "amd64" => RELAY_X86_64,
