@@ -34,6 +34,10 @@ fn the_committed_artifacts_are_static_elfs_for_the_arch_they_name() {
     // Both spellings each engine reports, and nothing invented for the rest.
     assert!(relay_binary("amd64").is_some());
     assert!(relay_binary("arm64").is_some());
+    // 32-bit is out of scope for deck, so those get no agent rather than an
+    // artifact nobody maintains.
+    assert!(relay_binary("armv7l").is_none());
+    assert!(relay_binary("i686").is_none());
     assert!(relay_binary("riscv64").is_none());
     assert!(relay_binary("").is_none());
 }
