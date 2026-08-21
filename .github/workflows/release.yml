@@ -88,8 +88,6 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
-          - target: armv7-unknown-linux-musleabihf
-            os: ubuntu-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -113,16 +111,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools
 
-      - name: Install cross (ARM Linux targets)
-        if: matrix.target == 'aarch64-unknown-linux-musl' || matrix.target == 'armv7-unknown-linux-musleabihf'
+      - name: Install cross (ARM Linux)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
         run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Build binary (cross)
-        if: matrix.target == 'aarch64-unknown-linux-musl' || matrix.target == 'armv7-unknown-linux-musleabihf'
+        if: matrix.target == 'aarch64-unknown-linux-musl'
         run: cross build --release --target ${{ matrix.target }}
 
       - name: Build binary (cargo)
-        if: matrix.target != 'aarch64-unknown-linux-musl' && matrix.target != 'armv7-unknown-linux-musleabihf'
+        if: matrix.target != 'aarch64-unknown-linux-musl'
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package archive
@@ -177,7 +175,6 @@ jobs:
           echo "x86_64_darwin=$(sha256sum deck-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "x86_64_linux=$(sha256sum deck-${{ github.ref_name }}-x86_64-unknown-linux-musl.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "aarch64_linux=$(sha256sum deck-${{ github.ref_name }}-aarch64-unknown-linux-musl.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-          echo "armv7_linux=$(sha256sum deck-${{ github.ref_name }}-armv7-unknown-linux-musleabihf.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       # Repackage the same binaries into Homebrew bottle layout so `brew install`
       # pours instead of "building from source". A source install triggers
@@ -231,7 +228,6 @@ jobs:
           SHA_X86_64_DARWIN: ${{ steps.sha.outputs.x86_64_darwin }}
           SHA_X86_64_LINUX: ${{ steps.sha.outputs.x86_64_linux }}
           SHA_AARCH64_LINUX: ${{ steps.sha.outputs.aarch64_linux }}
-          SHA_ARMV7_LINUX: ${{ steps.sha.outputs.armv7_linux }}
           SHA_BOTTLE_ARM64_DARWIN: ${{ steps.bottle.outputs.arm64_darwin }}
           SHA_BOTTLE_X86_64_DARWIN: ${{ steps.bottle.outputs.x86_64_darwin }}
           SHA_BOTTLE_ARM64_LINUX: ${{ steps.bottle.outputs.arm64_linux }}
@@ -258,13 +254,8 @@ jobs:
 
             on_linux do
               if Hardware::CPU.arm?
-                if Hardware::CPU.is_32_bit?
-                  url "${BASE_URL}/deck-${VERSION}-armv7-unknown-linux-musleabihf.tar.gz"
-                  sha256 "${SHA_ARMV7_LINUX}"
-                else
-                  url "${BASE_URL}/deck-${VERSION}-aarch64-unknown-linux-musl.tar.gz"
-                  sha256 "${SHA_AARCH64_LINUX}"
-                end
+                url "${BASE_URL}/deck-${VERSION}-aarch64-unknown-linux-musl.tar.gz"
+                sha256 "${SHA_AARCH64_LINUX}"
               else
                 url "${BASE_URL}/deck-${VERSION}-x86_64-unknown-linux-musl.tar.gz"
                 sha256 "${SHA_X86_64_LINUX}"
