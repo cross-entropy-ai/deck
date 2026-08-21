@@ -33,6 +33,28 @@ artifacts are stale; CI runs exactly that. See `docs/ssh-agent-forwarding.md`.
 
 Config is stored at `~/.config/deck/config.yaml`.
 
+### Running a second deck
+
+Launching deck **takes over**: it kills the instance already running, since
+takeover is the default (`--no-force` turns that into a refusal to start, which
+is not the same as being allowed to run). Sandboxing `HOME` and `XDG_STATE_HOME`
+does not isolate it — the lock lives in the runtime or temp directory, keyed by
+uid. To run a build under test beside the deck you are working in, give it a lock
+and a tmux server of its own:
+
+```bash
+env -u TMUX -u TMUX_PANE TMUX_TMPDIR=/tmp/deck-test \
+    DECK_LOCK_PATH=/tmp/deck-under-test.lock \
+    HOME=/tmp/deck-home XDG_STATE_HOME=/tmp/deck-state \
+    tmux new-session -d -s ui -x 190 -y 45 ./target/release/deck
+env -u TMUX TMUX_TMPDIR=/tmp/deck-test tmux capture-pane -p -t ui
+```
+
+`capture-pane` is how the TUI gets read without a human looking at it. Both
+`-u TMUX` matter: a shell inside tmux would otherwise send every one of those
+commands to the *running* server. Keep `TMUX_TMPDIR` short — the socket path
+under it has to fit macOS's 104-byte limit.
+
 ## Architecture
 
 Source is split into five top-level modules under `src/` (plus `main.rs`).

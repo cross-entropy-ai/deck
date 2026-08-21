@@ -165,10 +165,28 @@ impl InstanceGuard {
         Self::acquire_at_with(lock_path, current_pid, remove_fn)
     }
 
+    /// Environment variable naming a lock file to use instead of the shared
+    /// one. For running a *second* deck deliberately — a build under test
+    /// alongside the one you are working in.
+    ///
+    /// It exists because the guard's normal answer is takeover: launching deck
+    /// kills the running instance (`--no-force` refuses to start instead, which
+    /// is not the same as being allowed to run). Nothing else isolates it —
+    /// sandboxing `HOME` and `XDG_STATE_HOME` does not, since the lock lives in
+    /// the runtime or temp directory, keyed by uid.
+    ///
+    /// Two decks sharing a tmux server will still fight over the same sessions
+    /// and clients; this only makes that *possible*, for a caller who means it.
+    /// Ordinary runs never set it and are unaffected.
+    pub const LOCK_PATH_ENV: &'static str = "DECK_LOCK_PATH";
+
     fn default_lock_path() -> PathBuf {
         let xdg_runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
         let fallback_dir = fallback_lock_dir();
         Self::lock_path_for(
+            std::env::var_os(Self::LOCK_PATH_ENV)
+                .map(PathBuf::from)
+                .as_deref(),
             xdg_runtime_dir.as_deref(),
             &fallback_dir,
             current_user_id(),
@@ -177,6 +195,7 @@ impl InstanceGuard {
     }
 
     fn lock_path_for<F>(
+        override_path: Option<&Path>,
         xdg_runtime_dir: Option<&Path>,
         temp_dir: &Path,
         uid: u32,
@@ -185,6 +204,13 @@ impl InstanceGuard {
     where
         F: Fn(&Path, u32) -> bool,
     {
+        // Absolute only: a relative path would name a different lock depending
+        // on where deck was started from, which is the opposite of what a lock
+        // is for. A blank value is an unset one, not the current directory.
+        if let Some(path) = override_path.filter(|path| path.is_absolute()) {
+            return path.to_path_buf();
+        }
+
         if let Some(runtime_dir) =
             xdg_runtime_dir.filter(|path| path.is_absolute() && runtime_dir_is_suitable(path, uid))
         {
@@ -211,6 +237,14 @@ impl InstanceGuard {
     }
 
     fn create_lock(lock_path: &Path, current_pid: u32) -> io::Result<()> {
+        // The shared paths exist already; one named through `DECK_LOCK_PATH`
+        // may not, and failing on a missing directory would be a worse answer
+        // than making it.
+        if let Some(parent) = lock_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)?;
+            }
+        }
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
