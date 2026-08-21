@@ -1779,6 +1779,37 @@ fn test_engine(remote_id: &str) {
     );
 }
 
+/// What the mount picker would offer for the local lane, against the engine
+/// actually running on this machine. The unit test above covers the parsing;
+/// this covers the half that only reality has — that the engine answers at all,
+/// through a local `sh -c` with no ssh in the path, and that its listing is the
+/// shape deck expects of *that* engine.
+///
+/// ```text
+/// DECK_RELAY_TEST_ID=local#probe DECK_RELAY_TEST_ENGINE=container \
+///   cargo test --workspace -- --ignored discovery
+/// ```
+#[test]
+#[ignore = "needs a container running on this machine"]
+fn local_discovery_offers_this_machines_containers() {
+    let Ok(remote_id) = std::env::var("DECK_RELAY_TEST_ID") else {
+        panic!("set DECK_RELAY_TEST_ID=local#container");
+    };
+    let wanted = parse_remote_id(&remote_id)
+        .container
+        .expect("an id with a container half")
+        .to_string();
+    let engine = std::env::var("DECK_RELAY_TEST_ENGINE").unwrap_or_else(|_| "docker".to_string());
+
+    let found = list_containers(crate::remote_tmux::LOCAL_HOST);
+    let candidate = found
+        .iter()
+        .find(|candidate| candidate.name == wanted)
+        .unwrap_or_else(|| panic!("{wanted} not discovered locally: {found:?}"));
+    assert_eq!(candidate.engine, engine, "wrong engine: {candidate:?}");
+    assert!(candidate.running, "reported not running: {candidate:?}");
+}
+
 /// End-to-end against a real container: the probe, the install stream and the
 /// exec all happen two hops away, and the interesting failures (a `noexec`
 /// `/tmp`, a truncated transfer, a shell that re-parsed something it should not
