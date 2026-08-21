@@ -1676,6 +1676,25 @@ fn a_connections_own_marker_is_named_by_the_sweep_that_follows_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Point a live test's lane at whatever engine is running, defaulting to docker.
+///
+/// `DECK_RELAY_TEST_ENGINE=container` is Apple's engine on macOS, which makes
+/// the whole feature testable on a laptop with no Linux anywhere — and is the
+/// only way the *aarch64* artifact gets executed at all, since CI runs on x86_64.
+#[cfg(test)]
+fn test_engine(remote_id: &str) {
+    let Ok(engine) = std::env::var("DECK_RELAY_TEST_ENGINE") else {
+        return;
+    };
+    upsert_container_opts(
+        remote_id.to_string(),
+        ContainerOpts {
+            engine,
+            agent_sock: None,
+        },
+    );
+}
+
 /// End-to-end against a real container: the probe, the install stream and the
 /// exec all happen two hops away, and the interesting failures (a `noexec`
 /// `/tmp`, a truncated transfer, a shell that re-parsed something it should not
@@ -1703,6 +1722,7 @@ fn a_real_container_reaches_this_machines_agent() {
         crate::ssh::agent_relay::local_agent_socket().is_some(),
         "this machine has no SSH_AUTH_SOCK to forward"
     );
+    test_engine(&remote_id);
 
     let socket = container_agent_sock(&remote_id)
         .expect("the relay comes up (DECK_AGENT_LOG has the reason if it did not)");

@@ -757,6 +757,16 @@ mod tests {
         let Ok(remote_id) = std::env::var("DECK_RELAY_TEST_ID") else {
             panic!("set DECK_RELAY_TEST_ID=host#container");
         };
+        // Same engine knob the relay's own live test uses.
+        if let Ok(engine) = std::env::var("DECK_RELAY_TEST_ENGINE") {
+            crate::remote_tmux::upsert_container_opts(
+                remote_id.clone(),
+                crate::remote_tmux::ContainerOpts {
+                    engine,
+                    agent_sock: None,
+                },
+            );
+        }
         let session = "deck-agent-last-mile";
         // Something for the attach to land on. Also the path that hands a
         // *created* session its agent, which resolves per lane kind.

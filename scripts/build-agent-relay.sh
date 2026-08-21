@@ -9,6 +9,7 @@
 #
 #   scripts/build-agent-relay.sh --check    are the artifacts current?
 #   scripts/build-agent-relay.sh            local toolchain if it can, else a container
+#   DECK_RELAY_ENGINE=container scripts/build-agent-relay.sh
 #   DECK_RELAY_ENGINE="docker -H ssh://devbox" scripts/build-agent-relay.sh
 #
 # With both musl targets installed it builds them right here:
@@ -32,6 +33,10 @@ OUT="$ROOT/assets/agent-relay"
 
 # One entry per artifact: the name it is committed under, and its rust target.
 TARGETS="x86_64:x86_64-unknown-linux-musl aarch64:aarch64-unknown-linux-musl"
+
+# Tag for the throwaway build image, so nothing depends on what a given engine's
+# `build -q` chooses to print.
+BUILD_TAG=${DECK_RELAY_BUILD_TAG:-deck-agent-relay-build}
 
 # A command, not a shell function: it is handed to `xargs`, which cannot call a
 # function. macOS also ships a `sha256` that prints BSD-style
@@ -68,8 +73,14 @@ if [ "${1:-}" = "--check" ]; then
     exit 1
 fi
 
-STAGE=$(mktemp -d)
+# Staged inside the tree, not in $TMPDIR: a build context has to be somewhere
+# the engine can read, and Apple's `container` shares only paths under the
+# user's home with its builder VM — a context under /private/tmp arrived empty,
+# with `COPY` silently producing an empty directory. `target/` is gitignored and
+# is where build scratch belongs anyway.
+STAGE="$ROOT/target/agent-relay-build"
 trap 'rm -rf "$STAGE"' EXIT
+rm -rf "$STAGE"
 mkdir -p "$STAGE/agent-relay" "$OUT"
 cp -R "$ROOT/crates/agent-relay/." "$STAGE/agent-relay/"
 
@@ -130,12 +141,17 @@ RUN LLD="\$(rustc --print sysroot)/lib/rustlib/\$(rustc -vV | sed -n 's/^host: /
         cargo build --release --target "\$target" --bin deck-agent-relay ; \\
     done
 DOCKER
-    IMAGE_ID=$(tar czf - -C "$STAGE" . | $ENGINE build -q -)
+    # A directory context and an explicit tag, rather than a tar on stdin and
+    # the id `-q` prints: Apple's `container build` takes only a context
+    # directory, and its `-q` prints nothing to capture. A directory works the
+    # same for docker, including a remote daemon — the CLI ships the context.
+    $ENGINE build -t "$BUILD_TAG" "$STAGE" >/dev/null
     for pair in $TARGETS; do
         # `run` rather than `cp`: one stream out of the engine, remote or local,
-        # and no container left to remove.
-        $ENGINE run --rm "$IMAGE_ID" \
-            cat "target/${pair#*:}/release/deck-agent-relay" > "$STAGE/${pair%%:*}"
+        # and no container left to remove. Absolute path, because not every
+        # engine applies the image's WORKDIR to an argv command.
+        $ENGINE run --rm "$BUILD_TAG" \
+            cat "/relay/target/${pair#*:}/release/deck-agent-relay" > "$STAGE/${pair%%:*}"
     done
 }
 

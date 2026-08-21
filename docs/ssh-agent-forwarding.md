@@ -135,6 +135,19 @@ container:
 rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
 ```
 
+Failing that, any engine will do, including Apple's on macOS — which makes the
+whole thing local, with no Linux machine anywhere:
+
+```bash
+DECK_RELAY_ENGINE=container scripts/build-agent-relay.sh    # ~20s
+```
+
+Two things that engine taught the script: its `build` takes a context
+*directory* (no tar on stdin) and its `-q` prints nothing to capture, hence the
+explicit tag; and its builder VM only sees paths under the user's home, so the
+context is staged in `target/` — from `/private/tmp` it arrived empty, with
+`COPY` silently producing an empty directory.
+
 `cargo build -p agent-relay --target x86_64-unknown-linux-musl` is then the same
 thing by hand, minus the size profile (which cannot live in the committed
 manifest: a workspace member's `[profile]` is ignored, with a warning on every
@@ -196,11 +209,26 @@ also what the `relay-live` CI job assembles, so they run on every push without
 anyone having a spare host to point them at. Against your own remote:
 
 ```bash
-docker -H ssh://host run -d --name probe --entrypoint sleep mongo:7.0 900
+docker -H ssh://host run -d --name probe --entrypoint sleep alpine:3 900
+docker -H ssh://host exec probe apk add --no-cache tmux   # for last_mile only
 
-# the relay: probe, install, exec, and a real IDENTITIES_ANSWER from your agent
 DECK_RELAY_TEST_ID=host#probe cargo test --workspace -- --ignored relay
-
-# the last mile: what the attach leaves a new pane holding (needs tmux in the image)
 DECK_RELAY_TEST_ID=host#probe cargo test --workspace -- --ignored last_mile
 ```
+
+Or against a container on this machine, over ssh to localhost — no remote Linux
+required, and the only way the **aarch64** artifact ever actually runs, since CI
+is x86_64:
+
+```bash
+container run -d --name probe --entrypoint sleep alpine:3 900
+container exec probe apk add --no-cache tmux
+
+DECK_RELAY_TEST_ID=localhost#probe DECK_RELAY_TEST_ENGINE=container \
+  cargo test --workspace -- --ignored relay
+```
+
+`DECK_RELAY_TEST_ENGINE` points the lane at whatever engine is running; it
+defaults to `docker`. Remote Login has to be on for the ssh hop — deck reaches a
+container as `ssh <host> <engine> exec …`, and a local container is currently
+still reached that way.
