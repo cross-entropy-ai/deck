@@ -906,7 +906,7 @@ fn a_container_session_is_created_with_the_relays_socket() {
     // The inner script is quoted again for the host shell on its way through
     // `<engine> exec`, so assert on what it says rather than on how it is
     // escaped: this socket, guarded, with no fallback to the host's link.
-    assert!(call.contains(&format!("if [ -S ")), "call: {call}");
+    assert!(call.contains("if [ -S "), "call: {call}");
     assert!(call.contains(&agent), "call: {call}");
     assert!(
         call.contains("else unset SSH_AUTH_SOCK ; fi"),
