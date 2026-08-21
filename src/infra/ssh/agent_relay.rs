@@ -62,9 +62,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(8);
 
 const READ_CHUNK: usize = 32 * 1024;
 
-/// The relay, per container architecture, gzipped. One per platform deck itself
-/// publishes a binary for, so a machine that can run deck can also forward an
-/// agent into its containers. Committed rather than built
+/// The relay, per container architecture, gzipped. Committed rather than built
 /// with deck: they are Linux/musl static binaries, and a musl cross-toolchain
 /// (or even rustup) is too much to require of every machine that runs
 /// `cargo build`. `scripts/build-agent-relay.sh` regenerates them.
@@ -72,8 +70,6 @@ const RELAY_X86_64: &[u8] =
     include_bytes!("../../../assets/agent-relay/deck-agent-relay-x86_64-linux.gz");
 const RELAY_AARCH64: &[u8] =
     include_bytes!("../../../assets/agent-relay/deck-agent-relay-aarch64-linux.gz");
-const RELAY_ARMV7: &[u8] =
-    include_bytes!("../../../assets/agent-relay/deck-agent-relay-armv7-linux.gz");
 
 /// The relay build for a container's architecture, as `uname -m` inside it
 /// spells the answer, decompressed and ready to stream.
@@ -85,12 +81,6 @@ pub fn relay_binary(arch: &str) -> Option<Vec<u8>> {
     let compressed = match arch.trim() {
         "x86_64" | "amd64" => RELAY_X86_64,
         "aarch64" | "arm64" => RELAY_AARCH64,
-        // 32-bit ARM, because deck publishes a binary for it: `armv7l` is what a
-        // 32-bit userland reports, and `armv8l` a 64-bit chip running one.
-        // Deliberately *not* `armv6l` — a Pi 1 or Zero cannot run this, and
-        // handing it one would be an illegal instruction rather than a lane
-        // without an agent.
-        "armv7l" | "armv8l" => RELAY_ARMV7,
         _ => return None,
     };
     let mut binary = Vec::new();
