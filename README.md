@@ -73,6 +73,13 @@ Deck uses standard Unicode icons by default, so a Nerd Font is not required.
 Set `DECK_ICON_STYLE=ascii` for the strictest terminal compatibility, or
 `DECK_ICON_STYLE=nerd` to opt into Nerd Font glyphs.
 
+### Containers
+
+Any container can be a lane of its own, with its own sessions: mount it from the
+divider of the machine it runs on — the local section for a container on this
+machine, a host's section for one over ssh. Deck talks to `docker`, `podman`, or
+Apple's `container` on macOS, and needs only a `tmux` (and a POSIX `sh`) inside.
+
 ### Remote hosts
 
 Add hosts with `deck remote add <host>` (resolved through `~/.ssh/config`), and they appear as their own sidebar sections. Deck reuses one SSH connection per host and owns those options itself — tune them under **Settings → Remote**, where you can also turn reuse off; saved port forwards stay configured but inactive while it is off, since they run as `ssh -O` commands against that shared socket.

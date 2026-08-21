@@ -24,7 +24,11 @@ use super::{
 /// This system's id — the `system` half of every [`LaneId`] it produces.
 pub const TMUX: &str = "tmux";
 /// The in-system lane name for the local tmux server.
-const LOCAL: &str = "local";
+/// The local lane's own name. Shared with the transport, which needs the same
+/// spelling to recognise a lane id that means "this machine" — and which has
+/// reserved it since before local containers existed, `host_lane("local")`
+/// having always resolved to the local lane itself.
+const LOCAL: &str = crate::remote_tmux::LOCAL_HOST;
 
 /// Button command ids this system declares on its own dividers (the generic
 /// `…` menu, on both local and remote). Remote-only buttons (reconnect,
@@ -91,6 +95,23 @@ impl TmuxSystem {
         match lane.lane() {
             LOCAL => None,
             host => Some(host),
+        }
+    }
+
+    /// The id whose *engine* this lane's containers would run on: the lane's own
+    /// host for a remote one, and the local sentinel for the local lane, whose
+    /// engine Deck runs right here.
+    ///
+    /// `None` for a container lane, which cannot mount further containers. This
+    /// is what [`host_of`](Self::host_of) cannot answer: it says "not remote",
+    /// where mounting needs "and here is who to ask".
+    pub fn engine_host_of(lane: &LaneId) -> Option<&str> {
+        match Self::host_of(lane) {
+            None => Some(LOCAL),
+            Some(remote_id) => crate::remote_tmux::parse_remote_id(remote_id)
+                .container
+                .is_none()
+                .then_some(remote_id),
         }
     }
 }
@@ -197,7 +218,14 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId, ssh_connection_reuse: bo
                         .map_or(&[][..], |container| container.forwards.as_slice()),
                 })
                 .unwrap_or(&[]);
-            let mut buttons = crate::ssh::divider::divider(forwards, ssh_connection_reuse);
+            // A local container has no ssh connection: no forward count to show
+            // and nothing to reconnect. It gets what the local lane gets, plus
+            // the menu that can unmount it.
+            let mut buttons = if crate::remote_tmux::is_local_id(remote_id) {
+                vec![new_session_button()]
+            } else {
+                crate::ssh::divider::divider(forwards, ssh_connection_reuse)
+            };
             buttons.push(menu_button());
             // A container hangs under the host it runs on: the shell indents it
             // there and folds it away when the host folds. Its full title still
@@ -254,9 +282,11 @@ fn tmux_lane_capabilities(lane: &LaneId, ssh_connection_reuse: bool) -> LaneCapa
         actions: true,
         // Any remote lane can carry forwards, container included: the commands
         // are `ssh -O` against its *host's* master either way, and a container's
-        // rules live in its own config entry. Only the local lane, with no ssh
-        // connection anywhere in reach, has none.
-        port_forwards: ssh_connection_reuse && TmuxSystem::host_of(lane).is_some(),
+        // rules live in its own config entry. Neither the local lane nor a
+        // container on it has an ssh connection anywhere in reach.
+        port_forwards: ssh_connection_reuse
+            && TmuxSystem::host_of(lane)
+                .is_some_and(|remote_id| !crate::remote_tmux::is_local_id(remote_id)),
         // A host is a route to wherever the user names; a container is the
         // destination itself, and where it answers is this system's to find.
         forward_endpoint: if owns_connection {
@@ -264,10 +294,9 @@ fn tmux_lane_capabilities(lane: &LaneId, ssh_connection_reuse: bool) -> LaneCapa
         } else {
             crate::system::ForwardEndpointKind::Lane
         },
-        // Only a host lane can mount containers: the local lane has no engine
-        // Deck talks to (local Docker is out of scope), and a container cannot
-        // mount further containers.
-        mounts: owns_connection,
+        // A host lane, or the local lane — whose engine Deck runs right here. A
+        // container cannot mount further containers.
+        mounts: TmuxSystem::engine_host_of(lane).is_some(),
     }
 }
 
@@ -321,7 +350,11 @@ impl System for TmuxSystem {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         std::iter::once(Self::local_lane())
             .chain(usable_remotes(&remotes).flat_map(|remote| {
-                std::iter::once(Self::host_lane(&remote.host)).chain(
+                // The local entry is not a host: its lane is already the one
+                // above, and `host_lane(LOCAL)` *is* that lane — emitting it
+                // again would duplicate the section. Only its containers are new.
+                let host_lane = (remote.host != LOCAL).then(|| Self::host_lane(&remote.host));
+                host_lane.into_iter().chain(
                     usable_containers(remote)
                         .map(|container| Self::container_lane(&remote.host, &container.name)),
                 )
@@ -418,9 +451,31 @@ impl SummaryTransportProvider for TmuxSystem {
     }
 }
 
+/// The entry a container hangs under, created if this is the first one.
+///
+/// A remote host has an entry because linking it made one. The local lane does
+/// not: it is a lane whether or not anything is mounted under it, so its entry —
+/// the reserved-host one the state file writes back as `local.containers` —
+/// comes into being with its first container. `None` for a host nobody linked,
+/// which is a caller error rather than something to invent.
+fn entry_for<'a>(remotes: &'a mut Vec<RemoteConfig>, host: &str) -> Option<&'a mut RemoteConfig> {
+    if !remotes.iter().any(|remote| remote.host == host) {
+        if host != LOCAL {
+            return None;
+        }
+        remotes.push(RemoteConfig {
+            host: LOCAL.to_string(),
+            forwards: Vec::new(),
+            forward_agent: true,
+            containers: Vec::new(),
+        });
+    }
+    remotes.iter_mut().find(|remote| remote.host == host)
+}
+
 impl LaneMountProvider for TmuxSystem {
     fn discover(&self, lane: &LaneId) -> Result<Vec<MountCandidate>, String> {
-        let Some(host) = Self::host_of(lane) else {
+        let Some(host) = Self::engine_host_of(lane) else {
             return Ok(Vec::new());
         };
         // Hide what is already a lane. One list to consult now that a mount is
@@ -454,7 +509,7 @@ impl LaneMountProvider for TmuxSystem {
     }
 
     fn activate(&self, lane: &LaneId, candidate: &str) -> Result<(), String> {
-        let host = Self::host_of(lane).ok_or("the local lane has no containers")?;
+        let host = Self::engine_host_of(lane).ok_or("a container cannot hold containers")?;
         let (engine, name) =
             parse_mount_candidate(candidate).ok_or("malformed container candidate")?;
         crate::remote_tmux::start_container(host, engine, name)
@@ -466,7 +521,7 @@ impl LaneMountProvider for TmuxSystem {
         candidate: &str,
         remotes: &mut Vec<RemoteConfig>,
     ) -> Option<LaneId> {
-        let host = Self::host_of(lane)?;
+        let host = Self::engine_host_of(lane)?;
         let (engine, name) = parse_mount_candidate(candidate)?;
         // Publish the transport settings BEFORE returning: the shell onboards
         // the lane as soon as it has the id, and the attach spawner reads this
@@ -478,7 +533,7 @@ impl LaneMountProvider for TmuxSystem {
                 agent_sock: None,
             },
         );
-        let remote = remotes.iter_mut().find(|remote| remote.host == host)?;
+        let remote = entry_for(remotes, host)?;
         if !remote
             .containers
             .iter()
@@ -502,7 +557,7 @@ impl LaneMountProvider for TmuxSystem {
                 .remotes
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(remote) = own.iter_mut().find(|remote| remote.host == host) {
+            if let Some(remote) = entry_for(&mut own, host) {
                 if !remote
                     .containers
                     .iter()

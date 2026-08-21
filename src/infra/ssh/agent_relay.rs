@@ -114,18 +114,20 @@ pub fn live_socket(key: &str) -> Option<String> {
 /// Start a relay for `key` (idempotent) and wait, bounded, for its socket to
 /// exist inside the container.
 ///
-/// `argv` is the whole `ssh` argument vector that runs the already-installed
-/// relay on the far side — assembled by the transport that owns the container
-/// spelling, so this module stays free of any notion of hosts, engines or lanes.
+/// `program` and `argv` are the whole invocation that runs the already-installed
+/// relay on the far side — `ssh …` for a remote container, a local `sh -c` for
+/// one on this machine — assembled by the transport that owns the container
+/// spelling, so this module stays free of any notion of hosts, engines or
+/// lanes.
 /// A relay whose child has exited is replaced rather than reused, so a container
 /// that was restarted recovers on the next attach.
-pub fn ensure(key: &str, socket_path: &str, argv: &[String]) -> Result<(), String> {
+pub fn ensure(key: &str, socket_path: &str, program: &str, argv: &[String]) -> Result<(), String> {
     let relay = {
         let mut table = relays();
         match table.get(key) {
             Some(relay) if relay.usable() => Arc::clone(relay),
             _ => {
-                let relay = Relay::spawn(key, socket_path, argv)?;
+                let relay = Relay::spawn(key, socket_path, program, argv)?;
                 table.insert(key.to_string(), Arc::clone(&relay));
                 relay
             }
@@ -206,20 +208,25 @@ struct Inner {
 }
 
 impl Relay {
-    fn spawn(key: &str, socket_path: &str, argv: &[String]) -> Result<Arc<Self>, String> {
+    fn spawn(
+        key: &str,
+        socket_path: &str,
+        program: &str,
+        argv: &[String],
+    ) -> Result<Arc<Self>, String> {
         log(&format!("[{key}] starting relay for {socket_path}"));
-        let mut child = Command::new("ssh")
+        let mut child = Command::new(program)
             .args(argv)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|error| format!("could not spawn ssh for the agent relay: {error}"))?;
+            .map_err(|error| format!("could not spawn {program} for the agent relay: {error}"))?;
         // Taken before the handle is parked in `Inner`: the mux threads own the
         // pipes, `Inner` owns only what killing the child needs.
-        let stdin = child.stdin.take().ok_or("ssh stdin was not piped")?;
-        let stdout = child.stdout.take().ok_or("ssh stdout was not piped")?;
-        let stderr = child.stderr.take().ok_or("ssh stderr was not piped")?;
+        let stdin = child.stdin.take().ok_or("relay stdin was not piped")?;
+        let stdout = child.stdout.take().ok_or("relay stdout was not piped")?;
+        let stderr = child.stderr.take().ok_or("relay stderr was not piped")?;
 
         let relay = Arc::new(Self {
             socket_path: socket_path.to_string(),

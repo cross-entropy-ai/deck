@@ -70,6 +70,24 @@ pub fn parse_remote_id(id: &str) -> RemoteTarget<'_> {
     }
 }
 
+/// The reserved host half of a lane id that means "this machine".
+///
+/// Not a hostname deck could ever reach by ssh, and already reserved before
+/// local containers existed: `TmuxSystem::host_lane("local")` has always been
+/// the local lane itself. That is what makes `local#dev` fall into place — the
+/// section a local container hangs under is the local one, with no special case
+/// in the sidebar at all.
+pub(crate) const LOCAL_HOST: &str = "local";
+
+/// Whether a remote id addresses this machine rather than an ssh destination.
+///
+/// The one place the local/remote split lives: every command below is assembled
+/// the same way for both and then either handed to `ssh` or to a local `sh -c`.
+/// Nothing above the transport asks this question (see CLAUDE.md).
+pub(crate) fn is_local_id(remote_id: &str) -> bool {
+    parse_remote_id(remote_id).host == LOCAL_HOST
+}
+
 /// Per-container transport settings, keyed by remote id. Written whenever the
 /// app config is (re)applied (`TmuxSystem::configure`); read at the two
 /// argv-assembly points (here and the attach spawner). Same shape as the
@@ -230,23 +248,54 @@ pub(crate) fn run_ssh(
     remote_id: &str,
     remote_argv: &[&str],
 ) -> Result<String, CommandError> {
+    let command = lane_command(remote_id, remote_argv, ContainerStdin::Detached);
+    let (program, args) = lane_invocation(remote_id, &command);
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    runner
+        .run(program, &arg_refs, REMOTE_TIMEOUT)
+        .map(|out| out.stdout_trimmed())
+}
+
+/// The one command string the shell on the other side receives: deck's PATH
+/// prelude, then either the caller's command or that command wrapped in
+/// `<engine> exec` for a container id.
+///
+/// Assembled identically whether it will be run here or over ssh — ssh joins its
+/// argv into exactly this string anyway, and a local lane hands it to `sh -c`.
+/// That is what keeps one spelling of every remote command instead of a local
+/// and a remote one drifting apart.
+pub(crate) fn lane_command(remote_id: &str, remote_argv: &[&str], stdin: ContainerStdin) -> String {
     let target = parse_remote_id(remote_id);
-    let mut args = base_ssh_args(target.host);
-    args.push(target.host.to_string());
-    args.push(format!("{REMOTE_PATH_EXPORT} ;"));
-    match target.container {
-        None => args.extend(remote_argv.iter().map(|s| s.to_string())),
-        Some(container) => args.extend(container_exec_argv(
+    let rest = match target.container {
+        None => remote_argv.join(" "),
+        Some(container) => container_exec_argv(
             &container_opts(remote_id).engine,
             container,
             remote_argv,
-            ContainerStdin::Detached,
-        )),
+            stdin,
+        )
+        .join(" "),
+    };
+    format!("{REMOTE_PATH_EXPORT} ; {rest}")
+}
+
+/// Program and argv that run `command` for this lane: `ssh` with deck's
+/// connection options for a remote id, and a local `sh -c` for one that names
+/// this machine.
+///
+/// `sh -c` rather than the engine directly, so the *string* is the same either
+/// way. A local container could take a raw argv with no quoting at all, but then
+/// every command would exist in two spellings and only one of them would be
+/// exercised by the tests that check quoting.
+pub(crate) fn lane_invocation(remote_id: &str, command: &str) -> (&'static str, Vec<String>) {
+    if is_local_id(remote_id) {
+        return ("sh", vec!["-c".to_string(), command.to_string()]);
     }
-    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    runner
-        .run("ssh", &arg_refs, REMOTE_TIMEOUT)
-        .map(|out| out.stdout_trimmed())
+    let target = parse_remote_id(remote_id);
+    let mut args = base_ssh_args(target.host);
+    args.push(target.host.to_string());
+    args.push(command.to_string());
+    ("ssh", args)
 }
 
 /// Wrap a remote command for execution inside a container. The host shell
@@ -308,7 +357,7 @@ fn container_exec_argv(
 /// ([`crate::infra::command::RealRunner::run`]) and must not ask the engine to
 /// hold a stream nothing writes to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ContainerStdin {
+pub(crate) enum ContainerStdin {
     Detached,
     Attached,
 }
@@ -485,7 +534,71 @@ fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Detect
 /// Container engines Deck probes when discovering what a host could mount, in
 /// order. A host may have either or both installed; `docker` comes first because
 /// it is the common case and [`crate::config::DEFAULT_CONTAINER_ENGINE`].
-const CONTAINER_ENGINES: [&str; 2] = ["docker", "podman"];
+/// The engines Deck can discover containers through, and how each one has to be
+/// asked.
+///
+/// Apple's `container` is here because a Mac is a place people run containers
+/// without a docker daemon in sight, and because it is the local lane's engine
+/// on such a machine. It does not speak Go templates — `--format` takes
+/// `json|table|yaml|toml` — so the listing shape is per engine rather than one
+/// format string for all of them.
+const CONTAINER_ENGINES: [Engine; 3] = [
+    Engine {
+        name: "docker",
+        listing: Listing::GoTemplate,
+    },
+    Engine {
+        name: "podman",
+        listing: Listing::GoTemplate,
+    },
+    Engine {
+        name: "container",
+        listing: Listing::Json,
+    },
+];
+
+struct Engine {
+    /// The CLI, and what a mounted lane records as its engine.
+    name: &'static str,
+    listing: Listing,
+}
+
+/// How an engine reports its containers.
+#[derive(PartialEq, Eq)]
+enum Listing {
+    /// `ps -a --format '{{.State}}|{{.Names}}'` — docker and podman.
+    GoTemplate,
+    /// `ls -a --format json` — Apple's engine.
+    Json,
+}
+
+impl Engine {
+    /// The shell command that lists this engine's containers, or nothing at all
+    /// when the engine is not installed.
+    fn probe(&self) -> String {
+        let name = shell_single_quote(self.name);
+        match self.listing {
+            Listing::GoTemplate => format!(
+                "{name} ps -a --format {} 2>/dev/null",
+                shell_single_quote(CONTAINER_LIST_FORMAT)
+            ),
+            Listing::Json => format!("{name} ls -a --format json 2>/dev/null"),
+        }
+    }
+}
+
+/// One container as Apple's engine reports it. Only the two fields Deck needs;
+/// the rest of that JSON is the container's whole configuration.
+#[derive(serde::Deserialize)]
+struct JsonContainer {
+    id: String,
+    status: JsonStatus,
+}
+
+#[derive(serde::Deserialize)]
+struct JsonStatus {
+    state: String,
+}
 
 /// Separates one engine's `ps` output from the next in the combined probe. Must
 /// be shell-safe in any remote shell — see [`AGENT_PROBE_MARKER`].
@@ -523,8 +636,7 @@ fn list_containers_with(runner: &dyn CommandRunner, host: &str) -> Vec<Discovere
     // Discovery always addresses the host itself, never a container: a container
     // cannot mount further containers.
     let host = parse_remote_id(host).host;
-    let format = shell_single_quote(CONTAINER_LIST_FORMAT);
-    // One hop for both engines, blocks separated by the marker so a missing
+    // One hop for every engine, blocks separated by the marker so a missing
     // engine yields an empty block instead of failing the call, ending in `true`
     // so the compound's exit status is the probe's, not the last engine's.
     //
@@ -534,15 +646,7 @@ fn list_containers_with(runner: &dyn CommandRunner, host: &str) -> Vec<Discovere
     // empty command (`… ;  ; echo …`) that every POSIX shell
     // rejects outright — so the probe exited 2 and the `Err` arm below read it
     // as "this host has no engine", on every host.
-    let probes: Vec<String> = CONTAINER_ENGINES
-        .iter()
-        .map(|engine| {
-            format!(
-                "{} ps -a --format {format} 2>/dev/null",
-                shell_single_quote(engine)
-            )
-        })
-        .collect();
+    let probes: Vec<String> = CONTAINER_ENGINES.iter().map(Engine::probe).collect();
     let script = format!(
         "{} ; true",
         probes.join(&format!(" ; echo {ENGINE_PROBE_MARKER} ; "))
@@ -559,6 +663,28 @@ fn list_containers_with(runner: &dyn CommandRunner, host: &str) -> Vec<Discovere
 fn parse_discovered_containers(raw: &str) -> Vec<DiscoveredContainer> {
     let mut out: Vec<DiscoveredContainer> = Vec::new();
     for (engine, block) in CONTAINER_ENGINES.iter().zip(raw.split(ENGINE_PROBE_MARKER)) {
+        if engine.listing == Listing::Json {
+            // An absent engine leaves an empty block, and something else called
+            // `container` leaves whatever it prints: neither parses, and both
+            // mean "this engine has nothing to offer" — the same best-effort
+            // reading the template engines get.
+            let Ok(listed) = serde_json::from_str::<Vec<JsonContainer>>(block.trim()) else {
+                continue;
+            };
+            for found in listed {
+                if crate::config::validate_container_name(&found.id).is_err()
+                    || out.iter().any(|seen| seen.name == found.id)
+                {
+                    continue;
+                }
+                out.push(DiscoveredContainer {
+                    running: found.status.state.eq_ignore_ascii_case("running"),
+                    name: found.id,
+                    engine: engine.name.to_string(),
+                });
+            }
+            continue;
+        }
         for line in block.lines() {
             let Some((state, names)) = line.trim().split_once('|') else {
                 continue;
@@ -581,7 +707,7 @@ fn parse_discovered_containers(raw: &str) -> Vec<DiscoveredContainer> {
             }
             out.push(DiscoveredContainer {
                 name: name.to_string(),
-                engine: (*engine).to_string(),
+                engine: engine.name.to_string(),
                 running: state.trim().eq_ignore_ascii_case("running"),
             });
         }
@@ -1137,24 +1263,18 @@ fn relay_install_command() -> Vec<String> {
 /// Over stdin of the same multiplexed connection as everything else — no second
 /// authentication, and no argv, which could not carry 400 KB anyway.
 pub(crate) fn install_agent_relay(remote_id: &str, binary: Vec<u8>) -> Result<String, String> {
-    let target = parse_remote_id(remote_id);
-    let container = target.container.ok_or("not a container id")?;
+    if parse_remote_id(remote_id).container.is_none() {
+        return Err("not a container id".to_string());
+    }
     let sent = binary.len() as u64;
-    let mut args = base_ssh_args(target.host);
-    args.push(target.host.to_string());
-    args.push(format!("{REMOTE_PATH_EXPORT} ;"));
-    let command = relay_install_command();
-    let refs: Vec<&str> = command.iter().map(String::as_str).collect();
-    args.extend(container_exec_argv(
-        &container_opts(remote_id).engine,
-        container,
-        &refs,
-        // The bytes are the payload, so the engine has to hold the stream.
-        ContainerStdin::Attached,
-    ));
+    let script = relay_install_command();
+    let refs: Vec<&str> = script.iter().map(String::as_str).collect();
+    // The bytes are the payload, so the engine has to hold the stream.
+    let command = lane_command(remote_id, &refs, ContainerStdin::Attached);
+    let (program, args) = lane_invocation(remote_id, &command);
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let raw = crate::infra::command::run_with_stdin_bytes(
-        "ssh",
+        program,
         &arg_refs,
         binary,
         RELAY_INSTALL_TIMEOUT,
@@ -1186,24 +1306,15 @@ pub(crate) fn agent_relay_run_argv(
     remote_id: &str,
     dir: &str,
     socket_path: &str,
-) -> Option<Vec<String>> {
-    let target = parse_remote_id(remote_id);
-    let container = target.container?;
-    let command = format!(
+) -> Option<(&'static str, Vec<String>)> {
+    parse_remote_id(remote_id).container?;
+    let script = format!(
         "{dir}/relay {socket} ; rm -rf {dir}",
         dir = shell_single_quote(dir),
         socket = shell_single_quote(socket_path),
     );
-    let mut args = base_ssh_args(target.host);
-    args.push(target.host.to_string());
-    args.push(format!("{REMOTE_PATH_EXPORT} ;"));
-    args.extend(container_exec_argv(
-        &container_opts(remote_id).engine,
-        container,
-        &[command.as_str()],
-        ContainerStdin::Attached,
-    ));
-    Some(args)
+    let command = lane_command(remote_id, &[script.as_str()], ContainerStdin::Attached);
+    Some(lane_invocation(remote_id, &command))
 }
 
 /// Ask, from inside the container, whether `socket` answers as an *ssh*-agent.
@@ -1287,9 +1398,9 @@ fn start_agent_relay(remote_id: &str) -> Result<String, String> {
         .ok_or_else(|| format!("deck carries no agent relay for {arch:?} containers"))?;
     let dir = install_agent_relay(remote_id, binary)?;
     let socket = container_agent_socket_path();
-    let argv = agent_relay_run_argv(remote_id, &dir, &socket)
+    let (program, argv) = agent_relay_run_argv(remote_id, &dir, &socket)
         .ok_or_else(|| "not a container id".to_string())?;
-    crate::ssh::agent_relay::ensure(remote_id, &socket, &argv)?;
+    crate::ssh::agent_relay::ensure(remote_id, &socket, program, &argv)?;
     Ok(socket)
 }
 
@@ -1606,10 +1717,10 @@ pub fn upload_file(remote_id: &str, local_path: &std::path::Path) -> Result<Stri
         ));
     }
 
-    let args = upload_argv(remote_id, &staged_file_name(local_path));
+    let (program, args) = upload_argv(remote_id, &staged_file_name(local_path));
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let raw =
-        crate::infra::command::run_with_stdin_file("ssh", &arg_refs, local_path, UPLOAD_TIMEOUT)
+        crate::infra::command::run_with_stdin_file(program, &arg_refs, local_path, UPLOAD_TIMEOUT)
             .map_err(|error| upload_error_message(&error))?;
 
     // The remote shell reports the path it wrote, so `$HOME` is expanded by the
@@ -1655,26 +1766,13 @@ fn parse_staged_report(stdout: &str) -> Option<(String, u64)> {
 /// `docker` at all on a Mac remote that has it from OrbStack or Homebrew. One
 /// prelude for both spellings, rather than one that depends on which half of the
 /// `match` below ran.
-fn upload_argv(remote_id: &str, staged_name: &str) -> Vec<String> {
-    let target = parse_remote_id(remote_id);
-    let mut args = base_ssh_args(target.host);
-    args.push(target.host.to_string());
-    args.push(format!("{REMOTE_PATH_EXPORT} ;"));
-    let command = stage_command(staged_name);
-    match target.container {
-        None => args.extend(command),
-        Some(container) => {
-            let refs: Vec<&str> = command.iter().map(String::as_str).collect();
-            args.extend(container_exec_argv(
-                &container_opts(remote_id).engine,
-                container,
-                &refs,
-                // The one call whose payload is a stream rather than argv.
-                ContainerStdin::Attached,
-            ));
-        }
-    }
-    args
+fn upload_argv(remote_id: &str, staged_name: &str) -> (&'static str, Vec<String>) {
+    let script = stage_command(staged_name);
+    let refs: Vec<&str> = script.iter().map(String::as_str).collect();
+    // The one call whose payload is a stream rather than argv, so a container
+    // exec has to hold stdin open.
+    let command = lane_command(remote_id, &refs, ContainerStdin::Attached);
+    lane_invocation(remote_id, &command)
 }
 
 /// The remote-shell command that receives the bytes: create the staging
