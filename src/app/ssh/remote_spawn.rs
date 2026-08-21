@@ -803,16 +803,8 @@ mod tests {
             "tmux hands panes {published:?}"
         );
 
-        let probe = format!(
-            "python3 -c {}",
-            crate::remote_tmux::shell_single_quote(&format!(
-                "import socket,struct;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);\
-                 s.connect(\"{sock}\");s.sendall(struct.pack(\">IB\",1,11));\
-                 d=s.recv(65536);print(\"pane-agent-reply\",d[4])"
-            ))
-        );
-        let answer = crate::remote_tmux::run_ssh(default_runner(), &remote_id, &[probe.as_str()])
-            .expect("probe the published socket");
+        let answer = crate::remote_tmux::ssh_agent_probe(&remote_id, &sock)
+            .expect("probe the address tmux hands panes");
 
         drop(pty);
         let _ = crate::remote_tmux::run_ssh(
@@ -821,9 +813,16 @@ mod tests {
             &[&format!("tmux -u kill-session -t '{session}'")],
         );
 
+        // Type 12 is SSH2_AGENT_IDENTITIES_ANSWER, and a key count above zero
+        // means the answer came from the user's real agent rather than from
+        // something that merely accepted the connection.
         assert!(
-            answer.contains("pane-agent-reply 12"),
+            answer.contains("agent-reply-type 12"),
             "the address tmux hands panes is not a live agent: {answer}"
+        );
+        assert!(
+            !answer.contains("keys 0"),
+            "the agent has no keys: {answer}"
         );
     }
 }

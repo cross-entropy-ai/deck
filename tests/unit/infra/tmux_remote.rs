@@ -805,7 +805,8 @@ fn a_lanes_agent_socket_is_the_one_its_own_filesystem_has() {
 /// rewrite bytes in both directions and corrupt every signing request.
 #[test]
 fn the_agent_relay_rides_a_binary_exec_pipe() {
-    let argv = agent_relay_argv("box#dev", "/tmp/deck-agent-7-1.sock").expect("container id");
+    let argv = agent_relay_run_argv("box#dev", "/tmp/deck-relay.AbC123", "/tmp/agent.sock")
+        .expect("container id");
     let joined = argv.join(" ");
 
     assert!(joined.contains("'docker' exec -i "), "argv: {joined}");
@@ -814,12 +815,18 @@ fn the_agent_relay_rides_a_binary_exec_pipe() {
         "a pty in the mux: {joined}"
     );
     assert!(joined.contains("'dev'"), "argv: {joined}");
-    // Quoted twice over — once for the container's `sh`, once by the transport
-    // for the host's — so match on the value, not on one level's spelling.
-    assert!(joined.contains("DECK_AGENT_SOCK="), "argv: {joined}");
+    // The installed binary, its socket, and the directory it came in — removed
+    // after it exits, which is the only moment deck is still around to do it.
+    // Read at the level the container's `sh` sees, not through the second round
+    // of quoting the engine wrapping adds.
+    let script = container_script_of(&argv);
     assert!(
-        joined.contains("/tmp/deck-agent-7-1.sock"),
-        "argv: {joined}"
+        script.contains("'/tmp/deck-relay.AbC123'/relay '/tmp/agent.sock'"),
+        "script: {script}"
+    );
+    assert!(
+        script.contains("rm -rf '/tmp/deck-relay.AbC123'"),
+        "script: {script}"
     );
     // Rides the same multiplexed connection as every other call to the host.
     assert!(joined.contains("ControlMaster=auto"));
@@ -827,6 +834,72 @@ fn the_agent_relay_rides_a_binary_exec_pipe() {
     // The container's `sh` reads no startup file, so PATH is stated twice: once
     // for the host shell that runs the engine, once inside.
     assert_eq!(joined.matches(REMOTE_PATH_EXPORT).count(), 2);
+}
+
+/// A host has nothing to relay into — it reaches the agent through
+/// `ForwardAgent` — so asking for one is a caller error, not an empty command.
+#[test]
+fn there_is_no_agent_relay_for_a_host_lane() {
+    assert!(agent_relay_run_argv("box", "/tmp/d", "/tmp/whatever.sock").is_none());
+}
+
+/// The install command picks its own directory, and the requirement is stronger
+/// than "writable": deck has to be able to *execute* what it puts there, which a
+/// `noexec` `/tmp` would refuse only at the point of running the relay, far from
+/// anything that could explain it. Each candidate is therefore proved with a
+/// throwaway file that has to actually run.
+#[test]
+fn the_relay_install_proves_it_can_execute_where_it_writes() {
+    let command = relay_install_command().join(" ");
+
+    assert!(
+        command.contains("mktemp -d"),
+        "not a private dir: {command}"
+    );
+    assert!(command.contains("chmod 700"), "world-writable: {command}");
+    assert!(
+        command.contains("\"$t/probe\" 2>/dev/null"),
+        "no exec proof: {command}"
+    );
+    assert!(
+        command.contains(RELAY_NO_EXEC_DIR),
+        "silent failure: {command}"
+    );
+    // Same guarantee the paste staging gives: rename into place, and report the
+    // size back, because every step of this chain exits 0 on a short stream.
+    assert!(command.contains("mv \"$d/relay.part\" \"$d/relay\""));
+    assert!(command.contains("wc -c < \"$d/relay\""));
+    // CLAUDE.md: a token a remote shell would read as something else.
+    assert!(
+        !command
+            .split_whitespace()
+            .any(|token| token.starts_with('=') || token.starts_with('#')),
+        "a token the remote shell would take for something else: {command}"
+    );
+}
+
+/// The two relay commands do not go through `run_ssh`, so
+/// `every_assembled_remote_command_is_valid_shell` cannot reach them — and they
+/// are the most shell-dense strings deck sends anywhere.
+#[test]
+fn the_relay_commands_are_valid_shell_in_both_wrappings() {
+    let install = relay_install_command();
+    let refs: Vec<&str> = install.iter().map(String::as_str).collect();
+    let wrapped = container_exec_argv("docker", "dev", &refs, ContainerStdin::Attached).join(" ");
+    assert_remote_shells_parse("relay_install", "box#dev", &wrapped);
+    assert_remote_shells_parse(
+        "relay_install",
+        "box",
+        &format!("{REMOTE_PATH_EXPORT} ; {}", install.join(" ")),
+    );
+
+    let run = agent_relay_run_argv("box#dev", "/tmp/deck-relay.AbC123", "/tmp/agent.sock")
+        .expect("container id");
+    assert_remote_shells_parse(
+        "relay_run",
+        "box#dev",
+        &remote_command_of("box#dev", &run.join(" ")),
+    );
 }
 
 /// Which agent socket a container lane publishes is a policy question with three
@@ -858,13 +931,6 @@ fn a_container_lanes_agent_socket_answers_the_cheap_cases_first() {
     ]));
     assert_eq!(container_agent_sock("relay-locked#dev"), None);
     crate::ssh::set_agent_forward_disabled(std::collections::HashSet::new());
-}
-
-/// A host has nothing to relay into — it reaches the agent through
-/// `ForwardAgent` — so asking for one is a caller error, not an empty command.
-#[test]
-fn there_is_no_agent_relay_for_a_host_lane() {
-    assert!(agent_relay_argv("box", "/tmp/whatever.sock").is_none());
 }
 
 #[test]
@@ -921,6 +987,21 @@ fn a_container_session_is_created_with_the_relays_socket() {
 /// is included: an earlier version cut at the PATH prelude instead, which made
 /// the harness skip any fragment emitted ahead of it — the exact shape of the
 /// bug the tests below exist to catch.
+/// The command a *container's* `sh -c` receives, with the engine wrapping's
+/// quoting undone.
+///
+/// Every container-bound command is quoted twice — once for whatever it says to
+/// the container's shell, once by `container_exec_argv` for the host's — so
+/// asserting on the raw argv means asserting on `'\''` escapes. This reads the
+/// last argv element (the `sh -c` word) back as the inner shell sees it.
+fn container_script_of(argv: &[String]) -> String {
+    let word = argv.last().expect("an argv with a command in it");
+    word.strip_prefix('\'')
+        .and_then(|rest| rest.strip_suffix('\''))
+        .unwrap_or(word)
+        .replace("'\\''", "'")
+}
+
 fn remote_command_of(remote_id: &str, call: &str) -> String {
     let host = parse_remote_id(remote_id).host;
     let head = format!("{} {host} ", base_ssh_args(host).join(" "));
@@ -1593,4 +1674,58 @@ fn a_connections_own_marker_is_named_by_the_sweep_that_follows_it() {
 
     assert_eq!(named, vec![name.to_string()]);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// End-to-end against a real container: the probe, the install stream and the
+/// exec all happen two hops away, and the interesting failures (a `noexec`
+/// `/tmp`, a truncated transfer, a shell that re-parsed something it should not
+/// have) exist only over there.
+///
+/// Ignored, because it needs a reachable host, a running container and a local
+/// agent holding at least one key:
+///
+/// ```text
+/// DECK_RELAY_TEST_ID=host#container cargo test --workspace -- --ignored relay
+/// ```
+///
+/// The container needs no mount, no agent socket of its own, no root — **and no
+/// interpreter**: deck brings the relay with it, and the check runs through that
+/// same binary's `--probe` mode rather than borrowing a python or an ssh client
+/// from the image. A stock `mongo` or `nginx` container is a fair test precisely
+/// because there is nothing in it to borrow.
+#[test]
+#[ignore = "needs a live host, container and ssh-agent"]
+fn a_real_container_reaches_this_machines_agent() {
+    let Ok(remote_id) = std::env::var("DECK_RELAY_TEST_ID") else {
+        panic!("set DECK_RELAY_TEST_ID=host#container");
+    };
+    assert!(
+        crate::ssh::agent_relay::local_agent_socket().is_some(),
+        "this machine has no SSH_AUTH_SOCK to forward"
+    );
+
+    let socket = container_agent_sock(&remote_id)
+        .expect("the relay comes up (DECK_AGENT_LOG has the reason if it did not)");
+    assert!(socket.starts_with("/tmp/deck-agent-"), "socket: {socket}");
+    // A second ask must not touch the network: a relay lives as long as this
+    // process, so every reattach after the first should be free.
+    assert_eq!(
+        crate::ssh::agent_relay::live_socket(&remote_id).as_deref(),
+        Some(socket.as_str())
+    );
+
+    let answer = ssh_agent_probe(&remote_id, &socket).expect("probe the relay's socket");
+    // Type 12 is SSH2_AGENT_IDENTITIES_ANSWER: nothing but an agent sends it.
+    assert!(
+        answer.contains("agent-reply-type 12"),
+        "no agent answered inside the container: {answer}"
+    );
+    let keys: u32 = answer
+        .split_once("keys ")
+        .and_then(|(_, rest)| rest.split_whitespace().next())
+        .and_then(|count| count.parse().ok())
+        .unwrap_or(0);
+    assert!(keys > 0, "the agent answered with no keys: {answer}");
+
+    crate::ssh::agent_relay::shutdown_all();
 }

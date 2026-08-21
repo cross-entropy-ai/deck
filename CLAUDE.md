@@ -43,8 +43,11 @@ Source is split into five top-level modules under `src/` (plus `main.rs`).
   `infra/agent.rs`, etc. At the crate root these are aliased as
   `crate::tmux` (local) and `crate::remote_tmux` (remote). The one
   stateful exception is `infra/ssh/agent_relay.rs`, which owns a child
-  process and its mux threads per container lane — see
-  `docs/ssh-agent-forwarding.md` for what it forwards and why a container
+  process and its mux threads per container lane. Its container-side half
+  is the `agent-relay` workspace crate, a dependency-free static binary
+  deck embeds from `assets/agent-relay/` (rebuilt by
+  `scripts/build-agent-relay.sh`, never by `cargo build`) and streams into
+  the container — see `docs/ssh-agent-forwarding.md` for why a container
   cannot be served the way a host is.
 - **`session/`**: the `SessionControl` control-plane trait
   (`session/local.rs`, `session/remote.rs`, `session/executor.rs`); a

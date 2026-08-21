@@ -86,7 +86,7 @@ Add hosts with `deck remote add <host>` (resolved through `~/.ssh/config`), and 
 >     forward_agent: false
 > ```
 >
-> Container lanes get the same thing without a bind mount, root, or recreating the container: deck relays the agent over the container's `exec` channel, which needs a `python3` in the image. `forward_agent: false` turns that off too. See [`docs/ssh-agent-forwarding.md`](docs/ssh-agent-forwarding.md).
+> Container lanes get the same thing without a bind mount, root, recreating the container, or anything installed in the image: deck streams a small static relay in and forwards the agent over the container's own `exec` channel. `forward_agent: false` turns that off too. See [`docs/ssh-agent-forwarding.md`](docs/ssh-agent-forwarding.md).
 
 ## Develop
 

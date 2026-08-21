@@ -1089,30 +1089,153 @@ pub(crate) fn lane_agent_socket_token(remote_id: &str) -> String {
     }
 }
 
-/// The `ssh` argv that lands the agent-relay payload inside a container: the
-/// same multiplexed connection every other call to this host rides, then
-/// `<engine> exec -i` with the payload script as the container `sh`'s command.
+/// How long the relay install may take: one ~400 KB stream into the container
+/// over the host's existing master. Generous next to what that costs warm, and
+/// still a ceiling on a stall rather than an expected wait.
+const RELAY_INSTALL_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// What the container reports when nothing deck can write to will also let it
+/// execute — a hardened image with `noexec` everywhere it can reach.
+const RELAY_NO_EXEC_DIR: &str = "deck-agent-relay-no-exec-dir";
+
+/// The container-shell command that receives the relay binary on stdin.
+///
+/// It picks the directory rather than being told one: `/tmp` is normally the
+/// answer, but an image may mount it `noexec`, and the failure would otherwise
+/// surface as an unexplained `exec` error. Each candidate is tried with a
+/// throwaway file that has to actually run, so the answer means "this is a place
+/// deck can execute from", not merely "this is writable". `mktemp -d` gives a
+/// `0700` directory of our own, which is what keeps another account in a shared
+/// container from planting the binary deck is about to run.
+///
+/// The write goes to a `.part` and is renamed, and the byte count is read back,
+/// for the reason [`stage_command`] documents at length: every step of this
+/// chain exits 0 on a stream that ended early, so the size is the only thing
+/// separating an installed relay from a path to nothing.
+///
+/// POSIX-sh only, and nothing here starts with `=`, `-` or `#` — see CLAUDE.md
+/// on remote shells re-parsing what ssh sends.
+fn relay_install_command() -> Vec<String> {
+    vec![format!(
+        "d= ; for c in \"${{TMPDIR:-/tmp}}\" \"$HOME\" /dev/shm ; do \
+         [ -n \"$c\" ] || continue ; \
+         t=$(mktemp -d \"$c/deck-relay.XXXXXX\" 2>/dev/null) || continue ; \
+         printf 'exit 0\\n' > \"$t/probe\" && chmod 700 \"$t/probe\" 2>/dev/null \
+         && \"$t/probe\" 2>/dev/null && {{ rm -f \"$t/probe\" ; d=$t ; break ; }} ; \
+         rm -rf \"$t\" ; \
+         done ; \
+         [ -n \"$d\" ] || {{ echo {RELAY_NO_EXEC_DIR} >&2 ; exit 1 ; }} ; \
+         cat > \"$d/relay.part\" && chmod 700 \"$d/relay.part\" \
+         && mv \"$d/relay.part\" \"$d/relay\" || exit 1 ; \
+         printf '%s\\n' \"$d\" ; wc -c < \"$d/relay\""
+    )]
+}
+
+/// Stream the relay into a container and return the private directory it landed
+/// in, as that side spells it.
+///
+/// Over stdin of the same multiplexed connection as everything else — no second
+/// authentication, and no argv, which could not carry 400 KB anyway.
+pub(crate) fn install_agent_relay(remote_id: &str, binary: Vec<u8>) -> Result<String, String> {
+    let target = parse_remote_id(remote_id);
+    let container = target.container.ok_or("not a container id")?;
+    let sent = binary.len() as u64;
+    let mut args = base_ssh_args(target.host);
+    args.push(target.host.to_string());
+    args.push(format!("{REMOTE_PATH_EXPORT} ;"));
+    let command = relay_install_command();
+    let refs: Vec<&str> = command.iter().map(String::as_str).collect();
+    args.extend(container_exec_argv(
+        &container_opts(remote_id).engine,
+        container,
+        &refs,
+        // The bytes are the payload, so the engine has to hold the stream.
+        ContainerStdin::Attached,
+    ));
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let raw = crate::infra::command::run_with_stdin_bytes(
+        "ssh",
+        &arg_refs,
+        binary,
+        RELAY_INSTALL_TIMEOUT,
+    )
+    .map_err(|error| format!("could not install the agent relay: {error}"))?;
+    let (dir, landed) = parse_staged_report(&raw.stdout_trimmed())
+        .ok_or_else(|| "the container did not report where the relay landed".to_string())?;
+    if landed != sent {
+        return Err(format!("the container stored {landed} of {sent} bytes"));
+    }
+    Ok(dir)
+}
+
+/// The `ssh` argv that runs an installed relay: the same multiplexed connection
+/// every other call to this host rides, then `<engine> exec -i`.
 ///
 /// `-i` and no `-t`: the exec's stdio *is* the mux, so it must stay a binary
 /// pipe. A pty in the middle would translate bytes in both directions and every
 /// signing request would arrive corrupted.
 ///
+/// The `rm -rf` after it is why this is not an `exec`: the relay's own directory
+/// outlives it otherwise, and the container has no other moment when deck is
+/// still around to clean up. The shell that waits costs one process and passes
+/// stdio through untouched.
+///
 /// `None` for a host id — there is nothing to relay into, and a host reaches the
 /// agent through `ForwardAgent` instead.
-pub(crate) fn agent_relay_argv(remote_id: &str, socket_path: &str) -> Option<Vec<String>> {
+pub(crate) fn agent_relay_run_argv(
+    remote_id: &str,
+    dir: &str,
+    socket_path: &str,
+) -> Option<Vec<String>> {
     let target = parse_remote_id(remote_id);
     let container = target.container?;
-    let script = crate::ssh::agent_relay::payload_script(socket_path);
+    let command = format!(
+        "{dir}/relay {socket} ; rm -rf {dir}",
+        dir = shell_single_quote(dir),
+        socket = shell_single_quote(socket_path),
+    );
     let mut args = base_ssh_args(target.host);
     args.push(target.host.to_string());
     args.push(format!("{REMOTE_PATH_EXPORT} ;"));
     args.extend(container_exec_argv(
         &container_opts(remote_id).engine,
         container,
-        &[script.as_str()],
+        &[command.as_str()],
         ContainerStdin::Attached,
     ));
     Some(args)
+}
+
+/// Ask, from inside the container, whether `socket` answers as an *ssh*-agent.
+///
+/// (`agent_probe` in this module is about coding agents in panes; this one is
+/// about the socket that signs with the user's keys.)
+///
+/// Uses the relay's own `--probe` mode, installed the same way the relay is:
+/// a forwarded agent cannot be checked from the outside, because the socket only
+/// exists in the container's filesystem, and reaching for an interpreter or an
+/// ssh client in there is the requirement deck ships the relay to avoid. Returns
+/// the probe's line — `agent-reply-type 12 keys 3` when a real agent replied.
+///
+/// Test-only for now: nothing in the product asks the question, and installing a
+/// second copy of the relay to answer it is not something to do behind a user's
+/// back on every attach. The relay's `--probe` mode itself is worth keeping
+/// either way — it is what a person runs by hand inside a container when a pane
+/// says `Could not open a connection to your authentication agent`.
+#[cfg(test)]
+pub(crate) fn ssh_agent_probe(remote_id: &str, socket: &str) -> Result<String, String> {
+    let arch = run_ssh(default_runner(), remote_id, &["uname -m"])
+        .map_err(|error| format!("could not ask the container its architecture: {error}"))?;
+    let binary = crate::ssh::agent_relay::relay_binary(&arch)
+        .ok_or_else(|| format!("deck carries no agent relay for {arch:?} containers"))?;
+    let dir = install_agent_relay(remote_id, binary)?;
+    let script = format!(
+        "{dir}/relay --probe {socket} ; s=$? ; rm -rf {dir} ; exit $s",
+        dir = shell_single_quote(&dir),
+        socket = shell_single_quote(socket),
+    );
+    run_ssh(default_runner(), remote_id, &[script.as_str()])
+        .map_err(|error| format!("the agent probe failed inside the container: {error}"))
 }
 
 /// What a container lane exports as `SSH_AUTH_SOCK` on attach, starting the
@@ -1127,10 +1250,12 @@ pub(crate) fn agent_relay_argv(remote_id: &str, socket_path: &str) -> Option<Vec
 ///    agent to that machine", and a container on it is on it — even though the
 ///    relay would not put the agent on the host at all.
 /// 3. **No local agent, no relay.** Nothing to forward.
+/// 4. **A relay already up is reused**, without touching the network: it lives
+///    as long as this deck process, so every reattach after the first is free.
 ///
-/// A relay that cannot come up (no python in the image, an unwritable `/tmp`)
-/// yields `None`, and the lane attaches without an agent — the same state it was
-/// in before this existed. `DECK_AGENT_LOG` has the reason.
+/// A relay that cannot come up yields `None`, and the lane attaches without an
+/// agent — the same state it was in before this existed. `DECK_AGENT_LOG` has
+/// the reason.
 pub(crate) fn container_agent_sock(remote_id: &str) -> Option<String> {
     if let Some(configured) = container_opts(remote_id).agent_sock {
         return Some(configured);
@@ -1141,15 +1266,31 @@ pub(crate) fn container_agent_sock(remote_id: &str) -> Option<String> {
         return None;
     }
     crate::ssh::agent_relay::local_agent_socket()?;
-    let path = container_agent_socket_path();
-    let argv = agent_relay_argv(remote_id, &path)?;
-    match crate::ssh::agent_relay::ensure(remote_id, &path, &argv) {
-        Ok(()) => Some(path),
+    if let Some(live) = crate::ssh::agent_relay::live_socket(remote_id) {
+        return Some(live);
+    }
+    match start_agent_relay(remote_id) {
+        Ok(socket) => Some(socket),
         Err(error) => {
             crate::ssh::agent_relay::log(&format!("[{remote_id}] no agent socket: {error}"));
             None
         }
     }
+}
+
+/// Ask the container what it runs on, put the matching relay build there, and
+/// run it. Three hops on a warm master, once per container lane per deck run.
+fn start_agent_relay(remote_id: &str) -> Result<String, String> {
+    let arch = run_ssh(default_runner(), remote_id, &["uname -m"])
+        .map_err(|error| format!("could not ask the container its architecture: {error}"))?;
+    let binary = crate::ssh::agent_relay::relay_binary(&arch)
+        .ok_or_else(|| format!("deck carries no agent relay for {arch:?} containers"))?;
+    let dir = install_agent_relay(remote_id, binary)?;
+    let socket = container_agent_socket_path();
+    let argv = agent_relay_run_argv(remote_id, &dir, &socket)
+        .ok_or_else(|| "not a container id".to_string())?;
+    crate::ssh::agent_relay::ensure(remote_id, &socket, &argv)?;
+    Ok(socket)
 }
 
 /// Transport settings for one attach, with the lane's agent socket resolved —

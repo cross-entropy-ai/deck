@@ -10,38 +10,36 @@
 //! own stdio — so that is what deck uses:
 //!
 //! ```text
-//!   pane ── /tmp/deck-agent-<pid>-<n>.sock ── relay payload
+//!   pane ── /tmp/deck-agent-<pid>-<n>.sock ── deck-agent-relay
 //!                                  (container) │ stdout/stdin frames
 //!                                              │ docker exec -i
 //!                                              │ ssh (this host's master)
 //!   local $SSH_AUTH_SOCK ────── mux ───────────┘  (deck, this module)
 //! ```
 //!
-//! One `ssh … <engine> exec -i … python3` child per container lane. Inside, a
-//! small payload ([`PAYLOAD`]) listens on a unix socket *in the container's own
-//! filesystem* and multiplexes every connection it accepts over its stdio; here,
-//! each channel is de-multiplexed onto its own connection to the user's local
-//! agent. This is the shape VS Code's Dev Containers uses for the same problem
-//! (`vscode-ssh-auth-<uuid>.sock` in the container, tunneled to the client's
-//! `$SSH_AUTH_SOCK` over its own RPC channel), and for the same reason: it is
-//! the only path that needs neither a pre-existing bind mount, nor root on the
-//! host, nor recreating the container.
+//! The container side is [`crate::agent_relay`]'s binary: a dependency-free,
+//! `forbid(unsafe_code)` static musl build that deck **carries and streams in**,
+//! one per architecture, compressed, from `assets/agent-relay/`. Shipping the
+//! program rather than asking the image for an interpreter is the whole point of
+//! this design — a container is someone else's filesystem, and "install python
+//! first" is not a thing deck gets to require. `scripts/build-agent-relay.sh`
+//! rebuilds those artifacts; `docs/ssh-agent-forwarding.md` covers the rest.
 //!
 //! Two consequences worth stating outright:
 //!
 //! - **The host's `ForwardAgent` is not in the path.** Keys reach the container
-//!   from *this* process, so a container lane works even where the host has
-//!   agent forwarding off — which is why [`crate::remote_tmux::container_agent_sock`]
-//!   still refuses to start a relay for such a host: `forward_agent: false`
-//!   means "don't expose my agent to that machine", and a container on it is on
-//!   it.
-//! - **It needs a python in the image.** That is the one thing deck cannot
-//!   supply without shipping a binary into someone's container; without it the
-//!   lane simply has no agent (and `agent_sock` remains for images that were
-//!   started with a socket bind-mounted).
+//!   from *this* process, so a container lane would work even where the host has
+//!   agent forwarding off — which is why
+//!   [`crate::remote_tmux::container_agent_sock`] still refuses to start a relay
+//!   for such a host: `forward_agent: false` means "don't expose my agent to
+//!   that machine", and a container on it is on it.
+//! - **Anything in the container can use the agent** while the relay is up,
+//!   exactly as anything on a host can while `ForwardAgent` is on. The socket is
+//!   `0600` and the binary lands in a private directory, so "anything" means
+//!   processes running as the same user, not every account in the image.
 //!
-//! `DECK_AGENT_LOG=/tmp/deck-agent.log` records the relay's own diagnostics and
-//! everything the payload writes to stderr. Nothing is opened when it is unset.
+//! `DECK_AGENT_LOG=/tmp/deck-agent.log` records this module's diagnostics and
+//! everything the relay writes to stderr. Nothing is opened when it is unset.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -51,46 +49,72 @@ use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// Written to stderr by the payload once its socket is bound and listening.
-/// Readiness has to come out of band: stdout is the mux channel.
-pub const READY_MARKER: &str = "deck-agent-relay ready";
+use agent_relay::{encode_frame, FrameDecoder, READY_MARKER};
 
-/// What the container's `sh` reports when the image has no python at all.
-/// Recognizable in the log, and the only failure the user can act on.
-pub const NO_PYTHON_MARKER: &str = "deck-agent-relay no-python";
-
-/// How long [`ensure`] waits for the payload to bind before giving up on it.
+/// How long [`ensure`] waits for the relay to bind before giving up on it.
 ///
 /// The wait exists because the attach prelude only publishes `SSH_AUTH_SOCK`
-/// when the socket is already there (`[ -S … ]`), so a relay that binds a
-/// moment *after* the attach would leave that lane's panes without an agent
-/// until the next reconnect. Cold chain here is ssh (multiplexed on the host's
-/// existing master) + `<engine> exec` + interpreter start.
+/// when the socket is already there (`[ -S … ]`), so a relay that binds a moment
+/// *after* the attach would leave that lane's panes without an agent until the
+/// next reconnect. By this point the binary is already installed, so what is
+/// being waited for is one `exec` and a `bind`.
 const READY_TIMEOUT: Duration = Duration::from_secs(8);
-
-/// Frames larger than this are a desynchronised stream, not a signing request:
-/// the ssh-agent protocol caps a message at 256 KiB.
-const MAX_FRAME: u32 = 1 << 20;
 
 const READ_CHUNK: usize = 32 * 1024;
 
-/// The local end of the agent socket, or `None` when the user is running
-/// without an agent (nothing to forward, so no relay is started).
+/// The relay, per container architecture, gzipped. Committed rather than built
+/// with deck: they are Linux/musl static binaries, and a musl cross-toolchain
+/// (or even rustup) is too much to require of every machine that runs
+/// `cargo build`. `scripts/build-agent-relay.sh` regenerates them.
+const RELAY_X86_64: &[u8] =
+    include_bytes!("../../../assets/agent-relay/deck-agent-relay-x86_64-linux.gz");
+const RELAY_AARCH64: &[u8] =
+    include_bytes!("../../../assets/agent-relay/deck-agent-relay-aarch64-linux.gz");
+
+/// The relay build for a container's architecture, as `uname -m` inside it
+/// spells the answer, decompressed and ready to stream.
+///
+/// `None` for anything else, which is honest rather than hopeful: sending an
+/// ELF for the wrong machine would fail at `exec` with a message nobody can act
+/// on, and the two architectures here are the ones Linux containers run on.
+pub fn relay_binary(arch: &str) -> Option<Vec<u8>> {
+    let compressed = match arch.trim() {
+        "x86_64" | "amd64" => RELAY_X86_64,
+        "aarch64" | "arm64" => RELAY_AARCH64,
+        _ => return None,
+    };
+    let mut binary = Vec::new();
+    flate2::read::GzDecoder::new(compressed)
+        .read_to_end(&mut binary)
+        .ok()?;
+    Some(binary)
+}
+
+/// The local end of the agent socket, or `None` when the user is running without
+/// an agent (nothing to forward, so no relay is started).
 pub fn local_agent_socket() -> Option<String> {
     std::env::var("SSH_AUTH_SOCK")
         .ok()
         .filter(|path| !path.is_empty())
 }
 
+/// The socket of a relay that is already up for `key`, without touching the
+/// network. Lets a reattach skip the probe-install-exec sequence entirely, which
+/// is the common case: a relay lives as long as the deck process.
+pub fn live_socket(key: &str) -> Option<String> {
+    let relay = relays().get(key).map(Arc::clone)?;
+    let inner = relay.lock();
+    matches!(inner.state, State::Ready).then(|| relay.socket_path.clone())
+}
+
 /// Start a relay for `key` (idempotent) and wait, bounded, for its socket to
 /// exist inside the container.
 ///
-/// `argv` is the whole `ssh` argument vector that lands the payload on the far
-/// side — assembled by the transport that owns the container spelling, so this
-/// module stays free of any notion of hosts, engines or lanes. A relay whose
-/// child has exited (or never came up) is replaced rather than reused, so a
-/// container that was restarted, or an image that has since grown a python,
-/// recovers on the next attach.
+/// `argv` is the whole `ssh` argument vector that runs the already-installed
+/// relay on the far side — assembled by the transport that owns the container
+/// spelling, so this module stays free of any notion of hosts, engines or lanes.
+/// A relay whose child has exited is replaced rather than reused, so a container
+/// that was restarted recovers on the next attach.
 pub fn ensure(key: &str, socket_path: &str, argv: &[String]) -> Result<(), String> {
     let relay = {
         let mut table = relays();
@@ -106,10 +130,10 @@ pub fn ensure(key: &str, socket_path: &str, argv: &[String]) -> Result<(), Strin
     relay.wait_ready(READY_TIMEOUT)
 }
 
-/// Kill every relay child. Called on the way out so a payload that is wedged
+/// Kill every relay child. Called on the way out so a relay that is wedged
 /// writing to a stdout nobody reads any more cannot outlive deck: its `ssh`
-/// would sit there holding a channel open, and the container-side interpreter
-/// only notices the connection is gone when it next reads its stdin.
+/// would sit there holding a channel open, and the container-side process only
+/// notices the connection is gone when it next reads its stdin.
 pub fn shutdown_all() {
     let drained: Vec<Arc<Relay>> = relays().drain().map(|(_, relay)| relay).collect();
     for relay in drained {
@@ -117,44 +141,12 @@ pub fn shutdown_all() {
     }
 }
 
-/// The POSIX-sh command that runs the payload on the far side, given a shell
-/// that has already stated deck's `PATH`.
-///
-/// Everything crosses two shells — the host's login shell re-parses what ssh
-/// sends, then the container's `sh -c` re-parses what the engine passes on — so
-/// each value is quoted once here and once more by the transport when it embeds
-/// this script. The payload travels base64-encoded for that reason: a blob of
-/// `[A-Za-z0-9+/=]` has nothing either shell can act on, and the only quoted
-/// token that has to survive both parses is the fixed runner expression, which
-/// is written with double quotes so single-quoting it adds no escapes at all.
-///
-/// `exec` so the interpreter replaces the shell: one process to signal, and no
-/// `sh` left holding the exec's stdio between deck and the payload.
-pub fn payload_script(socket_path: &str) -> String {
-    const RUNNER: &str =
-        "import base64,os;exec(base64.b64decode(os.environ[\"DECK_AGENT_PAYLOAD\"]))";
-    static ENCODED: LazyLock<String> = LazyLock::new(|| base64(PAYLOAD.as_bytes()));
-
-    let quote = crate::remote_tmux::shell_single_quote;
-    format!(
-        "DECK_AGENT_SOCK={sock} ; DECK_AGENT_PAYLOAD={payload} ; \
-         export DECK_AGENT_SOCK DECK_AGENT_PAYLOAD ; \
-         if command -v python3 >/dev/null 2>&1 ; then exec python3 -c {runner} ; \
-         elif command -v python >/dev/null 2>&1 ; then exec python -c {runner} ; \
-         else echo {missing} >&2 ; exit 127 ; fi",
-        sock = quote(socket_path),
-        payload = quote(&ENCODED),
-        runner = quote(RUNNER),
-        missing = quote(NO_PYTHON_MARKER),
-    )
-}
-
 /// Append one diagnostic line when `DECK_AGENT_LOG` names a file.
 ///
 /// Same shape as [`crate::seqlog`]: opt-in, and nothing is opened when the
 /// variable is unset. A relay failure is otherwise invisible — the attach
-/// succeeds either way, the lane just has no agent — and the interesting half
-/// of the story is written by a python process two hops away.
+/// succeeds either way, the lane just has no agent — and half the story is
+/// written by a process two hops away.
 pub(crate) fn log(line: &str) {
     let Ok(path) = std::env::var("DECK_AGENT_LOG") else {
         return;
@@ -188,14 +180,15 @@ fn relays() -> MutexGuard<'static, HashMap<String, Arc<Relay>>> {
 enum State {
     /// Child spawned, socket not confirmed yet.
     Starting,
-    /// The payload reported its socket bound.
+    /// The relay reported its socket bound.
     Ready,
-    /// The child is gone, with the best explanation we have — the payload's own
+    /// The child is gone, with the best explanation we have — the relay's own
     /// last stderr line when it left one.
     Gone(String),
 }
 
 struct Relay {
+    socket_path: String,
     inner: Mutex<Inner>,
     ready: Condvar,
 }
@@ -203,7 +196,7 @@ struct Relay {
 struct Inner {
     state: State,
     child: Option<Child>,
-    /// Last line the payload wrote to stderr, so a child that dies without
+    /// Last line the relay wrote to stderr, so a child that dies without
     /// explaining itself can still be reported with the reason it printed.
     last_stderr: Option<String>,
 }
@@ -225,6 +218,7 @@ impl Relay {
         let stderr = child.stderr.take().ok_or("ssh stderr was not piped")?;
 
         let relay = Arc::new(Self {
+            socket_path: socket_path.to_string(),
             inner: Mutex::new(Inner {
                 state: State::Starting,
                 child: Some(child),
@@ -262,8 +256,7 @@ impl Relay {
     }
 
     /// Whether this entry is worth reusing. A `Gone` relay is not: replacing it
-    /// is how a restarted container, or an image that has since grown a python,
-    /// comes back without deck restarting.
+    /// is how a restarted container comes back without deck restarting.
     fn usable(&self) -> bool {
         !matches!(self.lock().state, State::Gone(_))
     }
@@ -277,8 +270,8 @@ impl Relay {
     }
 
     /// Record that the child is gone. `reason` is the mux thread's own account;
-    /// the payload's last stderr line wins when there is one, because "no
-    /// python in the image" is worth more to the reader than "stdout closed".
+    /// the relay's last stderr line wins when there is one, because "no writable
+    /// exec directory" is worth more to the reader than "stdout closed".
     fn mark_gone(&self, reason: String) {
         let mut inner = self.lock();
         let detail = inner.last_stderr.clone().unwrap_or(reason);
@@ -359,61 +352,15 @@ fn close_all(channels: &Channels) {
     }
 }
 
-/// `[id: u32 BE][len: u32 BE][bytes]`, `len == 0` meaning "this channel is
-/// done". Symmetric in both directions; the only stateful part is that ids are
-/// minted by the accepting (container) side.
-fn encode_frame(id: u32, payload: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(8 + payload.len());
-    out.extend_from_slice(&id.to_be_bytes());
-    out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-    out.extend_from_slice(payload);
-    out
-}
-
-/// Pull whole frames out of a byte stream that arrives in arbitrary chunks.
-#[derive(Default)]
-struct FrameDecoder {
-    buf: Vec<u8>,
-}
-
-impl FrameDecoder {
-    fn push(&mut self, chunk: &[u8]) {
-        self.buf.extend_from_slice(chunk);
-    }
-
-    /// `Ok(None)` when the buffer holds no complete frame yet; `Err` only for a
-    /// length no ssh-agent message could have, which means the stream is
-    /// desynchronised and the relay has to be torn down rather than guessed at.
-    fn next_frame(&mut self) -> Result<Option<(u32, Vec<u8>)>, String> {
-        if self.buf.len() < 8 {
-            return Ok(None);
-        }
-        let id = u32::from_be_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]]);
-        let len = u32::from_be_bytes([self.buf[4], self.buf[5], self.buf[6], self.buf[7]]);
-        if len > MAX_FRAME {
-            return Err(format!(
-                "relay framing lost sync (frame claims {len} bytes)"
-            ));
-        }
-        let len = len as usize;
-        if self.buf.len() < 8 + len {
-            return Ok(None);
-        }
-        let payload = self.buf[8..8 + len].to_vec();
-        self.buf.drain(..8 + len);
-        Ok(Some((id, payload)))
-    }
-}
-
 fn write_frame(writer: &Arc<Mutex<ChildStdin>>, id: u32, payload: &[u8]) -> bool {
     let frame = encode_frame(id, payload);
     let mut stdin = writer.lock().unwrap_or_else(PoisonError::into_inner);
     stdin.write_all(&frame).and_then(|()| stdin.flush()).is_ok()
 }
 
-/// Reads the payload's stderr: the readiness marker, and anything it has to say
+/// Reads the relay's stderr: the readiness marker, and anything it has to say
 /// about why it could not start. Lines go to the opt-in log; the last one is
-/// kept so a child that exits can be reported in the payload's own words.
+/// kept so a child that exits can be reported in the relay's own words.
 fn stderr_loop(relay: &Arc<Relay>, key: &str, stderr: std::process::ChildStderr) {
     for line in BufReader::new(stderr).lines().map_while(Result::ok) {
         let line = line.trim().to_string();
@@ -450,7 +397,7 @@ fn demux_loop(
         loop {
             match decoder.next_frame() {
                 Ok(None) => break,
-                Err(error) => return error,
+                Err(lost) => return lost.to_string(),
                 Ok(Some((id, payload))) => {
                     if payload.is_empty() {
                         if let Some(stream) = take_channel(channels, id) {
@@ -550,162 +497,6 @@ fn agent_to_container(
         write_frame(writer, id, &[]);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Payload
-// ---------------------------------------------------------------------------
-
-/// Base64 (RFC 4648) — a few lines rather than a dependency, and the decoder is
-/// the far side's standard library.
-fn base64(data: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let bytes = [
-            chunk[0],
-            chunk.get(1).copied().unwrap_or(0),
-            chunk.get(2).copied().unwrap_or(0),
-        ];
-        let word = u32::from(bytes[0]) << 16 | u32::from(bytes[1]) << 8 | u32::from(bytes[2]);
-        out.push(TABLE[(word >> 18 & 63) as usize] as char);
-        out.push(TABLE[(word >> 12 & 63) as usize] as char);
-        out.push(if chunk.len() > 1 {
-            TABLE[(word >> 6 & 63) as usize] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            TABLE[(word & 63) as usize] as char
-        } else {
-            '='
-        });
-    }
-    out
-}
-
-/// The container side of the mux, in the one interpreter a dev image can be
-/// expected to already have.
-///
-/// Deliberately plain: stdlib only, no f-strings or walrus (an old image may
-/// carry python 3.6), one `selectors` loop rather than a thread per connection
-/// so every write to the shared stdout is serialised by construction.
-///
-/// It exits when its stdin closes — the whole chain then unwinds by itself,
-/// since sshd hangs up the session when deck's ssh child dies and the engine
-/// closes the exec's streams in turn — and unlinks its socket on the way out,
-/// so a lane that comes and goes does not litter the container's `/tmp`.
-const PAYLOAD: &str = r#"
-import os
-import selectors
-import socket
-import struct
-
-BUF = 65536
-HEADER = 8
-
-
-def write_all(fd, data):
-    view = memoryview(data)
-    while len(view):
-        view = view[os.write(fd, view):]
-
-
-def frame(cid, payload):
-    return struct.pack(">II", cid, len(payload)) + payload
-
-
-def drop(sel, chans, cid):
-    conn = chans.pop(cid, None)
-    if conn is None:
-        return False
-    try:
-        sel.unregister(conn)
-    except (KeyError, ValueError):
-        pass
-    try:
-        conn.close()
-    except OSError:
-        pass
-    return True
-
-
-def serve(srv):
-    sel = selectors.DefaultSelector()
-    sel.register(srv, selectors.EVENT_READ, ("srv", 0))
-    sel.register(0, selectors.EVENT_READ, ("stdin", 0))
-    chans = {}
-    buf = bytearray()
-    next_id = 1
-    while True:
-        for key, _ in sel.select():
-            kind, cid = key.data
-            if kind == "srv":
-                conn, _ = srv.accept()
-                chans[next_id] = conn
-                sel.register(conn, selectors.EVENT_READ, ("chan", next_id))
-                next_id += 1
-            elif kind == "chan":
-                conn = chans.get(cid)
-                if conn is None:
-                    continue
-                try:
-                    data = conn.recv(BUF)
-                except OSError:
-                    data = b""
-                if data:
-                    write_all(1, frame(cid, data))
-                elif drop(sel, chans, cid):
-                    write_all(1, frame(cid, b""))
-            else:
-                data = os.read(0, BUF)
-                if not data:
-                    return
-                buf.extend(data)
-                while len(buf) >= HEADER:
-                    fid, size = struct.unpack(">II", bytes(buf[:HEADER]))
-                    if len(buf) < HEADER + size:
-                        break
-                    body = bytes(buf[HEADER:HEADER + size])
-                    del buf[:HEADER + size]
-                    if size == 0:
-                        drop(sel, chans, fid)
-                        continue
-                    conn = chans.get(fid)
-                    if conn is None:
-                        continue
-                    try:
-                        conn.sendall(body)
-                    except OSError:
-                        if drop(sel, chans, fid):
-                            write_all(1, frame(fid, b""))
-
-
-def main():
-    path = os.environ["DECK_AGENT_SOCK"]
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
-    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        srv.bind(path)
-        os.chmod(path, 0o600)
-        srv.listen(64)
-        write_all(2, b"deck-agent-relay ready\n")
-        serve(srv)
-    finally:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
-
-
-try:
-    main()
-except Exception as exc:
-    write_all(2, ("deck-agent-relay error: %s\n" % (exc,)).encode())
-    raise SystemExit(1)
-"#;
 
 #[cfg(test)]
 #[path = "../../../tests/unit/infra/agent_relay.rs"]
