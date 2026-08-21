@@ -1018,8 +1018,56 @@ mod tests {
         assert!(!system.lanes().contains(&mounted));
     }
 
+    /// A container on this machine is a lane like any other, and it hangs under
+    /// the local section because `host_lane(LOCAL)` *is* the local lane — the
+    /// whole reason the sentinel is spelled that way. What it must not have is
+    /// anything that only makes sense over ssh.
     #[test]
-    fn only_a_host_lane_can_mount() {
+    fn a_local_container_is_a_lane_under_the_local_section() {
+        let _serial = serial();
+        let system = tmux::TmuxSystem::default();
+        let mut remotes = vec![crate::config::RemoteConfig {
+            host: "local".into(),
+            forward_agent: true,
+            containers: vec![],
+            forwards: vec![],
+        }];
+        let local = tmux::TmuxSystem::local_lane();
+        let mounted = LaneMountProvider::mount(
+            &system,
+            &local,
+            &format!("container{}bench", '\x1f'),
+            &mut remotes,
+        )
+        .expect("the local lane mounts containers");
+        system.configure(&Config::default(), &remotes);
+
+        let lanes = system.lanes();
+        assert!(lanes.contains(&mounted), "{lanes:?}");
+        // Exactly one local section: the entry that carries the containers is
+        // not a second host lane.
+        assert_eq!(
+            lanes.iter().filter(|lane| **lane == local).count(),
+            1,
+            "{lanes:?}"
+        );
+
+        let section = system.section_for(&mounted).expect("section");
+        assert_eq!(section.parent.as_ref(), Some(&local));
+        assert_eq!(section.divider_title.as_deref(), Some("bench"));
+        // No forward badge, no reconnect: there is no ssh connection to speak of.
+        let glyphs: Vec<String> = section
+            .buttons
+            .iter()
+            .map(|button| button.glyph.clone())
+            .collect();
+        assert_eq!(glyphs, vec!["+".to_string(), "…".to_string()], "{glyphs:?}");
+        assert!(!section.lane_capabilities.port_forwards);
+        assert!(section.lane_capabilities.create_session);
+    }
+
+    #[test]
+    fn a_container_is_the_one_lane_that_cannot_mount() {
         let _serial = serial();
         let system = tmux::TmuxSystem::default();
         let remotes = vec![crate::config::RemoteConfig {
@@ -1038,10 +1086,12 @@ mod tests {
                 .mounts
         };
         assert!(mounts(&tmux::TmuxSystem::host_lane("devbox")));
-        // The local lane has no engine Deck talks to, and a container cannot
-        // mount further containers.
-        assert!(!mounts(&tmux::TmuxSystem::local_lane()));
+        // The local lane mounts containers on this machine — its engine is one
+        // Deck runs directly, with no ssh anywhere in the path.
+        assert!(mounts(&tmux::TmuxSystem::local_lane()));
+        // A container cannot mount further containers, wherever it runs.
         assert!(!mounts(&tmux::TmuxSystem::container_lane("devbox", "web")));
+        assert!(!mounts(&tmux::TmuxSystem::container_lane("local", "dev")));
     }
 
     #[test]

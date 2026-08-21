@@ -72,12 +72,53 @@ pub struct ContainerState {
     pub memory: LaneMemory,
 }
 
+impl ContainerState {
+    fn to_config(&self) -> ContainerConfig {
+        ContainerConfig {
+            name: self.name.clone(),
+            engine: self.engine.clone(),
+            agent_sock: self.agent_sock.clone(),
+            forwards: self.forwards.clone(),
+        }
+    }
+
+    /// `kept` is the entry this one replaces, whose fold and hidden-session
+    /// memory is not part of `ContainerConfig` and must survive the write.
+    fn from_config(config: &ContainerConfig, kept: Option<&ContainerState>) -> Self {
+        Self {
+            name: config.name.clone(),
+            engine: config.engine.clone(),
+            agent_sock: config.agent_sock.clone(),
+            forwards: config.forwards.clone(),
+            memory: kept.map(|kept| kept.memory.clone()).unwrap_or_default(),
+        }
+    }
+}
+
 fn default_engine() -> String {
     crate::config::DEFAULT_CONTAINER_ENGINE.to_string()
 }
 
 fn is_default_engine(engine: &str) -> bool {
     engine == crate::config::DEFAULT_CONTAINER_ENGINE
+}
+
+/// The local tmux server's node: what Deck remembers about it, and the
+/// containers *on this machine* Deck had mounted under it.
+///
+/// A sibling of [`RemoteState`] rather than a variant of it, because the two
+/// differ in exactly one way that matters here: a host is reached by ssh and has
+/// forwards and an agent-forwarding answer, and this one is reached by running
+/// the engine. Everything below the transport treats both the same — a local
+/// container is a `RemoteConfig` whose host is the reserved
+/// [`crate::remote_tmux::LOCAL_HOST`], so container code has one path, not two
+/// (see CLAUDE.md).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalState {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub containers: Vec<ContainerState>,
+    #[serde(flatten)]
+    pub memory: LaneMemory,
 }
 
 /// A remote host Deck was linked to, its containers, and its memory.
@@ -107,9 +148,10 @@ fn is_true(value: &bool) -> bool {
 #[serde(default)]
 pub struct LaneState {
     pub version: u32,
-    /// The local tmux server's memory. It is always a lane, so it has no
-    /// entry to be present or absent — only things to remember about it.
-    pub local: LaneMemory,
+    /// The local tmux server. It is always a lane, so it has no entry to be
+    /// present or absent — only things to remember, and any containers mounted
+    /// under it.
+    pub local: LocalState,
     pub remotes: Vec<RemoteState>,
 }
 
@@ -117,7 +159,7 @@ impl Default for LaneState {
     fn default() -> Self {
         Self {
             version: STATE_VERSION,
-            local: LaneMemory::default(),
+            local: LocalState::default(),
             remotes: Vec::new(),
         }
     }
@@ -128,23 +170,35 @@ impl LaneState {
     /// in-memory model did not change with the file: only where it is read
     /// from and written to.
     pub fn to_remote_configs(&self) -> Vec<RemoteConfig> {
-        self.remotes
-            .iter()
-            .map(|remote| RemoteConfig {
-                host: remote.host.clone(),
-                forwards: remote.forwards.clone(),
-                forward_agent: remote.forward_agent,
-                containers: remote
-                    .containers
-                    .iter()
-                    .map(|container| ContainerConfig {
-                        name: container.name.clone(),
-                        engine: container.engine.clone(),
-                        agent_sock: container.agent_sock.clone(),
-                        forwards: container.forwards.clone(),
-                    })
-                    .collect(),
-            })
+        // The local lane's containers come first, as an entry whose host is the
+        // reserved sentinel. Below this line nothing knows they are local.
+        let local = (!self.local.containers.is_empty()).then(|| RemoteConfig {
+            host: crate::remote_tmux::LOCAL_HOST.to_string(),
+            forwards: Vec::new(),
+            // Not a machine deck exposes an agent *to*: the relay into a local
+            // container runs from this process either way.
+            forward_agent: true,
+            containers: self
+                .local
+                .containers
+                .iter()
+                .map(ContainerState::to_config)
+                .collect(),
+        });
+        local
+            .into_iter()
+            .chain(self.remotes.iter().map(|remote| {
+                RemoteConfig {
+                    host: remote.host.clone(),
+                    forwards: remote.forwards.clone(),
+                    forward_agent: remote.forward_agent,
+                    containers: remote
+                        .containers
+                        .iter()
+                        .map(ContainerState::to_config)
+                        .collect(),
+                }
+            }))
             .collect()
     }
 
@@ -152,12 +206,34 @@ impl LaneState {
     /// app edits hosts as `RemoteConfig`; their fold and hidden-session
     /// memory is not part of that shape and must survive the write.
     pub fn set_remote_configs(&mut self, remotes: &[RemoteConfig]) {
+        // The sentinel entry goes back to the local node it came from, keeping
+        // each container's memory the same way a host's does.
+        let local: Vec<ContainerState> = remotes
+            .iter()
+            .find(|remote| remote.host == crate::remote_tmux::LOCAL_HOST)
+            .map(|remote| {
+                remote
+                    .containers
+                    .iter()
+                    .map(|container| {
+                        ContainerState::from_config(
+                            container,
+                            self.local
+                                .containers
+                                .iter()
+                                .find(|kept| kept.name == container.name),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let mut remembered: HashMap<&str, &RemoteState> = HashMap::new();
         for remote in &self.remotes {
             remembered.insert(remote.host.as_str(), remote);
         }
-        self.remotes = remotes
+        let rebuilt: Vec<RemoteState> = remotes
             .iter()
+            .filter(|remote| remote.host != crate::remote_tmux::LOCAL_HOST)
             .map(|remote| {
                 let previous = remembered.get(remote.host.as_str());
                 RemoteState {
@@ -174,19 +250,15 @@ impl LaneState {
                                     .iter()
                                     .find(|candidate| candidate.name == container.name)
                             });
-                            ContainerState {
-                                name: container.name.clone(),
-                                engine: container.engine.clone(),
-                                agent_sock: container.agent_sock.clone(),
-                                forwards: container.forwards.clone(),
-                                memory: kept.map(|kept| kept.memory.clone()).unwrap_or_default(),
-                            }
+                            ContainerState::from_config(container, kept)
                         })
                         .collect(),
                     memory: previous.map(|p| p.memory.clone()).unwrap_or_default(),
                 }
             })
             .collect();
+        self.remotes = rebuilt;
+        self.local.containers = local;
     }
 
     /// Every lane's memory, keyed the way the app stores it.
@@ -194,7 +266,19 @@ impl LaneState {
     /// Resolving lane ids here rather than at each reader keeps the tree the
     /// only place that knows a container's id is built from its host's.
     pub fn memories(&self) -> Vec<(LaneId, &LaneMemory)> {
-        let mut out = vec![(crate::system::tmux::TmuxSystem::local_lane(), &self.local)];
+        let mut out = vec![(
+            crate::system::tmux::TmuxSystem::local_lane(),
+            &self.local.memory,
+        )];
+        for container in &self.local.containers {
+            out.push((
+                crate::system::tmux::TmuxSystem::container_lane(
+                    crate::remote_tmux::LOCAL_HOST,
+                    &container.name,
+                ),
+                &container.memory,
+            ));
+        }
         for remote in &self.remotes {
             out.push((
                 crate::system::tmux::TmuxSystem::host_lane(&remote.host),
@@ -216,13 +300,22 @@ impl LaneState {
     fn memory_mut(&mut self, lane: &LaneId) -> Option<&mut LaneMemory> {
         use crate::system::tmux::TmuxSystem;
         if *lane == TmuxSystem::local_lane() {
-            return Some(&mut self.local);
+            return Some(&mut self.local.memory);
         }
         let remote_id = TmuxSystem::host_of(lane)?;
         let (host, container) = match remote_id.split_once(crate::remote_tmux::CONTAINER_SEP) {
             Some((host, container)) => (host, Some(container)),
             None => (remote_id, None),
         };
+        if host == crate::remote_tmux::LOCAL_HOST {
+            let name = container?;
+            return self
+                .local
+                .containers
+                .iter_mut()
+                .find(|candidate| candidate.name == name)
+                .map(|candidate| &mut candidate.memory);
+        }
         let remote = self.remotes.iter_mut().find(|remote| remote.host == host)?;
         match container {
             None => Some(&mut remote.memory),
