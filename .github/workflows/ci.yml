@@ -112,8 +112,10 @@ jobs:
           sudo systemctl start ssh
           chmod 700 ~/.ssh 2>/dev/null || mkdir -m 700 ~/.ssh
           mkdir -p ~/.ssh/socks
-          ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_relay -C relay-live
-          cat ~/.ssh/id_relay.pub >> ~/.ssh/authorized_keys
+          # A default identity name on purpose: deck offers whatever ssh
+          # offers, and ssh does not reach for a key called `id_relay`.
+          ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 -C relay-live
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
           chmod 600 ~/.ssh/authorized_keys
           ssh-keyscan -H localhost >> ~/.ssh/known_hosts 2>/dev/null
           ssh -o BatchMode=yes localhost 'echo "ssh hop works"; docker version --format "server {{.Server.Version}}"'
@@ -134,7 +136,7 @@ jobs:
           DECK_RELAY_TEST_ID: "localhost#deck-relay-ci"
         run: |
           eval "$(ssh-agent -s)"
-          ssh-add ~/.ssh/id_relay
+          ssh-add ~/.ssh/id_ed25519
           export DECK_AGENT_LOG="$RUNNER_TEMP/agent-relay.log"
           # Probe, install, exec, and a real IDENTITIES_ANSWER back from the
           # agent this shell is holding.
