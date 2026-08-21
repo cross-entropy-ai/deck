@@ -3,19 +3,25 @@
 #
 # deck cannot compile these at build time: they are Linux/musl static binaries,
 # and requiring a musl cross-toolchain (or even rustup) on every machine that
-# runs `cargo build` is too much to ask for one 400 KB helper. So they are built
+# runs `cargo build` is too much to ask for one 440 KB helper. So they are built
 # here, compressed, and committed under assets/agent-relay/ — rerun this whenever
 # crates/agent-relay changes, and commit what it writes.
 #
-# The build runs in a container so it needs no local toolchain at all. Any engine
-# works, including a remote one:
-#
-#   scripts/build-agent-relay.sh
+#   scripts/build-agent-relay.sh --check    are the artifacts current?
+#   scripts/build-agent-relay.sh            local toolchain if it can, else a container
 #   DECK_RELAY_ENGINE="docker -H ssh://devbox" scripts/build-agent-relay.sh
+#
+# With both musl targets installed it builds them right here:
+#
+#   rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+#
+# Without them it falls back to a container, which needs no local toolchain at
+# all and may be a remote engine — the way out on a Homebrew or distro rustc,
+# which has no rustup to add a target with.
 #
 # The artifacts are not byte-reproducible across rustc versions, which is why CI
 # checks that the committed ones *work* (it runs the one matching its own
-# architecture) and that SOURCE.sha256 still matches crates/agent-relay — not
+# architecture, and drives a real container through the whole path) rather than
 # that a rebuild produces identical bytes.
 set -eu
 
@@ -23,6 +29,9 @@ ENGINE=${DECK_RELAY_ENGINE:-docker}
 IMAGE=${DECK_RELAY_IMAGE:-rust:alpine}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 OUT="$ROOT/assets/agent-relay"
+
+# One entry per artifact: the name it is committed under, and its rust target.
+TARGETS="x86_64:x86_64-unknown-linux-musl aarch64:aarch64-unknown-linux-musl"
 
 # A command, not a shell function: it is handed to `xargs`, which cannot call a
 # function. macOS also ships a `sha256` that prints BSD-style
@@ -61,7 +70,6 @@ fi
 
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
-
 mkdir -p "$STAGE/agent-relay" "$OUT"
 cp -R "$ROOT/crates/agent-relay/." "$STAGE/agent-relay/"
 
@@ -79,29 +87,68 @@ panic = "abort"
 strip = "symbols"
 PROFILE
 
-# aarch64 is linked by the rust-lld that ships with the toolchain, so a second
-# cross-toolchain never has to be installed.
-cat > "$STAGE/Dockerfile" <<DOCKER
+# The linker for both targets: the rust-lld that ships with the toolchain, so no
+# cross-toolchain — and no `cc` that knows about musl — is ever needed.
+lld_path() {
+    echo "$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/rust-lld"
+}
+
+# Whether this machine can do it itself: both targets' std unpacked, and that
+# linker present.
+can_build_locally() {
+    command -v cargo >/dev/null 2>&1 || return 1
+    [ -x "$(lld_path)" ] || return 1
+    for pair in $TARGETS; do
+        libdir=$(rustc --target "${pair#*:}" --print target-libdir 2>/dev/null) || return 1
+        [ -d "$libdir" ] || return 1
+    done
+}
+
+build_locally() {
+    for pair in $TARGETS; do
+        target=${pair#*:}
+        (
+            cd "$STAGE/agent-relay"
+            RUSTFLAGS="-C linker=$(lld_path) -C link-self-contained=yes" \
+                cargo build --release --target "$target" --bin deck-agent-relay
+        )
+        cp "$STAGE/agent-relay/target/$target/release/deck-agent-relay" \
+            "$STAGE/${pair%%:*}"
+    done
+}
+
+build_in_container() {
+    cat > "$STAGE/Dockerfile" <<DOCKER
 FROM $IMAGE
 RUN apk add --no-cache musl-dev || (apt-get update && apt-get install -y --no-install-recommends musl-tools)
 COPY agent-relay /relay
 WORKDIR /relay
-RUN cargo build --release --bin deck-agent-relay
-RUN rustup target add aarch64-unknown-linux-musl && \\
-    LLD="\$(rustc --print sysroot)/lib/rustlib/\$(rustc -vV | sed -n 's/^host: //p')/bin/rust-lld" && \\
-    RUSTFLAGS="-C linker=\$LLD -C link-self-contained=yes" \\
-    cargo build --release --target aarch64-unknown-linux-musl --bin deck-agent-relay
+RUN LLD="\$(rustc --print sysroot)/lib/rustlib/\$(rustc -vV | sed -n 's/^host: //p')/bin/rust-lld" && \\
+    for target in $(for p in $TARGETS; do printf '%s ' "${p#*:}"; done) ; do \\
+        rustup target add "\$target" && \\
+        RUSTFLAGS="-C linker=\$LLD -C link-self-contained=yes" \\
+        cargo build --release --target "\$target" --bin deck-agent-relay ; \\
+    done
 DOCKER
+    IMAGE_ID=$(tar czf - -C "$STAGE" . | $ENGINE build -q -)
+    for pair in $TARGETS; do
+        # `run` rather than `cp`: one stream out of the engine, remote or local,
+        # and no container left to remove.
+        $ENGINE run --rm "$IMAGE_ID" \
+            cat "target/${pair#*:}/release/deck-agent-relay" > "$STAGE/${pair%%:*}"
+    done
+}
 
-echo "building in $IMAGE via $ENGINE ..."
-IMAGE_ID=$(tar czf - -C "$STAGE" . | $ENGINE build -q -)
+if can_build_locally; then
+    echo "building with the local toolchain ..."
+    build_locally
+else
+    echo "no musl targets installed locally; building in $IMAGE via $ENGINE ..."
+    build_in_container
+fi
 
-for pair in "x86_64:target/release" "aarch64:target/aarch64-unknown-linux-musl/release"; do
+for pair in $TARGETS; do
     arch=${pair%%:*}
-    dir=${pair#*:}
-    # `run` rather than `cp`: one stream out of the engine, remote or local, and
-    # no container left to remove.
-    $ENGINE run --rm "$IMAGE_ID" cat "$dir/deck-agent-relay" > "$STAGE/$arch"
     gzip -9c "$STAGE/$arch" > "$OUT/deck-agent-relay-$arch-linux.gz"
     printf '%s: %s bytes, %s compressed\n' "$arch" \
         "$(wc -c < "$STAGE/$arch" | tr -d ' ')" \
