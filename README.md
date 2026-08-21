@@ -111,3 +111,10 @@ cargo build --release
 ```
 
 You still need tmux installed locally to run it.
+
+To build a **Linux** deck from a Mac — what the release publishes — use a
+container engine, Apple's included:
+
+```bash
+DECK_ENGINE=container scripts/build-app-in-container.sh
+```

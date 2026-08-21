@@ -19,6 +19,18 @@ cargo fmt --all -- --check     # check formatting for all workspace crates
 ./target/release/deck          # run the release binary (needs tmux)
 ```
 
+Two things `cargo build` deliberately does not do, both through a container
+engine so no cross-toolchain is needed (`DECK_ENGINE=container` for Apple's on a
+Mac, or a remote `docker -H ssh://host`):
+
+```bash
+scripts/build-agent-relay.sh        # the embedded container-side relay binaries
+scripts/build-app-in-container.sh   # a Linux deck, for the arch of the container
+```
+
+`scripts/build-agent-relay.sh --check` says whether the committed relay
+artifacts are stale; CI runs exactly that. See `docs/ssh-agent-forwarding.md`.
+
 Config is stored at `~/.config/deck/config.yaml`.
 
 ## Architecture
