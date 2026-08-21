@@ -9,8 +9,8 @@
 #
 #   scripts/build-agent-relay.sh --check    are the artifacts current?
 #   scripts/build-agent-relay.sh            local toolchain if it can, else a container
-#   DECK_RELAY_ENGINE=container scripts/build-agent-relay.sh
-#   DECK_RELAY_ENGINE="docker -H ssh://devbox" scripts/build-agent-relay.sh
+#   DECK_ENGINE=container scripts/build-agent-relay.sh
+#   DECK_ENGINE="docker -H ssh://devbox" scripts/build-agent-relay.sh
 #
 # With both musl targets installed it builds them right here:
 #
@@ -26,7 +26,7 @@
 # that a rebuild produces identical bytes.
 set -eu
 
-ENGINE=${DECK_RELAY_ENGINE:-docker}
+ENGINE=${DECK_ENGINE:-${DECK_RELAY_ENGINE:-docker}}
 IMAGE=${DECK_RELAY_IMAGE:-rust:alpine}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 OUT="$ROOT/assets/agent-relay"

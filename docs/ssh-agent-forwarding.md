@@ -113,9 +113,10 @@ cross-toolchain — or even rustup — on every machine that builds deck is too 
 to ask for one 440 KB helper.
 
 ```bash
-scripts/build-agent-relay.sh --check                          # are they current?
-scripts/build-agent-relay.sh                                  # local engine
-DECK_RELAY_ENGINE="docker -H ssh://devbox" scripts/build-agent-relay.sh
+scripts/build-agent-relay.sh --check                     # are they current?
+scripts/build-agent-relay.sh                             # local toolchain, else a container
+DECK_ENGINE=container scripts/build-agent-relay.sh       # Apple's engine, on a Mac
+DECK_ENGINE="docker -H ssh://devbox" scripts/build-agent-relay.sh
 ```
 
 **Ordinary builds need none of this.** `cargo build` only reads the committed
@@ -144,7 +145,7 @@ Failing that, any engine will do, including Apple's on macOS — which makes the
 whole thing local, with no Linux machine anywhere:
 
 ```bash
-DECK_RELAY_ENGINE=container scripts/build-agent-relay.sh    # ~20s
+DECK_ENGINE=container scripts/build-agent-relay.sh    # ~20s
 ```
 
 Two things that engine taught the script: its `build` takes a context
