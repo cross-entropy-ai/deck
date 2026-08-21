@@ -56,6 +56,11 @@ but a container is someone else's filesystem, and "works only if your image has
 python" is a coin flip on a `distroless`, `alpine` or slim base. Shipping the
 program instead means the feature has no requirements on the image at all.
 
+A container on *this* machine takes the same three steps with the ssh hop
+removed: the command string is identical and a local `sh -c` runs it instead of
+`ssh` (`remote_tmux::lane_invocation`), so there is one relay implementation
+rather than a local and a remote one.
+
 Starting a relay is three hops on the host's warm master, once per container lane
 per deck run:
 

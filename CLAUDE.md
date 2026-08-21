@@ -76,6 +76,15 @@ When adding any per-session/per-lane feature:
   (e.g. `SessionInfo`, `DetectedAgent`, `LaneSnapshot`). Never introduce a
   parallel `foo` + `remote_foo` pair with different shapes — that leaks the
   distinction upward.
+- **A container is a container, wherever it runs.** A lane id's host half may
+  be the reserved `local` sentinel (`crate::remote_tmux::LOCAL_HOST`), which
+  means "this machine": `local#dev` is a container on the local engine, and
+  `TmuxSystem::host_lane("local")` *is* the local lane, so the sidebar nests it
+  with no special case. Only two functions know the difference —
+  `remote_tmux::lane_command` assembles the same command string either way and
+  `lane_invocation` decides whether `ssh` or a local `sh -c` runs it. Nothing
+  above the transport branches on it (`is_local_id` exists for the transport and
+  for capability answers that are genuinely about ssh, like port forwards).
 - **Key in-memory stores by `LaneId`** (`{system}\x1f{lane}`), not by host:
   `AppState.agents`, `collapsed_sections`, the executor's FIFO lanes. Use
   the injected `SystemRegistry` to reach the owning runtime; never match on

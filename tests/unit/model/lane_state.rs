@@ -312,3 +312,65 @@ fn a_containers_forwards_survive_the_round_trip_through_the_state_file() {
     assert_eq!(back[0].containers[0].forwards[0].listen_port, 9000);
     assert_eq!(back[0].containers[0].forwards[0].target_host, None);
 }
+
+/// A container on *this* machine is remembered under the local node, not smuggled
+/// into `remotes:` as a host that is not one — and it comes back out as an
+/// ordinary entry whose host is the reserved sentinel, so everything below the
+/// transport keeps one container path instead of two.
+#[test]
+fn local_containers_live_under_the_local_lane() {
+    let mut state = LaneState::default();
+    state.set_remote_configs(&[remote("local", &["dev"]), remote("box", &["web"])]);
+
+    assert_eq!(state.local.containers.len(), 1, "{:?}", state.local);
+    assert_eq!(state.local.containers[0].name, "dev");
+    assert_eq!(
+        state.remotes.len(),
+        1,
+        "the local entry must not be a host: {:?}",
+        state.remotes
+    );
+    assert_eq!(state.remotes[0].host, "box");
+
+    // It reads back in the shape the rest of Deck speaks, local first.
+    let back = state.to_remote_configs();
+    assert_eq!(back[0].host, "local");
+    assert_eq!(back[0].containers[0].name, "dev");
+    assert_eq!(back[0].containers[0].engine, "podman");
+    assert_eq!(back[1].host, "box");
+
+    // Its lane id is a container of the local lane, so the sidebar nests it
+    // there with no special case.
+    let lane = TmuxSystem::container_lane("local", "dev");
+    assert_eq!(TmuxSystem::host_lane("local"), TmuxSystem::local_lane());
+    assert!(
+        state.memories().iter().any(|(id, _)| *id == lane),
+        "no memory for the local container"
+    );
+}
+
+/// The same guarantee a host's containers get: what Deck remembers about a lane
+/// is not part of the shape the app edits, so it has to survive the write.
+#[test]
+fn a_local_containers_memory_survives_a_rewrite() {
+    let mut state = LaneState::default();
+    state.set_remote_configs(&[remote("local", &["dev"])]);
+    let lane = TmuxSystem::container_lane("local", "dev");
+
+    let mut collapsed = HashSet::new();
+    collapsed.insert(lane.clone());
+    let mut hidden = HashMap::new();
+    hidden.insert(lane.clone(), HashSet::from(["scratch".to_string()]));
+    state.remember(&collapsed, &HashSet::new(), &hidden);
+    assert!(state.local.containers[0].memory.collapsed);
+
+    // A rewrite that merely re-states the same lanes must not forget it.
+    state.set_remote_configs(&[remote("local", &["dev"])]);
+    assert!(state.local.containers[0].memory.collapsed);
+    assert_eq!(
+        state.local.containers[0].memory.hidden_sessions,
+        vec!["scratch".to_string()]
+    );
+    assert!(state.collapsed_lanes().contains(&lane));
+    assert!(state.hidden_sessions().contains_key(&lane));
+}

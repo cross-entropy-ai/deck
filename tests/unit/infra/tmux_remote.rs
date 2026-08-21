@@ -64,14 +64,20 @@ impl CommandRunner for FakeRunner {
         args: &[&str],
         _timeout: Duration,
     ) -> Result<Output, CommandError> {
-        self.calls.lock().unwrap().push(args.join(" "));
-        if self.fail_others && !args.contains(&"list-sessions") {
+        let call = args.join(" ");
+        self.calls.lock().unwrap().push(call.clone());
+        // Matched against the whole command, not one argv element: a lane's
+        // command is assembled into a single string now (the one a shell on the
+        // other side re-parses), so `tmux -u list-sessions` is not an element of
+        // its own any more.
+        let lists_sessions = call.contains("list-sessions");
+        if self.fail_others && !lists_sessions {
             return Err(CommandError::Timeout {
                 program: program.to_string(),
                 elapsed: Duration::from_secs(1),
             });
         }
-        if args.contains(&"list-sessions") {
+        if lists_sessions {
             self.list_sessions
                 .lock()
                 .unwrap()
@@ -805,9 +811,12 @@ fn a_lanes_agent_socket_is_the_one_its_own_filesystem_has() {
 /// rewrite bytes in both directions and corrupt every signing request.
 #[test]
 fn the_agent_relay_rides_a_binary_exec_pipe() {
-    let argv = agent_relay_run_argv("box#dev", "/tmp/deck-relay.AbC123", "/tmp/agent.sock")
-        .expect("container id");
+    let (program, argv) =
+        agent_relay_run_argv("box#dev", "/tmp/deck-relay.AbC123", "/tmp/agent.sock")
+            .expect("container id");
     let joined = argv.join(" ");
+
+    assert_eq!(program, "ssh", "a remote container rides ssh");
 
     assert!(joined.contains("'docker' exec -i "), "argv: {joined}");
     assert!(
@@ -893,13 +902,87 @@ fn the_relay_commands_are_valid_shell_in_both_wrappings() {
         &format!("{REMOTE_PATH_EXPORT} ; {}", install.join(" ")),
     );
 
-    let run = agent_relay_run_argv("box#dev", "/tmp/deck-relay.AbC123", "/tmp/agent.sock")
+    let (_, run) = agent_relay_run_argv("box#dev", "/tmp/deck-relay.AbC123", "/tmp/agent.sock")
         .expect("container id");
     assert_remote_shells_parse(
         "relay_run",
         "box#dev",
         &remote_command_of("box#dev", &run.join(" ")),
     );
+}
+
+/// The local/remote split lives in exactly one place: the same command string is
+/// assembled for both, and only the invocation differs. If a lane on this
+/// machine ever grew its own command spelling, the quoting tests above would
+/// stop covering half the paths deck actually runs.
+#[test]
+fn a_lane_on_this_machine_runs_the_same_command_without_ssh() {
+    let argv = ["tmux -u", "list-sessions"];
+    let local = lane_command("local#dev", &argv, ContainerStdin::Detached);
+    let remote = lane_command("box#dev", &argv, ContainerStdin::Detached);
+    assert_eq!(
+        local, remote,
+        "the command must not depend on where it runs"
+    );
+
+    let (program, args) = lane_invocation("local#dev", &local);
+    assert_eq!(program, "sh");
+    assert_eq!(args, vec!["-c".to_string(), local.clone()]);
+
+    // The local *lane* itself, for the discovery hop that asks this machine
+    // what containers it has.
+    assert_eq!(lane_invocation("local", &local).0, "sh");
+
+    let (program, args) = lane_invocation("box#dev", &remote);
+    assert_eq!(program, "ssh");
+    assert!(args.iter().any(|arg| arg == "box"), "argv: {args:?}");
+    assert_eq!(args.last(), Some(&remote));
+    assert!(args.iter().any(|arg| arg.contains("ControlMaster=auto")));
+}
+
+/// Apple's engine is the reason discovery is per-engine: its `--format` takes
+/// `json|table|yaml|toml`, so the Go template the other two answer is not an
+/// option. Fixture trimmed from a real `container ls -a --format json`.
+#[test]
+fn discovery_reads_each_engines_own_listing() {
+    let raw = format!(
+        "running|web
+exited|old
+{ENGINE_PROBE_MARKER}
+         {ENGINE_PROBE_MARKER}
+         [{{\"id\":\"dev\",\"status\":{{\"state\":\"running\",\"networks\":[]}},         \"configuration\":{{\"id\":\"dev\",\"labels\":{{}}}}}},         {{\"id\":\"stale\",\"status\":{{\"state\":\"stopped\"}},         \"configuration\":{{\"id\":\"stale\"}}}}]
+"
+    );
+    let found = parse_discovered_containers(&raw);
+
+    let named = |name: &str| {
+        found
+            .iter()
+            .find(|candidate| candidate.name == name)
+            .unwrap_or_else(|| panic!("{name} not discovered: {found:?}"))
+    };
+    assert_eq!(named("web").engine, "docker");
+    assert!(named("web").running);
+    assert!(!named("old").running);
+    // Apple's engine, whose block is JSON and whose name is the container id.
+    assert_eq!(named("dev").engine, "container");
+    assert!(named("dev").running);
+    assert!(!named("stale").running);
+    assert_eq!(found.len(), 4, "{found:?}");
+}
+
+/// An engine that is not installed prints nothing, and something else called
+/// `container` prints something that is not this JSON. Both mean "nothing to
+/// offer" — never a failed discovery.
+#[test]
+fn a_listing_that_does_not_parse_is_simply_empty() {
+    let raw = format!(
+        "{ENGINE_PROBE_MARKER}
+{ENGINE_PROBE_MARKER}
+usage: container [options]
+"
+    );
+    assert!(parse_discovered_containers(&raw).is_empty());
 }
 
 /// Which agent socket a container lane publishes is a policy question with three
@@ -1471,7 +1554,7 @@ fn a_staged_report_yields_the_path_and_the_size_it_landed_at() {
 
 #[test]
 fn upload_to_a_container_stages_inside_it_not_on_its_host() {
-    let call = upload_argv("box#dev", "1234-a.png").join(" ");
+    let call = upload_argv("box#dev", "1234-a.png").1.join(" ");
 
     // ssh still targets the bare host, exactly as every other remote call does.
     assert!(call.contains(" box "), "host arg mangled: {call}");
@@ -1492,7 +1575,7 @@ fn upload_to_a_container_stages_inside_it_not_on_its_host() {
     assert!(call.contains("mkdir -p"), "command lost: {call}");
 
     // The host spelling stays free of any exec wrap.
-    let host_call = upload_argv("box", "1234-a.png").join(" ");
+    let host_call = upload_argv("box", "1234-a.png").1.join(" ");
     assert!(
         !host_call.contains(" exec "),
         "host upload must not exec: {host_call}"
@@ -1507,14 +1590,14 @@ fn upload_to_a_container_stages_inside_it_not_on_its_host() {
 #[test]
 fn staged_upload_reaches_the_engine_through_the_path_prelude() {
     for id in ["box", "box#dev"] {
-        let command = remote_command_of(id, &upload_argv(id, "1234-a.png").join(" "));
+        let command = remote_command_of(id, &upload_argv(id, "1234-a.png").1.join(" "));
         assert!(
             command.starts_with(REMOTE_PATH_EXPORT),
             "{id} stages without the PATH prelude: {command}"
         );
     }
     // On the container spelling the engine is the first thing after it.
-    let command = remote_command_of("box#dev", &upload_argv("box#dev", "1234-a.png").join(" "));
+    let command = remote_command_of("box#dev", &upload_argv("box#dev", "1234-a.png").1.join(" "));
     assert!(
         command.contains(&format!("{REMOTE_PATH_EXPORT} ; 'docker' exec -i")),
         "the engine does not follow the prelude: {command}"
@@ -1533,6 +1616,7 @@ fn staged_upload_command_is_valid_shell() {
             &staged_file_name(std::path::Path::new("/tmp/a b';.png")),
         );
         let host = parse_remote_id(id).host;
+        let args = args.1;
         let start = args
             .iter()
             .position(|arg| arg == host)

@@ -360,7 +360,17 @@ fn attach_shell_command_with(
 ///
 /// Assembling it here, rather than inline in the spawn thread, is what lets the
 /// real attach be exercised against a live host in a test.
-fn attach_ssh_argv(remote_id: &str, marker_id: u64) -> Vec<String> {
+///
+/// A lane on *this* machine — a local container — needs none of that: its
+/// command runs under a local `sh -c`, and the pty this PTY already is stands in
+/// for the one `-tt` would have asked ssh for. The engine's own `exec -it`
+/// supplies the terminal the tmux client inside sees, exactly as it does over
+/// ssh.
+fn attach_invocation(remote_id: &str, marker_id: u64) -> (&'static str, Vec<String>) {
+    let command = attach_shell_command(remote_id, marker_id);
+    if crate::remote_tmux::is_local_id(remote_id) {
+        return ("sh", vec!["-c".to_string(), command]);
+    }
     let target = crate::remote_tmux::parse_remote_id(remote_id);
     let mut argv = vec!["-tt".to_string()];
     argv.extend(crate::ssh::connection_opts());
@@ -370,8 +380,8 @@ fn attach_ssh_argv(remote_id: &str, marker_id: u64) -> Vec<String> {
             .map(|opt| (*opt).to_string()),
     );
     argv.push(target.host.to_string());
-    argv.push(attach_shell_command(remote_id, marker_id));
-    argv
+    argv.push(command);
+    ("ssh", argv)
 }
 
 fn spawn_one(
@@ -393,9 +403,9 @@ fn spawn_one(
             // output goes to the file, so nothing dirties the terminal before
             // tmux paints. Best-effort; readiness confirmed out of band below.
             let marker_id = next_marker_id();
-            let argv = attach_ssh_argv(&host_for_args, marker_id);
+            let (program, argv) = attach_invocation(&host_for_args, marker_id);
             let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-            let pane = match Pty::spawn("ssh", &argv, size) {
+            let pane = match Pty::spawn(program, &argv, size) {
                 Ok(pty) => Box::new(TerminalSurface::new(pty, size.rows, size.cols)),
                 Err(error) => {
                     let _ = tx.send(RemoteSpawnEvent::Failed {
@@ -674,6 +684,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// A lane on this machine needs no ssh at all — and must not ask for a pty
+    /// from a program that is not going to allocate one. The command it runs is
+    /// the same string a remote container's shell would receive, which is what
+    /// keeps the quoting checked in one place.
+    #[test]
+    fn a_local_container_attaches_without_ssh() {
+        let (program, argv) = attach_invocation("local#dev", 17);
+
+        assert_eq!(program, "sh");
+        assert_eq!(argv.len(), 2);
+        assert_eq!(argv[0], "-c");
+        assert!(!argv.iter().any(|arg| arg == "-tt"), "argv: {argv:?}");
+        assert!(
+            !argv.iter().any(|arg| arg.contains("ControlMaster")),
+            "argv: {argv:?}"
+        );
+        // The engine still provides the terminal the tmux client inside sees.
+        assert!(
+            argv[1].contains("exec -it -e 'TERM="),
+            "command: {}",
+            argv[1]
+        );
+        assert_eq!(argv[1], attach_shell_command("local#dev", 17));
+
+        let (program, argv) = attach_invocation("box#dev", 17);
+        assert_eq!(program, "ssh");
+        assert!(argv.iter().any(|arg| arg == "-tt"));
+        assert!(argv.iter().any(|arg| arg == "box"));
+    }
+
     /// A container is the other half of that: the socket it is handed is the
     /// relay's, at a path that already survives reconnects, so pinning it would
     /// buy nothing and cost the lane its agent whenever the image's `$HOME` is
@@ -773,14 +813,14 @@ mod tests {
         let _ = crate::remote_tmux::new_session(&remote_id, session, "/tmp");
 
         let marker_id = 1;
-        let argv = attach_ssh_argv(&remote_id, marker_id);
+        let (program, argv) = attach_invocation(&remote_id, marker_id);
         let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
         assert!(
             argv.iter().any(|arg| arg.contains("-e 'SSH_AUTH_SOCK=")),
             "the attach carries no agent socket, so the relay never came up: {argv:?}"
         );
         let pty = crate::pty::Pty::spawn(
-            "ssh",
+            program,
             &argv_refs,
             portable_pty::PtySize {
                 rows: 24,
