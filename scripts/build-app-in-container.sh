@@ -10,12 +10,16 @@
 #   DECK_ENGINE=container scripts/build-app-in-container.sh
 #   DECK_ENGINE="docker -H ssh://devbox" scripts/build-app-in-container.sh
 #
-# The binary lands in target/app-build/ and the script prints what it is — the
-# architecture is the *container's*, not a choice: deck links `ring`, whose C
-# sources need a compiler for the target, so a cross build would need a cross C
-# toolchain rather than the `rust-lld` trick the pure-Rust relay gets away with.
-# To build for the other architecture, run this against an engine (or a
-# `--platform`) that gives you a container of that architecture.
+# The binary lands in target/app-build/deck-<arch>. The architecture is the
+# container's, because deck links `ring`, whose C sources need a compiler for the
+# target — a cross build would want a cross C toolchain, not the `rust-lld` trick
+# the pure-Rust relay gets away with. Both engines emulate the other
+# architecture, though, and inside that container the compiler *is* native:
+#
+#   DECK_BUILD_ARCH=amd64 DECK_ENGINE=container scripts/build-app-in-container.sh
+#
+# Emulated builds are much slower than native ones; the default is whatever the
+# engine gives, which is this machine's own architecture.
 #
 # Dependencies are compiled in their own layer, so a second run after editing
 # deck's own sources reuses them and takes a fraction of the first.
@@ -27,6 +31,20 @@ TAG=${DECK_BUILD_TAG:-deck-app-build}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 OUT="$ROOT/target/app-build"
 STAGE="$OUT/context"
+
+# The two engines spell the same request differently, and `$ENGINE` is an opaque
+# command here — including a remote `docker -H …` — so the spelling is chosen by
+# what it starts with. Both `build` and `run` need it: extraction runs the image,
+# and an engine asked for the wrong platform will either refuse or hand back a
+# binary from a different build.
+PLATFORM=""
+if [ -n "${DECK_BUILD_ARCH:-}" ]; then
+    case "$ENGINE" in
+        container | container\ *) PLATFORM="--arch $DECK_BUILD_ARCH" ;;
+        *) PLATFORM="--platform linux/$DECK_BUILD_ARCH" ;;
+    esac
+    TAG="$TAG-$DECK_BUILD_ARCH"
+fi
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE/tree"
@@ -64,18 +82,25 @@ RUN find . -path ./target -prune -o -type f -print0 | xargs -0 touch \
     && ls -l target/release/deck
 DOCKER
 
-echo "building deck in $IMAGE via $ENGINE ..."
-$ENGINE build -t "$TAG" "$STAGE"
-$ENGINE run --rm "$TAG" cat /deck/target/release/deck > "$OUT/deck"
-chmod +x "$OUT/deck"
+echo "building deck in $IMAGE via $ENGINE ${PLATFORM:-natively} ..."
+# Unquoted on purpose: empty means "no flag", and neither the engine name nor an
+# architecture can carry a space.
+# shellcheck disable=SC2086
+$ENGINE build $PLATFORM -t "$TAG" "$STAGE"
+# shellcheck disable=SC2086
+$ENGINE run $PLATFORM --rm "$TAG" cat /deck/target/release/deck > "$OUT/deck.part"
 rm -rf "$STAGE"
 
 # Say what came out, rather than leaving the reader to assume: `file` is not in
-# every image and not on every host, so read the ELF header directly.
-machine=$(od -An -tu1 -j18 -N1 "$OUT/deck" | tr -d ' \n')
+# every image and not on every host, so read the ELF header directly. The name
+# carries the answer too, so two architectures can sit side by side.
+machine=$(od -An -tu1 -j18 -N1 "$OUT/deck.part" | tr -d ' \n')
 case "$machine" in
     62) arch="x86_64" ;;
     183) arch="aarch64" ;;
-    *) arch="ELF machine $machine" ;;
+    *) arch="elf-machine-$machine" ;;
 esac
-printf '%s: %s bytes, %s (linux)\n' "$OUT/deck" "$(wc -c < "$OUT/deck" | tr -d ' ')" "$arch"
+mv "$OUT/deck.part" "$OUT/deck-$arch"
+chmod +x "$OUT/deck-$arch"
+printf '%s: %s bytes, linux/%s\n' "$OUT/deck-$arch" \
+    "$(wc -c < "$OUT/deck-$arch" | tr -d ' ')" "$arch"

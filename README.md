@@ -116,5 +116,9 @@ To build a **Linux** deck from a Mac — what the release publishes — use a
 container engine, Apple's included:
 
 ```bash
-DECK_ENGINE=container scripts/build-app-in-container.sh
+DECK_ENGINE=container scripts/build-app-in-container.sh                  # this machine's arch
+DECK_BUILD_ARCH=amd64 DECK_ENGINE=container scripts/build-app-in-container.sh
 ```
+
+Both engines emulate the other architecture, so an Apple Silicon Mac can produce
+either Linux binary the release publishes.
