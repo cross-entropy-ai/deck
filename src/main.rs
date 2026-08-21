@@ -67,12 +67,20 @@ fn main() -> io::Result<()> {
         std::process::exit(1);
     }
 
-    ratatui::run(|terminal| {
+    let outcome = ratatui::run(|terminal| {
         let _terminal_guard = TerminalGuard::enter()?;
         let size = terminal.size()?;
         let mut app = app::App::new(size.width, size.height, args.attach_override.clone())?;
         app.run(terminal)
-    })?;
+    });
 
+    // Before the process goes, take the agent relays with it. They unwind on
+    // their own when their pipes close — the container-side payload exits on
+    // stdin EOF — but a payload wedged writing to a stdout nobody drains never
+    // reads that EOF, and its `ssh` would sit on the host holding a channel
+    // open. Killing here also runs on the error path, which `?` would skip.
+    ssh::agent_relay::shutdown_all();
+
+    outcome?;
     Ok(())
 }

@@ -32,6 +32,11 @@ pub struct RemoteConfig {
     /// ssh_config. Forwarding exposes the agent to root on the remote host —
     /// turn it off for hosts you don't fully trust.
     ///
+    /// Also the answer for this host's *containers*, which reach the agent
+    /// through `crate::ssh::agent_relay` rather than through ssh forwarding at
+    /// all: the flag says "do not expose my agent to that machine", and a
+    /// container on it is on it.
+    ///
     /// Applies to connections opened after the change. With reuse on, the agent
     /// a multiplexed session gets is the *master's* ("it is not possible to
     /// forward multiple displays or agents" — ssh_config(5)), so flipping this
@@ -56,10 +61,12 @@ pub struct ContainerConfig {
     #[serde(default = "default_engine", skip_serializing_if = "is_default_engine")]
     pub engine: String,
     /// Path *inside the container* of an ssh-agent socket, exported as
-    /// `SSH_AUTH_SOCK` when attaching. deck can't mount the forwarded agent
-    /// into a running container; set this when the container was started
-    /// with a socket bind-mounted (e.g. `-v ~/.ssh/deck-agent.sock:/ssh-agent`
-    /// — that host path stays valid across reconnects, see `forward_agent`).
+    /// `SSH_AUTH_SOCK` when attaching. An **override**: leave it unset and deck
+    /// relays your local agent into the container itself
+    /// (`crate::ssh::agent_relay`, no mount and no root required, but it needs a
+    /// python in the image). Set it when the container was started with a socket
+    /// of its own bind-mounted and you want that one used instead — deck then
+    /// starts no relay and takes the path on trust.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_sock: Option<String>,
     /// Forwards into this container, `-L` only: the listener is local, and the

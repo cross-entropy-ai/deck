@@ -1061,6 +1061,109 @@ pub(crate) fn agent_socket_name() -> &'static str {
 /// reaches the links of a deck that crashed, which is most of the pile.
 pub(crate) const AGENT_SOCKET_NAME_PATTERN: &str = "deck-agent-*.sock";
 
+/// Absolute path of the agent socket deck's relay binds *inside* a container.
+///
+/// `/tmp` rather than the `~/.ssh` the host case uses: a container's `$HOME` is
+/// whatever the image says it is, may not exist and may not be writable, while
+/// the relay needs somewhere it can bind before any pane asks for a key.
+///
+/// The name is [`agent_socket_name`], so it is scoped to this deck process for
+/// the same reason the host link is — two people decking into the same
+/// container must not take turns re-pointing one name — while staying *stable*
+/// across reconnects and across relay restarts, which is what lets a pane hold
+/// the path and keep working when the relay behind it is replaced.
+pub(crate) fn container_agent_socket_path() -> String {
+    format!("/tmp/{}", agent_socket_name())
+}
+
+/// Quoted path of the stable agent socket a *lane* publishes to its panes:
+/// [`agent_socket_token`] on a host, the relay's socket inside a container.
+///
+/// Every path that hands a pane an `SSH_AUTH_SOCK` goes through here, so the two
+/// lane kinds cannot drift apart — a container lane pointed at the host's
+/// `~/.ssh` link would name a path its filesystem does not have.
+pub(crate) fn lane_agent_socket_token(remote_id: &str) -> String {
+    match parse_remote_id(remote_id).container {
+        Some(_) => shell_single_quote(&container_agent_socket_path()),
+        None => agent_socket_token(),
+    }
+}
+
+/// The `ssh` argv that lands the agent-relay payload inside a container: the
+/// same multiplexed connection every other call to this host rides, then
+/// `<engine> exec -i` with the payload script as the container `sh`'s command.
+///
+/// `-i` and no `-t`: the exec's stdio *is* the mux, so it must stay a binary
+/// pipe. A pty in the middle would translate bytes in both directions and every
+/// signing request would arrive corrupted.
+///
+/// `None` for a host id — there is nothing to relay into, and a host reaches the
+/// agent through `ForwardAgent` instead.
+pub(crate) fn agent_relay_argv(remote_id: &str, socket_path: &str) -> Option<Vec<String>> {
+    let target = parse_remote_id(remote_id);
+    let container = target.container?;
+    let script = crate::ssh::agent_relay::payload_script(socket_path);
+    let mut args = base_ssh_args(target.host);
+    args.push(target.host.to_string());
+    args.push(format!("{REMOTE_PATH_EXPORT} ;"));
+    args.extend(container_exec_argv(
+        &container_opts(remote_id).engine,
+        container,
+        &[script.as_str()],
+        ContainerStdin::Attached,
+    ));
+    Some(args)
+}
+
+/// What a container lane exports as `SSH_AUTH_SOCK` on attach, starting the
+/// relay that backs it if it is not already up.
+///
+/// Order of answers, and why:
+///
+/// 1. **`agent_sock` from config wins.** It means the user mounted a socket in
+///    at creation and knows where it is; deck has no business second-guessing
+///    that, and no relay is started.
+/// 2. **`forward_agent: false` means no.** The flag says "do not expose my
+///    agent to that machine", and a container on it is on it — even though the
+///    relay would not put the agent on the host at all.
+/// 3. **No local agent, no relay.** Nothing to forward.
+///
+/// A relay that cannot come up (no python in the image, an unwritable `/tmp`)
+/// yields `None`, and the lane attaches without an agent — the same state it was
+/// in before this existed. `DECK_AGENT_LOG` has the reason.
+pub(crate) fn container_agent_sock(remote_id: &str) -> Option<String> {
+    if let Some(configured) = container_opts(remote_id).agent_sock {
+        return Some(configured);
+    }
+    let target = parse_remote_id(remote_id);
+    target.container?;
+    if !crate::ssh::agent_forwarding_enabled(target.host) {
+        return None;
+    }
+    crate::ssh::agent_relay::local_agent_socket()?;
+    let path = container_agent_socket_path();
+    let argv = agent_relay_argv(remote_id, &path)?;
+    match crate::ssh::agent_relay::ensure(remote_id, &path, &argv) {
+        Ok(()) => Some(path),
+        Err(error) => {
+            crate::ssh::agent_relay::log(&format!("[{remote_id}] no agent socket: {error}"));
+            None
+        }
+    }
+}
+
+/// Transport settings for one attach, with the lane's agent socket resolved —
+/// [`container_agent_sock`] for a container, nothing extra for a host.
+///
+/// Split from [`container_opts`] because it *starts things*: the attach spawner
+/// wants a socket that exists, every other reader wants the table as configured.
+pub(crate) fn attach_container_opts(remote_id: &str) -> ContainerOpts {
+    ContainerOpts {
+        agent_sock: container_agent_sock(remote_id),
+        ..container_opts(remote_id)
+    }
+}
+
 /// Confirm out of band (not via the PTY stream) that this connection's
 /// client-tty marker got written, so switch/focus commit only once their
 /// `-c` target exists. Returns `true` iff the marker file is present and
@@ -1246,7 +1349,7 @@ fn new_session_with(
     // pane of a session created from deck — the one the user is looking at — was
     // left with a dead agent forever. A later attach repairs the session entry
     // but not an already-spawned pane.
-    let agent = agent_socket_token();
+    let agent = lane_agent_socket_token(host);
     let script = format!(
         "if [ -S {agent} ]; then SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK ; \
          else unset SSH_AUTH_SOCK ; fi ; \

@@ -41,7 +41,11 @@ Source is split into five top-level modules under `src/` (plus `main.rs`).
   command builders, listener enumeration, and ssh-specific model types
   under `infra/ssh/model/`), `infra/pty.rs`,
   `infra/agent.rs`, etc. At the crate root these are aliased as
-  `crate::tmux` (local) and `crate::remote_tmux` (remote).
+  `crate::tmux` (local) and `crate::remote_tmux` (remote). The one
+  stateful exception is `infra/ssh/agent_relay.rs`, which owns a child
+  process and its mux threads per container lane — see
+  `docs/ssh-agent-forwarding.md` for what it forwards and why a container
+  cannot be served the way a host is.
 - **`session/`**: the `SessionControl` control-plane trait
   (`session/local.rs`, `session/remote.rs`, `session/executor.rs`); a
   `System` hands one out per lane via `control()`.

@@ -252,14 +252,11 @@ fn attach_command(remote_id: &str, marker_id: u64) -> String {
          '!' -name '{agent_name}' 2>/dev/null | while IFS= read -r l ; do \
          [ -e \"$l\" ] || rm -f -- \"$l\" 2>/dev/null ; \
          done ; \
-         if [ -S \"${{SSH_AUTH_SOCK-}}\" ] && (umask 077 && mkdir -p \"$HOME/.ssh\") 2>/dev/null \
-         && ln -sf \"$SSH_AUTH_SOCK\" {agent} 2>/dev/null ; then \
-         SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK ; \
-         {tmux} set-environment -g SSH_AUTH_SOCK {agent} 2>/dev/null ; \
-         fi ; {tmux} attach",
+         {agent_publish} ; {tmux} attach",
         path = crate::remote_tmux::REMOTE_PATH_EXPORT,
         agent_pattern = crate::remote_tmux::AGENT_SOCKET_NAME_PATTERN,
         agent_name = crate::remote_tmux::agent_socket_name(),
+        agent_publish = agent_publish(remote_id, &agent),
         // The attached client renders the user's panes, so a container's
         // locale-less tmux would draw every non-ASCII byte in them as `_`.
         tmux = crate::remote_tmux::REMOTE_TMUX,
@@ -277,11 +274,46 @@ fn attach_command(remote_id: &str, marker_id: u64) -> String {
 /// exec: the tmux client inside the container read the engine's own value,
 /// concluded it had 8 colors, and quantized the user's 256-color panes down to
 /// them. See [`crate::pty::CHILD_TERM`].
+/// The prelude's `SSH_AUTH_SOCK` block, which differs by lane kind because the
+/// socket's *lifetime* does.
+///
+/// On a host, sshd mints a fresh `/tmp/ssh-*/agent.N` per connection, so the
+/// prelude pins it behind [`crate::remote_tmux::agent_socket_token`] and
+/// re-points that link on every attach.
+///
+/// In a container the socket is deck's own relay
+/// ([`crate::ssh::agent_relay`]) at a path that already survives reconnects, so
+/// there is nothing to pin — and pinning it anyway made the feature depend on a
+/// writable `$HOME/.ssh` the image need not have, which would have failed the
+/// whole block and published no agent at all. Both branches stay gated on the
+/// socket actually being there: `-e SSH_AUTH_SOCK=…` is set from what the relay
+/// *should* have bound, and a relay that never came up must not leave panes
+/// pointed at a path nothing answers.
+fn agent_publish(remote_id: &str, agent: &str) -> String {
+    let tmux = crate::remote_tmux::REMOTE_TMUX;
+    if crate::remote_tmux::parse_remote_id(remote_id)
+        .container
+        .is_some()
+    {
+        return format!(
+            "if [ -S \"${{SSH_AUTH_SOCK-}}\" ] ; then \
+             {tmux} set-environment -g SSH_AUTH_SOCK \"$SSH_AUTH_SOCK\" 2>/dev/null ; fi"
+        );
+    }
+    format!(
+        "if [ -S \"${{SSH_AUTH_SOCK-}}\" ] && (umask 077 && mkdir -p \"$HOME/.ssh\") 2>/dev/null \
+         && ln -sf \"$SSH_AUTH_SOCK\" {agent} 2>/dev/null ; then \
+         SSH_AUTH_SOCK={agent} ; export SSH_AUTH_SOCK ; \
+         {tmux} set-environment -g SSH_AUTH_SOCK {agent} 2>/dev/null ; \
+         fi"
+    )
+}
+
 fn attach_shell_command(remote_id: &str, marker_id: u64) -> String {
     attach_shell_command_with(
         remote_id,
         marker_id,
-        &crate::remote_tmux::container_opts(remote_id),
+        &crate::remote_tmux::attach_container_opts(remote_id),
     )
 }
 
@@ -316,6 +348,32 @@ fn attach_shell_command_with(
     )
 }
 
+/// The whole `ssh` argument vector for one attach connection.
+///
+/// `-tt` forces TTY allocation for the remote tmux client; the connection-reuse
+/// flags land this PTY on the same ControlMaster as the one-shot `remote_tmux`
+/// calls, and the ForwardAgent answer has to match theirs for the reason
+/// [`crate::remote_tmux::base_ssh_args`] documents. Auth is the user's
+/// responsibility: `BatchMode=yes` (in Deck's shared connection options) stops
+/// ssh blocking on a hidden password prompt we would never see from this thread
+/// and that would deadlock the PTY.
+///
+/// Assembling it here, rather than inline in the spawn thread, is what lets the
+/// real attach be exercised against a live host in a test.
+fn attach_ssh_argv(remote_id: &str, marker_id: u64) -> Vec<String> {
+    let target = crate::remote_tmux::parse_remote_id(remote_id);
+    let mut argv = vec!["-tt".to_string()];
+    argv.extend(crate::ssh::connection_opts());
+    argv.extend(
+        crate::ssh::agent_forward_opts(target.host)
+            .iter()
+            .map(|opt| (*opt).to_string()),
+    );
+    argv.push(target.host.to_string());
+    argv.push(attach_shell_command(remote_id, marker_id));
+    argv
+}
+
 fn spawn_one(
     host: String,
     generation: u64,
@@ -326,16 +384,6 @@ fn spawn_one(
         .name(format!("deck-pty-spawn-{host}"))
         .spawn(move || {
             let host_for_args = host.clone();
-            // Auth is the user's responsibility. `BatchMode=yes` (in Deck's
-            // shared connection options)
-            // stops ssh blocking on a hidden password prompt we'd never see
-            // from this thread and that would deadlock the PTY. `-tt` forces
-            // TTY allocation for the remote tmux client; the multiplexing
-            // connection-reuse flags land this PTY on the same ControlMaster
-            // as the one-shot `remote_tmux` calls. The `PATH=`
-            // prefix makes tmux discoverable when it's off the default
-            // non-interactive PATH (e.g. Homebrew on macOS).
-            //
             // Before handing off to tmux, record *this* client's tty (the
             // `-tt` pty = tmux's `#{client_tty}`) to a per-connection marker
             // file keyed by `marker_id`. Later one-shot `switch-client` calls
@@ -345,17 +393,7 @@ fn spawn_one(
             // output goes to the file, so nothing dirties the terminal before
             // tmux paints. Best-effort; readiness confirmed out of band below.
             let marker_id = next_marker_id();
-            let target = crate::remote_tmux::parse_remote_id(&host_for_args);
-            let remote_cmd = attach_shell_command(&host_for_args, marker_id);
-            let mut argv = vec!["-tt".to_string()];
-            argv.extend(crate::ssh::connection_opts());
-            argv.extend(
-                crate::ssh::agent_forward_opts(target.host)
-                    .iter()
-                    .map(|opt| (*opt).to_string()),
-            );
-            argv.push(target.host.to_string());
-            argv.push(remote_cmd);
+            let argv = attach_ssh_argv(&host_for_args, marker_id);
             let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
             let pane = match Pty::spawn("ssh", &argv, size) {
                 Ok(pty) => Box::new(TerminalSurface::new(pty, size.rows, size.cols)),
@@ -462,8 +500,8 @@ mod tests {
         // client inside believes it — left alone it reported 8 colors and
         // quantized the user's palette down to them.
         assert!(command.contains(crate::pty::CHILD_TERM));
-        // No exec-time agent env unless the config names a socket path (the
-        // prelude's own symlink block still mentions SSH_AUTH_SOCK).
+        // No exec-time agent env unless the lane resolved a socket (the
+        // prelude's own publish block still mentions SSH_AUTH_SOCK).
         assert!(!command.contains("-e 'SSH_AUTH_SOCK"));
         // The prelude still writes this connection's marker (quoted through
         // the wrapping layer).
@@ -636,6 +674,40 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// A container is the other half of that: the socket it is handed is the
+    /// relay's, at a path that already survives reconnects, so pinning it would
+    /// buy nothing and cost the lane its agent whenever the image's `$HOME` is
+    /// not writable — which is most images that run as a non-root user.
+    #[test]
+    fn a_container_publishes_the_relay_socket_it_was_handed() {
+        let command = attach_command("web.prod#dev", 17);
+
+        // Same guard as the host path, and for the same reason: a relay that
+        // never came up must not leave panes pointed at a dead address, and
+        // `${SSH_AUTH_SOCK-}` keeps a `nounset` shell from aborting the attach.
+        assert!(command.contains("if [ -S \"${SSH_AUTH_SOCK-}\" ]"));
+        assert!(command
+            .contains("tmux -u set-environment -g SSH_AUTH_SOCK \"$SSH_AUTH_SOCK\" 2>/dev/null"));
+        // Nothing is pinned, and nothing depends on a writable home.
+        assert!(
+            !command.contains("ln -sf"),
+            "container pins a link: {command}"
+        );
+        assert!(
+            !command.contains("mkdir -p \"$HOME/.ssh\""),
+            "container needs a writable home: {command}"
+        );
+        // The sweep stays, though: it is what collects the links a deck of an
+        // earlier version left inside this container.
+        assert!(command.contains(&format!(
+            "-name '{}'",
+            crate::remote_tmux::AGENT_SOCKET_NAME_PATTERN
+        )));
+        let setenv = command.find("set-environment").unwrap();
+        let attach = command.rfind("tmux -u attach").unwrap();
+        assert!(setenv < attach);
+    }
+
     #[test]
     fn attach_pins_forwarded_agent_behind_stable_symlink() {
         let command = attach_command("web.prod", 17);
@@ -662,5 +734,96 @@ mod tests {
         let setenv = command.find("set-environment").unwrap();
         let attach = command.rfind("tmux -u attach").unwrap();
         assert!(setenv < attach);
+    }
+
+    /// The last mile, against a live container: what the attach *actually*
+    /// leaves a new pane holding.
+    ///
+    /// Everything before this is checked in isolation — the relay comes up
+    /// ([`crate::ssh::agent_relay`]'s own live test), the prelude publishes what
+    /// it was handed, the exec carries `-e SSH_AUTH_SOCK` — and none of it says
+    /// whether the value a pane inherits answers as an agent. It asks the
+    /// container's own tmux for the address it hands out, then speaks the agent
+    /// protocol to exactly that address.
+    ///
+    /// ```text
+    /// DECK_RELAY_TEST_ID=host#container cargo test --workspace -- --ignored last_mile
+    /// ```
+    #[test]
+    #[ignore = "needs a live host, container and ssh-agent"]
+    fn a_container_pane_inherits_a_live_agent_last_mile() {
+        use crate::infra::command::default_runner;
+
+        let Ok(remote_id) = std::env::var("DECK_RELAY_TEST_ID") else {
+            panic!("set DECK_RELAY_TEST_ID=host#container");
+        };
+        let session = "deck-agent-last-mile";
+        // Something for the attach to land on. Also the path that hands a
+        // *created* session its agent, which resolves per lane kind.
+        let _ = crate::remote_tmux::new_session(&remote_id, session, "/tmp");
+
+        let marker_id = 1;
+        let argv = attach_ssh_argv(&remote_id, marker_id);
+        let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+        assert!(
+            argv.iter().any(|arg| arg.contains("-e 'SSH_AUTH_SOCK=")),
+            "the attach carries no agent socket, so the relay never came up: {argv:?}"
+        );
+        let pty = crate::pty::Pty::spawn(
+            "ssh",
+            &argv_refs,
+            portable_pty::PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            },
+        )
+        .expect("attach PTY");
+        assert!(
+            crate::remote_tmux::wait_for_client_marker(&remote_id, marker_id),
+            "the attach never landed a client inside the container"
+        );
+
+        // Not the path deck computed — the one the container's tmux hands out,
+        // which is what a new pane actually inherits.
+        let published = crate::remote_tmux::run_ssh(
+            default_runner(),
+            &remote_id,
+            &["tmux -u show-environment -g SSH_AUTH_SOCK"],
+        )
+        .expect("ask the container's tmux");
+        let sock = published
+            .trim()
+            .strip_prefix("SSH_AUTH_SOCK=")
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            sock.starts_with("/tmp/deck-agent-"),
+            "tmux hands panes {published:?}"
+        );
+
+        let probe = format!(
+            "python3 -c {}",
+            crate::remote_tmux::shell_single_quote(&format!(
+                "import socket,struct;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);\
+                 s.connect(\"{sock}\");s.sendall(struct.pack(\">IB\",1,11));\
+                 d=s.recv(65536);print(\"pane-agent-reply\",d[4])"
+            ))
+        );
+        let answer = crate::remote_tmux::run_ssh(default_runner(), &remote_id, &[probe.as_str()])
+            .expect("probe the published socket");
+
+        drop(pty);
+        let _ = crate::remote_tmux::run_ssh(
+            default_runner(),
+            &remote_id,
+            &[&format!("tmux -u kill-session -t '{session}'")],
+        );
+
+        assert!(
+            answer.contains("pane-agent-reply 12"),
+            "the address tmux hands panes is not a live agent: {answer}"
+        );
     }
 }
