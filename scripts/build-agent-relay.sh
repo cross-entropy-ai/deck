@@ -32,7 +32,11 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 OUT="$ROOT/assets/agent-relay"
 
 # One entry per artifact: the name it is committed under, and its rust target.
-TARGETS="x86_64:x86_64-unknown-linux-musl aarch64:aarch64-unknown-linux-musl"
+# armv7 is here because deck publishes an armv7 binary: a 32-bit ARM machine can
+# run deck, so its containers should get an agent too. Pure Rust cross-compiles
+# to it with the same rust-lld, so it costs a target in this list and nothing
+# else — unlike the app itself, which links C and would need emulation.
+TARGETS="x86_64:x86_64-unknown-linux-musl aarch64:aarch64-unknown-linux-musl armv7:armv7-unknown-linux-musleabihf"
 
 # Tag for the throwaway build image, so nothing depends on what a given engine's
 # `build -q` chooses to print.

@@ -6,8 +6,12 @@ use super::*;
 /// inside somebody's container with nothing pointing back here.
 #[test]
 fn the_committed_artifacts_are_static_elfs_for_the_arch_they_name() {
-    // ELF machine numbers, e_machine at offset 18 (little-endian, ELF64).
-    for (arch, machine) in [("x86_64", 0x3e_u16), ("aarch64", 0xb7)] {
+    // e_machine at offset 18, ELF class at 4 (2 = 64-bit, 1 = 32-bit).
+    for (arch, machine, class) in [
+        ("x86_64", 0x3e_u16, 2_u8),
+        ("aarch64", 0xb7, 2),
+        ("armv7l", 0x28, 1),
+    ] {
         let binary = relay_binary(arch).unwrap_or_else(|| panic!("no relay for {arch}"));
         assert!(
             binary.len() > 64,
@@ -15,7 +19,7 @@ fn the_committed_artifacts_are_static_elfs_for_the_arch_they_name() {
             binary.len()
         );
         assert_eq!(&binary[..4], b"\x7fELF", "{arch}: not an ELF");
-        assert_eq!(binary[4], 2, "{arch}: not 64-bit");
+        assert_eq!(binary[4], class, "{arch}: wrong ELF class");
         assert_eq!(binary[5], 1, "{arch}: not little-endian");
         assert_eq!(
             u16::from_le_bytes([binary[18], binary[19]]),
@@ -34,6 +38,11 @@ fn the_committed_artifacts_are_static_elfs_for_the_arch_they_name() {
     // Both spellings each engine reports, and nothing invented for the rest.
     assert!(relay_binary("amd64").is_some());
     assert!(relay_binary("arm64").is_some());
+    // A 64-bit chip running a 32-bit userland takes the 32-bit build.
+    assert!(relay_binary("armv8l").is_some());
+    // ARMv6 cannot execute an ARMv7 hard-float binary: no agent beats an
+    // illegal instruction.
+    assert!(relay_binary("armv6l").is_none());
     assert!(relay_binary("riscv64").is_none());
     assert!(relay_binary("").is_none());
 }
@@ -54,6 +63,8 @@ fn the_committed_relay_binary_proxies_a_channel() {
 
     let arch = if cfg!(target_arch = "aarch64") {
         "aarch64"
+    } else if cfg!(target_arch = "arm") {
+        "armv7l"
     } else {
         "x86_64"
     };
