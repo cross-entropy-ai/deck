@@ -216,6 +216,16 @@ pub fn agent_forward_opts(host: &str) -> &'static [&'static str] {
     agent_forward_opts_in(&disabled, host)
 }
 
+/// Whether deck is willing to put this user's agent within reach of `host` —
+/// [`agent_forward_opts`] as a question rather than as argv.
+///
+/// Asked by paths that reach the agent *without* `ForwardAgent`, so they honour
+/// the same answer: `forward_agent: false` is a statement about the machine, not
+/// about the mechanism.
+pub fn agent_forwarding_enabled(host: &str) -> bool {
+    agent_forward_opts(host) == AGENT_FORWARD_ON
+}
+
 fn agent_forward_opts_in(disabled: &HashSet<String>, host: &str) -> &'static [&'static str] {
     if disabled.contains(host) {
         AGENT_FORWARD_OFF

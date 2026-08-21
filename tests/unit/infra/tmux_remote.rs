@@ -778,6 +778,95 @@ fn shell_quote_remote_path_keeps_home_expandable() {
     );
 }
 
+/// A container lane's panes reach the agent through the relay's socket, which
+/// lives in the container's own `/tmp` — the host's `~/.ssh` link names a path
+/// the container's filesystem does not have, so the two lane kinds must resolve
+/// to different tokens or one of them publishes a dead address.
+#[test]
+fn a_lanes_agent_socket_is_the_one_its_own_filesystem_has() {
+    let host = lane_agent_socket_token("box");
+    let container = lane_agent_socket_token("box#dev");
+
+    assert_eq!(host, agent_socket_token());
+    assert!(host.contains(".ssh/"), "host token: {host}");
+    assert_eq!(
+        container,
+        format!("'{}'", container_agent_socket_path()),
+        "container token: {container}"
+    );
+    assert!(container.starts_with("'/tmp/deck-agent-"));
+    // Same per-process name on both sides: a shared container must not have two
+    // decks re-pointing one address, and a reconnect must not move it.
+    assert!(container.contains(agent_socket_name()));
+}
+
+/// The relay's transport is the exec's stdio, so it has to stay a binary pipe:
+/// `-i` to keep stdin attached, and never `-t`, whose line discipline would
+/// rewrite bytes in both directions and corrupt every signing request.
+#[test]
+fn the_agent_relay_rides_a_binary_exec_pipe() {
+    let argv = agent_relay_argv("box#dev", "/tmp/deck-agent-7-1.sock").expect("container id");
+    let joined = argv.join(" ");
+
+    assert!(joined.contains("'docker' exec -i "), "argv: {joined}");
+    assert!(
+        !argv.iter().any(|arg| arg == "-t"),
+        "a pty in the mux: {joined}"
+    );
+    assert!(joined.contains("'dev'"), "argv: {joined}");
+    // Quoted twice over — once for the container's `sh`, once by the transport
+    // for the host's — so match on the value, not on one level's spelling.
+    assert!(joined.contains("DECK_AGENT_SOCK="), "argv: {joined}");
+    assert!(
+        joined.contains("/tmp/deck-agent-7-1.sock"),
+        "argv: {joined}"
+    );
+    // Rides the same multiplexed connection as every other call to the host.
+    assert!(joined.contains("ControlMaster=auto"));
+    assert!(argv.iter().any(|arg| arg == "box"));
+    // The container's `sh` reads no startup file, so PATH is stated twice: once
+    // for the host shell that runs the engine, once inside.
+    assert_eq!(joined.matches(REMOTE_PATH_EXPORT).count(), 2);
+}
+
+/// Which agent socket a container lane publishes is a policy question with three
+/// answers that need no relay at all, and each of them has to be decided *before*
+/// anything is started — a relay spawned and then discarded is an ssh child and a
+/// container process nobody asked for.
+#[test]
+fn a_container_lanes_agent_socket_answers_the_cheap_cases_first() {
+    // A socket the user mounted in themselves wins, verbatim and untouched.
+    upsert_container_opts(
+        "relay-policy#mounted".to_string(),
+        ContainerOpts {
+            engine: "docker".to_string(),
+            agent_sock: Some("/ssh-agent".to_string()),
+        },
+    );
+    assert_eq!(
+        container_agent_sock("relay-policy#mounted"),
+        Some("/ssh-agent".to_string())
+    );
+
+    // A host lane is not a container: it reaches the agent through ForwardAgent.
+    assert_eq!(container_agent_sock("relay-policy"), None);
+
+    // `forward_agent: false` is about the machine, not the mechanism — even
+    // though the relay would never put the agent on that machine's filesystem.
+    crate::ssh::set_agent_forward_disabled(std::collections::HashSet::from([
+        "relay-locked".to_string()
+    ]));
+    assert_eq!(container_agent_sock("relay-locked#dev"), None);
+    crate::ssh::set_agent_forward_disabled(std::collections::HashSet::new());
+}
+
+/// A host has nothing to relay into — it reaches the agent through
+/// `ForwardAgent` — so asking for one is a caller error, not an empty command.
+#[test]
+fn there_is_no_agent_relay_for_a_host_lane() {
+    assert!(agent_relay_argv("box", "/tmp/whatever.sock").is_none());
+}
+
 #[test]
 fn new_session_never_bakes_this_calls_own_agent_socket_into_the_session() {
     // tmux copies the creating client's env into the session, and a one-shot ssh
@@ -801,6 +890,29 @@ fn new_session_never_bakes_this_calls_own_agent_socket_into_the_session() {
         call.contains("tmux -u new-session -d -s 'work'"),
         "call: {call}"
     );
+}
+
+/// Same reasoning inside a container, where "the stable socket" is the relay's
+/// own path. Pointing a new session at the host's `~/.ssh` link would hand its
+/// first pane — the one the user is looking at — an address that does not exist
+/// on that filesystem.
+#[test]
+fn a_container_session_is_created_with_the_relays_socket() {
+    let runner = FakeRunner::new(ok(""));
+    let _ = new_session_with(&runner, "box#dev", "work", "~/proj");
+    let call = &runner.calls()[0];
+    let agent = container_agent_socket_path();
+
+    // The inner script is quoted again for the host shell on its way through
+    // `<engine> exec`, so assert on what it says rather than on how it is
+    // escaped: this socket, guarded, with no fallback to the host's link.
+    assert!(call.contains(&format!("if [ -S ")), "call: {call}");
+    assert!(call.contains(&agent), "call: {call}");
+    assert!(
+        call.contains("else unset SSH_AUTH_SOCK ; fi"),
+        "call: {call}"
+    );
+    assert!(!call.contains(".ssh/deck-agent"), "call: {call}");
 }
 
 /// The remote command `run_ssh` assembled, as the remote login shell will see it
