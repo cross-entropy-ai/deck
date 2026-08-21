@@ -71,24 +71,85 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # The committed artifacts under assets/agent-relay/ are built by
-      # scripts/build-agent-relay.sh, not by CI: they are not byte-reproducible
-      # across rustc versions, so there is nothing to diff against. What CI can
-      # check is that the source still compiles for both container
-      # architectures, and that nobody edited it without rerunning the script.
-      # (Whether the *committed* binary works is checked by the `test` job,
-      # which runs the one matching its own architecture.)
-      - name: Build the relay for both container architectures
-        run: |
-          LLD="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/rust-lld"
-          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
-            RUSTFLAGS="-C linker=$LLD -C link-self-contained=yes" \
-              cargo build --release --target "$target" -p agent-relay --bin deck-agent-relay
-          done
-
       # Through the script, not a copy of its pipeline: the two spellings
       # disagreed once already (macOS ships a `sha256` whose output format is
       # not `sha256sum`'s), and a staleness guard that cannot be reproduced
       # locally is worse than none.
       - name: Refuse artifacts older than the source they came from
         run: scripts/build-agent-relay.sh --check
+
+      # The committed artifacts are not byte-reproducible across rustc versions,
+      # so there is nothing to diff a rebuild against. What this proves is that
+      # the crate still compiles for both container architectures and that the
+      # script's local-toolchain path works — the path a contributor with the
+      # musl targets installed takes, and the one least likely to be exercised
+      # by hand. Whether the *committed* binaries work is the `test` job's job
+      # (it runs the one matching its own architecture) and `relay-live`'s.
+      - name: Rebuild the artifacts, the way a contributor would
+        run: scripts/build-agent-relay.sh
+
+  relay-live:
+    name: relay-live
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # deck reaches a container as `ssh <host> <engine> exec …`, so the live
+      # path needs a real ssh hop and a real agent — neither of which a unit test
+      # can fake, and both of which a runner can be talked into providing. The
+      # host key is trusted up front because deck connects with `BatchMode=yes`
+      # and would otherwise die on the prompt; `~/.ssh/socks` exists because
+      # that is where deck's default ControlPath wants to live.
+      - name: Make the runner its own ssh remote
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openssh-server
+          sudo systemctl start ssh
+          chmod 700 ~/.ssh 2>/dev/null || mkdir -m 700 ~/.ssh
+          mkdir -p ~/.ssh/socks
+          ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_relay -C relay-live
+          cat ~/.ssh/id_relay.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          ssh-keyscan -H localhost >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -o BatchMode=yes localhost 'echo "ssh hop works"; docker version --format "server {{.Server.Version}}"'
+
+      # alpine on purpose: 5 MB of busybox with nothing to borrow — no python,
+      # no perl, no socat, no ssh client. If agent forwarding works in here it
+      # works anywhere, because deck brought everything it needed. tmux is added
+      # for the attach test only, which needs a tmux server to attach to.
+      - name: Start a container with nothing in it
+        run: |
+          docker run -d --name deck-relay-ci --entrypoint sleep alpine:3 900
+          docker exec deck-relay-ci sh -c \
+            'command -v python3 python perl socat nc ssh-add || echo "nothing to borrow in this image"'
+          docker exec deck-relay-ci apk add --no-cache tmux
+
+      - name: Forward the agent into it, for real
+        env:
+          DECK_RELAY_TEST_ID: "localhost#deck-relay-ci"
+        run: |
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/id_relay
+          export DECK_AGENT_LOG="$RUNNER_TEMP/agent-relay.log"
+          # Probe, install, exec, and a real IDENTITIES_ANSWER back from the
+          # agent this shell is holding.
+          cargo test --workspace -- --ignored --exact \
+            infra::tmux::remote::tests::a_real_container_reaches_this_machines_agent
+          # And what the attach leaves a new pane holding, which is the part a
+          # user actually meets.
+          cargo test --workspace -- --ignored --exact \
+            app::ssh::remote_spawn::tests::a_container_pane_inherits_a_live_agent_last_mile
+          echo "--- relay log"
+          cat "$DECK_AGENT_LOG"
+
+      - name: Nothing left behind
+        if: always()
+        run: |
+          docker exec deck-relay-ci sh -c \
+            'ls -d /tmp/deck-relay.* /tmp/deck-agent-*.sock 2>/dev/null && exit 1 || echo "container is clean"' || true
+          docker rm -f deck-relay-ci

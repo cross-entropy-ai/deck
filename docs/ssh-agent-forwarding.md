@@ -115,19 +115,46 @@ DECK_RELAY_ENGINE="docker -H ssh://devbox" scripts/build-agent-relay.sh
 
 **Ordinary builds need none of this.** `cargo build` only reads the committed
 files — there is no `build.rs`, nothing is cross-compiled, and no container is
-started. The engine is needed only when `crates/agent-relay` changes and the
-artifacts have to be regenerated; `--check` answers whether that is the case and
-needs neither an engine nor a toolchain (CI runs exactly that, so a guard that
-fails in CI can always be reproduced locally).
+started.
 
-The build itself runs in a `rust:alpine` container, so it needs no local
-toolchain and works against a remote engine — which is how it is done on a Mac
-with no Linux in sight. Commit what it writes, including `SOURCE.sha256`.
+### Changing the relay
 
-CI also compiles the crate for both targets, and the `test` job runs the
-committed artifact matching its own architecture through the wire protocol —
-byte-comparing a rebuild would be meaningless, since Rust output is not
-reproducible across compiler versions.
+1. Edit `crates/agent-relay`, and debug it as a host build (below).
+2. `scripts/build-agent-relay.sh`
+3. Commit `crates/agent-relay` **and** what the script wrote under
+   `assets/agent-relay/`, `SOURCE.sha256` included.
+
+`scripts/build-agent-relay.sh --check` says whether step 2 is outstanding, and
+needs neither an engine nor a toolchain. CI runs exactly that, so a guard that
+fails in CI can always be reproduced locally.
+
+With both musl targets installed the script builds them right here — no
+container:
+
+```bash
+rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+```
+
+`cargo build -p agent-relay --target x86_64-unknown-linux-musl` is then the same
+thing by hand, minus the size profile (which cannot live in the committed
+manifest: a workspace member's `[profile]` is ignored, with a warning on every
+deck build) and minus the `rust-lld` the script passes as the linker, so no musl
+`cc` has to exist. Without those targets — a Homebrew or distro rustc has no
+rustup to add one with — the script falls back to a `rust:alpine` container and
+works against a remote engine, which is how it is done on a Mac with no Linux in
+sight.
+
+### What CI checks
+
+| job | what it proves |
+| --- | --- |
+| `agent-relay` | the artifacts are not stale, and the crate still builds for both architectures through the script's own local-toolchain path |
+| `test` | the *committed* artifact for the runner's architecture accepts a connection, reframes it, delivers a reply, reports the close, and removes its socket on stdin EOF |
+| `relay-live` | the whole path against a real `alpine:3` container over a real ssh hop with a real agent: probe, install, exec, a real `IDENTITIES_ANSWER`, and what the attach leaves a new pane holding |
+
+Byte-comparing a rebuild would be meaningless, since Rust output is not
+reproducible across compiler versions — hence checks on behaviour and on the
+source hash instead.
 
 ## Debugging the relay itself
 
@@ -164,10 +191,9 @@ agent-reply-type 12 keys 1
 ```
 
 Two live tests cover what unit tests cannot, both `#[ignore]`d because they need
-a reachable host, a running container and a local agent holding a key. The
-container needs no mount, no agent socket of its own, no root, and nothing
-installed — a stock `mongo` or `nginx` container is a fair test precisely because
-there is nothing in it to borrow:
+a reachable host, a running container and a local agent holding a key — which is
+also what the `relay-live` CI job assembles, so they run on every push without
+anyone having a spare host to point them at. Against your own remote:
 
 ```bash
 docker -H ssh://host run -d --name probe --entrypoint sleep mongo:7.0 900
