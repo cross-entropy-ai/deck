@@ -119,14 +119,15 @@ effects and sits behind its own config flag.
   `Verdict { status, keep_previous, visible_blocker, visible_idle }`
   (modeled on herdr's `AgentDetection`); `classify_status` stays as the
   status-only wrapper so existing call sites keep working. The `title`
-  parameter is the OSC pane-title tier from herdr's manifests — both agents
-  spin a braille/half-circle glyph through the title for the whole turn,
-  which survives the streaming blind spot; Codex also sets "Action
-  Required" when blocked. PR 1 defines and tests the tier; PR 2 wires
-  `#{pane_title}` through. One deviation from herdr: their codex manifest
-  treats any non-empty non-spinner title as positive idle, but through tmux
-  a title can be a stale shell-set one Codex never touched, so only the
-  anchored forms (Claude's `✳ ` prefix) upgrade idle.
+  parameter is the OSC pane-title tier from herdr's manifests — a
+  braille/half-circle spinner → Working, Codex's "Action Required" →
+  blocked. PR 1 defines and tests the tier; PR 2 wires `#{pane_title}`
+  through. Two deviations from herdr, both forced by measurement or by
+  reading through tmux: their `osc_title_idle` rules (any non-spinner title
+  → positive idle) are dropped entirely — a tmux pane title can be a stale
+  shell-set one the agent never touched, and Claude 2.1.241 shows
+  "✳ <summary>" *mid-turn*, so a title must never count as idle evidence
+  (see the title findings under PR 2).
 - Claude, three new rules (all captured in the experiments):
   `Interrupted · What should Claude do instead?` → Idle;
   workspace-trust dialog (`1. Yes, I trust this folder` + `Enter to confirm ·
@@ -158,10 +159,15 @@ clock for agents whose titles don't spin.
   `#{window_activity}`, `#{window_panes}`, and `#{pane_title}`;
   `parse_panes` tolerates both field counts (older remote tmux → `None` →
   today's behavior). The title feeds `classify_verdict`'s title tier.
-- While wiring, live-verify the title assumptions on this machine: does
-  Claude's title spin during a permission dialog (herdr ranks title-working
-  above every blocked rule — if the title spins while blocked, demote it
-  below the waiting checks), and does it spin during plain-text streaming?
+- Title assumptions, measured live on Claude 2.1.241 (2026-08-24): the
+  title does **not** spin — it stays "✳ <session summary>" straight through
+  a running turn (tool phase and plain-text streaming alike). Two
+  consequences already applied in PR 1: the spinner→working tier is
+  legacy-version-only for Claude (inert on 2.1.241, kept for the versions
+  herdr documented), and herdr's `osc_title_idle` ("✳ " → idle) is **wrong**
+  for tmux consumers — "✳ " mid-turn would retract a correct hook Working,
+  so it is dropped. Codex title behavior (braille spinner, "Action
+  Required") is still unverified live — check it while wiring PR 2.
 - Remote "now": append `; echo __deck_now__ ; date +%s` to the `agent_probe`
   compound (`src/infra/tmux/remote.rs`) — same ssh hop as `ps`, and the
   remote's own clock sidesteps local/remote skew. Marker must not start with
@@ -259,11 +265,22 @@ CLAUDE.md's remote-shell rule.
 Drive a sandboxed agent from the CLI, never inside the running deck:
 
 ```bash
+mkdir -p /tmp/dt   # BEFORE anything else — see the trap below
 env -u TMUX -u TMUX_PANE TMUX_TMPDIR=/tmp/dt \
     tmux new-session -d -s t1 -x 200 -y 50 "cd <trusted-dir> && exec claude"
+# assert isolation actually took before driving anything:
+env -u TMUX TMUX_TMPDIR=/tmp/dt tmux display -p '#{socket_path}'   # must print /tmp/dt/…
 env -u TMUX TMUX_TMPDIR=/tmp/dt tmux send-keys -t t1 "..." Enter
 env -u TMUX TMUX_TMPDIR=/tmp/dt tmux capture-pane -p -t t1
 ```
+
+**The trap that makes the mkdir + assert mandatory**: if the directory
+`TMUX_TMPDIR` points at does not exist, tmux (3.7c measured) does not error —
+it silently falls back to the **default** socket, so every "sandboxed"
+command lands on the real server: the test session appears among the user's
+sessions, and a cleanup `kill-server` would kill their server. This happened
+once (2026-08-24, an `rm -rf` of the tmpdir without re-mkdir); the
+`#{socket_path}` assertion is what turns the mistake into a loud failure.
 
 Claude needs the real `HOME` (credentials live in the macOS Keychain; a
 sandboxed `HOME` cannot log in) — scope hooks via the throwaway project's

@@ -142,10 +142,12 @@ pub fn classify_status(kind: AgentKind, buffer: &str) -> AgentStatus {
 /// has it, the pane's OSC title (`#{pane_title}`). Pure (no IO) so it runs
 /// cheaply every refresh and is trivial to unit-test.
 ///
-/// The title is a tell of its own: both agents drive a spinner through it
-/// while a turn runs, which survives the streaming blind spot — mid-turn
-/// plain-text output shows no spinner or interrupt hint in the buffer at
-/// all, so buffer rules alone misread streaming as idle.
+/// The title is a tell of its own where the agent drives a spinner through
+/// it while a turn runs (older Claude versions, Codex per herdr's manifest)
+/// or flags "Action Required" — those survive the streaming blind spot,
+/// where the buffer shows no tell at all. Measured on Claude 2.1.241 the
+/// title stays "✳ <summary>" throughout, so for it the title tier is inert:
+/// neither working nor idle evidence.
 pub fn classify_verdict(kind: AgentKind, buffer: &str, title: Option<&str>) -> Verdict {
     // An unset title comes through as an empty string; treat it as absent.
     let title = title.map(str::trim).filter(|t| !t.is_empty());
@@ -219,15 +221,21 @@ fn working_tool_tail() -> &'static regex::Regex {
     })
 }
 
-/// Markers of a permission/confirmation dialog awaiting the user's choice.
-/// `do you want` and the `❯ 1.` selector cover permission and trust dialogs;
-/// `tab to amend` is the Bash-permission footer (survives even when the
-/// question has scrolled); the rest are dialog phrasings herdr's manifest
-/// carries that our two cover-alls miss.
-const CLAUDE_WAITING_MARKERS: &[&str] = &[
+/// Dialog *chrome*: strings only Claude Code's own selection UI paints —
+/// the `❯ 1.` selector and the Bash-permission footer. These are strong
+/// evidence (`visible_blocker`): a dialog is on screen right now, whatever
+/// any other source says. Dialogs are bottom-anchored and clip from the
+/// top, so their chrome is visible whenever the dialog is.
+const CLAUDE_BLOCKER_CHROME: &[&str] = &["\u{276f} 1.", "tab to amend"];
+
+/// Dialog *question text*. Weak evidence on purpose: Claude routinely ends
+/// a finished turn with prose like "Do you want me to continue?", and that
+/// line lingers in the transcript. At rest it still reads Waiting (the
+/// agent did ask the user something), but it must not outrank live
+/// sources — a fresh activity clock or hook report says the next turn is
+/// already running past it.
+const CLAUDE_WAITING_PROSE: &[&str] = &[
     "do you want",
-    "\u{276f} 1.",
-    "tab to amend",
     "waiting for permission",
     "run a dynamic workflow?",
 ];
@@ -239,19 +247,17 @@ const CLAUDE_WAITING_MARKERS: &[&str] = &[
 const CLAUDE_INTERRUPTED: &str = "interrupted \u{b7} what should claude do instead";
 
 /// Claude Code's busy-spinner pane title: a braille frame (≤ 2.1.227) or a
-/// half-circle frame (2.1.228+) leading the OSC title. Shape copied from
-/// herdr's claude manifest. The title spins for the whole turn — including
-/// while plain text streams and the buffer shows no tell — so it outranks
-/// every buffer rule.
+/// half-circle frame (2.1.228+) leading the OSC title, per herdr's claude
+/// manifest. Measured on 2.1.241 the title does NOT spin — it stays
+/// "✳ <summary>" straight through a running turn — so this tier only ever
+/// fires on the older versions herdr documented, where a spinning title is
+/// unambiguous and outranks the buffer. Crucially the reverse rule is dead
+/// on 2.1.241: "✳ " appears mid-turn, so it must never count as idle
+/// evidence (herdr's `osc_title_idle` is wrong for tmux consumers).
 fn claude_title_working() -> &'static regex::Regex {
     static R: OnceLock<regex::Regex> = OnceLock::new();
     R.get_or_init(|| regex::Regex::new(r"^[\u{2800}-\u{28FF}\u{25D0}-\u{25D3}] ").unwrap())
 }
-
-/// Claude Code's at-rest pane title prefix ("✳ <session summary>"). Weakest
-/// tier: consulted only after every buffer rule has passed, where it upgrades
-/// the fallback idle to a positive one.
-const CLAUDE_TITLE_IDLE_PREFIX: &str = "\u{2733} ";
 
 /// A finished-turn summary line: "…ed for <number>…" (the past-tense verb
 /// Claude Code prints when a turn completes, e.g. "Cogitated for 8s").
@@ -272,7 +278,8 @@ fn completed_line(lower: &str) -> bool {
 ///   Claude's rotating spinner verbs ([`CLAUDE_INTERRUPT_HINT`],
 ///   [`working_timer_tail`], [`working_spinner_glyph`],
 ///   [`working_spinner_tail`], [`working_tool_tail`]);
-/// - permission/confirmation/trust dialog → `Waiting` + `visible_blocker`;
+/// - dialog chrome → `Waiting` + `visible_blocker`; bare question prose →
+///   weak `Waiting` (see [`CLAUDE_WAITING_PROSE`]);
 /// - finished-turn summary "…ed for <number>…" or the interrupt line
 ///   ("Interrupted · What should Claude do instead?") → `Idle` +
 ///   `visible_idle` (positive evidence — retracts a stale hook Working);
@@ -307,8 +314,11 @@ fn claude_verdict(buffer: &str, title: Option<&str>) -> Verdict {
         if lower.contains(CLAUDE_INTERRUPT_HINT) || working_timer_tail().is_match(line) {
             return Verdict::status(AgentStatus::Working);
         }
-        if CLAUDE_WAITING_MARKERS.iter().any(|m| lower.contains(m)) {
+        if CLAUDE_BLOCKER_CHROME.iter().any(|m| lower.contains(m)) {
             return Verdict::blocker();
+        }
+        if CLAUDE_WAITING_PROSE.iter().any(|m| lower.contains(m)) {
+            return Verdict::status(AgentStatus::Waiting);
         }
         // A finished-turn summary ("✶ Cogitated for 8s") reuses a spinner
         // glyph, so rule it out before the bare-spinner tells below. Both it
@@ -330,12 +340,10 @@ fn claude_verdict(buffer: &str, title: Option<&str>) -> Verdict {
             return Verdict::status(AgentStatus::Working);
         }
     }
-    // No status line recognized → sitting at the prompt. The at-rest title
-    // ("✳ …") upgrades this to positive idle; on its own the fallback is
-    // weak — mid-turn streaming looks exactly like this.
-    if title.is_some_and(|t| t.starts_with(CLAUDE_TITLE_IDLE_PREFIX)) {
-        return Verdict::idle_tell();
-    }
+    // No status line recognized → weak idle. The "✳ <summary>" title is NOT
+    // an upgrade to positive idle: measured on 2.1.241 it shows mid-turn too
+    // (tool phase and text streaming alike), so it can't distinguish the
+    // streaming blind spot from a real prompt wait.
     Verdict::status(AgentStatus::Idle)
 }
 
@@ -381,8 +389,7 @@ const CODEX_WEAK_BLOCKERS: &[&str] = &["[y/n]", "yes (y)", "do you want to", "wo
 /// Classify Codex's pane. Same tiering as [`claude_verdict`]: title first
 /// ("Action Required" → blocked; a braille spinner → working — both from
 /// herdr's manifest), then full-screen modals, then a bottom-up scan of the
-/// buffer tail, then the at-rest title as a positive-idle upgrade, then the
-/// weak idle fallback.
+/// buffer tail, then the weak idle fallback.
 fn codex_verdict(buffer: &str, title: Option<&str>) -> Verdict {
     if let Some(t) = title {
         let t_lower = t.to_ascii_lowercase();
@@ -811,12 +818,13 @@ mod tests {
             );
         }
 
-        // The at-rest "✳ " title upgrades the fallback to positive idle.
+        // The "✳ <summary>" title upgrades nothing: measured on 2.1.241 it
+        // shows during a running turn too, so it is not idle evidence.
         let rest = classify_verdict(AgentKind::Claude, CLAUDE_STREAMING, Some("✳ deck"));
         assert_eq!(rest.status, AgentStatus::Idle);
-        assert!(rest.visible_idle);
+        assert!(!rest.visible_idle);
 
-        // A stale shell-set title (hostname) upgrades nothing.
+        // A stale shell-set title (hostname) upgrades nothing either.
         let stale = classify_verdict(AgentKind::Claude, CLAUDE_STREAMING, Some("mybox.local"));
         assert_eq!(stale.status, AgentStatus::Idle);
         assert!(!stale.visible_idle);
@@ -851,6 +859,25 @@ mod tests {
         // Bash-permission footer alone (question scrolled off).
         let footer = "   mkdir -p /tmp/probe\n\n Esc to cancel · Tab to amend · ctrl+e to explain";
         assert!(classify_verdict(AgentKind::Claude, footer, None).visible_blocker);
+    }
+
+    #[test]
+    fn claude_question_prose_is_weak_waiting_not_a_blocker() {
+        // A finished turn that ends by asking the user something: Waiting at
+        // rest, but only weakly. The line lingers in the transcript, so it
+        // must not claim the hard `visible_blocker` that real dialog chrome
+        // gets -- a live source has to be able to outrank it while the next
+        // turn streams past it. What outranks it arrives with the evidence
+        // layers above this one; here the verdict just has to leave room.
+        let prose = "⏺ Done with the refactor. Do you want me to run the tests?\n\n❯ \n\
+  ⏸ manual mode on · ? for shortcuts";
+        let v = classify_verdict(AgentKind::Claude, prose, None);
+        assert_eq!(v.status, AgentStatus::Waiting);
+        assert!(!v.visible_blocker);
+
+        // Real dialog chrome stays a hard blocker.
+        let dialog = " Do you want to proceed?\n ❯ 1. Yes\n   2. No";
+        assert!(classify_verdict(AgentKind::Claude, dialog, None).visible_blocker);
     }
 
     #[test]
