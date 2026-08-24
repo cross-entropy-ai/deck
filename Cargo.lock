@@ -2786,7 +2786,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vt100"
 version = "0.16.2"
-source = "git+https://github.com/Junyi-99/vt100-rust?branch=deck#e84a9548de55199c844b47385981973a70448998"
+source = "git+https://github.com/Junyi-99/vt100-rust?branch=deck#6458fd80f19a1a97c373358a3643536517d1b0f0"
 dependencies = [
  "itoa",
  "unicode-width",

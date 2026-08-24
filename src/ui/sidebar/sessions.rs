@@ -91,14 +91,31 @@ fn square_off_focus_marker(mut text: Text<'static>) -> Text<'static> {
     text
 }
 
-/// A focused row is one visual state: every glyph must use the theme's
-/// contrast-safe selection foreground. `SectionedListWidget` paints its
-/// highlight before rendering text, while `basic_style` gives the title and
-/// secondary lines explicit foregrounds that would otherwise win over it.
+/// An active focused row is one high-emphasis visual state: every glyph must
+/// use the theme's contrast-safe selection foreground. `SectionedListWidget`
+/// paints its highlight before rendering text, while `basic_style` gives the
+/// title and secondary lines explicit foregrounds that would otherwise win.
 fn apply_selection_foreground(mut text: Text<'static>, theme: &Theme) -> Text<'static> {
     for line in &mut text.lines {
         for span in &mut line.spans {
             span.style = span.style.fg(theme.selection_fg);
+        }
+    }
+    text
+}
+
+/// An inactive selection keeps wayfinding visible without competing with the
+/// surface that owns keyboard focus. Preserve a primary/secondary hierarchy;
+/// semantic status and drag colors are applied after this pass.
+fn apply_inactive_selection_foreground(mut text: Text<'static>, theme: &Theme) -> Text<'static> {
+    for (line_idx, line) in text.lines.iter_mut().enumerate() {
+        for span in &mut line.spans {
+            if line_idx > 0 {
+                span.style = span.style.fg(theme.secondary);
+            } else if span.style.fg.is_none() || span.style.fg == Some(ratatui::style::Color::Reset)
+            {
+                span.style = span.style.fg(theme.inactive_selection_fg);
+            }
         }
     }
     text
@@ -238,6 +255,8 @@ pub(super) struct SessionsProps<'a> {
     /// the hit-tester so clicks resolve to the same rows the widget drew.
     pub built: &'a BuiltLayout,
     pub focus_target: Option<FocusTarget>,
+    /// Whether the sidebar, rather than the main pane, owns keyboard focus.
+    pub sidebar_active: bool,
     pub project_drag: Option<(usize, usize)>,
     /// Whether the Agents tab is active — agent rows publish a click target
     /// (switch-to-pane); session rows are focused via `focus_at_row`.
@@ -288,11 +307,15 @@ pub(super) fn draw_sessions(
     let agent_entries = props.agent_entries;
     let project_drag = props.project_drag;
     let highlight = props.highlight;
+    let sidebar_active = props.sidebar_active;
     let tree_rows = props.built.tree_rows.as_slice();
     let widget = SectionedListWidget::new(layout, move |item, item_ctx| {
         let mut text = basic_style(item, item_ctx);
         if matches!(item.kind, ItemKind::Header) {
             return lead_with_branch(unbold(text));
+        }
+        if item_ctx.focused && !sidebar_active {
+            text = apply_inactive_selection_foreground(text, theme);
         }
         if agents_tab {
             if let Some(status) = item_ctx
@@ -311,7 +334,7 @@ pub(super) fn draw_sessions(
         // is the exception: it is a filled block, and any glyph in its gutter
         // is a dark mark punched out of that block, so the line passes behind
         // the selection instead of through it. `Subtle` keeps the run going.
-        let occluded = item_ctx.focused && highlight == SessionHighlight::Solid;
+        let occluded = item_ctx.focused && sidebar_active && highlight == SessionHighlight::Solid;
         if !occluded
             && item_ctx
                 .row_idx
@@ -319,22 +342,27 @@ pub(super) fn draw_sessions(
         {
             text = mark_tree_line(text, theme);
         }
-        // Last of all, the focused row's own treatment. `Solid` fills the row,
-        // so per-span colors from the preset, status dots, tree lines, or drag
-        // markers must not defeat its readable selection foreground (status and
-        // drag meaning remains encoded by glyph), and the marker gives way to
-        // the block. `Subtle` is a wash the preset's own colors read against
-        // unchanged, marker included.
-        if item_ctx.focused && highlight == SessionHighlight::Solid {
+        // Last of all, the active focused row's own treatment. `Solid` fills
+        // the row, so per-span colors must not defeat its readable selection
+        // foreground and the marker gives way to the block. `Subtle` keeps
+        // the row's colors and marker; an inactive sidebar uses its neutral
+        // selection treatment regardless of the active highlight preference.
+        if item_ctx.focused && sidebar_active && highlight == SessionHighlight::Solid {
             text = apply_selection_foreground(square_off_focus_marker(text), theme);
         }
         text
     })
-    .highlight_style(match props.highlight {
-        SessionHighlight::Solid => Style::default()
-            .fg(ctx.theme.selection_fg)
-            .bg(ctx.theme.selection_bg),
-        SessionHighlight::Subtle => Style::default().bg(ctx.theme.surface),
+    .highlight_style(if sidebar_active {
+        match highlight {
+            SessionHighlight::Solid => Style::default()
+                .fg(ctx.theme.selection_fg)
+                .bg(ctx.theme.selection_bg),
+            SessionHighlight::Subtle => Style::default().bg(ctx.theme.surface),
+        }
+    } else {
+        Style::default()
+            .fg(ctx.theme.inactive_selection_fg)
+            .bg(ctx.theme.inactive_selection_bg)
     });
     frame.render_stateful_widget(widget, area, &mut state);
 
@@ -658,7 +686,7 @@ mod tests {
     }
 
     #[test]
-    fn focused_session_title_and_detail_use_selection_foreground() {
+    fn active_session_title_and_detail_use_selection_foreground() {
         let mut theme = crate::theme::THEMES[0];
         theme.selection_fg = Color::Rgb(251, 252, 253);
         theme.selection_bg = Color::Rgb(1, 2, 3);
@@ -680,6 +708,7 @@ mod tests {
                     SessionsProps {
                         built: &built,
                         focus_target: Some(FocusTarget(0)),
+                        sidebar_active: true,
                         project_drag: None,
                         agents_tab: false,
                         agent_entries: &[],
@@ -719,6 +748,7 @@ mod tests {
                     SessionsProps {
                         built: &built,
                         focus_target: Some(FocusTarget(0)),
+                        sidebar_active: true,
                         project_drag: None,
                         agents_tab: false,
                         agent_entries: &[],
@@ -763,6 +793,49 @@ mod tests {
     }
 
     #[test]
+    fn inactive_session_uses_neutral_background_and_preserves_text_hierarchy() {
+        let mut theme = crate::theme::THEMES[0];
+        theme.inactive_selection_bg = Color::Rgb(41, 42, 43);
+        theme.inactive_selection_fg = Color::Rgb(241, 242, 243);
+        theme.secondary = Color::Rgb(151, 152, 153);
+        let mut built = BuiltLayout::default();
+        built
+            .layout
+            .push_row_auto(BasicItem::new("alpha").line("~"));
+
+        let backend = TestBackend::new(20, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                draw_sessions(
+                    frame,
+                    frame.area(),
+                    &SidebarRenderCtx { theme: &theme },
+                    SessionsProps {
+                        built: &built,
+                        focus_target: Some(FocusTarget(0)),
+                        sidebar_active: false,
+                        project_drag: None,
+                        agents_tab: false,
+                        agent_entries: &[],
+                        highlight: SessionHighlight::Solid,
+                    },
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let title = &buffer[(2, 0)];
+        let detail = &buffer[(4, 1)];
+        assert_eq!(title.symbol(), "a");
+        assert_eq!(detail.symbol(), "~");
+        assert_eq!(title.fg, theme.inactive_selection_fg);
+        assert_eq!(detail.fg, theme.secondary);
+        assert_eq!(title.bg, theme.inactive_selection_bg);
+        assert_eq!(detail.bg, theme.inactive_selection_bg);
+    }
+
+    #[test]
     fn project_drag_renders_source_and_target_indicators() {
         let theme = &crate::theme::THEMES[0];
         let mut built = BuiltLayout::default();
@@ -781,6 +854,7 @@ mod tests {
                     SessionsProps {
                         built: &built,
                         focus_target: Some(FocusTarget(2)),
+                        sidebar_active: true,
                         project_drag: Some((0, 2)),
                         agents_tab: false,
                         agent_entries: &[],

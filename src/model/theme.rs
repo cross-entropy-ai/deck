@@ -19,6 +19,9 @@ pub struct Theme {
     /// Full-row selection colors, independent from the decorative accent.
     pub selection_bg: Color,
     pub selection_fg: Color,
+    /// A persistent selection shown outside the currently focused surface.
+    pub inactive_selection_bg: Color,
+    pub inactive_selection_fg: Color,
     /// Recessed single-line fields and their compact label/border treatment.
     pub input_bg: Color,
     pub input_border: Color,
@@ -81,6 +84,8 @@ macro_rules! theme {
             focus_border: $accent,
             selection_bg: theme_selection_bg!($accent $(, $selection_bg)?),
             selection_fg: $selection_fg,
+            inactive_selection_bg: $surface,
+            inactive_selection_fg: $text,
             input_bg: $bg,
             input_border: $dim,
             scrollbar: $muted,
@@ -556,6 +561,14 @@ mod tests {
                 Color::Rgb(255, 255, 255),
                 "{name}"
             );
+        }
+    }
+
+    #[test]
+    fn inactive_selections_use_each_themes_neutral_surface_and_text() {
+        for theme in THEMES {
+            assert_eq!(theme.inactive_selection_bg, theme.surface, "{}", theme.name);
+            assert_eq!(theme.inactive_selection_fg, theme.text, "{}", theme.name);
         }
     }
 }

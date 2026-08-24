@@ -371,6 +371,7 @@ pub fn draw_sidebar(frame: &mut Frame, area: Rect, props: SidebarProps<'_>) -> H
             SessionsProps {
                 built: props.built,
                 focus_target: props.focus_target,
+                sidebar_active: props.sidebar_active,
                 project_drag: props.project_drag,
                 agents_tab,
                 agent_entries: props.agent_entries,
