@@ -10,8 +10,8 @@
 // but it's part of the re-exported detection API, so keep it in the surface.
 #[allow(unused_imports)]
 pub use agent_detect::{
-    classify_status, classify_verdict, detect_agents, AgentKind, AgentStatus, DetectedAgent,
-    PaneInfo, Verdict,
+    activity_fresh, classify_status, classify_verdict, detect_agents, merge_status, AgentKind,
+    AgentStatus, DetectedAgent, PaneInfo, Verdict,
 };
 
 /// Snapshot of the process table for agent detection: `ps -axo

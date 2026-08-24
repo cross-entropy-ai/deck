@@ -6,6 +6,9 @@ fn pane(pid: u32, session: &str, window: &str) -> PaneInfo {
         session: session.to_string(),
         window: window.to_string(),
         pane_id: format!("%{pid}"),
+        title: String::new(),
+        window_activity: None,
+        window_panes: None,
     }
 }
 

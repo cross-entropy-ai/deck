@@ -87,19 +87,27 @@ shared by the local and ssh gathering paths):
 merge(prev, screen: Verdict, activity_fresh: Option<bool>, hook: Option<HookReport>)
 ```
 
-Priority, highest first:
+Priority, highest first (as implemented in `merge_status`):
 
 1. `screen.visible_blocker` → **Waiting**. A dialog visibly on screen is the
    strongest truth and may override a non-blocked hook state.
 2. `screen.keep_previous` → keep `prev` (transcript viewer, model picker —
-   screens that show history instead of live state).
-3. Screen shows a positive **idle tell** ("…ed for N", `Interrupted ·`,
+   screens that show history instead of live state). The pure layer has no
+   memory, so this rides as a flag on `DetectedAgent` and the stateful
+   snapshot-apply (`app/refresh.rs`) resolves it against the old status.
+3. Screen working tell, or `activity_fresh == Some(true)` → **Working**.
+   This covers the streaming blind spot — and it sits *above* the idle
+   tells deliberately: a previous turn's "…ed for N" line lingers on screen
+   while the next turn streams, and fresh output disproves it. (An earlier
+   draft put the idle tells first; that ordering re-opens the blind spot
+   whenever a completed line is anywhere in the tail.)
+4. Screen shows a positive **idle tell** ("…ed for N", `Interrupted ·`,
    `■ Conversation interrupted`) → **Idle**, overriding a hook's Working.
-   This kills the stuck green dot after Esc / permission-deny.
-4. Fresh hook report → hook's state.
-5. Screen working tell, or `activity_fresh == Some(true)` → **Working**.
-   This covers the streaming blind spot.
-6. Otherwise → Idle.
+   This kills the stuck green dot after Esc / permission-deny: by then the
+   activity clock has gone stale too, so rule 3 no longer holds the light.
+5. Fresh hook report → hook's state (PR 4).
+6. Otherwise the weak screen reading passes through (weak Waiting stays
+   Waiting; unrecognized → Idle; empty capture → Unknown).
 
 In one line: **hooks and the activity clock light Working up; only the screen
 retracts it.** Lighting tolerates error (worst case the user clicks into an
@@ -167,7 +175,11 @@ clock for agents whose titles don't spin.
   herdr documented), and herdr's `osc_title_idle` ("✳ " → idle) is **wrong**
   for tmux consumers — "✳ " mid-turn would retract a correct hook Working,
   so it is dropped. Codex title behavior (braille spinner, "Action
-  Required") is still unverified live — check it while wiring PR 2.
+  Required") — the spinner half verified live on codex-cli 0.149.1
+  (2026-08-24): title cycles "work" → "⠧ work" mid-turn (spinning through
+  the streaming phase, which the buffer misses) → "work" at completion,
+  while `window_activity` tracked output and froze at the end. "Action
+  Required" remains herdr's word; the rule is harmless if it never fires.
 - Remote "now": append `; echo __deck_now__ ; date +%s` to the `agent_probe`
   compound (`src/infra/tmux/remote.rs`) — same ssh hop as `ps`, and the
   remote's own clock sidesteps local/remote skew. Marker must not start with

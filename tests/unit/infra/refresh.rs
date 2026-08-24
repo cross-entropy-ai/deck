@@ -248,6 +248,7 @@ impl crate::system::SessionCatalog for PopulatedCatalog {
                 window: "0".to_string(),
                 pane_id: "%9".to_string(),
                 status: crate::agent::AgentStatus::Unknown,
+                keep_previous: false,
             }]),
         })
     }

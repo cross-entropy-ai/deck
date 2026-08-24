@@ -2891,6 +2891,7 @@ mod agents_tab {
             window: "1".to_string(),
             pane_id: pane_id.to_string(),
             status: crate::agent::AgentStatus::Unknown,
+            keep_previous: false,
         }
     }
 
