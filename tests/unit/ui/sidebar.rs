@@ -18,27 +18,29 @@ fn sidebar_props<'a>(
     keybindings: &'a Keybindings,
 ) -> SidebarProps<'a> {
     SidebarProps {
-        sessions,
-        built,
-        // Overridden by the tabs-mode tests, which are the only ones that draw
-        // a tab bar; every other layout ignores it.
-        tab_labels: &[],
-        focus_target: None,
-        project_drag: None,
+        list: SidebarListProps {
+            sessions,
+            built,
+            // Overridden by the tabs-mode tests, which are the only ones that
+            // draw a tab bar; every other layout ignores it.
+            tab_labels: &[],
+            focus_target: None,
+            project_drag: None,
+            session_highlight: SessionHighlight::Solid,
+            agent_entries: &[],
+        },
+        summary: SidebarSummaryProps {
+            summary: &IDLE_SUMMARY,
+            summary_age: None,
+            spinner_idx: 0,
+            summary_scroll: 0,
+            summary_card_height: 0,
+        },
         sidebar_active: true,
         theme,
-        show_help: false,
-        confirm_kill: None,
-        rename_input: None,
+        overlay: SidebarOverlay::None,
         show_borders: true,
         sidebar_tab: SidebarTab::Projects,
-        session_highlight: SessionHighlight::Solid,
-        agent_entries: &[],
-        summary: &IDLE_SUMMARY,
-        summary_age: None,
-        spinner_idx: 0,
-        summary_scroll: 0,
-        summary_card_height: 0,
         tabs_mode: false,
         keybindings,
         update_available: None,
@@ -87,11 +89,9 @@ fn confirm_kill_renders_clickable_in_tabs_mode() {
     let built = BuiltLayout::default();
     let keybindings = Keybindings::default();
     let sessions: Vec<crate::state::SessionEntry> = Vec::new();
-    let props = SidebarProps {
-        confirm_kill: Some("victim"),
-        tabs_mode: true,
-        ..sidebar_props(&sessions, &built, theme, &keybindings)
-    };
+    let mut props = sidebar_props(&sessions, &built, theme, &keybindings);
+    props.overlay = SidebarOverlay::ConfirmKill("victim");
+    props.tabs_mode = true;
     let (terminal, captured) = render_sidebar(30, 12, None, props);
 
     let hits = captured
@@ -208,14 +208,12 @@ fn idle_summary_without_agents_is_compact_and_disabled() {
     let built = state.agents_layout(crate::state::ViewMode::Expanded);
     let sessions: Vec<crate::state::SessionEntry> = Vec::new();
 
-    let props = SidebarProps {
-        focus_target: state.focus_target(),
-        show_borders: false,
-        sidebar_tab: SidebarTab::Agents,
-        agent_entries: &state.agent_entries,
-        summary_card_height: state.summary_card_height(),
-        ..sidebar_props(&sessions, &built, theme, &keybindings)
-    };
+    let mut props = sidebar_props(&sessions, &built, theme, &keybindings);
+    props.list.focus_target = state.focus_target();
+    props.list.agent_entries = &state.agent_entries;
+    props.summary.summary_card_height = state.summary_card_height();
+    props.show_borders = false;
+    props.sidebar_tab = SidebarTab::Agents;
     let (terminal, captured) = render_sidebar(30, 20, None, props);
 
     assert_eq!(captured.summary.card.unwrap().height, 3);
@@ -251,12 +249,10 @@ fn overflowing_vertical_tabs_keep_focus_and_menu_visible() {
     let sessions = state.entries.clone();
 
     let labels = state.tab_labels();
-    let props = SidebarProps {
-        focus_target: state.focus_target(),
-        tabs_mode: true,
-        tab_labels: &labels,
-        ..sidebar_props(&sessions, &built, theme, &keybindings)
-    };
+    let mut props = sidebar_props(&sessions, &built, theme, &keybindings);
+    props.list.focus_target = state.focus_target();
+    props.list.tab_labels = &labels;
+    props.tabs_mode = true;
     let (terminal, captured) = render_sidebar(40, 12, Some(Rect::new(0, 0, 40, 3)), props);
 
     let menu = captured.menu.expect("menu remains pinned on overflow");
@@ -292,10 +288,8 @@ fn render_hits(width: u16, height: u16, has_update: bool) -> HitRegions {
         checked_at: 0,
     };
 
-    let props = SidebarProps {
-        update_available: has_update.then_some(&update),
-        ..sidebar_props(&sessions, &built, theme, &keybindings)
-    };
+    let mut props = sidebar_props(&sessions, &built, theme, &keybindings);
+    props.update_available = has_update.then_some(&update);
     render_sidebar(width, height, None, props).1
 }
 
@@ -336,12 +330,10 @@ fn header_shows_live_counts_without_duplicate_new_action() {
     let built = state.sidebar_layout(state.prefs.view_mode);
     let sessions = state.entries.clone();
 
-    let props = SidebarProps {
-        focus_target: state.focus_target(),
-        show_borders: false,
-        agent_entries: &state.agent_entries,
-        ..sidebar_props(&sessions, &built, theme, &keybindings)
-    };
+    let mut props = sidebar_props(&sessions, &built, theme, &keybindings);
+    props.list.focus_target = state.focus_target();
+    props.list.agent_entries = &state.agent_entries;
+    props.show_borders = false;
     let (terminal, captured) = render_sidebar(50, 20, None, props);
 
     let first_row: String = (0..50)
@@ -374,11 +366,9 @@ fn footer_is_contextual_and_drops_persistent_version_text() {
         let built = BuiltLayout::default();
         let keybindings = Keybindings::default();
         let sessions: Vec<crate::state::SessionEntry> = Vec::new();
-        let props = SidebarProps {
-            sidebar_active,
-            show_borders: false,
-            ..sidebar_props(&sessions, &built, theme, &keybindings)
-        };
+        let mut props = sidebar_props(&sessions, &built, theme, &keybindings);
+        props.sidebar_active = sidebar_active;
+        props.show_borders = false;
         let (terminal, _) = render_sidebar(50, 12, None, props);
         terminal
             .backend()
@@ -445,13 +435,11 @@ fn agents_tab_publishes_clickable_agent_entries() {
     let agent_entries = state.agent_entries.clone();
     let sessions: Vec<crate::state::SessionEntry> = Vec::new();
 
-    let props = SidebarProps {
-        focus_target: state.focus_target(),
-        sidebar_tab: SidebarTab::Agents,
-        agent_entries: &agent_entries,
-        summary_card_height: state.summary_card_height(),
-        ..sidebar_props(&sessions, &built, theme, &keybindings)
-    };
+    let mut props = sidebar_props(&sessions, &built, theme, &keybindings);
+    props.list.focus_target = state.focus_target();
+    props.list.agent_entries = &agent_entries;
+    props.summary.summary_card_height = state.summary_card_height();
+    props.sidebar_tab = SidebarTab::Agents;
     let (_, captured) = render_sidebar(40, 24, None, props);
 
     // Each agent row publishes a hit, in agent_entries order, with its pane.
@@ -515,10 +503,8 @@ fn remote_divider_buttons_register_below_their_top_margin() {
     let built = state.sidebar_layout(ViewMode::Expanded);
     let sessions = state.entries.clone();
 
-    let props = SidebarProps {
-        focus_target: state.focus_target(),
-        ..sidebar_props(&sessions, &built, theme, &keybindings)
-    };
+    let mut props = sidebar_props(&sessions, &built, theme, &keybindings);
+    props.list.focus_target = state.focus_target();
     let (terminal, captured) = render_sidebar(40, 24, None, props);
 
     // The remote divider publishes both of its buttons, in order.
@@ -601,10 +587,8 @@ fn remote_divider_shows_forward_count() {
     let built = state.sidebar_layout(ViewMode::Expanded);
     let sessions = state.entries.clone();
 
-    let props = SidebarProps {
-        focus_target: state.focus_target(),
-        ..sidebar_props(&sessions, &built, theme, &keybindings)
-    };
+    let mut props = sidebar_props(&sessions, &built, theme, &keybindings);
+    props.list.focus_target = state.focus_target();
     let (terminal, captured) = render_sidebar(40, 24, None, props);
 
     // Buttons register left→right as badge, reconnect, more.
@@ -828,11 +812,9 @@ fn container_dividers_render_as_a_branch_under_their_host() {
     let sessions = state.entries.clone();
     // `Subtle`, so the structural trunk remains visible through the focused
     // row; the solid candidate intentionally occludes it (covered below).
-    let props = SidebarProps {
-        focus_target: state.focus_target(),
-        session_highlight: SessionHighlight::Subtle,
-        ..sidebar_props(&sessions, &built, theme, &keybindings)
-    };
+    let mut props = sidebar_props(&sessions, &built, theme, &keybindings);
+    props.list.focus_target = state.focus_target();
+    props.list.session_highlight = SessionHighlight::Subtle;
     let (terminal, _) = render_sidebar(32, 24, None, props);
 
     let buf = terminal.backend().buffer();
@@ -929,11 +911,9 @@ fn a_solid_selection_block_occludes_the_trunk_it_covers() {
     let built = state.sidebar_layout(ViewMode::Expanded);
     let sessions = state.entries.clone();
     let focus_target = state.focus_target();
-    let props = SidebarProps {
-        focus_target,
-        session_highlight: SessionHighlight::Solid,
-        ..sidebar_props(&sessions, &built, theme, &keybindings)
-    };
+    let mut props = sidebar_props(&sessions, &built, theme, &keybindings);
+    props.list.focus_target = focus_target;
+    props.list.session_highlight = SessionHighlight::Solid;
     let (terminal, _) = render_sidebar(32, 24, None, props);
 
     let buf = terminal.backend().buffer();
@@ -1017,12 +997,10 @@ fn the_tree_line_reaches_a_container_on_the_agents_tab_too() {
     let built = state.agents_layout(ViewMode::Expanded);
     let agent_entries = state.agent_entries.clone();
     let sessions: Vec<crate::state::SessionEntry> = Vec::new();
-    let props = SidebarProps {
-        sidebar_tab: SidebarTab::Agents,
-        agent_entries: &agent_entries,
-        focus_target: None,
-        ..sidebar_props(&sessions, &built, theme, &keybindings)
-    };
+    let mut props = sidebar_props(&sessions, &built, theme, &keybindings);
+    props.sidebar_tab = SidebarTab::Agents;
+    props.list.agent_entries = &agent_entries;
+    props.list.focus_target = None;
     let (terminal, _) = render_sidebar(38, 20, None, props);
 
     let buf = terminal.backend().buffer();

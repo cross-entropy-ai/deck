@@ -11,7 +11,7 @@ use crate::theme::Theme;
 use crate::ui::style::{text_style, TextRole};
 use crate::update::UpdateStatus;
 
-use super::{menu_span, SidebarRenderCtx, MENU_LABEL};
+use super::{menu_span, MENU_LABEL};
 
 pub(super) struct FooterProps<'a> {
     pub update_available: Option<&'a UpdateStatus>,
@@ -94,10 +94,9 @@ fn actions(props: &FooterProps<'_>) -> Vec<FooterAction> {
 pub(super) fn draw_footer(
     frame: &mut Frame,
     area: Rect,
-    ctx: &SidebarRenderCtx<'_>,
+    theme: &Theme,
     props: FooterProps<'_>,
 ) -> FooterHits {
-    let theme = ctx.theme;
     let w = area.width as usize;
     let sep = divider_line(w, theme);
 

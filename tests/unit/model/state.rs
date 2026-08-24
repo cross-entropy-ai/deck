@@ -725,13 +725,17 @@ fn is_divider_at_row_detects_header_not_session() {
 
 #[test]
 fn sidebar_footer_height_matches_renderer() {
-    // The renderer (ui::sidebar::draw_sidebar) lays the footer out as
-    // `2 + banner`; the hit-tester must agree or the bottom visible session
-    // row goes click-dead. This locks the two fixed rows (the separator +
-    // the menu/version line).
-    let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
+    // Rendering and hit-testing both consume this shared sidebar split, so the
+    // footer height cannot drift from the visible session area's bottom edge.
+    let mut state = make_state(LayoutMode::Horizontal, false, 120, 24);
+    let footer_height = |state: &AppState| {
+        let content = state.pane_areas().sidebar_content;
+        crate::geometry::sidebar_areas(content, state.update_available.is_some(), 0)
+            .footer
+            .height
+    };
     assert_eq!(
-        state.sidebar_footer_height(),
+        footer_height(&state),
         2,
         "no banner: just the separator + menu rows"
     );
@@ -741,7 +745,7 @@ fn sidebar_footer_height_matches_renderer() {
         current_version: "0.0.0".to_string(),
         checked_at: 0,
     });
-    assert_eq!(state.sidebar_footer_height(), 3);
+    assert_eq!(footer_height(&state), 3);
 }
 
 #[test]
