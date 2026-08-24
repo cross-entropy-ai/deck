@@ -67,17 +67,10 @@ fn recolor_agent_dot(
 /// space, occupying the row's two-cell gutter.
 const FOCUS_MARKER: &str = "\u{258c} ";
 
-/// Square off the top-left corner of a [`SessionHighlight::Solid`] row. The
-/// preset's marker is a *left half* block, so painted in the selection
-/// foreground it fills half of the row's first cell with the text color —
-/// a notch cut out of the corner of an otherwise unbroken block. The filled
-/// block is already what says "focused", leaving the marker nothing to add,
-/// so blank its cells and let the background through.
-///
-/// Only the untouched marker is cleared: a drag indicator (`↕`/`▸`) sits in
-/// the same cells and is meaning, not decoration. `Subtle` rows keep the
-/// marker — there the wash alone is quiet enough to need the bar.
-fn square_off_focus_marker(mut text: Text<'static>) -> Text<'static> {
+/// Remove the preset's decorative focus bar. Both highlight choices already
+/// communicate selection through their background, while project-drag marks
+/// (`↕`/`▸`) and structural tree lines still use this gutter when meaningful.
+fn clear_focus_marker(mut text: Text<'static>) -> Text<'static> {
     let Some(span) = text
         .lines
         .first_mut()
@@ -314,6 +307,9 @@ pub(super) fn draw_sessions(
         if matches!(item.kind, ItemKind::Header) {
             return lead_with_branch(unbold(text));
         }
+        if item_ctx.focused {
+            text = clear_focus_marker(text);
+        }
         if item_ctx.focused && !sidebar_active {
             text = apply_inactive_selection_foreground(text, theme);
         }
@@ -344,11 +340,10 @@ pub(super) fn draw_sessions(
         }
         // Last of all, the active focused row's own treatment. `Solid` fills
         // the row, so per-span colors must not defeat its readable selection
-        // foreground and the marker gives way to the block. `Subtle` keeps
-        // the row's colors and marker; an inactive sidebar uses its neutral
-        // selection treatment regardless of the active highlight preference.
+        // foreground. `Subtle` keeps the row's colors; an inactive sidebar
+        // uses its neutral treatment regardless of the active preference.
         if item_ctx.focused && sidebar_active && highlight == SessionHighlight::Solid {
-            text = apply_selection_foreground(square_off_focus_marker(text), theme);
+            text = apply_selection_foreground(text, theme);
         }
         text
     })
@@ -777,12 +772,12 @@ mod tests {
     }
 
     #[test]
-    fn subtle_highlight_keeps_the_accent_bar_over_a_surface_wash() {
+    fn subtle_highlight_uses_only_a_surface_wash() {
         let theme = &crate::theme::THEMES[0];
         let buffer = focused_row_buffer(theme, SessionHighlight::Subtle);
 
         let marker = &buffer[(0, 0)];
-        assert_eq!(marker.symbol(), "\u{258c}");
+        assert_eq!(marker.symbol(), " ");
         assert_eq!(marker.bg, theme.surface);
         // The row keeps its own foreground rather than the selection color:
         // the wash is quiet enough to read the list's colors against.
@@ -827,8 +822,10 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let title = &buffer[(2, 0)];
         let detail = &buffer[(4, 1)];
+        let marker = &buffer[(0, 0)];
         assert_eq!(title.symbol(), "a");
         assert_eq!(detail.symbol(), "~");
+        assert_eq!(marker.symbol(), " ");
         assert_eq!(title.fg, theme.inactive_selection_fg);
         assert_eq!(detail.fg, theme.secondary);
         assert_eq!(title.bg, theme.inactive_selection_bg);

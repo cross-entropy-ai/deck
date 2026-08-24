@@ -826,10 +826,8 @@ fn container_dividers_render_as_a_branch_under_their_host() {
 
     let built = state.sidebar_layout(ViewMode::Expanded);
     let sessions = state.entries.clone();
-    // `Subtle`, so the focused row still carries its own gutter mark: this
-    // test is about the run being continuous, and the other candidate answers
-    // the focused row differently (see
-    // `a_solid_selection_block_occludes_the_trunk_it_covers`).
+    // `Subtle`, so the structural trunk remains visible through the focused
+    // row; the solid candidate intentionally occludes it (covered below).
     let props = SidebarProps {
         focus_target: state.focus_target(),
         session_highlight: SessionHighlight::Subtle,
@@ -870,14 +868,14 @@ fn container_dividers_render_as_a_branch_under_their_host() {
 
     // The line reaches the elbows: every row between a divider and the nested
     // one below it carries the trunk down its gutter, so the connector joins
-    // the group it came from instead of dangling. A focus/drag marker holds
-    // that same cell and reads as an emphasized segment of the run.
+    // the group it came from instead of dangling.
     let gutter = |row: usize| lines[row].chars().nth(1).unwrap_or(' ');
     let dev = row_of("├ ▾ dev ");
     let build = row_of("└ ▾ build ");
     for row in (host + 1..dev).chain(dev + 1..build) {
-        assert!(
-            matches!(gutter(row), '│' | '▌'),
+        assert_eq!(
+            gutter(row),
+            '│',
             "gap in the trunk at row {row}: {lines:#?}"
         );
     }
