@@ -23,6 +23,10 @@ pub(crate) enum ParsedCommand {
     RemoteAdd(String),
     RemoteList,
     RemoteRemove(String),
+    /// Manage the optional agent lifecycle hooks; the payload is the action
+    /// and an optional single target ("local" or a configured host). No
+    /// target = local plus every configured remote.
+    Hooks(HooksAction, Option<String>),
     /// Hidden re-exec entrypoint: in-place self-upgrade to the given version
     /// via the `self_update` crate. Spawned by the running TUI inside the
     /// upgrade pane so its progress renders live.
@@ -56,7 +60,58 @@ enum Subcommand {
     Attach(AttachCmd),
     New(NewCmd),
     Remote(RemoteCmd),
+    Hooks(HooksCmd),
     UpgradeSelf(UpgradeSelfCmd),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum HooksAction {
+    Install,
+    Uninstall,
+    Status,
+}
+
+/// install, remove, or inspect deck's agent status hooks (Claude Code, Codex)
+#[derive(FromArgs)]
+#[argh(subcommand, name = "hooks")]
+struct HooksCmd {
+    #[argh(subcommand)]
+    sub: HooksSubcommand,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand)]
+enum HooksSubcommand {
+    Install(HooksInstallCmd),
+    Uninstall(HooksUninstallCmd),
+    Status(HooksStatusCmd),
+}
+
+/// install the hooks ("local", a configured host, or omit for everywhere)
+#[derive(FromArgs)]
+#[argh(subcommand, name = "install")]
+struct HooksInstallCmd {
+    /// the target; omit for local + every configured remote
+    #[argh(positional)]
+    host: Option<String>,
+}
+
+/// remove deck's hooks, leaving everything else in place
+#[derive(FromArgs)]
+#[argh(subcommand, name = "uninstall")]
+struct HooksUninstallCmd {
+    /// the target; omit for local + every configured remote
+    #[argh(positional)]
+    host: Option<String>,
+}
+
+/// show where the hooks are installed and whether they can run
+#[derive(FromArgs)]
+#[argh(subcommand, name = "status")]
+struct HooksStatusCmd {
+    /// the target; omit for local + every configured remote
+    #[argh(positional)]
+    host: Option<String>,
 }
 
 /// attach to a session, creating it in the current directory if absent
@@ -176,6 +231,11 @@ pub(crate) fn parse_args<I: IntoIterator<Item = String>>(
             RemoteSubcommand::List(_) => ParsedCommand::RemoteList,
             RemoteSubcommand::Remove(r) => ParsedCommand::RemoteRemove(r.host),
         },
+        Some(Subcommand::Hooks(c)) => match c.sub {
+            HooksSubcommand::Install(i) => ParsedCommand::Hooks(HooksAction::Install, i.host),
+            HooksSubcommand::Uninstall(u) => ParsedCommand::Hooks(HooksAction::Uninstall, u.host),
+            HooksSubcommand::Status(s) => ParsedCommand::Hooks(HooksAction::Status, s.host),
+        },
         Some(Subcommand::UpgradeSelf(u)) => ParsedCommand::UpgradeSelf(u.version),
     };
     Ok(Some(command))
@@ -293,6 +353,145 @@ pub(crate) fn run_remote_remove(host: &str) -> i32 {
         &format!("deck: removed remote '{host}'."),
         crate::lane_state::LaneState::save,
     )
+}
+
+/// Run `deck hooks <action>` against one target or all of them. Reports one
+/// line per agent per target; the Codex trust notice prints once at the end
+/// because it is the one visible consequence the user must expect later
+/// (Codex blocks its next launch on trusting changed hooks).
+pub(crate) fn run_hooks(action: HooksAction, host: Option<&str>) -> i32 {
+    use crate::agent_hooks::{self, HookAgent, HookFs, LocalFs, Outcome, RemoteFs};
+
+    let state = match load_lane_state() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("deck: cannot read config: {e}");
+            return 1;
+        }
+    };
+    let configured: Vec<String> = state.remotes.iter().map(|r| r.host.clone()).collect();
+    let targets: Vec<String> = match host {
+        Some("local") => vec!["local".to_string()],
+        Some(h) => {
+            if !configured.iter().any(|c| c == h) {
+                eprintln!("deck: '{h}' is not a configured remote (see `deck remote list`)");
+                return 1;
+            }
+            vec![h.to_string()]
+        }
+        None => std::iter::once("local".to_string())
+            .chain(configured)
+            .collect(),
+    };
+
+    let mut failed = false;
+    let mut codex_changed: Vec<String> = Vec::new();
+    for target in &targets {
+        let local = LocalFs;
+        let remote;
+        let fs: &dyn HookFs = if target == "local" {
+            &local
+        } else {
+            remote = RemoteFs {
+                host: target.clone(),
+            };
+            &remote
+        };
+        println!("{target}:");
+        match action {
+            HooksAction::Install | HooksAction::Uninstall => {
+                let reports = if action == HooksAction::Install {
+                    agent_hooks::install(fs)
+                } else {
+                    agent_hooks::uninstall(fs)
+                };
+                for report in reports {
+                    let agent = report.agent.label();
+                    match &report.outcome {
+                        Outcome::Absent => {
+                            println!("  {agent}: skipped (no ~/.{agent} — not set up here)")
+                        }
+                        Outcome::Installed => println!("  {agent}: installed"),
+                        Outcome::Updated => println!("  {agent}: updated"),
+                        Outcome::Unchanged => println!("  {agent}: already installed, unchanged"),
+                        Outcome::Removed => println!("  {agent}: removed"),
+                        Outcome::NothingToRemove => println!("  {agent}: nothing installed"),
+                        Outcome::Failed(e) => {
+                            failed = true;
+                            eprintln!("  {agent}: FAILED — {e}");
+                        }
+                    }
+                    if report.agent == HookAgent::Codex
+                        && matches!(report.outcome, Outcome::Installed | Outcome::Updated)
+                    {
+                        codex_changed.push(target.clone());
+                    }
+                }
+            }
+            HooksAction::Status => {
+                // Live proof the hooks actually run: `@deck_hook_alive` is
+                // written on SessionStart, so "entries current" plus zero
+                // reporting panes while agents are visibly running points at
+                // Codex's trust gate (hooks installed but never trusted).
+                let alive = if target == "local" {
+                    crate::tmux::hook_alive_panes()
+                } else {
+                    crate::remote_tmux::hook_alive_panes(target)
+                };
+                match alive {
+                    Some(n) => println!("  live: {n} pane(s) currently reporting hook state"),
+                    None => println!("  live: (no tmux server reachable to ask)"),
+                }
+                for st in agent_hooks::status(fs) {
+                    let agent = st.agent.label();
+                    if let Some(e) = st.error {
+                        failed = true;
+                        eprintln!("  {agent}: cannot probe — {e}");
+                        continue;
+                    }
+                    match st.installed {
+                        None => println!("  {agent}: not set up here (no ~/.{agent})"),
+                        Some((version, entries_ok)) => {
+                            let script = match version {
+                                Some(v) if v == agent_hooks::DECK_HOOK_VERSION => {
+                                    format!("script v{v}")
+                                }
+                                Some(v) => format!(
+                                    "script v{v} (deck ships v{})",
+                                    agent_hooks::DECK_HOOK_VERSION
+                                ),
+                                None => "no script".to_string(),
+                            };
+                            let entries = if entries_ok {
+                                "entries current"
+                            } else {
+                                "entries missing or stale"
+                            };
+                            let disabled = if st.hooks_disabled {
+                                " — hooks disabled in ~/.codex/config.toml, they will not run"
+                            } else {
+                                ""
+                            };
+                            println!("  {agent}: {script}, {entries}{disabled}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if action == HooksAction::Install && !codex_changed.is_empty() {
+        println!();
+        println!(
+            "note: Codex reviews new or changed hooks — the next `codex` launch on {} will ask once to trust deck's hooks (they only report agent status to tmux; choose \"Review hooks\" to read them).",
+            codex_changed.join(", ")
+        );
+    }
+    if failed {
+        1
+    } else {
+        0
+    }
 }
 
 #[cfg(test)]

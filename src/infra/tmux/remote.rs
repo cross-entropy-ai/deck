@@ -567,6 +567,31 @@ fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Detect
     Some(agents)
 }
 
+/// Remote spelling of `tmux::hook_alive_panes`: count the panes on `host`
+/// whose agents' hooks have proven themselves (`@deck_hook_alive`), for
+/// `deck hooks status`. `None` when the host or its tmux is unreachable.
+pub fn hook_alive_panes(host: &str) -> Option<usize> {
+    let format = if parse_remote_id(host).container.is_some() {
+        "'#{@deck_hook_alive}'".to_string()
+    } else {
+        "$'#{@deck_hook_alive}'".to_string()
+    };
+    run_ssh(
+        default_runner(),
+        host,
+        &[
+            REMOTE_TMUX,
+            "list-panes",
+            "-a",
+            "-F",
+            &format,
+            "2>/dev/null",
+        ],
+    )
+    .ok()
+    .map(|raw| raw.lines().filter(|l| !l.trim().is_empty()).count())
+}
+
 /// Container engines Deck probes when discovering what a host could mount, in
 /// order. A host may have either or both installed; `docker` comes first because
 /// it is the common case and [`crate::config::DEFAULT_CONTAINER_ENGINE`].

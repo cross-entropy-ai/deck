@@ -232,20 +232,30 @@ The `merge` function above, table-driven tests, wired where local
 - Idempotence: own entries tagged `"_deck": true` (Otty's pattern) inside
   `~/.claude/settings.json` / `~/.codex/hooks.json`; managed script file
   beside them (herdr's pattern — reinstall overwrites the file, user hooks
-  live untouched next to it). JSON merge happens **in deck** (ssh cat →
-  merge in Rust → heredoc write-back) so the remote needs nothing installed.
-  Ensure Codex `[features] hooks` isn't `false`. Skip silently when
-  `~/.claude`/`~/.codex` is absent. **User-level config only — never the
-  project-level `.claude/settings.json`** (it would be committed into the
-  user's repo).
+  live untouched next to it). JSON merge happens **in deck** (ssh `cat` →
+  merge in Rust with `serde_json` preserve_order → `printf` write-back) so
+  the remote needs nothing installed, and it is **byte-stable**: an install
+  over an already-correct file writes nothing (verified: second `deck hooks
+  install` reports "unchanged" with zero writes), because any rewrite of
+  `hooks.json` re-triggers the Codex trust prompt. Codex `[features]
+  hooks = false` is **reported by `status`, never flipped** — silently
+  re-enabling a mechanism the user turned off is exactly the move the trust
+  gate exists to catch (deviation from herdr, which sets it to true). Skip
+  silently when `~/.claude`/`~/.codex` is absent. **User-level config only —
+  never the project-level `.claude/settings.json`** (it would be committed
+  into the user's repo).
 - **Timing (the rule the Codex trust gate imposes)**: install only on an
-  explicit user action — flipping `agent_hooks: true` in config (install to
-  all configured lanes in the foreground, then report: "installed on N
-  hosts; the next Codex launch on each will ask you to trust deck's hooks
-  once"), adding a lane while the flag is on, or `deck hooks
-  install|uninstall|status [lane]` (CLI paths skip the instance guard).
-  **Never as a silent side effect of attach or snapshot** — a security modal
-  the user can't attribute is the one way this feature can betray them.
+  explicit user action. As shipped that action is `deck hooks
+  install [target]` (CLI paths exit before the instance guard); it reports
+  per target/agent and ends with the trust notice: the next Codex launch on
+  each touched machine asks once to trust deck's hooks. **Never as a silent
+  side effect of attach or snapshot** — a security modal the user can't
+  attribute is the one way this feature can betray them. A config flag +
+  settings-UI toggle (auto-install when adding a lane while enabled) is
+  deferred until the settings surface grows a row for it; the CLI is the
+  consent surface for now. Container lanes are also deferred: their `$HOME`
+  is volatile and the exec-wrapped path is untested — `RemoteFs` already
+  goes through `run_ssh`, so they cost only testing when wanted.
 - Version discipline: every `DECK_HOOK_VERSION` bump re-triggers the Codex
   trust modal on every machine. Bump only for behavior changes.
 - Uninstall: remove our entries + script, leave everything else (herdr's
@@ -253,13 +263,20 @@ The `merge` function above, table-driven tests, wired where local
 - Local cache `~/.local/state/deck/agent-hooks.json` (lane + agent +
   version) so `status` answers without ssh.
 
-### PR 6 — observability
+### PR 6 — observability (shipped inside PR 5)
 
-The trust gate makes "installed" ≠ "running". The hook additionally writes
-`@deck_hook_alive <version>` on `SessionStart`, so `deck hooks status` can
-distinguish three states: not installed; installed and reporting; installed
-but never reported despite the screen having seen the agent active — likely
-waiting on Codex's trust confirmation.
+The trust gate makes "installed" ≠ "running". The hook writes
+`@deck_hook_alive` on `SessionStart`, and `deck hooks status` prints a live
+count of panes carrying it per target, so the three states separate: not
+installed; installed and reporting; installed with entries current but zero
+reporting panes while agents visibly run — waiting on Codex's trust
+confirmation.
+
+Verified end to end against a real Claude Code (2.1.241, sandboxed tmux):
+`SessionStart` wrote the session UUID + alive mark, `UserPromptSubmit`/`Stop`
+cycled working→idle, and `PermissionRequest` wrote `blocked@…` ~10 s before
+the dialog was even painted. Exiting killed the pane and the options with it
+— the third cleanup layer under `SessionEnd`-clear and the TTLs.
 
 ## Dependency order
 
