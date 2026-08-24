@@ -1137,6 +1137,25 @@ pub(crate) fn client_cache_dir_token() -> String {
     shell_quote_remote_path("~/.cache/deck")
 }
 
+/// Deck's own directory inside a home's `~/.ssh`, and the only place deck
+/// creates sockets in one.
+///
+/// `~/.ssh` itself belongs to the user: their keys, their `config`, their
+/// `known_hosts`. Deck's agent links are per-process and one-per-run, so left
+/// loose there they pile up among those files — which is why the local
+/// ControlMaster sockets moved under `socks/` (`DEFAULT_SSH_CONTROL_PATH`) and
+/// why the agent link, added later, belongs in the same place. Nothing here
+/// reads the *configured* control path: that setting is local and about ssh's
+/// own multiplexing socket, while this is a path on whichever machine the lane
+/// lives on.
+pub(crate) const AGENT_SOCKET_DIR: &str = "~/.ssh/socks";
+
+/// Quoted remote path of the directory [`agent_socket_token`] sits in, for the
+/// prelude's `mkdir -p`. One `mkdir` covers `~/.ssh` too.
+pub(crate) fn agent_socket_dir_token() -> String {
+    shell_quote_remote_path(AGENT_SOCKET_DIR)
+}
+
 /// Quoted remote path of the stable symlink this deck process points at its
 /// forwarded ssh-agent socket. Written by the attach prelude, read by every pane
 /// through `SSH_AUTH_SOCK`.
@@ -1156,7 +1175,7 @@ pub(crate) fn client_cache_dir_token() -> String {
 /// Which is also why every run leaves one behind. The attach prelude clears the
 /// dead ones out — see [`AGENT_SOCKET_NAME_PATTERN`].
 pub(crate) fn agent_socket_token() -> String {
-    shell_quote_remote_path(&format!("~/.ssh/{}", agent_socket_name()))
+    shell_quote_remote_path(&format!("{AGENT_SOCKET_DIR}/{}", agent_socket_name()))
 }
 
 /// Bare filename of this process's agent link, for the `find` clause that has
@@ -1177,8 +1196,12 @@ pub(crate) fn agent_socket_name() -> &'static str {
     &NAME
 }
 
-/// `find -name` pattern for every deck agent link in a remote `~/.ssh`,
+/// `find -name` pattern for every deck agent link under a remote `~/.ssh`,
 /// whoever left it.
+///
+/// Matched at any depth the sweep walks, so it names the links in
+/// [`AGENT_SOCKET_DIR`] *and* the ones an older deck left loose in `~/.ssh`
+/// itself — the pile that move created still has to be collected.
 ///
 /// The sweep that uses it removes only the ones whose target is gone, so it
 /// needs no ownership scoping at all: a dangling link is useless to its owner
@@ -1189,9 +1212,10 @@ pub(crate) const AGENT_SOCKET_NAME_PATTERN: &str = "deck-agent-*.sock";
 
 /// Absolute path of the agent socket deck's relay binds *inside* a container.
 ///
-/// `/tmp` rather than the `~/.ssh` the host case uses: a container's `$HOME` is
-/// whatever the image says it is, may not exist and may not be writable, while
-/// the relay needs somewhere it can bind before any pane asks for a key.
+/// `/tmp` rather than the [`AGENT_SOCKET_DIR`] the host case uses: a
+/// container's `$HOME` is whatever the image says it is, may not exist and may
+/// not be writable, while the relay needs somewhere it can bind before any pane
+/// asks for a key.
 ///
 /// The name is [`agent_socket_name`], so it is scoped to this deck process for
 /// the same reason the host link is — two people decking into the same
@@ -1207,7 +1231,7 @@ pub(crate) fn container_agent_socket_path() -> String {
 ///
 /// Every path that hands a pane an `SSH_AUTH_SOCK` goes through here, so the two
 /// lane kinds cannot drift apart — a container lane pointed at the host's
-/// `~/.ssh` link would name a path its filesystem does not have.
+/// `~/.ssh/socks` link would name a path its filesystem does not have.
 pub(crate) fn lane_agent_socket_token(remote_id: &str) -> String {
     match parse_remote_id(remote_id).container {
         Some(_) => shell_single_quote(&container_agent_socket_path()),

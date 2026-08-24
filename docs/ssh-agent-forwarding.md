@@ -18,12 +18,15 @@ one-shot listing, not the attach.
 sshd then mints a *fresh* `$SSH_AUTH_SOCK` (`/tmp/ssh-*/agent.N`) per
 connection, so any pane that captured an older path holds a dead socket after a
 reconnect. The attach prelude (`app/ssh/remote_spawn.rs`) therefore points
-`~/.ssh/deck-agent-<pid>-<nanos>.sock` at the live socket on every attach and
-publishes *that* — to the attached client and to the tmux server's global
+`~/.ssh/socks/deck-agent-<pid>-<nanos>.sock` at the live socket on every attach
+and publishes *that* — to the attached client and to the tmux server's global
 environment. The name is per deck process: a single fixed name in a shared
 remote account is last-attach-wins, so two people decking into `deploy@host`
 could sign with each other's keys. Every run leaves one link behind; the
-prelude's sweep removes the ones whose target is gone.
+prelude's sweep removes the ones whose target is gone — two levels deep, so it
+also collects the links older decks left loose in `~/.ssh` itself, before the
+`socks/` subdirectory (the same one the local ControlMaster sockets use) became
+the only place deck puts a socket in someone's `~/.ssh`.
 
 ## Container lanes: a relay deck ships and streams in
 
@@ -92,7 +95,8 @@ Consequences worth knowing:
 - **Nothing is pinned inside the container.** The relay's socket path is already
   stable across reconnects — and across relay restarts, since the name is per
   deck process — so the prelude publishes it as-is rather than symlinking it
-  under `$HOME/.ssh`, which many images do not let the pane's user write.
+  under `$HOME/.ssh/socks`, which many images do not let the pane's user
+  create.
 - **`-i` and never `-t`.** The exec's stdio *is* the mux, so it must stay a
   binary pipe; a pty in the middle would rewrite bytes and corrupt every signing
   request.
