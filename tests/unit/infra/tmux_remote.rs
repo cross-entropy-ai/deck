@@ -1042,7 +1042,7 @@ fn new_session_never_bakes_this_calls_own_agent_socket_into_the_session() {
 }
 
 /// Same reasoning inside a container, where "the stable socket" is the relay's
-/// own path. Pointing a new session at the host's `~/.ssh` link would hand its
+/// own path. Pointing a new session at the host's `~/.ssh/agent` link would hand its
 /// first pane — the one the user is looking at — an address that does not exist
 /// on that filesystem.
 #[test]
@@ -1061,7 +1061,7 @@ fn a_container_session_is_created_with_the_relays_socket() {
         call.contains("else unset SSH_AUTH_SOCK ; fi"),
         "call: {call}"
     );
-    assert!(!call.contains(".ssh/deck-agent"), "call: {call}");
+    assert!(!call.contains(".ssh/agent/deck-agent"), "call: {call}");
 }
 
 /// The remote command `run_ssh` assembled, as the remote login shell will see it
