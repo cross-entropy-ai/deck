@@ -1,7 +1,7 @@
 use std::io;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
@@ -111,45 +111,24 @@ impl App {
                 None
             };
 
-            let shared_horizontal_frame = layout_mode == LayoutMode::Horizontal && show_borders;
-            let (sidebar_area, gap_area, main_area) = match layout_mode {
-                LayoutMode::Horizontal if shared_horizontal_frame => {
-                    let outer = Block::default()
+            let panes = crate::geometry::pane_areas(
+                full,
+                layout_mode,
+                sidebar_width,
+                sidebar_height,
+                show_borders,
+            );
+            let shared_horizontal_frame = panes.shared_frame.is_some();
+            if let Some(outer_area) = panes.shared_frame {
+                frame.render_widget(
+                    Block::default()
                         .borders(Borders::ALL)
                         .border_set(ratatui::symbols::border::ROUNDED)
                         .border_style(Style::default().fg(theme.dim))
-                        .style(Style::default().bg(theme.bg));
-                    let inner = outer.inner(full);
-                    frame.render_widget(outer, full);
-
-                    // `sidebar_width` remains the divider's screen column, so
-                    // resizing and hit-testing keep the same stable boundary.
-                    // The shared outer frame owns the left edge; the sidebar
-                    // therefore loses only that one column, not two borders.
-                    let [s, g, m] = Layout::horizontal([
-                        Constraint::Length(sidebar_width.saturating_sub(1)),
-                        Constraint::Length(1),
-                        Constraint::Min(1),
-                    ])
-                    .areas(inner);
-                    (s, Some(g), m)
-                }
-                LayoutMode::Horizontal => {
-                    let [s, g, m] = Layout::horizontal([
-                        Constraint::Length(sidebar_width),
-                        Constraint::Length(1),
-                        Constraint::Min(1),
-                    ])
-                    .areas(full);
-                    (s, Some(g), m)
-                }
-                LayoutMode::Vertical => {
-                    let [s, m] =
-                        Layout::vertical([Constraint::Length(sidebar_height), Constraint::Min(1)])
-                            .areas(full);
-                    (s, None, m)
-                }
-            };
+                        .style(Style::default().bg(theme.bg)),
+                    outer_area,
+                );
+            }
 
             // ~12.5 fps braille spinner for the Summary card; sessions.rs
             // takes this mod the frame count.
@@ -175,37 +154,48 @@ impl App {
             let focus_target = self.state.focus_target();
             let project_drag = self.state.project_drag_indicators();
             let summary_card_height = self.state.summary_card_height();
+            let sidebar_overlay = if show_help {
+                ui::SidebarOverlay::Help
+            } else if let Some(name) = confirm_name.as_deref() {
+                ui::SidebarOverlay::ConfirmKill(name)
+            } else if let Some(textarea) = rename_input {
+                ui::SidebarOverlay::Rename(textarea)
+            } else {
+                ui::SidebarOverlay::None
+            };
             captured_hits = if sidebar_collapsed {
                 ui::draw_collapsed_sidebar(
                     frame,
-                    sidebar_area,
+                    panes.sidebar,
                     theme,
                     show_borders && !shared_horizontal_frame,
                 )
             } else {
                 ui::draw_sidebar(
                     frame,
-                    sidebar_area,
+                    panes.sidebar,
                     ui::SidebarProps {
-                        sessions: &self.state.entries,
-                        built: &layout,
-                        tab_labels: &tab_labels,
-                        focus_target,
-                        project_drag,
+                        list: ui::SidebarListProps {
+                            sessions: &self.state.entries,
+                            built: &layout,
+                            tab_labels: &tab_labels,
+                            focus_target,
+                            project_drag,
+                            session_highlight: self.state.prefs.session_highlight,
+                            agent_entries,
+                        },
+                        summary: ui::SidebarSummaryProps {
+                            summary: &self.state.summary.state,
+                            summary_age: summary_age.as_deref(),
+                            spinner_idx,
+                            summary_scroll: self.state.summary.scroll,
+                            summary_card_height,
+                        },
                         sidebar_active,
                         theme,
-                        show_help,
-                        confirm_kill: confirm_name.as_deref(),
-                        rename_input,
+                        overlay: sidebar_overlay,
                         show_borders: show_borders && !shared_horizontal_frame,
                         sidebar_tab,
-                        session_highlight: self.state.prefs.session_highlight,
-                        agent_entries,
-                        summary: &self.state.summary.state,
-                        summary_age: summary_age.as_deref(),
-                        spinner_idx,
-                        summary_scroll: self.state.summary.scroll,
-                        summary_card_height,
                         tabs_mode: layout_mode == LayoutMode::Vertical,
                         keybindings: &self.state.keybindings,
                         update_available,
@@ -213,7 +203,7 @@ impl App {
                 )
             };
 
-            if let Some(gap) = gap_area {
+            if let Some(gap) = panes.divider {
                 let (sep_char, sep_fg) = if dragging_sep {
                     ('┃', theme.green)
                 } else {
@@ -268,8 +258,8 @@ impl App {
             let main_base = Style::default().fg(theme.text).bg(theme.bg);
 
             let main_inner = if shared_horizontal_frame {
-                frame.render_widget(Block::default().style(main_base), main_area);
-                main_area
+                frame.render_widget(Block::default().style(main_base), panes.main);
+                panes.main_content
             } else if show_borders {
                 let main_border_color = if sidebar_active {
                     theme.dim
@@ -281,12 +271,11 @@ impl App {
                     .border_set(ratatui::symbols::border::ROUNDED)
                     .border_style(Style::default().fg(main_border_color))
                     .style(main_base);
-                let main_inner = main_block.inner(main_area);
-                frame.render_widget(main_block, main_area);
-                main_inner
+                frame.render_widget(main_block, panes.main);
+                panes.main_content
             } else {
-                frame.render_widget(Block::default().style(main_base), main_area);
-                main_area
+                frame.render_widget(Block::default().style(main_base), panes.main);
+                panes.main_content
             };
 
             if let Some(screen) = background_screen {

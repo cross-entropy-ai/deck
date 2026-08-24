@@ -8,31 +8,25 @@ use unicode_width::UnicodeWidthStr;
 use crate::geometry::{tab_bar_layout, truncate, TAB_OVERFLOW_MARKER, TAB_SEPARATOR};
 
 use super::super::text::pad_line;
-use super::container::draw_sidebar_container;
-use super::{menu_span, SidebarRenderCtx, MENU_LABEL};
+use super::{menu_span, MENU_LABEL};
 use crate::state::{SessionEntry, SessionEntryKind};
+use crate::theme::Theme;
 
 pub(super) struct TabsProps<'a> {
     pub sessions: &'a [SessionEntry],
     /// One label per session, in `sessions` order — see `AppState::tab_labels`.
     pub labels: &'a [String],
     pub focused: usize,
-    pub sidebar_active: bool,
-    pub show_borders: bool,
 }
 
 pub(super) fn draw_sidebar_tabs(
     frame: &mut Frame,
-    area: Rect,
-    ctx: &SidebarRenderCtx<'_>,
+    content: Rect,
+    theme: &Theme,
     props: TabsProps<'_>,
 ) -> Option<Rect> {
-    let theme = ctx.theme;
     let sessions = props.sessions;
     let focused = props.focused;
-    let content =
-        draw_sidebar_container(frame, area, theme, props.sidebar_active, props.show_borders);
-
     if content.height == 0 {
         return None;
     }

@@ -1,6 +1,73 @@
-use super::{context_menu_rect, context_menu_width, tab_bar_layout, tab_label, MENU_LABEL};
+use super::{
+    context_menu_rect, context_menu_width, header_button_ranges, pane_areas, sidebar_areas,
+    tab_bar_layout, tab_label, MENU_LABEL,
+};
 use crate::menu::MenuItem;
+use crate::state::LayoutMode;
+use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
+
+#[test]
+fn horizontal_bordered_panes_share_one_frame_geometry() {
+    let full = Rect::new(0, 0, 120, 40);
+    let panes = pane_areas(full, LayoutMode::Horizontal, 28, 3, true);
+
+    assert_eq!(panes.shared_frame, Some(full));
+    assert_eq!(panes.sidebar, Rect::new(1, 1, 27, 38));
+    assert_eq!(panes.sidebar_content, panes.sidebar);
+    assert_eq!(panes.sidebar_hit, Rect::new(0, 0, 28, 40));
+    assert_eq!(panes.divider, Some(Rect::new(28, 1, 1, 38)));
+    assert_eq!(panes.divider_hit, panes.divider);
+    assert_eq!(panes.main, Rect::new(29, 1, 90, 38));
+    assert_eq!(panes.main_content, panes.main);
+}
+
+#[test]
+fn horizontal_borderless_panes_keep_wide_divider_hit_target() {
+    let panes = pane_areas(
+        Rect::new(0, 0, 120, 40),
+        LayoutMode::Horizontal,
+        28,
+        3,
+        false,
+    );
+
+    assert_eq!(panes.sidebar, Rect::new(0, 0, 28, 40));
+    assert_eq!(panes.divider, Some(Rect::new(28, 0, 1, 40)));
+    assert_eq!(panes.divider_hit, Some(Rect::new(28, 0, 2, 40)));
+    assert_eq!(panes.main_content, Rect::new(29, 0, 91, 40));
+    assert_eq!(panes.shared_frame, None);
+}
+
+#[test]
+fn vertical_bordered_panes_publish_exact_terminal_content() {
+    let panes = pane_areas(Rect::new(0, 0, 120, 40), LayoutMode::Vertical, 28, 3, true);
+
+    assert_eq!(panes.sidebar, Rect::new(0, 0, 120, 3));
+    assert_eq!(panes.sidebar_content, Rect::new(1, 1, 118, 1));
+    assert_eq!(panes.divider, None);
+    assert_eq!(panes.main, Rect::new(0, 3, 120, 37));
+    assert_eq!(panes.main_content, Rect::new(1, 4, 118, 35));
+}
+
+#[test]
+fn sidebar_split_pins_summary_above_footer() {
+    let areas = sidebar_areas(Rect::new(1, 1, 27, 38), true, 5);
+
+    assert_eq!(areas.header, Rect::new(1, 1, 27, 2));
+    assert_eq!(areas.body, Rect::new(1, 3, 27, 33));
+    assert_eq!(areas.list, Rect::new(1, 3, 27, 28));
+    assert_eq!(areas.summary, Rect::new(1, 31, 27, 5));
+    assert_eq!(areas.footer, Rect::new(1, 36, 27, 3));
+    assert!(areas.banner_visible);
+}
+
+#[test]
+fn section_header_buttons_are_right_aligned_by_display_width() {
+    let buttons = vec!["[+]".to_string(), "[关闭]".to_string()];
+    assert_eq!(header_button_ranges(14, &buttons), vec![4..7, 8..14]);
+    assert!(header_button_ranges(4, &buttons).is_empty());
+}
 
 #[test]
 fn remote_tab_label_truncates_each_side_to_six() {

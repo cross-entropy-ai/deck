@@ -5,7 +5,9 @@
 //! single source of truth here: renderer and hit-tester both read it, so
 //! changing tab width keeps click-target math in sync.
 
-use ratatui::layout::{Position, Rect};
+use std::ops::Range;
+
+use ratatui::layout::{Constraint, Layout, Margin, Position, Rect};
 use unicode_width::UnicodeWidthStr;
 
 use crate::lane::LaneId;
@@ -13,7 +15,7 @@ use crate::lane::LaneId;
 use unicode_width::UnicodeWidthChar;
 
 use crate::menu::MenuItem;
-use crate::state::SidebarTab;
+use crate::state::{LayoutMode, SidebarTab};
 
 /// One divider button. Open-ended: `glyph` is drawn, `command` is an id only
 /// the registering backend understands and the shell echoes back to its
@@ -135,6 +137,175 @@ pub fn banner_visible(has_update: bool, content_width: u16) -> bool {
 /// went click-dead).
 pub fn sidebar_footer_height(banner_visible: bool) -> u16 {
     2 + banner_visible as u16
+}
+
+/// Right-aligned button cell ranges within a section header, in button order
+/// with a one-cell gap. This is the single Deck-owned copy of the geometry
+/// used to publish click targets for the sectioned-list preset.
+pub fn header_button_ranges(width: u16, buttons: &[String]) -> Vec<Range<u16>> {
+    if buttons.is_empty() {
+        return Vec::new();
+    }
+    let widths: Vec<u16> = buttons.iter().map(|button| button.width() as u16).collect();
+    let total = widths.iter().sum::<u16>() + buttons.len() as u16 - 1;
+    if total > width {
+        return Vec::new();
+    }
+
+    let mut x = width - total;
+    widths
+        .into_iter()
+        .enumerate()
+        .map(|(index, button_width)| {
+            if index > 0 {
+                x += 1;
+            }
+            let range = x..x + button_width;
+            x = range.end;
+            range
+        })
+        .collect()
+}
+
+/// All screen regions owned by the top-level Deck layout. Render, PTY sizing,
+/// and mouse routing consume this same value so borders and divider columns
+/// cannot drift between three independent formulas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaneAreas {
+    /// Rect passed to the sidebar renderer. In the shared horizontal frame it
+    /// is already border-free; in vertical layout it still owns its frame.
+    pub sidebar: Rect,
+    /// Actual sidebar content, used by sidebar sub-layout and hit-testing.
+    pub sidebar_content: Rect,
+    /// Screen region routed to sidebar input, including its outer edge.
+    pub sidebar_hit: Rect,
+    /// The visible horizontal divider, absent in vertical layout.
+    pub divider: Option<Rect>,
+    /// Divider drag target. Borderless mode intentionally includes one extra
+    /// column as a larger affordance.
+    pub divider_hit: Option<Rect>,
+    /// Rect passed to the main-pane renderer.
+    pub main: Rect,
+    /// Exact terminal surface inside any border.
+    pub main_content: Rect,
+    /// One shared outer frame for bordered horizontal layout.
+    pub shared_frame: Option<Rect>,
+}
+
+/// Resolve the complete Deck pane geometry for one terminal frame.
+pub fn pane_areas(
+    full: Rect,
+    mode: LayoutMode,
+    sidebar_width: u16,
+    sidebar_height: u16,
+    show_borders: bool,
+) -> PaneAreas {
+    match mode {
+        LayoutMode::Horizontal if show_borders => {
+            let inner = full.inner(Margin::new(1, 1));
+            let [sidebar, divider, main] = Layout::horizontal([
+                Constraint::Length(sidebar_width.saturating_sub(1)),
+                Constraint::Length(1),
+                Constraint::Min(1),
+            ])
+            .areas(inner);
+            PaneAreas {
+                sidebar,
+                sidebar_content: sidebar,
+                sidebar_hit: Rect {
+                    width: divider.x.saturating_sub(full.x),
+                    ..full
+                },
+                divider: Some(divider),
+                divider_hit: Some(divider),
+                main,
+                main_content: main,
+                shared_frame: Some(full),
+            }
+        }
+        LayoutMode::Horizontal => {
+            let [sidebar, divider, main] = Layout::horizontal([
+                Constraint::Length(sidebar_width),
+                Constraint::Length(1),
+                Constraint::Min(1),
+            ])
+            .areas(full);
+            let divider_hit = Rect {
+                width: 2.min(full.right().saturating_sub(divider.x)),
+                ..divider
+            };
+            PaneAreas {
+                sidebar,
+                sidebar_content: sidebar,
+                sidebar_hit: sidebar,
+                divider: Some(divider),
+                divider_hit: Some(divider_hit),
+                main,
+                main_content: main,
+                shared_frame: None,
+            }
+        }
+        LayoutMode::Vertical => {
+            let [sidebar, main] =
+                Layout::vertical([Constraint::Length(sidebar_height), Constraint::Min(1)])
+                    .areas(full);
+            let sidebar_content = if show_borders {
+                sidebar.inner(Margin::new(1, 1))
+            } else {
+                sidebar
+            };
+            let main_content = if show_borders {
+                main.inner(Margin::new(1, 1))
+            } else {
+                main
+            };
+            PaneAreas {
+                sidebar,
+                sidebar_content,
+                sidebar_hit: sidebar,
+                divider: None,
+                divider_hit: None,
+                main,
+                main_content,
+                shared_frame: None,
+            }
+        }
+    }
+}
+
+/// Stable sub-regions inside an expanded horizontal sidebar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SidebarAreas {
+    pub header: Rect,
+    /// Entire area between header and footer, used by inline overlays.
+    pub body: Rect,
+    pub list: Rect,
+    pub summary: Rect,
+    pub footer: Rect,
+    pub banner_visible: bool,
+}
+
+/// Split sidebar content once for rendering and mouse row resolution.
+pub fn sidebar_areas(content: Rect, has_update: bool, summary_height: u16) -> SidebarAreas {
+    let show_banner = banner_visible(has_update, content.width);
+    let footer_height = sidebar_footer_height(show_banner);
+    let [header, body, footer] = Layout::vertical([
+        Constraint::Length(SIDEBAR_HEADER_HEIGHT),
+        Constraint::Min(1),
+        Constraint::Length(footer_height),
+    ])
+    .areas(content);
+    let summary_height = summary_height.min(body.height);
+    let [list, summary] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(summary_height)]).areas(body);
+    SidebarAreas {
+        header,
+        body,
+        list,
+        summary,
+        footer,
+        banner_visible: show_banner,
+    }
 }
 
 /// On-screen rect of the context menu anchored at `(menu_x, menu_y)`,

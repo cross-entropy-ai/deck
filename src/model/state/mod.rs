@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use ratatui::layout::Position;
+use ratatui::layout::{Position, Rect};
 use ratatui_sectioned_list::widget::BasicItem;
 use ratatui_sectioned_list::{ItemKind, RowDragState};
 use serde::{Deserialize, Serialize};
@@ -1101,50 +1101,20 @@ impl AppState {
         u16::from(self.prefs.show_borders)
     }
 
-    pub fn pty_size(&self) -> (u16, u16) {
-        let b = self.border_inset();
-        let bo = b * 2;
-        match self.effective_layout_mode() {
-            LayoutMode::Horizontal => {
-                let cols = self
-                    .term_width
-                    // The horizontal panes share one outer frame. Past the
-                    // stable divider column, only the divider itself and the
-                    // frame's right edge consume space.
-                    .saturating_sub(self.effective_sidebar_width() + 1 + b)
-                    .max(1);
-                let rows = self.term_height.saturating_sub(bo).max(1);
-                (rows, cols)
-            }
-            LayoutMode::Vertical => {
-                let cols = self.term_width.saturating_sub(bo).max(1);
-                let rows = self
-                    .term_height
-                    .saturating_sub(self.effective_sidebar_height() + bo)
-                    .max(1);
-                (rows, cols)
-            }
-        }
+    /// One source of truth for pane rendering, PTY sizing, and mouse routing.
+    pub fn pane_areas(&self) -> crate::geometry::PaneAreas {
+        crate::geometry::pane_areas(
+            Rect::new(0, 0, self.term_width, self.term_height),
+            self.effective_layout_mode(),
+            self.effective_sidebar_width(),
+            self.effective_sidebar_height(),
+            self.prefs.show_borders,
+        )
     }
 
-    /// Height of the sidebar footer in rows, for mouse hit-testing. The formula
-    /// lives in `crate::geometry::sidebar_footer_height`, shared with the
-    /// renderer (`ui::sidebar::draw_sidebar`) so the two can't drift — when they
-    /// did, the bottom visible session row was click-dead.
-    pub fn sidebar_footer_height(&self) -> u16 {
-        let b = self.border_inset() * 2;
-        let content_width = match self.effective_layout_mode() {
-            // In horizontal mode the shared frame owns only the sidebar's
-            // left edge; its right edge is the internal divider.
-            LayoutMode::Horizontal => self
-                .effective_sidebar_width()
-                .saturating_sub(self.border_inset()),
-            LayoutMode::Vertical => self.term_width.saturating_sub(b),
-        };
-        crate::geometry::sidebar_footer_height(crate::geometry::banner_visible(
-            self.update_available.is_some(),
-            content_width,
-        ))
+    pub fn pty_size(&self) -> (u16, u16) {
+        let main = self.pane_areas().main_content;
+        (main.height.max(1), main.width.max(1))
     }
 
     /// Resolve a screen row in the scrollable session area into
@@ -1152,29 +1122,21 @@ impl AppState {
     /// the header banner, footer, or outside the sidebar. Shared by the row and
     /// divider hit-testers so they agree on geometry and the applied scroll offset.
     fn session_row_hit(&self, row: u16) -> Option<(BuiltLayout, u16, u16, u16)> {
-        let b = self.border_inset();
-        let sidebar_h = match self.effective_layout_mode() {
-            LayoutMode::Horizontal => self.term_height,
-            LayoutMode::Vertical => self.effective_sidebar_height(),
-        };
-        let header_height = crate::geometry::SIDEBAR_HEADER_HEIGHT;
-        let footer_height = self.sidebar_footer_height();
-        let sessions_top = b + header_height;
-        let sessions_bottom = sidebar_h.saturating_sub(b + footer_height);
-        // The list viewport sits above the Summary card (pinned to the bottom
-        // of the Agents tab, between the list and the footer, not part of the
-        // sectioned list; `summary_card_height` is 0 elsewhere). `list_bottom`
-        // is never past `sessions_bottom`, so this one check covers both.
-        let list_bottom = sessions_bottom.saturating_sub(self.summary_card_height());
-        if row < sessions_top || row >= list_bottom {
+        let pane = self.pane_areas();
+        let sidebar = crate::geometry::sidebar_areas(
+            pane.sidebar_content,
+            self.update_available.is_some(),
+            self.summary_card_height(),
+        );
+        if row < sidebar.list.y || row >= sidebar.list.bottom() {
             return None;
         }
-        let visible_height = list_bottom - sessions_top;
+        let visible_height = sidebar.list.height;
         let built = self.current_layout(self.prefs.view_mode);
         let scroll = built
             .layout
             .scroll_offset(self.focus_target().map(|f| f.0), visible_height);
-        let viewport_y = row - sessions_top;
+        let viewport_y = row - sidebar.list.y;
         Some((built, viewport_y, scroll, visible_height))
     }
 

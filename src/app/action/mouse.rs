@@ -43,29 +43,10 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         }
     }
 
-    let (on_separator, in_sidebar) = match state.effective_layout_mode() {
-        LayoutMode::Horizontal => {
-            let sidebar_width = state.effective_sidebar_width();
-            let gap_col = sidebar_width;
-            // With the shared outer frame the divider is one real column;
-            // don't steal the first PTY column as extra drag affordance.
-            // Borderless mode keeps its existing two-column hit target.
-            let on_sep = if state.prefs.show_borders {
-                mouse.column == gap_col
-            } else {
-                mouse.column >= gap_col && mouse.column <= gap_col + 1
-            };
-            let in_sb = mouse.column < sidebar_width;
-            (on_sep, in_sb)
-        }
-        LayoutMode::Vertical => {
-            // Tabs mode is a fixed single row, so there's no resize
-            // handle — never treat a click as a separator drag.
-            let sidebar_height = state.effective_sidebar_height();
-            let in_sb = mouse.row < sidebar_height;
-            (false, in_sb)
-        }
-    };
+    let panes = state.pane_areas();
+    let pos = ratatui::layout::Position::new(mouse.column, mouse.row);
+    let on_separator = panes.divider_hit.is_some_and(|area| area.contains(pos));
+    let in_sidebar = panes.sidebar_hit.contains(pos);
 
     match mouse.kind {
         MouseEventKind::Moved => {
@@ -235,15 +216,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             }
             return Action::None;
         }
-        let b = state.border_inset();
-        let (col_off, row_off) = match state.effective_layout_mode() {
-            // The horizontal panes share an outer frame, so the PTY starts
-            // immediately after the stable divider column in both bordered
-            // and borderless modes.
-            LayoutMode::Horizontal => (state.effective_sidebar_width() + 1, b),
-            LayoutMode::Vertical => (b, state.effective_sidebar_height() + b),
-        };
-        let bytes = crate::pty::encode_mouse(mouse, col_off, row_off);
+        let bytes = crate::pty::encode_mouse(mouse, panes.main_content.x, panes.main_content.y);
         // An unencodable left click still claims keyboard focus for the
         // main pane; anything else unencodable is inert.
         if bytes.is_empty() && mouse.kind == MouseEventKind::Down(MouseButton::Left) {

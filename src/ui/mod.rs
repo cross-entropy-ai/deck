@@ -19,7 +19,7 @@ pub use settings::{
 };
 pub use sidebar::{
     draw_collapsed_sidebar, draw_confirm_kill_popup, draw_help_popup, draw_rename_popup,
-    draw_sidebar, SidebarProps,
+    draw_sidebar, SidebarListProps, SidebarOverlay, SidebarProps, SidebarSummaryProps,
 };
 
 pub struct ExcludeEditorView<'a> {
