@@ -659,7 +659,8 @@ impl SessionCatalog for TmuxSystem {
                             let fresh = pane.and_then(|p| {
                                 agent::activity_fresh(p.window_activity, p.window_panes, now)
                             });
-                            detected.status = agent::merge_status(verdict, fresh);
+                            let hook = pane.and_then(|p| agent::hook_status(&p.hook_state, now));
+                            detected.status = agent::merge_status(verdict, fresh, hook);
                             detected.keep_previous = verdict.keep_previous;
                         }
                     }

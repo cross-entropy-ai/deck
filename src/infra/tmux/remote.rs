@@ -558,7 +558,8 @@ fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Detect
                 let fresh = pane.and_then(|p| {
                     crate::agent::activity_fresh(p.window_activity, p.window_panes, remote_now)
                 });
-                a.status = crate::agent::merge_status(verdict, fresh);
+                let hook = pane.and_then(|p| crate::agent::hook_status(&p.hook_state, remote_now));
+                a.status = crate::agent::merge_status(verdict, fresh, hook);
                 a.keep_previous = verdict.keep_previous;
             }
         }
