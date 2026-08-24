@@ -247,6 +247,25 @@ fn project_drag_keeps_last_valid_target_over_divider() {
     assert_eq!(state.project_drag.target(), Some(1));
 }
 
+#[test]
+fn bordered_horizontal_divider_does_not_consume_first_pty_column() {
+    let mut state = AppState::new(120, 40);
+    state.prefs.layout_mode = LayoutMode::Horizontal;
+    state.prefs.show_borders = true;
+    state.prefs.sidebar_width = 28;
+
+    assert!(matches!(
+        mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 28, 1), &state),
+        Action::StartDrag
+    ));
+
+    let action = mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 29, 1), &state);
+    match action {
+        Action::ForwardMouse(bytes) => assert_eq!(bytes, b"\x1b[<0;1;1M"),
+        other => panic!("first PTY column must receive the click, got {other:?}"),
+    }
+}
+
 fn state_with_add_remote() -> AppState {
     let mut state = AppState::new(120, 40);
     state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(

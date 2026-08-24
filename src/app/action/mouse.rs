@@ -47,7 +47,14 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         LayoutMode::Horizontal => {
             let sidebar_width = state.effective_sidebar_width();
             let gap_col = sidebar_width;
-            let on_sep = mouse.column >= gap_col && mouse.column <= gap_col + 1;
+            // With the shared outer frame the divider is one real column;
+            // don't steal the first PTY column as extra drag affordance.
+            // Borderless mode keeps its existing two-column hit target.
+            let on_sep = if state.prefs.show_borders {
+                mouse.column == gap_col
+            } else {
+                mouse.column >= gap_col && mouse.column <= gap_col + 1
+            };
             let in_sb = mouse.column < sidebar_width;
             (on_sep, in_sb)
         }
@@ -230,7 +237,10 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         }
         let b = state.border_inset();
         let (col_off, row_off) = match state.effective_layout_mode() {
-            LayoutMode::Horizontal => (state.effective_sidebar_width() + 1 + b, b),
+            // The horizontal panes share an outer frame, so the PTY starts
+            // immediately after the stable divider column in both bordered
+            // and borderless modes.
+            LayoutMode::Horizontal => (state.effective_sidebar_width() + 1, b),
             LayoutMode::Vertical => (b, state.effective_sidebar_height() + b),
         };
         let bytes = crate::pty::encode_mouse(mouse, col_off, row_off);

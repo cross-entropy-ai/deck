@@ -874,6 +874,16 @@ fn collapsed_sidebar_restores_space_without_losing_expanded_width() {
 }
 
 #[test]
+fn horizontal_shared_frame_sizes_pty_to_its_content_rect() {
+    let bordered = make_state(LayoutMode::Horizontal, true, 120, 40);
+    assert_eq!(bordered.effective_sidebar_width(), 28);
+    assert_eq!(bordered.pty_size(), (38, 90));
+
+    let borderless = make_state(LayoutMode::Horizontal, false, 120, 40);
+    assert_eq!(borderless.pty_size(), (40, 91));
+}
+
+#[test]
 fn vertical_sidebar_is_fixed_single_tab_row() {
     // Bordered: one tab row + top/bottom border = 3 rows, and the
     // height is pinned there regardless of any stored sidebar_height.

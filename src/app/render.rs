@@ -111,7 +111,29 @@ impl App {
                 None
             };
 
+            let shared_horizontal_frame = layout_mode == LayoutMode::Horizontal && show_borders;
             let (sidebar_area, gap_area, main_area) = match layout_mode {
+                LayoutMode::Horizontal if shared_horizontal_frame => {
+                    let outer = Block::default()
+                        .borders(Borders::ALL)
+                        .border_set(ratatui::symbols::border::ROUNDED)
+                        .border_style(Style::default().fg(theme.dim))
+                        .style(Style::default().bg(theme.bg));
+                    let inner = outer.inner(full);
+                    frame.render_widget(outer, full);
+
+                    // `sidebar_width` remains the divider's screen column, so
+                    // resizing and hit-testing keep the same stable boundary.
+                    // The shared outer frame owns the left edge; the sidebar
+                    // therefore loses only that one column, not two borders.
+                    let [s, g, m] = Layout::horizontal([
+                        Constraint::Length(sidebar_width.saturating_sub(1)),
+                        Constraint::Length(1),
+                        Constraint::Min(1),
+                    ])
+                    .areas(inner);
+                    (s, Some(g), m)
+                }
                 LayoutMode::Horizontal => {
                     let [s, g, m] = Layout::horizontal([
                         Constraint::Length(sidebar_width),
@@ -154,7 +176,12 @@ impl App {
             let project_drag = self.state.project_drag_indicators();
             let summary_card_height = self.state.summary_card_height();
             captured_hits = if sidebar_collapsed {
-                ui::draw_collapsed_sidebar(frame, sidebar_area, theme, show_borders)
+                ui::draw_collapsed_sidebar(
+                    frame,
+                    sidebar_area,
+                    theme,
+                    show_borders && !shared_horizontal_frame,
+                )
             } else {
                 ui::draw_sidebar(
                     frame,
@@ -170,7 +197,7 @@ impl App {
                         show_help,
                         confirm_kill: confirm_name.as_deref(),
                         rename_input,
-                        show_borders,
+                        show_borders: show_borders && !shared_horizontal_frame,
                         sidebar_tab,
                         agent_entries,
                         summary: &self.state.summary.state,
@@ -195,6 +222,19 @@ impl App {
                     if let Some(cell) = frame.buffer_mut().cell_mut((gap.x, y)) {
                         cell.set_char(sep_char);
                         cell.set_style(ratatui::style::Style::default().fg(sep_fg).bg(theme.bg));
+                    }
+                }
+                if shared_horizontal_frame && gap.height > 0 {
+                    let junction_style = Style::default().fg(sep_fg).bg(theme.bg);
+                    if let Some(cell) = frame.buffer_mut().cell_mut((gap.x, full.y)) {
+                        cell.set_char('┬');
+                        cell.set_style(junction_style);
+                    }
+                    if let Some(y) = full.bottom().checked_sub(1) {
+                        if let Some(cell) = frame.buffer_mut().cell_mut((gap.x, y)) {
+                            cell.set_char('┴');
+                            cell.set_style(junction_style);
+                        }
                     }
                 }
             }
@@ -226,7 +266,10 @@ impl App {
 
             let main_base = Style::default().fg(theme.text).bg(theme.bg);
 
-            let main_inner = if show_borders {
+            let main_inner = if shared_horizontal_frame {
+                frame.render_widget(Block::default().style(main_base), main_area);
+                main_area
+            } else if show_borders {
                 let main_border_color = if sidebar_active {
                     theme.dim
                 } else {

@@ -1054,12 +1054,16 @@ impl AppState {
     }
 
     pub fn pty_size(&self) -> (u16, u16) {
-        let bo = self.border_inset() * 2;
+        let b = self.border_inset();
+        let bo = b * 2;
         match self.effective_layout_mode() {
             LayoutMode::Horizontal => {
                 let cols = self
                     .term_width
-                    .saturating_sub(self.effective_sidebar_width() + 1 + bo)
+                    // The horizontal panes share one outer frame. Past the
+                    // stable divider column, only the divider itself and the
+                    // frame's right edge consume space.
+                    .saturating_sub(self.effective_sidebar_width() + 1 + b)
                     .max(1);
                 let rows = self.term_height.saturating_sub(bo).max(1);
                 (rows, cols)
@@ -1082,7 +1086,11 @@ impl AppState {
     pub fn sidebar_footer_height(&self) -> u16 {
         let b = self.border_inset() * 2;
         let content_width = match self.effective_layout_mode() {
-            LayoutMode::Horizontal => self.effective_sidebar_width().saturating_sub(b),
+            // In horizontal mode the shared frame owns only the sidebar's
+            // left edge; its right edge is the internal divider.
+            LayoutMode::Horizontal => self
+                .effective_sidebar_width()
+                .saturating_sub(self.border_inset()),
             LayoutMode::Vertical => self.term_width.saturating_sub(b),
         };
         crate::geometry::sidebar_footer_height(crate::geometry::banner_visible(
