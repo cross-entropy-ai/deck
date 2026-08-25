@@ -330,7 +330,6 @@ impl From<&str> for LaneActionId {
 pub enum LaneShellIntent {
     ReconnectAttachment,
     OpenPortForwards,
-    OpenNewSession,
     OpenContextMenu { anchor: LaneActionAnchor },
 }
 
@@ -731,7 +730,7 @@ mod tests {
     }
 
     #[test]
-    fn local_tmux_divider_is_a_single_direct_new_session_action() {
+    fn local_tmux_divider_is_the_menu_every_lane_has() {
         // `configure` replaces the process-wide container-options table
         // wholesale, so it has to take the lock even when the case under test
         // is the *local* divider and the remote list is empty: without it, this
@@ -742,15 +741,27 @@ mod tests {
         system.configure(&Config::default(), &[]);
         let lane = tmux::TmuxSystem::local_lane();
         let section = system.section_for(&lane).expect("local section");
-        assert_eq!(section.buttons.len(), 1);
-        assert_eq!(section.buttons[0].glyph, "+");
+        // Just `…`, the same button every other lane ends on. `Show hidden`
+        // lives in there and is the only way back from hiding a session, so
+        // this lane must never be left without it.
+        let glyphs: Vec<&str> = section
+            .buttons
+            .iter()
+            .map(|button| button.glyph.as_str())
+            .collect();
+        assert_eq!(glyphs, vec!["…"]);
 
         let intents = system.invoke(
             &lane,
             &section.buttons[0].action,
             LaneActionAnchor { x: 4, y: 5 },
         );
-        assert_eq!(intents, vec![LaneShellIntent::OpenNewSession]);
+        assert_eq!(
+            intents,
+            vec![LaneShellIntent::OpenContextMenu {
+                anchor: LaneActionAnchor { x: 4, y: 5 }
+            }]
+        );
     }
 
     #[test]
@@ -1055,13 +1066,14 @@ mod tests {
         let section = system.section_for(&mounted).expect("section");
         assert_eq!(section.parent.as_ref(), Some(&local));
         assert_eq!(section.divider_title.as_deref(), Some("bench"));
-        // No forward badge, no reconnect: there is no ssh connection to speak of.
+        // No forward badge, no reconnect: there is no ssh connection to speak
+        // of. What's left is the menu every lane carries.
         let glyphs: Vec<String> = section
             .buttons
             .iter()
             .map(|button| button.glyph.clone())
             .collect();
-        assert_eq!(glyphs, vec!["+".to_string(), "…".to_string()], "{glyphs:?}");
+        assert_eq!(glyphs, vec!["…".to_string()], "{glyphs:?}");
         assert!(!section.lane_capabilities.port_forwards);
         assert!(section.lane_capabilities.create_session);
     }

@@ -31,11 +31,10 @@ pub const TMUX: &str = "tmux";
 const LOCAL: &str = crate::remote_tmux::LOCAL_HOST;
 
 /// Button command ids this system declares on its own dividers (the generic
-/// `…` menu, on both local and remote). Remote-only buttons (reconnect,
-/// forwards) live in `crate::ssh::divider::cmd`.
+/// `…` menu, on every lane). Remote-only buttons (reconnect, forwards) live in
+/// `crate::ssh::divider::cmd`.
 mod cmd {
     pub const MENU: &str = "menu";
-    pub const NEW_SESSION: &str = "new-session";
 }
 
 /// The tmux backend. Configured remote definitions are backend-owned behind a
@@ -167,7 +166,7 @@ fn usable_containers(
     })
 }
 
-/// The generic `…` divider menu button this system owns (both lanes).
+/// The generic `…` divider menu button this system owns (every lane).
 fn menu_button() -> SectionButton {
     SectionButton {
         glyph: "…".to_string(),
@@ -175,17 +174,12 @@ fn menu_button() -> SectionButton {
     }
 }
 
-fn new_session_button() -> SectionButton {
-    SectionButton {
-        glyph: "+".to_string(),
-        action: LaneActionId::from(cmd::NEW_SESSION),
-    }
-}
-
-/// Build one lane's [`SectionDef`]. The local lane is flush with a direct
-/// new-session button; a remote lane takes the ssh-registered buttons (the `⇄N` forward
-/// count + reconnect, from `crate::ssh::divider`), then the menu button. This
-/// fn doesn't know which remote buttons exist — ssh decides.
+/// Build one lane's [`SectionDef`]. Every lane ends in the same `…` menu, and
+/// the local lane is nothing but that: its whole divider vocabulary lives in
+/// there, `Show hidden` — the only way back from hiding a session — included.
+/// A remote lane leads with the ssh-registered buttons (`crate::ssh::divider`
+/// contributes the `⇄N` forward count and reconnect); this fn doesn't know
+/// which of those exist — ssh decides.
 fn section_def(remotes: &[RemoteConfig], lane: &LaneId, ssh_connection_reuse: bool) -> SectionDef {
     match TmuxSystem::host_of(lane) {
         None => SectionDef {
@@ -193,7 +187,7 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId, ssh_connection_reuse: bo
             title: "local".to_string(),
             parent: None,
             divider_title: None,
-            buttons: vec![new_session_button()],
+            buttons: vec![menu_button()],
             top_margin: false,
             primary: true,
             session_capabilities: tmux_session_capabilities(),
@@ -219,10 +213,9 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId, ssh_connection_reuse: bo
                 })
                 .unwrap_or(&[]);
             // A local container has no ssh connection: no forward count to show
-            // and nothing to reconnect. It gets what the local lane gets, plus
-            // the menu that can unmount it.
+            // and nothing to reconnect. What's left is the menu every lane has.
             let mut buttons = if crate::remote_tmux::is_local_id(remote_id) {
-                vec![new_session_button()]
+                Vec::new()
             } else {
                 crate::ssh::divider::divider(forwards, ssh_connection_reuse)
             };
@@ -722,7 +715,6 @@ impl LaneActionProvider for TmuxSystem {
         match action.as_str() {
             // The generic menu button this system owns.
             cmd::MENU => vec![LaneShellIntent::OpenContextMenu { anchor }],
-            cmd::NEW_SESSION if host.is_none() => vec![LaneShellIntent::OpenNewSession],
             // Everything else on a remote divider is ssh-registered; route it
             // back to ssh, which owns those commands' semantics.
             _ => match host {

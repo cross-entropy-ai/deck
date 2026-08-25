@@ -115,7 +115,7 @@ impl MenuKind {
     /// carry a per-row set, and a divider greys whatever its lane cannot do.
     ///
     /// Built rather than picked from a static table: the divider's greyed set
-    /// is three independent flags, and enumerating their combinations was
+    /// is four independent flags, and enumerating their combinations was
     /// already at four constants before `Show hidden` would have made it eight.
     pub fn disabled(&self) -> Vec<MenuItem> {
         match self {
@@ -129,10 +129,13 @@ impl MenuKind {
                 ..
             } => {
                 let mut out = Vec::new();
-                if !mounts_enabled || *primary {
+                // Both key off the lane's own capability, never off "is this
+                // the local lane": deck mounts containers on this machine too,
+                // and the local lane already answers `false` to port forwards.
+                if !mounts_enabled {
                     out.push(MenuItem::Containers);
                 }
-                if !port_forward_enabled || *primary {
+                if !port_forward_enabled {
                     out.push(MenuItem::PortForward);
                 }
                 if !has_hidden {

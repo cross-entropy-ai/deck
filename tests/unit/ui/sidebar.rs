@@ -345,17 +345,18 @@ fn header_shows_live_counts_without_duplicate_new_action() {
     assert!(!first_row.contains(" + "));
     assert!(captured.tabs.is_some());
 
-    let local_new = captured
+    // The local divider ends on the same lone `…` every other lane ends on —
+    // and nothing else, so there is one place to look for a lane's actions.
+    let local: Vec<_> = captured
         .dividers
         .iter()
-        .find(|hit| {
-            crate::system::tmux::TmuxSystem::host_of(&hit.lane).is_none()
-                && hit.action.as_str() == "new-session"
-        })
-        .expect("local divider keeps its direct new-session button");
+        .filter(|hit| crate::system::tmux::TmuxSystem::host_of(&hit.lane).is_none())
+        .collect();
+    assert_eq!(local.len(), 1, "{local:?}");
+    assert_eq!(local[0].action.as_str(), "menu");
     assert_eq!(
-        terminal.backend().buffer()[(local_new.rect.x + 1, local_new.rect.y)].symbol(),
-        "+"
+        terminal.backend().buffer()[(local[0].rect.x + 1, local[0].rect.y)].symbol(),
+        "…"
     );
 }
 
