@@ -130,6 +130,75 @@ pub fn draw_new_session(
     }
 }
 
+/// Draw a picker over plain names: one filter field, a scrolling list, and a
+/// footer whose hints double as its buttons.
+///
+/// Add Remote and the hidden-session restore picker are the same gesture — pick
+/// one name out of a list and act on it — so they share every measurement here
+/// and differ only in their wording. Six numbers that had to be kept equal at
+/// two call sites now cannot drift.
+///
+/// The mount picker looks like one of these but is not: it needs a placeholder
+/// row while discovery is out and per-row dimming for candidates that need
+/// activation, neither of which `FilterPickerView` carries. Folding it in means
+/// teaching the shared view those two things first.
+///
+/// Returns the row hits and the single-row footer rect the caller resolves its
+/// own hint rects against.
+fn draw_name_picker(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    picker: &crate::picker::FilterPicker,
+    words: NamePickerWords<'_>,
+) -> (Vec<crate::geometry::ListItemHit>, Rect) {
+    const MAX_VISIBLE: usize = 8;
+
+    let hits = draw_filter_picker(
+        frame,
+        area,
+        theme,
+        FilterPickerView {
+            title: words.title,
+            width: 56,
+            min_height: 7,
+            max_visible: MAX_VISIBLE,
+            fields: &[PickerField {
+                label: words.field_label,
+                textarea: &picker.input,
+                focused: true,
+            }],
+            filtered: &picker.filtered,
+            selected: picker.selected,
+            scroll: super::widgets::scroll_window(
+                picker.selected,
+                picker.filtered.len(),
+                MAX_VISIBLE,
+            ),
+            list_focused: true,
+            pinned: 0,
+            empty_msg: words.empty_msg,
+            error: picker.error.as_deref(),
+            footer: &[words.footer],
+        },
+        |idx| picker.items[idx].clone(),
+    );
+
+    let footer_row = Rect {
+        height: 1,
+        ..hits.footer
+    };
+    (hits.rows, footer_row)
+}
+
+/// The only thing two name pickers disagree about.
+struct NamePickerWords<'a> {
+    title: &'a str,
+    field_label: &'a str,
+    empty_msg: &'a str,
+    footer: &'a str,
+}
+
 /// The add-remote footer, whose hints double as its buttons.
 const ADD_HINT: &str = "[Enter] Add";
 const CANCEL_HINT: &str = "[Esc] Cancel";
@@ -141,45 +210,25 @@ pub fn draw_add_remote(
     state: &AddRemoteState,
     theme: &Theme,
 ) -> crate::geometry::AddRemoteHits {
-    let p = &state.picker;
-    let empty_msg = if p.items.is_empty() {
-        "    (no ~/.ssh/config hosts \u{2014} type a hostname)"
-    } else {
-        "    (no matches — press Enter to add the typed host)"
-    };
-
-    let hits = draw_filter_picker(
+    let (rows, footer_row) = draw_name_picker(
         frame,
         area,
         theme,
-        FilterPickerView {
+        &state.picker,
+        NamePickerWords {
             title: "Add Remote",
-            width: 56,
-            min_height: 7,
-            max_visible: 8,
-            fields: &[PickerField {
-                label: "Host",
-                textarea: &p.input,
-                focused: true,
-            }],
-            filtered: &p.filtered,
-            selected: p.selected,
-            scroll: super::widgets::scroll_window(p.selected, p.filtered.len(), 8),
-            list_focused: true,
-            pinned: 0,
-            empty_msg,
-            error: p.error.as_deref(),
-            footer: &[ADD_REMOTE_FOOTER],
+            field_label: "Host",
+            empty_msg: if state.picker.items.is_empty() {
+                "    (no ~/.ssh/config hosts \u{2014} type a hostname)"
+            } else {
+                "    (no matches — press Enter to add the typed host)"
+            },
+            footer: ADD_REMOTE_FOOTER,
         },
-        |idx| p.items[idx].clone(),
     );
 
-    let footer_row = Rect {
-        height: 1,
-        ..hits.footer
-    };
     crate::geometry::AddRemoteHits {
-        hosts: hits.rows,
+        hosts: rows,
         add: hint_rect(footer_row, ADD_REMOTE_FOOTER, ADD_HINT),
         cancel: hint_rect(footer_row, ADD_REMOTE_FOOTER, CANCEL_HINT),
     }
@@ -190,10 +239,6 @@ const RESTORE_ALL_HINT: &str = "^A all";
 const HIDDEN_FOOTER: &str = "\u{23ce} restore   \u{2191}\u{2193} select   ^A all   \u{238b} cancel";
 
 /// Draw the "restore a hidden session" picker for one lane.
-///
-/// The shared filter picker, like Add Remote: these are the same gesture —
-/// pick one name out of a list and act on it — and one click restores, with no
-/// highlight-then-confirm step.
 pub fn draw_hidden_sessions(
     frame: &mut Frame,
     area: Rect,
@@ -201,41 +246,21 @@ pub fn draw_hidden_sessions(
     lane_title: &str,
     theme: &Theme,
 ) -> crate::geometry::HiddenHits {
-    let p = &state.picker;
-    let title = format!("Hidden on {lane_title}");
-
-    let hits = draw_filter_picker(
+    let (rows, footer_row) = draw_name_picker(
         frame,
         area,
         theme,
-        FilterPickerView {
-            title: &title,
-            width: 56,
-            min_height: 7,
-            max_visible: 8,
-            fields: &[PickerField {
-                label: "Filter",
-                textarea: &p.input,
-                focused: true,
-            }],
-            filtered: &p.filtered,
-            selected: p.selected,
-            scroll: super::widgets::scroll_window(p.selected, p.filtered.len(), 8),
-            list_focused: true,
-            pinned: 0,
+        &state.picker,
+        NamePickerWords {
+            title: &format!("Hidden on {lane_title}"),
+            field_label: "Filter",
             empty_msg: "    (no matches)",
-            error: p.error.as_deref(),
-            footer: &[HIDDEN_FOOTER],
+            footer: HIDDEN_FOOTER,
         },
-        |idx| p.items[idx].clone(),
     );
 
-    let footer_row = Rect {
-        height: 1,
-        ..hits.footer
-    };
     crate::geometry::HiddenHits {
-        rows: hits.rows,
+        rows,
         restore_all: hint_rect(footer_row, HIDDEN_FOOTER, RESTORE_ALL_HINT),
         cancel: hint_rect(footer_row, HIDDEN_FOOTER, CANCEL_HINT),
     }
