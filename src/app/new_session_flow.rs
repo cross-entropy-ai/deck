@@ -4,6 +4,7 @@
 
 use super::App;
 use crate::new_session::validate_unique_session_name;
+use crate::overlay::{Modal, ModalState};
 
 struct NewSessionTarget {
     lane: crate::lane::LaneId,
@@ -44,9 +45,8 @@ impl App {
             .into_iter()
             .filter(|h| !existing.contains(h.as_str()))
             .collect();
-        self.state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(
-            crate::app::ssh::config_adapter::owner(),
-            hosts,
+        self.state.overlay.open(ModalState::AddRemote(
+            crate::add_remote::AddRemoteState::new(crate::app::ssh::config_adapter::owner(), hosts),
         ));
     }
 
@@ -109,7 +109,7 @@ impl App {
             target_lane: Some(target.lane),
         };
         ns.refilter();
-        self.state.overlay.new_session = Some(ns);
+        self.state.overlay.open(ModalState::NewSession(ns));
         self.request_new_session_listing();
     }
 
@@ -138,13 +138,12 @@ impl App {
         let Some(path) = self
             .state
             .overlay
-            .new_session
-            .as_ref()
+            .new_session()
             .and_then(|ns| ns.path_after_entering(index))
         else {
             return false;
         };
-        if let Some(ns) = self.state.overlay.new_session.as_mut() {
+        if let Some(ns) = self.state.overlay.new_session_mut() {
             ns.set_path(&path);
         }
         true
@@ -152,7 +151,7 @@ impl App {
 
     pub(super) fn confirm_new_session(&mut self) -> Option<crate::effects::CreateSessionRequest> {
         let (name, lane) = {
-            let ns = self.state.overlay.new_session.as_ref()?;
+            let ns = self.state.overlay.new_session()?;
             (ns.name_str().trim().to_string(), ns.target_lane.clone()?)
         };
         if self.state.is_primary_lane(&lane) {
@@ -166,7 +165,7 @@ impl App {
         &mut self,
         err: impl Into<String>,
     ) -> Option<crate::effects::CreateSessionRequest> {
-        if let Some(ns) = self.state.overlay.new_session.as_mut() {
+        if let Some(ns) = self.state.overlay.new_session_mut() {
             ns.picker.error = Some(err.into());
         }
         None
@@ -185,9 +184,9 @@ impl App {
         if let Some(err) = validate_unique_session_name(&name, existing) {
             return self.set_new_session_error(err);
         }
-        let dir = self.state.overlay.new_session.as_ref()?.input_str().trim();
+        let dir = self.state.overlay.new_session()?.input_str().trim();
         let dir = if dir.is_empty() { "~" } else { dir }.to_string();
-        self.state.overlay.new_session = None;
+        self.state.overlay.close(Modal::NewSession);
         Some(crate::effects::CreateSessionRequest { name, dir, lane })
     }
 
@@ -203,18 +202,12 @@ impl App {
             return self.set_new_session_error(err);
         }
 
-        let input = self
-            .state
-            .overlay
-            .new_session
-            .as_ref()?
-            .input_str()
-            .to_string();
+        let input = self.state.overlay.new_session()?.input_str().to_string();
         let resolved = crate::new_session::expand_path(&input, &crate::config::home_dir());
         match std::fs::metadata(&resolved) {
             Ok(m) if m.is_dir() => {
                 let dir = resolved.to_string_lossy().to_string();
-                self.state.overlay.new_session = None;
+                self.state.overlay.close(Modal::NewSession);
                 Some(crate::effects::CreateSessionRequest { name, dir, lane })
             }
             Ok(_) => self.set_new_session_error("not a directory"),
@@ -233,8 +226,7 @@ impl App {
         let Some((lane, path)) = self
             .state
             .overlay
-            .new_session
-            .as_ref()
+            .new_session()
             .and_then(|state| new_session_list_query(state, primary_lane.as_ref()))
         else {
             return;

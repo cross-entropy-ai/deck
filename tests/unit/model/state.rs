@@ -988,6 +988,7 @@ fn context_menu_navigation_skips_disabled_items() {
 
 use crate::forwards::ForwardMode;
 use crate::forwards::{PfAddForm, PfField, PfFormError};
+use crate::overlay::ModalState;
 use ratatui_textarea::TextArea;
 
 fn ta(text: &str) -> TextArea<'static> {
@@ -1116,7 +1117,7 @@ fn confirm_kill_name_resolves_remote_focused_row() {
     set_remote(&mut state, vec![remote_row("h1", false, false)]); // named "s"
                                                                   // Flat index 2 == local_count(2) + remote_idx(0): the remote row.
     state.focused = 2;
-    state.overlay.confirm_kill = true;
+    state.overlay.open(ModalState::ConfirmKill);
     assert_eq!(state.confirm_kill_name().as_deref(), Some("s"));
 }
 
@@ -1124,7 +1125,7 @@ fn confirm_kill_name_resolves_remote_focused_row() {
 fn confirm_kill_name_resolves_local_focused_row() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.focused = 1; // local "beta"
-    state.overlay.confirm_kill = true;
+    state.overlay.open(ModalState::ConfirmKill);
     assert_eq!(state.confirm_kill_name().as_deref(), Some("beta"));
 }
 

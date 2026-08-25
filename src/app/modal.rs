@@ -40,8 +40,7 @@ pub(super) fn close_action(modal: Modal, state: &AppState) -> Action {
         Modal::PortForward => {
             let action = if state
                 .overlay
-                .port_forward
-                .as_ref()
+                .port_forward()
                 .is_some_and(|overlay| overlay.add_form.is_some())
             {
                 PfAction::AddCancel
@@ -55,8 +54,7 @@ pub(super) fn close_action(modal: Modal, state: &AppState) -> Action {
         Modal::ExcludeEditor => {
             let action = if state
                 .overlay
-                .exclude_editor
-                .as_ref()
+                .exclude_editor()
                 .is_some_and(|editor| editor.adding)
             {
                 SettingsAction::ExcludeCancelAdd
@@ -96,7 +94,7 @@ pub(super) fn draw_active_modal(
             }
         }
         Modal::NewSession => {
-            if let Some(ns) = state.overlay.new_session.as_ref() {
+            if let Some(ns) = state.overlay.new_session() {
                 let lane_title = ns
                     .target_lane
                     .as_ref()
@@ -124,12 +122,12 @@ pub(super) fn draw_active_modal(
             }
         }
         Modal::AddRemote => {
-            if let Some(picker) = state.overlay.add_remote.as_ref() {
+            if let Some(picker) = state.overlay.add_remote() {
                 rendered.add_remote = ui::draw_add_remote(frame, full, picker, theme);
             }
         }
         Modal::HiddenSessions => {
-            if let Some(picker) = state.overlay.hidden_sessions.as_ref() {
+            if let Some(picker) = state.overlay.hidden_sessions() {
                 rendered.hidden = ui::draw_hidden_sessions(
                     frame,
                     full,
@@ -143,13 +141,13 @@ pub(super) fn draw_active_modal(
             // Horizontal layout renders rename in the sidebar. The vertical
             // tab bar cannot hold the editor, so it uses a centered surface.
             if layout_mode == LayoutMode::Vertical {
-                if let Some(rename) = state.overlay.renaming.as_ref() {
+                if let Some(rename) = state.overlay.renaming() {
                     ui::draw_rename_popup(frame, full, theme, &rename.input);
                 }
             }
         }
         Modal::ContextMenu => {
-            if let Some(menu) = state.overlay.context_menu.as_ref() {
+            if let Some(menu) = state.overlay.context_menu() {
                 ui::draw_context_menu(
                     frame,
                     menu.x,
@@ -162,7 +160,7 @@ pub(super) fn draw_active_modal(
             }
         }
         Modal::PortForward => {
-            if let Some(overlay) = state.overlay.port_forward.as_ref() {
+            if let Some(overlay) = state.overlay.port_forward() {
                 let lane_title = state.section_title(&overlay.lane);
                 let forwards = crate::app::ssh::config_adapter::forwards_for_lane(
                     &state.config_remotes,
@@ -199,7 +197,7 @@ pub(super) fn draw_active_modal(
             theme,
         ),
         Modal::ExcludeEditor => {
-            if let Some(editor) = state.overlay.exclude_editor.as_ref() {
+            if let Some(editor) = state.overlay.exclude_editor() {
                 ui::draw_exclude_editor(
                     frame,
                     main,
@@ -215,7 +213,7 @@ pub(super) fn draw_active_modal(
             }
         }
         Modal::MountPicker => {
-            if let Some(picker) = state.overlay.mount_picker.as_ref() {
+            if let Some(picker) = state.overlay.mount_picker() {
                 rendered.mounts = crate::ui::overlays::mounts::draw_mount_picker(
                     frame,
                     full,
@@ -226,7 +224,7 @@ pub(super) fn draw_active_modal(
             }
         }
         Modal::SshSetting => {
-            if let Some(editor) = state.overlay.ssh_setting_editor.as_ref() {
+            if let Some(editor) = state.overlay.ssh_setting_editor() {
                 ui::draw_ssh_setting_editor(
                     frame,
                     main,
@@ -240,7 +238,7 @@ pub(super) fn draw_active_modal(
             }
         }
         Modal::SummaryLang => {
-            if let Some(input) = state.overlay.summary_lang_input.as_ref() {
+            if let Some(input) = state.overlay.summary_lang_input() {
                 ui::draw_summary_language_editor(frame, main, input, theme);
             }
         }
@@ -264,6 +262,7 @@ pub(super) fn draw_active_modal(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::overlay::ModalState;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use ratatui::Terminal;
@@ -305,15 +304,17 @@ mod tests {
         picker.selected = 17;
 
         let mut state = AppState::new(100, 30);
-        state.overlay.mount_picker = Some(MountPickerState {
-            lane: crate::system::tmux::TmuxSystem::host_lane("devbox"),
-            generation: 1,
-            picker,
-            candidates,
-            busy: None,
-            confirming: None,
-            sort: MountSort::default(),
-        });
+        state
+            .overlay
+            .open(ModalState::MountPicker(MountPickerState {
+                lane: crate::system::tmux::TmuxSystem::host_lane("devbox"),
+                generation: 1,
+                picker,
+                candidates,
+                busy: None,
+                confirming: None,
+                sort: MountSort::default(),
+            }));
 
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         let mut rendered = RenderedModal::default();
@@ -364,9 +365,8 @@ mod tests {
     fn add_remote_rows_and_add_button_land_on_what_was_painted() {
         let hosts: Vec<String> = (0..4).map(|index| format!("host-{index}")).collect();
         let mut state = AppState::new(100, 30);
-        state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(
-            crate::app::ssh::config_adapter::owner(),
-            hosts,
+        state.overlay.open(ModalState::AddRemote(
+            crate::add_remote::AddRemoteState::new(crate::app::ssh::config_adapter::owner(), hosts),
         ));
 
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
@@ -414,7 +414,7 @@ mod tests {
             vec!["devbox".to_string()],
         );
         add_remote.picker.error = Some("Host is already configured".to_string());
-        state.overlay.add_remote = Some(add_remote);
+        state.overlay.open(ModalState::AddRemote(add_remote));
 
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         let mut rendered = RenderedModal::default();
@@ -445,30 +445,42 @@ mod tests {
         assert!(error_y < first_candidate_y);
     }
 
+    /// One modal owns the screen, and the state says so.
+    ///
+    /// This used to be a priority test: two overlay fields were set at once and
+    /// the renderer had to pick. `OverlayState` holds one modal now, so opening
+    /// a second *replaces* the first and there is no stale lower-priority state
+    /// left to paint — the property the old test was defending, moved into the
+    /// type. What is still worth asserting is that the survivor is what gets
+    /// drawn, and that it publishes its own click targets.
     #[test]
-    fn renderer_draws_only_the_modal_that_owns_input() {
+    fn opening_a_modal_replaces_the_one_before_it() {
         use crate::forwards::PortForwardOverlay;
         use crate::new_session::{make_textarea, NewSessionState, PickerFocus};
         use crate::picker::FilterPicker;
 
         let mut state = AppState::new(100, 30);
-        state.overlay.new_session = Some(NewSessionState {
+        state
+            .overlay
+            .open(ModalState::PortForward(PortForwardOverlay {
+                lane: crate::system::tmux::TmuxSystem::host_lane("stale-host"),
+                selected: 0,
+                add_form: None,
+                status: None,
+            }));
+        state.overlay.open(ModalState::NewSession(NewSessionState {
             name: make_textarea("session-1"),
             focus: PickerFocus::Name,
             picker: FilterPicker::new(vec!["~/project".to_string()]),
             scroll: 0,
             target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
-        });
-        // Simulate stale lower-priority state. Before the unified renderer,
-        // Port Forward was painted later even though New Session got input.
-        state.overlay.port_forward = Some(PortForwardOverlay {
-            lane: crate::system::tmux::TmuxSystem::host_lane("stale-host"),
-            selected: 0,
-            add_form: None,
-            status: None,
-        });
+        }));
 
         assert_eq!(state.active_modal(), Some(Modal::NewSession));
+        assert!(
+            state.overlay.port_forward().is_none(),
+            "the replaced modal must not still be readable"
+        );
 
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -494,7 +506,7 @@ mod tests {
         );
         assert!(
             !text.contains("Port Forward"),
-            "lower-priority modal painted over active modal: {text:?}"
+            "replaced modal painted over active modal: {text:?}"
         );
         assert_eq!(rendered.new_session_dirs.len(), 1);
         assert_eq!(rendered.new_session_dirs[0].index, 0);
@@ -543,7 +555,7 @@ mod tests {
         );
 
         let mut state = AppState::new(100, 30);
-        state.overlay.new_session = Some(ns);
+        state.overlay.open(ModalState::NewSession(ns));
 
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -621,13 +633,13 @@ mod tests {
         // between the popup's own borders, plus the published button rect.
         let render = |focus: PickerFocus| -> ((usize, usize), Rect) {
             let mut state = AppState::new(100, 30);
-            state.overlay.new_session = Some(NewSessionState {
+            state.overlay.open(ModalState::NewSession(NewSessionState {
                 name: make_textarea("session-1"),
                 focus,
                 picker: FilterPicker::new(vec!["~/project".to_string()]),
                 scroll: 0,
                 target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
-            });
+            }));
 
             let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
             let mut rendered = RenderedModal::default();
@@ -695,7 +707,7 @@ mod tests {
             ns.refilter();
 
             let mut state = AppState::new(100, 30);
-            state.overlay.new_session = Some(ns);
+            state.overlay.open(ModalState::NewSession(ns));
             let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
             let mut rendered = RenderedModal::default();
             terminal
@@ -732,7 +744,7 @@ mod tests {
             dir: "/tmp".to_string(),
             kind: SessionEntryKind::Live { is_current: false },
         }];
-        state.overlay.confirm_kill = true;
+        state.overlay.open(ModalState::ConfirmKill);
 
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();

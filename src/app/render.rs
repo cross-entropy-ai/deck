@@ -45,7 +45,7 @@ impl App {
         let active_modal = s.active_modal();
         let show_help = active_modal == Some(Modal::Help);
         let rename_input = if active_modal == Some(Modal::Rename) {
-            s.overlay.renaming.as_ref().map(|r| &r.input)
+            s.overlay.renaming().map(|r| &r.input)
         } else {
             None
         };

@@ -8,26 +8,29 @@ use crate::state::{cycle_option, step_clamped, AppState};
 
 use super::PfAction;
 use crate::action::PfTaskKind;
+use crate::overlay::{Modal, ModalState};
 
 pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
     let mut fx = SideEffect::default();
     match action {
         PfAction::Open(lane) => {
             if !state.lane_capabilities(&lane).port_forwards {
-                state.overlay.port_forward = None;
+                state.overlay.close(Modal::PortForward);
                 return fx;
             }
-            state.overlay.context_menu = None;
-            state.overlay.port_forward = Some(PortForwardOverlay {
-                lane,
-                selected: 0,
-                add_form: None,
-                status: None,
-            });
+            state.overlay.close(Modal::ContextMenu);
+            state
+                .overlay
+                .open(ModalState::PortForward(PortForwardOverlay {
+                    lane,
+                    selected: 0,
+                    add_form: None,
+                    status: None,
+                }));
         }
 
         PfAction::Close => {
-            state.overlay.port_forward = None;
+            state.overlay.close(Modal::PortForward);
         }
 
         // These three need the open overlay and nothing else; one guard for all.
@@ -36,8 +39,7 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
             // lane's own declaration, never something inferred from its id.
             let (endpoint_kind, lane_label) = state
                 .overlay
-                .port_forward
-                .as_ref()
+                .port_forward()
                 .map(|overlay| {
                     (
                         state.lane_capabilities(&overlay.lane).forward_endpoint,
@@ -45,7 +47,7 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
                     )
                 })
                 .unwrap_or_default();
-            let Some(o) = state.overlay.port_forward.as_mut() else {
+            let Some(o) = state.overlay.port_forward_mut() else {
                 return fx;
             };
             match action {
@@ -68,12 +70,11 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
         PfAction::FocusRow(index) => {
             let lane = state
                 .overlay
-                .port_forward
-                .as_ref()
+                .port_forward()
                 .map(|overlay| overlay.lane.clone());
             if let Some(lane) = lane {
                 let len = forwards_len(state, &lane);
-                if let Some(o) = state.overlay.port_forward.as_mut() {
+                if let Some(o) = state.overlay.port_forward_mut() {
                     o.selected = index.min(len.saturating_sub(1));
                 }
             }
@@ -81,12 +82,11 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
         PfAction::FocusDown => {
             let lane = state
                 .overlay
-                .port_forward
-                .as_ref()
+                .port_forward()
                 .map(|overlay| overlay.lane.clone());
             if let Some(lane) = lane {
                 let len = forwards_len(state, &lane);
-                if let Some(o) = state.overlay.port_forward.as_mut() {
+                if let Some(o) = state.overlay.port_forward_mut() {
                     o.selected = step_clamped(o.selected, len, 1);
                 }
             }
@@ -107,7 +107,7 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
 
         // Every remaining action edits the open add form; one guard for all.
         other => {
-            let Some(overlay) = state.overlay.port_forward.as_mut() else {
+            let Some(overlay) = state.overlay.port_forward_mut() else {
                 return fx;
             };
             let Some(f) = overlay.add_form.as_mut() else {
@@ -297,7 +297,7 @@ fn apply_pf_task_result(
     }
 
     // --- Overlay UI updates (gated on overlay being open for this lane) ---
-    let Some(overlay) = state.overlay.port_forward.as_mut() else {
+    let Some(overlay) = state.overlay.port_forward_mut() else {
         return fx;
     };
     if overlay.lane != *lane {

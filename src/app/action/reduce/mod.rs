@@ -1,6 +1,7 @@
 use crate::effects::{Effect, KillRequest, RenameRequest, SideEffect};
 use crate::new_session::{textarea_input, textarea_line};
 use crate::overlay::RenameState;
+use crate::overlay::{Modal, ModalState};
 use crate::state::{AppState, FocusMode, LayoutMode, MainView, SidebarTab, ViewMode};
 
 use super::{
@@ -24,9 +25,9 @@ fn close_settings_page(state: &mut AppState) {
     state.settings.reset_pages();
     state.settings.theme_picker_open = false;
     state.settings.keybindings_view_open = false;
-    state.overlay.exclude_editor = None;
-    state.overlay.summary_lang_input = None;
-    state.overlay.ssh_setting_editor = None;
+    state.overlay.close(Modal::ExcludeEditor);
+    state.overlay.close(Modal::SummaryLang);
+    state.overlay.close(Modal::SshSetting);
 }
 
 /// Activate the focused live session through one lane-qualified identity.
@@ -248,7 +249,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // placeholder row, a host's last live session, or the last local
             // session. See `can_kill_focused`.
             if state.can_kill_focused() {
-                state.overlay.confirm_kill = true;
+                state.overlay.open(ModalState::ConfirmKill);
             }
         }
         Action::ConfirmKill => {
@@ -256,7 +257,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             // blocked (defense in depth: a stale or forced confirm shouldn't
             // fire on a placeholder, a host's last session, or the last local
             // session — `can_kill_focused` gates that, same as KillSession).
-            state.overlay.confirm_kill = false;
+            state.overlay.close(Modal::ConfirmKill);
             if !state.can_kill_focused() {
                 return fx;
             }
@@ -340,7 +341,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::CancelKill => {
-            state.overlay.confirm_kill = false;
+            state.overlay.close(Modal::ConfirmKill);
         }
         // Hiding is a boundary, not a view filter: the entry leaves `entries`
         // now rather than after the next refresh, so nothing — an in-flight
@@ -399,15 +400,21 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
             let name = entry.name.clone();
             let lane = entry.lane.clone();
-            state.overlay.renaming = Some(RenameState::new_with_lane(name.clone(), name, lane));
+            state
+                .overlay
+                .open(ModalState::Rename(RenameState::new_with_lane(
+                    name.clone(),
+                    name,
+                    lane,
+                )));
         }
         Action::RenameInputKey(key) => {
-            if let Some(ref mut r) = state.overlay.renaming {
+            if let Some(r) = state.overlay.renaming_mut() {
                 textarea_input(&mut r.input, key);
             }
         }
         Action::RenameConfirm => {
-            if let Some(r) = state.overlay.renaming.take() {
+            if let Some(r) = state.overlay.take_renaming() {
                 let new_name = textarea_line(&r.input).trim().to_string();
                 // Skip no-op renames.
                 if new_name == r.original_name {
@@ -427,7 +434,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                     crate::new_session::validate_unique_session_name(&new_name, existing)
                 {
                     state.show_warning(error);
-                    state.overlay.renaming = Some(r);
+                    state.overlay.open(ModalState::Rename(r));
                     return fx;
                 }
 
@@ -439,7 +446,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::RenameCancel => {
-            state.overlay.renaming = None;
+            state.overlay.close(Modal::Rename);
         }
 
         Action::ToggleLayout => {
@@ -510,10 +517,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::NewSession(a) => return reduce_new_session(state, a),
 
         Action::ToggleHelp => {
-            state.overlay.show_help = true;
+            state.overlay.open(ModalState::Help);
         }
         Action::DismissHelp => {
-            state.overlay.show_help = false;
+            state.overlay.close(Modal::Help);
         }
 
         Action::SetFocusMain => {
@@ -633,12 +640,12 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
                 state.summary.state,
                 crate::summary_card::SummaryState::Ready { .. }
             ) {
-                state.overlay.summary_popup = true;
+                state.overlay.open(ModalState::SummaryPopup);
                 state.summary.popup_scroll = 0;
             }
         }
         SummaryAction::ClosePopup => {
-            state.overlay.summary_popup = false;
+            state.overlay.close(Modal::SummaryPopup);
         }
         SummaryAction::ScrollPopup(delta) => {
             state.scroll_summary_popup(delta);
@@ -654,23 +661,25 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
             fx.save_config();
         }
         SummaryAction::OpenLanguageEditor => {
-            state.overlay.summary_lang_input = Some(crate::new_session::make_textarea(
-                &state.prefs.summary_language,
-            ));
+            state
+                .overlay
+                .open(ModalState::SummaryLang(crate::new_session::make_textarea(
+                    &state.prefs.summary_language,
+                )));
         }
         SummaryAction::LanguageInputKey(key) => {
-            if let Some(ref mut ta) = state.overlay.summary_lang_input {
+            if let Some(ta) = state.overlay.summary_lang_input_mut() {
                 textarea_input(ta, key);
             }
         }
         SummaryAction::LanguageConfirm => {
-            if let Some(ta) = state.overlay.summary_lang_input.take() {
+            if let Some(ta) = state.overlay.take_summary_lang_input() {
                 state.prefs.summary_language = textarea_line(&ta).trim().to_string();
                 fx.save_config();
             }
         }
         SummaryAction::LanguageCancel => {
-            state.overlay.summary_lang_input = None;
+            state.overlay.close(Modal::SummaryLang);
         }
     }
     fx
@@ -692,12 +701,12 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
             return fx;
         }
         NewSessionAction::Close => {
-            state.overlay.new_session = None;
+            state.overlay.close(Modal::NewSession);
             return fx;
         }
         _ => {}
     }
-    let Some(ns) = state.overlay.new_session.as_mut() else {
+    let Some(ns) = state.overlay.new_session_mut() else {
         return fx;
     };
     match action {
@@ -801,16 +810,14 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
             // previous picker.
             state.mount_generation = state.mount_generation.wrapping_add(1);
             let generation = state.mount_generation;
-            state.overlay.context_menu = None;
-            state.overlay.mount_picker = Some(crate::overlay::MountPickerState::new(
-                lane.clone(),
-                generation,
-                state.mount_sort,
+            state.overlay.close(Modal::ContextMenu);
+            state.overlay.open(ModalState::MountPicker(
+                crate::overlay::MountPickerState::new(lane.clone(), generation, state.mount_sort),
             ));
             fx.push(Effect::DiscoverMounts { lane, generation });
         }
         MountAction::InputKey(_) | MountAction::Prev | MountAction::Next => {
-            let Some(picker) = state.overlay.mount_picker.as_mut() else {
+            let Some(picker) = state.overlay.mount_picker_mut() else {
                 return fx;
             };
             // Any navigation abandons a pending confirmation rather than
@@ -827,7 +834,7 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
             }
         }
         MountAction::CycleSort => {
-            let Some(picker) = state.overlay.mount_picker.as_mut() else {
+            let Some(picker) = state.overlay.mount_picker_mut() else {
                 return fx;
             };
             // Re-ordering moves the row a pending confirmation was aimed at, so
@@ -839,10 +846,10 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
             state.mount_sort = sort;
         }
         MountAction::Close => {
-            state.overlay.mount_picker = None;
+            state.overlay.close(Modal::MountPicker);
         }
         MountAction::Confirm => {
-            let Some(picker) = state.overlay.mount_picker.as_mut() else {
+            let Some(picker) = state.overlay.mount_picker_mut() else {
                 return fx;
             };
             if picker.busy.is_some() {
@@ -867,7 +874,7 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
                 return fx;
             }
             let lane = picker.lane.clone();
-            state.overlay.mount_picker = None;
+            state.overlay.close(Modal::MountPicker);
             fx.push(Effect::MountLane {
                 lane,
                 candidate: candidate.id,
@@ -878,7 +885,7 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
         // so a misclick during a prompt cannot start the wrong container.
         MountAction::ClickCandidate(index) => {
             {
-                let Some(picker) = state.overlay.mount_picker.as_mut() else {
+                let Some(picker) = state.overlay.mount_picker_mut() else {
                     return fx;
                 };
                 if picker.busy.is_some() || index >= picker.picker.filtered.len() {
@@ -907,7 +914,7 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
             generation,
             result,
         } => {
-            let Some(picker) = state.overlay.mount_picker.as_mut() else {
+            let Some(picker) = state.overlay.mount_picker_mut() else {
                 return fx;
             };
             if picker.generation != generation || picker.lane != lane {
@@ -927,7 +934,7 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
             candidate,
             result,
         } => {
-            let Some(picker) = state.overlay.mount_picker.as_mut() else {
+            let Some(picker) = state.overlay.mount_picker_mut() else {
                 return fx;
             };
             if picker.generation != generation || picker.lane != lane {
@@ -936,7 +943,7 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
             picker.busy = None;
             match result {
                 Ok(()) => {
-                    state.overlay.mount_picker = None;
+                    state.overlay.close(Modal::MountPicker);
                     fx.push(Effect::MountLane { lane, candidate });
                 }
                 Err(error) => picker.picker.error = Some(error),
@@ -954,19 +961,20 @@ fn reduce_hidden(state: &mut AppState, action: HiddenAction) -> SideEffect {
     let mut fx = SideEffect::default();
     match action {
         HiddenAction::Open(lane) => {
-            state.overlay.context_menu = None;
+            state.overlay.close(Modal::ContextMenu);
             let Some(names) = state.hidden_sessions.get(&lane) else {
                 return fx;
             };
-            state.overlay.hidden_sessions =
-                Some(crate::overlay::HiddenSessionsState::new(lane, names));
+            state.overlay.open(ModalState::HiddenSessions(
+                crate::overlay::HiddenSessionsState::new(lane, names),
+            ));
         }
         HiddenAction::Close => {
-            state.overlay.hidden_sessions = None;
+            state.overlay.close(Modal::HiddenSessions);
         }
         // Input and navigation edit the open picker; one guard for all.
         HiddenAction::InputKey(_) | HiddenAction::Prev | HiddenAction::Next => {
-            let Some(open) = state.overlay.hidden_sessions.as_mut() else {
+            let Some(open) = state.overlay.hidden_sessions_mut() else {
                 return fx;
             };
             match action {
@@ -979,7 +987,7 @@ fn reduce_hidden(state: &mut AppState, action: HiddenAction) -> SideEffect {
             }
         }
         HiddenAction::ClickRow(index) => {
-            let Some(open) = state.overlay.hidden_sessions.as_mut() else {
+            let Some(open) = state.overlay.hidden_sessions_mut() else {
                 return fx;
             };
             if index >= open.picker.filtered.len() {
@@ -989,7 +997,7 @@ fn reduce_hidden(state: &mut AppState, action: HiddenAction) -> SideEffect {
             return reduce_hidden(state, HiddenAction::Restore);
         }
         HiddenAction::Restore => {
-            let Some(open) = state.overlay.hidden_sessions.as_mut() else {
+            let Some(open) = state.overlay.hidden_sessions_mut() else {
                 return fx;
             };
             let Some(name) = open.selected_name().map(str::to_string) else {
@@ -1000,7 +1008,7 @@ fn reduce_hidden(state: &mut AppState, action: HiddenAction) -> SideEffect {
             // Closing on the last one is the honest end of the list: an empty
             // picker offers nothing and would have to be dismissed by hand.
             if open.picker.items.is_empty() {
-                state.overlay.hidden_sessions = None;
+                state.overlay.close(Modal::HiddenSessions);
             }
             if let Some(names) = state.hidden_sessions.get_mut(&lane) {
                 names.remove(&name);
@@ -1012,7 +1020,7 @@ fn reduce_hidden(state: &mut AppState, action: HiddenAction) -> SideEffect {
             fx.refresh_sessions();
         }
         HiddenAction::RestoreAll => {
-            let Some(open) = state.overlay.hidden_sessions.take() else {
+            let Some(open) = state.overlay.take_hidden_sessions() else {
                 return fx;
             };
             state.hidden_sessions.remove(&open.lane);
@@ -1028,7 +1036,7 @@ fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffec
     match action {
         // The input/navigation arms all edit the open picker; one guard for all.
         AddRemoteAction::InputKey(_) | AddRemoteAction::Prev | AddRemoteAction::Next => {
-            let Some(ar) = state.overlay.add_remote.as_mut() else {
+            let Some(ar) = state.overlay.add_remote_mut() else {
                 return fx;
             };
             match action {
@@ -1042,12 +1050,12 @@ fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffec
             }
         }
         AddRemoteAction::Close => {
-            state.overlay.add_remote = None;
+            state.overlay.close(Modal::AddRemote);
         }
         // A click aims and fires in one gesture: highlight the host, then take
         // the same path Enter does, so the two cannot add different things.
         AddRemoteAction::ClickHost(index) => {
-            let Some(ar) = state.overlay.add_remote.as_mut() else {
+            let Some(ar) = state.overlay.add_remote_mut() else {
                 return fx;
             };
             if index >= ar.picker.filtered.len() {
@@ -1058,7 +1066,7 @@ fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffec
             return reduce_add_remote(state, AddRemoteAction::Confirm);
         }
         AddRemoteAction::Confirm => {
-            let request = state.overlay.add_remote.as_ref().and_then(|picker| {
+            let request = state.overlay.add_remote().and_then(|picker| {
                 picker
                     .chosen_host()
                     .map(|candidate| (picker.owner.clone(), candidate))
@@ -1068,7 +1076,7 @@ fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffec
                     fx.push(Effect::AddConfiguredLane { owner, candidate });
                 }
                 None => {
-                    if let Some(ar) = state.overlay.add_remote.as_mut() {
+                    if let Some(ar) = state.overlay.add_remote_mut() {
                         ar.picker.error = Some("enter a lane identifier".into());
                     }
                 }

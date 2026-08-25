@@ -6,6 +6,7 @@
 
 use crate::action::{Action, MenuAction, MountAction, PfAction};
 use crate::effects::{Effect, SideEffect};
+use crate::overlay::Modal;
 use crate::state::MainView;
 
 use super::App;
@@ -271,18 +272,18 @@ impl App {
                     match outcome {
                         Some(crate::system::LaneConfigAddOutcome::Added(lane)) => {
                             self.state.config_remotes = remotes;
-                            self.state.overlay.add_remote = None;
+                            self.state.overlay.close(Modal::AddRemote);
                             self.save_config();
                             self.onboard_lane(&lane);
                             self.request_refresh();
                         }
                         Some(crate::system::LaneConfigAddOutcome::AlreadyExists) => {
-                            if let Some(picker) = self.state.overlay.add_remote.as_mut() {
+                            if let Some(picker) = self.state.overlay.add_remote_mut() {
                                 picker.picker.error = Some("already added".into());
                             }
                         }
                         Some(crate::system::LaneConfigAddOutcome::Invalid) | None => {
-                            if let Some(picker) = self.state.overlay.add_remote.as_mut() {
+                            if let Some(picker) = self.state.overlay.add_remote_mut() {
                                 picker.picker.error = Some("invalid lane identifier".into());
                             }
                         }

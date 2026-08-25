@@ -4,6 +4,7 @@
 
 use crate::config::Config;
 use crate::keybindings::{self, Keybindings};
+use crate::overlay::Modal;
 use crate::state::ReloadStatus;
 
 use super::App;
@@ -77,11 +78,11 @@ impl App {
         let theme_changed = self.state.active_theme_index() != old_theme_index;
 
         // Reset sub-UIs whose indices may no longer be valid.
-        self.state.overlay.exclude_editor = None;
-        self.state.overlay.ssh_setting_editor = None;
+        self.state.overlay.close(Modal::ExcludeEditor);
+        self.state.overlay.close(Modal::SshSetting);
         if !cfg.ssh_connection_reuse {
-            self.state.overlay.port_forward = None;
-            self.state.overlay.context_menu = None;
+            self.state.overlay.close(Modal::PortForward);
+            self.state.overlay.close(Modal::ContextMenu);
         }
 
         self.raw_keybindings = cfg.keybindings.clone();

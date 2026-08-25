@@ -4,6 +4,7 @@ use super::{
 };
 use crate::effects::Effect;
 use crate::overlay::RenameState;
+use crate::overlay::{Modal, ModalState};
 use crate::state::{
     AppState, FocusMode, LayoutMode, MainView, SessionEntry, SessionEntryKind, SettingsPage,
     ViewMode, NO_SESSIONS_LABEL,
@@ -184,14 +185,14 @@ fn unsupported_session_mutations_are_disabled_and_reducer_guarded() {
             y: 1,
         }),
     );
-    let menu = state.overlay.context_menu.as_ref().expect("session menu");
+    let menu = state.overlay.context_menu().expect("session menu");
     assert!(menu.disabled().contains(&crate::menu::MenuItem::Rename));
     assert!(menu.disabled().contains(&crate::menu::MenuItem::Close));
 
     apply_action(&mut state, Action::StartRename);
-    assert!(state.overlay.renaming.is_none());
+    assert!(state.overlay.is_not(Modal::Rename));
     apply_action(&mut state, Action::KillSession);
-    assert!(!state.overlay.confirm_kill);
+    assert!(!state.overlay.is(Modal::ConfirmKill));
 }
 
 #[test]
@@ -291,7 +292,7 @@ fn kill_session_requires_confirmation() {
     let mut state = make_test_state(3);
     state.focused = 1;
     let fx = apply_action(&mut state, Action::KillSession);
-    assert!(state.overlay.confirm_kill);
+    assert!(state.overlay.is(Modal::ConfirmKill));
     assert!(fx.first_kill_session().is_none());
 }
 
@@ -299,16 +300,16 @@ fn kill_session_requires_confirmation() {
 fn kill_single_session_prevented() {
     let mut state = make_test_state(1);
     apply_action(&mut state, Action::KillSession);
-    assert!(!state.overlay.confirm_kill);
+    assert!(!state.overlay.is(Modal::ConfirmKill));
 }
 
 #[test]
 fn confirm_kill_current_session_sets_switch_target() {
     let mut state = make_test_state(3);
     state.focused = 0; // sess-0 is the current (attached) session
-    state.overlay.confirm_kill = true;
+    state.overlay.open(ModalState::ConfirmKill);
     let fx = apply_action(&mut state, Action::ConfirmKill);
-    assert!(!state.overlay.confirm_kill);
+    assert!(!state.overlay.is(Modal::ConfirmKill));
     let kill = fx.first_kill_session().unwrap();
     assert_eq!(kill.name, "sess-0");
     // Killing the attached session must pre-switch off it first.
@@ -319,7 +320,7 @@ fn confirm_kill_current_session_sets_switch_target() {
 fn confirm_kill_noncurrent_session_keeps_view() {
     let mut state = make_test_state(3);
     state.focused = 1; // sess-1 is NOT the current session
-    state.overlay.confirm_kill = true;
+    state.overlay.open(ModalState::ConfirmKill);
     let fx = apply_action(&mut state, Action::ConfirmKill);
     let kill = fx.first_kill_session().unwrap();
     assert_eq!(kill.name, "sess-1");
@@ -337,7 +338,7 @@ fn kill_keyboard_blocked_on_remote_placeholder() {
         .push(remote_row("remote-a", NO_SESSIONS_LABEL));
     state.focused = state.local_count();
     let fx = apply_action(&mut state, Action::KillSession);
-    assert!(!state.overlay.confirm_kill);
+    assert!(!state.overlay.is(Modal::ConfirmKill));
     assert!(fx.first_kill_session().is_none());
 }
 
@@ -348,7 +349,7 @@ fn kill_keyboard_blocked_on_last_remote_session() {
     state.entries.push(remote_row("remote-a", "solo"));
     state.focused = state.local_count();
     apply_action(&mut state, Action::KillSession);
-    assert!(!state.overlay.confirm_kill);
+    assert!(!state.overlay.is(Modal::ConfirmKill));
 }
 
 #[test]
@@ -360,7 +361,7 @@ fn kill_keyboard_allowed_on_remote_session_with_sibling() {
     state.entries.push(remote_row("remote-a", "second"));
     state.focused = state.local_count();
     apply_action(&mut state, Action::KillSession);
-    assert!(state.overlay.confirm_kill);
+    assert!(state.overlay.is(Modal::ConfirmKill));
 }
 
 #[test]
@@ -370,7 +371,7 @@ fn confirm_remote_kill_selects_a_sibling_on_the_same_host() {
     state.entries.push(remote_row("xtras3", "second"));
     state.entries.push(remote_row("other", "unrelated"));
     state.focused = state.local_count();
-    state.overlay.confirm_kill = true;
+    state.overlay.open(ModalState::ConfirmKill);
 
     let fx = apply_action(&mut state, Action::ConfirmKill);
     let kill = fx.first_kill_session().unwrap();
@@ -392,7 +393,7 @@ fn confirm_kill_blocked_on_remote_placeholder() {
         .entries
         .push(remote_row("remote-a", NO_SESSIONS_LABEL));
     state.focused = state.local_count();
-    state.overlay.confirm_kill = true;
+    state.overlay.open(ModalState::ConfirmKill);
     let fx = apply_action(&mut state, Action::ConfirmKill);
     assert!(fx.first_kill_session().is_none());
 }
@@ -400,9 +401,9 @@ fn confirm_kill_blocked_on_remote_placeholder() {
 #[test]
 fn cancel_kill_clears_flag() {
     let mut state = make_test_state(3);
-    state.overlay.confirm_kill = true;
+    state.overlay.open(ModalState::ConfirmKill);
     apply_action(&mut state, Action::CancelKill);
-    assert!(!state.overlay.confirm_kill);
+    assert!(!state.overlay.is(Modal::ConfirmKill));
 }
 
 #[test]
@@ -827,9 +828,9 @@ fn quit_signals_quit() {
 #[test]
 fn dismiss_help() {
     let mut state = make_test_state(1);
-    state.overlay.show_help = true;
+    state.overlay.open(ModalState::Help);
     apply_action(&mut state, Action::DismissHelp);
-    assert!(!state.overlay.show_help);
+    assert!(!state.overlay.is(Modal::Help));
 }
 
 #[test]
@@ -849,7 +850,7 @@ fn open_local_divider_menu_greys_what_the_local_lane_cannot_do() {
             y: 5,
         }),
     );
-    let menu = state.overlay.context_menu.as_ref().expect("menu open");
+    let menu = state.overlay.context_menu().expect("menu open");
     assert!(matches!(
         menu.kind,
         crate::menu::MenuKind::LaneDivider { primary: true, .. }
@@ -884,7 +885,7 @@ fn local_divider_new_session_opens_local_picker() {
     // "New session" on the local divider routes to the local picker.
     assert!(fx.has_open_new_session_picker());
     // Confirming closes the menu.
-    assert!(state.overlay.context_menu.is_none());
+    assert!(state.overlay.is_not(Modal::ContextMenu));
 }
 
 #[test]
@@ -898,17 +899,17 @@ fn open_and_navigate_context_menu() {
             y: 5,
         }),
     );
-    assert!(state.overlay.context_menu.is_some());
+    assert!(state.overlay.is(Modal::ContextMenu));
     assert_eq!(state.focused, 1);
 
     apply_action(&mut state, Action::Menu(MenuAction::Next));
-    assert_eq!(state.overlay.context_menu.as_ref().unwrap().selected, 1);
+    assert_eq!(state.overlay.context_menu().unwrap().selected, 1);
 
     apply_action(&mut state, Action::Menu(MenuAction::Prev));
-    assert_eq!(state.overlay.context_menu.as_ref().unwrap().selected, 0);
+    assert_eq!(state.overlay.context_menu().unwrap().selected, 0);
 
     apply_action(&mut state, Action::Menu(MenuAction::Dismiss));
-    assert!(state.overlay.context_menu.is_none());
+    assert!(state.overlay.is_not(Modal::ContextMenu));
 }
 
 #[test]
@@ -1114,9 +1115,9 @@ fn open_close_exclude_editor() {
     state.main_view = MainView::Settings;
     state.settings.set_selected(4);
     apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
-    assert!(state.overlay.exclude_editor.is_some());
+    assert!(state.overlay.is(Modal::ExcludeEditor));
     apply_action(&mut state, Action::Settings(SettingsAction::ExcludeClose));
-    assert!(state.overlay.exclude_editor.is_none());
+    assert!(state.overlay.is_not(Modal::ExcludeEditor));
 }
 
 #[test]
@@ -1129,7 +1130,7 @@ fn exclude_editor_add_pattern() {
         &mut state,
         Action::Settings(SettingsAction::ExcludeStartAdd),
     );
-    assert!(state.overlay.exclude_editor.as_ref().unwrap().adding);
+    assert!(state.overlay.exclude_editor().unwrap().adding);
     apply_action(
         &mut state,
         Action::Settings(SettingsAction::ExcludeInputKey(key(KeyCode::Char('t')))),
@@ -1142,7 +1143,7 @@ fn exclude_editor_add_pattern() {
     assert_eq!(state.prefs.exclude_patterns, vec!["_*", "t*"]);
     assert!(fx.has_save_config());
     assert!(fx.has_refresh_sessions());
-    assert!(!state.overlay.exclude_editor.as_ref().unwrap().adding);
+    assert!(!state.overlay.exclude_editor().unwrap().adding);
 }
 
 #[test]
@@ -1150,7 +1151,7 @@ fn exclude_editor_delete_pattern() {
     let mut state = make_test_state(1);
     state.prefs.exclude_patterns = vec!["_*".to_string(), "scratch*".to_string()];
     apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
-    state.overlay.exclude_editor.as_mut().unwrap().selected = 0;
+    state.overlay.exclude_editor_mut().unwrap().selected = 0;
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::ExcludeDelete));
     assert_eq!(state.prefs.exclude_patterns, vec!["scratch*"]);
     assert!(fx.has_save_config());
@@ -1174,7 +1175,7 @@ fn exclude_editor_invalid_regex_shows_error() {
         );
     }
     apply_action(&mut state, Action::Settings(SettingsAction::ExcludeConfirm));
-    let editor = state.overlay.exclude_editor.as_ref().unwrap();
+    let editor = state.overlay.exclude_editor().unwrap();
     assert!(editor.adding);
     assert!(editor.error.is_some());
     assert!(state.prefs.exclude_patterns.is_empty());
@@ -1221,7 +1222,7 @@ fn settings_adjust_exclude_opens_editor_after_frame_rate_row() {
     let mut state = make_test_state(1);
     select_settings_row(&mut state, "Exclude");
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert!(state.overlay.exclude_editor.is_some());
+    assert!(state.overlay.is(Modal::ExcludeEditor));
     assert!(!fx.has_save_config());
 }
 
@@ -1361,7 +1362,7 @@ fn agents_submenu_contains_and_routes_agent_settings() {
 
     state.settings.set_selected(3);
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    assert!(state.overlay.summary_lang_input.is_some());
+    assert!(state.overlay.is(Modal::SummaryLang));
 }
 
 #[test]
@@ -1491,12 +1492,14 @@ fn disabling_ssh_connection_reuse_keeps_rules_but_locks_port_forwards() {
         }],
     });
     open_settings_page(&mut state, SettingsPage::Remote);
-    state.overlay.port_forward = Some(crate::forwards::PortForwardOverlay {
-        lane: crate::system::tmux::TmuxSystem::host_lane("prod"),
-        selected: 0,
-        add_form: None,
-        status: None,
-    });
+    state.overlay.open(ModalState::PortForward(
+        crate::forwards::PortForwardOverlay {
+            lane: crate::system::tmux::TmuxSystem::host_lane("prod"),
+            selected: 0,
+            add_form: None,
+            status: None,
+        },
+    ));
     select_settings_row(&mut state, "SSH connection reuse");
 
     let fx = apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
@@ -1504,7 +1507,7 @@ fn disabling_ssh_connection_reuse_keeps_rules_but_locks_port_forwards() {
     assert!(!state.prefs.ssh_connection_reuse);
     assert!(fx.has_save_config());
     assert_eq!(state.config_remotes[0].forwards.len(), 1);
-    assert!(state.overlay.port_forward.is_none());
+    assert!(state.overlay.is_not(Modal::PortForward));
 
     let rows = crate::app::settings::setting_rows(&state);
     let port_forwards = rows
@@ -1523,7 +1526,7 @@ fn disabling_ssh_connection_reuse_keeps_rules_but_locks_port_forwards() {
     }
     let lane = crate::system::tmux::TmuxSystem::host_lane("prod");
     apply_action(&mut state, Action::Pf(PfAction::Open(lane)));
-    assert!(state.overlay.port_forward.is_none());
+    assert!(state.overlay.is_not(Modal::PortForward));
 }
 
 #[test]
@@ -1533,19 +1536,19 @@ fn ssh_control_path_and_duration_are_editable_and_validated() {
 
     select_settings_row(&mut state, "Control path");
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    let editor = state.overlay.ssh_setting_editor.as_mut().unwrap();
+    let editor = state.overlay.ssh_setting_editor_mut().unwrap();
     editor.input = crate::new_session::make_textarea("$HOME/.cache/deck/cm-%C");
     let fx = apply_action(
         &mut state,
         Action::Settings(SettingsAction::SshSettingConfirm),
     );
     assert_eq!(state.prefs.ssh_control_path, "$HOME/.cache/deck/cm-%C");
-    assert!(state.overlay.ssh_setting_editor.is_none());
+    assert!(state.overlay.is_not(Modal::SshSetting));
     assert!(fx.has_save_config());
 
     select_settings_row(&mut state, "Reuse duration");
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    state.overlay.ssh_setting_editor.as_mut().unwrap().input =
+    state.overlay.ssh_setting_editor_mut().unwrap().input =
         crate::new_session::make_textarea("1h30m");
     let fx = apply_action(
         &mut state,
@@ -1556,20 +1559,14 @@ fn ssh_control_path_and_duration_are_editable_and_validated() {
 
     select_settings_row(&mut state, "Reuse duration");
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
-    state.overlay.ssh_setting_editor.as_mut().unwrap().input =
+    state.overlay.ssh_setting_editor_mut().unwrap().input =
         crate::new_session::make_textarea("tomorrow");
     let fx = apply_action(
         &mut state,
         Action::Settings(SettingsAction::SshSettingConfirm),
     );
     assert!(!fx.has_save_config());
-    assert!(state
-        .overlay
-        .ssh_setting_editor
-        .as_ref()
-        .unwrap()
-        .error
-        .is_some());
+    assert!(state.overlay.ssh_setting_editor().unwrap().error.is_some());
     assert_eq!(state.prefs.ssh_control_persist, "1h30m");
 }
 
@@ -1615,8 +1612,7 @@ fn rename_state(initial: &str) -> RenameState {
 fn rename_input_text(state: &AppState) -> &str {
     state
         .overlay
-        .renaming
-        .as_ref()
+        .renaming()
         .and_then(|r| r.input.lines().first().map(String::as_str))
         .unwrap_or("")
 }
@@ -1629,7 +1625,9 @@ fn key(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
 fn rename_input_key_appends_char() {
     use crossterm::event::KeyCode;
     let mut state = make_test_state(1);
-    state.overlay.renaming = Some(rename_state("hello"));
+    state
+        .overlay
+        .open(ModalState::Rename(rename_state("hello")));
     apply_action(&mut state, Action::RenameInputKey(key(KeyCode::Char('!'))));
     assert_eq!(rename_input_text(&state), "hello!");
 }
@@ -1643,9 +1641,9 @@ fn rename_confirm_produces_side_effect() {
         crate::system::tmux::TmuxSystem::local_lane(),
     );
     assert_eq!(rs.original_name, "old");
-    state.overlay.renaming = Some(rs);
+    state.overlay.open(ModalState::Rename(rs));
     let fx = apply_action(&mut state, Action::RenameConfirm);
-    assert!(state.overlay.renaming.is_none());
+    assert!(state.overlay.is_not(Modal::Rename));
     let req = fx.first_rename_session().expect("rename_session effect");
     assert_eq!(req.old_name, "old");
     assert_eq!(req.new_name, "new-name");
@@ -1654,20 +1652,22 @@ fn rename_confirm_produces_side_effect() {
 #[test]
 fn rename_confirm_noop_when_unchanged() {
     let mut state = make_test_state(1);
-    state.overlay.renaming = Some(rename_state("same"));
+    state.overlay.open(ModalState::Rename(rename_state("same")));
     let fx = apply_action(&mut state, Action::RenameConfirm);
-    assert!(state.overlay.renaming.is_none());
+    assert!(state.overlay.is_not(Modal::Rename));
     assert!(fx.first_rename_session().is_none());
 }
 
 #[test]
 fn rename_confirm_rejects_invalid_name_and_keeps_editor_open() {
     let mut state = make_test_state(1);
-    state.overlay.renaming = Some(RenameState::new_with_lane(
-        "sess-0".to_string(),
-        "invalid.name".to_string(),
-        crate::system::tmux::TmuxSystem::local_lane(),
-    ));
+    state
+        .overlay
+        .open(ModalState::Rename(RenameState::new_with_lane(
+            "sess-0".to_string(),
+            "invalid.name".to_string(),
+            crate::system::tmux::TmuxSystem::local_lane(),
+        )));
 
     let fx = apply_action(&mut state, Action::RenameConfirm);
 
@@ -1682,16 +1682,18 @@ fn rename_confirm_rejects_invalid_name_and_keeps_editor_open() {
 #[test]
 fn rename_confirm_rejects_duplicate_on_same_backend() {
     let mut state = make_test_state(2);
-    state.overlay.renaming = Some(RenameState::new_with_lane(
-        "sess-0".to_string(),
-        "sess-1".to_string(),
-        crate::system::tmux::TmuxSystem::local_lane(),
-    ));
+    state
+        .overlay
+        .open(ModalState::Rename(RenameState::new_with_lane(
+            "sess-0".to_string(),
+            "sess-1".to_string(),
+            crate::system::tmux::TmuxSystem::local_lane(),
+        )));
 
     let fx = apply_action(&mut state, Action::RenameConfirm);
 
     assert!(fx.first_rename_session().is_none());
-    assert!(state.overlay.renaming.is_some());
+    assert!(state.overlay.is(Modal::Rename));
     assert!(matches!(
         state.reload_status.as_ref(),
         Some(crate::state::ReloadStatus::Err(message)) if message == "name already in use"
@@ -1701,9 +1703,11 @@ fn rename_confirm_rejects_duplicate_on_same_backend() {
 #[test]
 fn rename_cancel_clears_overlay() {
     let mut state = make_test_state(1);
-    state.overlay.renaming = Some(rename_state("hello"));
+    state
+        .overlay
+        .open(ModalState::Rename(rename_state("hello")));
     apply_action(&mut state, Action::RenameCancel);
-    assert!(state.overlay.renaming.is_none());
+    assert!(state.overlay.is_not(Modal::Rename));
 }
 
 fn picker_state_with(input: &str, entries: Vec<String>) -> AppState {
@@ -1720,15 +1724,14 @@ fn picker_state_with(input: &str, entries: Vec<String>) -> AppState {
         target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
     };
     ns.refilter();
-    state.overlay.new_session = Some(ns);
+    state.overlay.open(ModalState::NewSession(ns));
     state
 }
 
 fn ns_input_str(state: &AppState) -> &str {
     state
         .overlay
-        .new_session
-        .as_ref()
+        .new_session()
         .map(|ns| ns.input_str())
         .unwrap_or("")
 }
@@ -1736,8 +1739,7 @@ fn ns_input_str(state: &AppState) -> &str {
 fn ns_name_str(state: &AppState) -> &str {
     state
         .overlay
-        .new_session
-        .as_ref()
+        .new_session()
         .map(|ns| ns.name_str())
         .unwrap_or("")
 }
@@ -1750,7 +1752,7 @@ fn new_session_input_inserts_at_cursor() {
         &mut state,
         Action::NewSession(NewSessionAction::InputKey(key(KeyCode::Char('b')))),
     );
-    let ns = state.overlay.new_session.as_ref().unwrap();
+    let ns = state.overlay.new_session().unwrap();
     assert_eq!(ns.input_str(), "~/foo/b");
     assert_eq!(ns.picker.filtered, vec![0, 1]); // both still match "b"
     assert!(!fx.has_reread_new_session_entries()); // parent didn't change
@@ -1772,13 +1774,10 @@ fn new_session_input_crossing_slash_sets_reread() {
 fn new_session_selection_wraps_at_filtered_boundaries() {
     let mut state = picker_state_with("~/", vec!["a".into(), "b".into()]);
     apply_action(&mut state, Action::NewSession(NewSessionAction::Prev));
-    assert_eq!(
-        state.overlay.new_session.as_ref().unwrap().picker.selected,
-        1
-    );
+    assert_eq!(state.overlay.new_session().unwrap().picker.selected, 1);
     apply_action(&mut state, Action::NewSession(NewSessionAction::Next));
     apply_action(&mut state, Action::NewSession(NewSessionAction::Next));
-    let ns = state.overlay.new_session.as_ref().unwrap();
+    let ns = state.overlay.new_session().unwrap();
     assert_eq!(ns.picker.selected, 1);
 }
 
@@ -1787,14 +1786,14 @@ fn new_session_moving_up_from_bottom_keeps_current_viewport() {
     let entries = (0..10).map(|i| format!("dir-{i}")).collect();
     let mut state = picker_state_with("~/", entries);
     {
-        let ns = state.overlay.new_session.as_mut().unwrap();
+        let ns = state.overlay.new_session_mut().unwrap();
         ns.picker.selected = 9;
         ns.scroll = 2; // rows 2..=9 are visible, selection is on the bottom.
     }
 
     apply_action(&mut state, Action::NewSession(NewSessionAction::Prev));
 
-    let ns = state.overlay.new_session.as_ref().unwrap();
+    let ns = state.overlay.new_session().unwrap();
     assert_eq!(ns.picker.selected, 8, "highlight moves up one row");
     assert_eq!(ns.scroll, 2, "the visible window stays fixed");
 }
@@ -1814,14 +1813,14 @@ fn new_session_delete_segment_goes_back_to_slash() {
 fn new_session_switch_focus_toggles_field() {
     let mut state = picker_state_with("~/foo/", vec![]);
     // picker_state_with sets focus to Dir; switch to Name first
-    state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
+    state.overlay.new_session_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
 
     apply_action(
         &mut state,
         Action::NewSession(NewSessionAction::SwitchFocus),
     );
     assert_eq!(
-        state.overlay.new_session.as_ref().unwrap().focus,
+        state.overlay.new_session().unwrap().focus,
         crate::new_session::PickerFocus::Dir
     );
 
@@ -1830,7 +1829,7 @@ fn new_session_switch_focus_toggles_field() {
         Action::NewSession(NewSessionAction::SwitchFocus),
     );
     assert_eq!(
-        state.overlay.new_session.as_ref().unwrap().focus,
+        state.overlay.new_session().unwrap().focus,
         crate::new_session::PickerFocus::Name
     );
 }
@@ -1839,7 +1838,7 @@ fn new_session_switch_focus_toggles_field() {
 fn new_session_input_routes_to_name_when_focused_on_name() {
     use crossterm::event::KeyCode;
     let mut state = picker_state_with("~/foo/", vec![]);
-    state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
+    state.overlay.new_session_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
 
     apply_action(
         &mut state,
@@ -1905,10 +1904,10 @@ fn new_session_dir_open_on_the_parent_row_goes_up() {
 #[test]
 fn new_session_dir_open_from_the_name_field_moves_focus_to_the_path() {
     let mut state = picker_state_with("~/foo/", vec!["..".into(), "bar".into()]);
-    state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
+    state.overlay.new_session_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
     apply_action(&mut state, Action::NewSession(NewSessionAction::DirOpen(1)));
     assert_eq!(
-        state.overlay.new_session.as_ref().unwrap().focus,
+        state.overlay.new_session().unwrap().focus,
         crate::new_session::PickerFocus::Dir
     );
 }
@@ -1924,7 +1923,7 @@ fn open_host_divider_menu_uses_host_kind() {
             y: 5,
         }),
     );
-    let menu = state.overlay.context_menu.as_ref().expect("menu opened");
+    let menu = state.overlay.context_menu().expect("menu opened");
     match &menu.kind {
         crate::menu::MenuKind::LaneDivider { lane, .. } => {
             assert_eq!(crate::system::tmux::TmuxSystem::host_of(lane), Some("h1"))
@@ -1938,8 +1937,8 @@ fn open_port_forward_clears_menu_and_opens_overlay() {
     let mut state = make_test_state(1);
     let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
     crate::action::apply_action(&mut state, Action::Pf(PfAction::Open(lane.clone())));
-    assert!(state.overlay.context_menu.is_none());
-    let o = state.overlay.port_forward.as_ref().expect("overlay open");
+    assert!(state.overlay.is_not(Modal::ContextMenu));
+    let o = state.overlay.port_forward().expect("overlay open");
     assert_eq!(o.lane, lane);
     assert_eq!(o.selected, 0);
 }
@@ -1955,20 +1954,22 @@ fn open_port_forward_is_refused_when_the_lane_cannot_host_one() {
         section.lane_capabilities.port_forwards = false;
     }
     crate::action::apply_action(&mut state, Action::Pf(PfAction::Open(lane)));
-    assert!(state.overlay.port_forward.is_none());
+    assert!(state.overlay.is_not(Modal::PortForward));
 }
 
 #[test]
 fn pf_add_open_creates_default_form() {
     let mut state = make_test_state(1);
-    state.overlay.port_forward = Some(crate::forwards::PortForwardOverlay {
-        lane: crate::system::tmux::TmuxSystem::host_lane("h"),
-        selected: 0,
-        add_form: None,
-        status: None,
-    });
+    state.overlay.open(ModalState::PortForward(
+        crate::forwards::PortForwardOverlay {
+            lane: crate::system::tmux::TmuxSystem::host_lane("h"),
+            selected: 0,
+            add_form: None,
+            status: None,
+        },
+    ));
     crate::action::apply_action(&mut state, Action::Pf(PfAction::AddOpen));
-    let o = state.overlay.port_forward.as_ref().unwrap();
+    let o = state.overlay.port_forward().unwrap();
     let f = o.add_form.as_ref().unwrap();
     assert_eq!(f.mode, crate::forwards::ForwardMode::Local);
     assert_eq!(f.focus, crate::forwards::PfField::ListenPort);
@@ -2052,37 +2053,39 @@ fn open_form_with_focus(
         t.move_cursor(CursorMove::End);
         t
     };
-    state.overlay.port_forward = Some(crate::forwards::PortForwardOverlay {
-        lane: crate::system::tmux::TmuxSystem::host_lane("h"),
-        selected: 0,
-        add_form: Some(crate::forwards::PfAddForm {
-            endpoint: crate::system::ForwardEndpointKind::Explicit,
-            mode: crate::forwards::ForwardMode::Local,
-            focus: field,
-            bind_addr: if matches!(field, crate::forwards::PfField::BindAddr) {
-                ta(value)
-            } else {
-                ta("")
-            },
-            listen_port: if matches!(field, crate::forwards::PfField::ListenPort) {
-                ta(value)
-            } else {
-                ta("")
-            },
-            target_host: if matches!(field, crate::forwards::PfField::TargetHost) {
-                ta(value)
-            } else {
-                ta("")
-            },
-            target_port: if matches!(field, crate::forwards::PfField::TargetPort) {
-                ta(value)
-            } else {
-                ta("")
-            },
-            submitting: false,
-        }),
-        status: None,
-    });
+    state.overlay.open(ModalState::PortForward(
+        crate::forwards::PortForwardOverlay {
+            lane: crate::system::tmux::TmuxSystem::host_lane("h"),
+            selected: 0,
+            add_form: Some(crate::forwards::PfAddForm {
+                endpoint: crate::system::ForwardEndpointKind::Explicit,
+                mode: crate::forwards::ForwardMode::Local,
+                focus: field,
+                bind_addr: if matches!(field, crate::forwards::PfField::BindAddr) {
+                    ta(value)
+                } else {
+                    ta("")
+                },
+                listen_port: if matches!(field, crate::forwards::PfField::ListenPort) {
+                    ta(value)
+                } else {
+                    ta("")
+                },
+                target_host: if matches!(field, crate::forwards::PfField::TargetHost) {
+                    ta(value)
+                } else {
+                    ta("")
+                },
+                target_port: if matches!(field, crate::forwards::PfField::TargetPort) {
+                    ta(value)
+                } else {
+                    ta("")
+                },
+                submitting: false,
+            }),
+            status: None,
+        },
+    ));
 }
 
 #[test]
@@ -2106,8 +2109,7 @@ fn pf_add_input_applies_each_field_policy() {
         }
         let form = state
             .overlay
-            .port_forward
-            .as_ref()
+            .port_forward()
             .unwrap()
             .add_form
             .as_ref()
@@ -2128,8 +2130,7 @@ fn pf_add_input_rejects_out_of_range_ports() {
     );
     let f = state
         .overlay
-        .port_forward
-        .as_ref()
+        .port_forward()
         .unwrap()
         .add_form
         .as_ref()
@@ -2143,8 +2144,7 @@ fn pf_add_input_rejects_out_of_range_ports() {
     );
     let f = state
         .overlay
-        .port_forward
-        .as_ref()
+        .port_forward()
         .unwrap()
         .add_form
         .as_ref()
@@ -2157,7 +2157,7 @@ fn editing_a_port_forward_clears_stale_validation_feedback() {
     use crossterm::event::KeyCode;
     let mut state = make_test_state(0);
     open_form_with_focus(&mut state, crate::forwards::PfField::ListenPort, "8");
-    state.overlay.port_forward.as_mut().unwrap().status =
+    state.overlay.port_forward_mut().unwrap().status =
         Some("Listen port must be a number".to_string());
 
     crate::action::apply_action(
@@ -2165,13 +2165,7 @@ fn editing_a_port_forward_clears_stale_validation_feedback() {
         Action::Pf(PfAction::AddInputKey(key(KeyCode::Char('0')))),
     );
 
-    assert!(state
-        .overlay
-        .port_forward
-        .as_ref()
-        .unwrap()
-        .status
-        .is_none());
+    assert!(state.overlay.port_forward().unwrap().status.is_none());
 }
 
 #[test]
@@ -2275,12 +2269,12 @@ fn divider_menu_greys_port_forward_for_a_lane_without_its_own_connection() {
             y: 4,
         }),
     );
-    let menu = state.overlay.context_menu.as_ref().expect("menu open");
+    let menu = state.overlay.context_menu().expect("menu open");
     assert!(menu.kind.disabled().contains(&MenuItem::PortForward));
 
     // Opening the overlay directly is refused for the same reason.
     apply_action(&mut state, Action::Pf(PfAction::Open(container)));
-    assert!(state.overlay.port_forward.is_none());
+    assert!(state.overlay.is_not(Modal::PortForward));
 }
 
 #[test]
@@ -2292,7 +2286,7 @@ fn mount_picker_refuses_lanes_whose_system_offers_no_mounts() {
         section.lane_capabilities.mounts = false;
     }
     let fx = apply_action(&mut state, Action::Mount(MountAction::Open(lane)));
-    assert!(state.overlay.mount_picker.is_none());
+    assert!(state.overlay.is_not(Modal::MountPicker));
     assert!(fx.effects().is_empty(), "no discovery should be requested");
 }
 
@@ -2303,7 +2297,7 @@ fn mount_picker_opens_busy_and_fills_from_the_worker() {
     mount_remote_lane(&mut state, "h1");
 
     let fx = apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
-    let picker = state.overlay.mount_picker.as_ref().expect("open");
+    let picker = state.overlay.mount_picker().expect("open");
     let generation = picker.generation;
     // Opens in a loading state so the list never reads as "nothing found" while
     // the ssh hop is still out.
@@ -2332,7 +2326,7 @@ fn mount_picker_opens_busy_and_fills_from_the_worker() {
             ]),
         }),
     );
-    let picker = state.overlay.mount_picker.as_ref().expect("still open");
+    let picker = state.overlay.mount_picker().expect("still open");
     assert_eq!(picker.busy, None);
     assert_eq!(picker.picker.items.len(), 2);
     assert_eq!(
@@ -2358,12 +2352,7 @@ fn scrambled_candidates() -> Vec<crate::system::MountCandidate> {
 }
 
 fn discover(state: &mut AppState, lane: &crate::lane::LaneId) {
-    let generation = state
-        .overlay
-        .mount_picker
-        .as_ref()
-        .expect("open")
-        .generation;
+    let generation = state.overlay.mount_picker().expect("open").generation;
     apply_action(
         state,
         Action::Mount(MountAction::Discovered {
@@ -2377,8 +2366,7 @@ fn discover(state: &mut AppState, lane: &crate::lane::LaneId) {
 fn candidate_ids(state: &AppState) -> Vec<String> {
     state
         .overlay
-        .mount_picker
-        .as_ref()
+        .mount_picker()
         .expect("open")
         .candidates
         .iter()
@@ -2406,7 +2394,7 @@ fn discovered_candidates_are_ordered_ready_first_then_by_name() {
         ]
     );
     assert_eq!(
-        state.overlay.mount_picker.as_ref().unwrap().sort,
+        state.overlay.mount_picker().unwrap().sort,
         crate::overlay::MountSort::ReadyFirst
     );
 }
@@ -2457,8 +2445,7 @@ fn re_sorting_keeps_the_highlight_on_its_candidate_not_its_row() {
     assert_eq!(
         state
             .overlay
-            .mount_picker
-            .as_ref()
+            .mount_picker()
             .unwrap()
             .selected()
             .map(|c| c.id.as_str()),
@@ -2466,7 +2453,7 @@ fn re_sorting_keeps_the_highlight_on_its_candidate_not_its_row() {
     );
 
     apply_action(&mut state, Action::Mount(MountAction::CycleSort));
-    let picker = state.overlay.mount_picker.as_ref().unwrap();
+    let picker = state.overlay.mount_picker().unwrap();
     assert_eq!(
         picker.selected().map(|c| c.id.as_str()),
         Some("docker\x1fzeta"),
@@ -2488,23 +2475,11 @@ fn re_sorting_abandons_a_pending_activation_confirmation() {
         apply_action(&mut state, Action::Mount(MountAction::Next));
     }
     apply_action(&mut state, Action::Mount(MountAction::Confirm));
-    assert!(state
-        .overlay
-        .mount_picker
-        .as_ref()
-        .unwrap()
-        .confirming
-        .is_some());
+    assert!(state.overlay.mount_picker().unwrap().confirming.is_some());
 
     apply_action(&mut state, Action::Mount(MountAction::CycleSort));
     assert!(
-        state
-            .overlay
-            .mount_picker
-            .as_ref()
-            .unwrap()
-            .confirming
-            .is_none(),
+        state.overlay.mount_picker().unwrap().confirming.is_none(),
         "re-ordering moves the row the confirmation pointed at"
     );
 }
@@ -2527,7 +2502,7 @@ fn a_filter_typed_while_discovery_is_out_survives_the_answer() {
     }
     discover(&mut state, &lane);
 
-    let picker = state.overlay.mount_picker.as_ref().unwrap();
+    let picker = state.overlay.mount_picker().unwrap();
     assert_eq!(picker.picker.input_str(), "et");
     let shown: Vec<&str> = picker
         .picker
@@ -2545,7 +2520,7 @@ fn a_late_worker_answer_for_a_superseded_picker_is_dropped() {
     mount_remote_lane(&mut state, "h1");
 
     apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
-    let stale = state.overlay.mount_picker.as_ref().unwrap().generation;
+    let stale = state.overlay.mount_picker().unwrap().generation;
     // Reopening retires the in-flight probe.
     apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
 
@@ -2561,7 +2536,7 @@ fn a_late_worker_answer_for_a_superseded_picker_is_dropped() {
             }]),
         }),
     );
-    let picker = state.overlay.mount_picker.as_ref().expect("open");
+    let picker = state.overlay.mount_picker().expect("open");
     assert!(
         picker.candidates.is_empty(),
         "stale answer must not fill the list"
@@ -2575,7 +2550,7 @@ fn mounting_a_stopped_candidate_takes_a_second_enter() {
     let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
     mount_remote_lane(&mut state, "h1");
     apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
-    let generation = state.overlay.mount_picker.as_ref().unwrap().generation;
+    let generation = state.overlay.mount_picker().unwrap().generation;
     apply_action(
         &mut state,
         Action::Mount(MountAction::Discovered {
@@ -2593,7 +2568,7 @@ fn mounting_a_stopped_candidate_takes_a_second_enter() {
     // keypress: the first Enter only asks.
     let fx = apply_action(&mut state, Action::Mount(MountAction::Confirm));
     assert!(fx.effects().is_empty(), "first Enter must not act");
-    let picker = state.overlay.mount_picker.as_ref().expect("open");
+    let picker = state.overlay.mount_picker().expect("open");
     assert_eq!(
         picker.confirming.as_ref().map(|c| c.id.as_str()),
         Some("docker\x1fold")
@@ -2601,13 +2576,7 @@ fn mounting_a_stopped_candidate_takes_a_second_enter() {
 
     // Navigating away abandons the pending question rather than carrying it.
     apply_action(&mut state, Action::Mount(MountAction::Next));
-    assert!(state
-        .overlay
-        .mount_picker
-        .as_ref()
-        .unwrap()
-        .confirming
-        .is_none());
+    assert!(state.overlay.mount_picker().unwrap().confirming.is_none());
 
     apply_action(&mut state, Action::Mount(MountAction::Confirm));
     let fx = apply_action(&mut state, Action::Mount(MountAction::Confirm));
@@ -2616,7 +2585,7 @@ fn mounting_a_stopped_candidate_takes_a_second_enter() {
         .iter()
         .any(|effect| matches!(effect, Effect::ActivateMount { .. })));
     assert_eq!(
-        state.overlay.mount_picker.as_ref().unwrap().busy,
+        state.overlay.mount_picker().unwrap().busy,
         Some(crate::overlay::MountBusy::Activating)
     );
 }
@@ -2627,7 +2596,7 @@ fn a_running_candidate_mounts_on_the_first_enter() {
     let lane = crate::system::tmux::TmuxSystem::host_lane("h1");
     mount_remote_lane(&mut state, "h1");
     apply_action(&mut state, Action::Mount(MountAction::Open(lane.clone())));
-    let generation = state.overlay.mount_picker.as_ref().unwrap().generation;
+    let generation = state.overlay.mount_picker().unwrap().generation;
     apply_action(
         &mut state,
         Action::Mount(MountAction::Discovered {
@@ -2647,7 +2616,7 @@ fn a_running_candidate_mounts_on_the_first_enter() {
         .iter()
         .any(|effect| matches!(effect, Effect::MountLane { .. })));
     assert!(
-        state.overlay.mount_picker.is_none(),
+        state.overlay.is_not(Modal::MountPicker),
         "picker closes on mount"
     );
 }
@@ -2803,8 +2772,7 @@ fn pf_add_field_next_changes_focus() {
     crate::action::apply_action(&mut state, Action::Pf(PfAction::AddFieldNext));
     let f = state
         .overlay
-        .port_forward
-        .as_ref()
+        .port_forward()
         .unwrap()
         .add_form
         .as_ref()
@@ -3079,7 +3047,7 @@ mod agents_tab {
         apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
         apply_action(&mut state, Action::KillSession);
         assert!(
-            !state.overlay.confirm_kill,
+            !state.overlay.is(Modal::ConfirmKill),
             "no kill prompt on the Agents tab"
         );
     }
@@ -3148,7 +3116,7 @@ fn restoring_one_hidden_session_leaves_the_others_hidden() {
         state.hidden_sessions[&lane],
         std::collections::HashSet::from(["sess-1".to_string()])
     );
-    let open = state.overlay.hidden_sessions.as_ref().expect("still open");
+    let open = state.overlay.hidden_sessions().expect("still open");
     assert_eq!(open.picker.items, ["sess-1"]);
     assert!(fx.has_save_config());
     assert!(fx.has_refresh_sessions());
@@ -3169,7 +3137,7 @@ fn restoring_the_last_hidden_session_closes_the_picker_and_drops_the_lane() {
     crate::action::apply_action(&mut state, Action::Hidden(HiddenAction::Restore));
 
     assert!(!state.hidden_sessions.contains_key(&lane));
-    assert!(state.overlay.hidden_sessions.is_none());
+    assert!(state.overlay.is_not(Modal::HiddenSessions));
 }
 
 #[test]
@@ -3187,7 +3155,7 @@ fn restore_all_empties_the_lane_in_one_step() {
     let fx = crate::action::apply_action(&mut state, Action::Hidden(HiddenAction::RestoreAll));
 
     assert!(!state.hidden_sessions.contains_key(&lane));
-    assert!(state.overlay.hidden_sessions.is_none());
+    assert!(state.overlay.is_not(Modal::HiddenSessions));
     assert!(fx.has_save_config());
 }
 
@@ -3199,7 +3167,7 @@ fn opening_the_restore_picker_for_a_lane_with_nothing_hidden_is_a_noop() {
     let mut state = make_test_state(1);
     let lane = crate::system::tmux::TmuxSystem::local_lane();
     crate::action::apply_action(&mut state, Action::Hidden(HiddenAction::Open(lane)));
-    assert!(state.overlay.hidden_sessions.is_none());
+    assert!(state.overlay.is_not(Modal::HiddenSessions));
 }
 
 /// `Show hidden` is greyed on a lane with nothing to restore. (The round trip
@@ -3237,9 +3205,8 @@ fn cmd_backspace() -> crossterm::event::KeyEvent {
 #[test]
 fn new_session_clear_line_chord_empties_the_name_field_only() {
     let mut state = picker_state_with("~/foo/", vec![]);
-    state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
-    state.overlay.new_session.as_mut().unwrap().name =
-        crate::new_session::make_textarea("session-7");
+    state.overlay.new_session_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
+    state.overlay.new_session_mut().unwrap().name = crate::new_session::make_textarea("session-7");
 
     apply_action(
         &mut state,
@@ -3248,8 +3215,7 @@ fn new_session_clear_line_chord_empties_the_name_field_only() {
     assert_eq!(ns_name_str(&state), "");
     assert_eq!(ns_input_str(&state), "~/foo/"); // dir untouched
 
-    state.overlay.new_session.as_mut().unwrap().name =
-        crate::new_session::make_textarea("session-8");
+    state.overlay.new_session_mut().unwrap().name = crate::new_session::make_textarea("session-8");
     apply_action(
         &mut state,
         Action::NewSession(NewSessionAction::InputKey(cmd_backspace())),
@@ -3260,7 +3226,9 @@ fn new_session_clear_line_chord_empties_the_name_field_only() {
 #[test]
 fn rename_clear_line_chord_empties_the_input() {
     let mut state = make_test_state(1);
-    state.overlay.renaming = Some(rename_state("hello"));
+    state
+        .overlay
+        .open(ModalState::Rename(rename_state("hello")));
     apply_action(&mut state, Action::RenameInputKey(ctrl_u()));
     assert_eq!(rename_input_text(&state), "");
 }
@@ -3280,8 +3248,7 @@ fn pf_add_input_clear_line_chord_empties_a_port_field() {
         crate::action::apply_action(&mut state, Action::Pf(PfAction::AddInputKey(chord)));
         let form = state
             .overlay
-            .port_forward
-            .as_ref()
+            .port_forward()
             .unwrap()
             .add_form
             .as_ref()
@@ -3300,7 +3267,9 @@ fn ctrl_backspace() -> crossterm::event::KeyEvent {
 #[test]
 fn rename_ctrl_backspace_deletes_the_last_word() {
     let mut state = make_test_state(1);
-    state.overlay.renaming = Some(rename_state("hello world"));
+    state
+        .overlay
+        .open(ModalState::Rename(rename_state("hello world")));
     apply_action(&mut state, Action::RenameInputKey(ctrl_backspace()));
     assert_eq!(rename_input_text(&state), "hello ");
 }
@@ -3316,8 +3285,7 @@ fn pf_add_input_ctrl_backspace_reaches_a_port_field() {
     );
     let form = state
         .overlay
-        .port_forward
-        .as_ref()
+        .port_forward()
         .unwrap()
         .add_form
         .as_ref()

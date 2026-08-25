@@ -4,6 +4,7 @@
 
 use crate::effects::{Effect, SideEffect};
 use crate::menu::{session_menu_disabled, ContextMenu, MenuItem, MenuKind};
+use crate::overlay::{Modal, ModalState};
 use crate::state::AppState;
 
 use super::{apply_action, Action, MenuAction, SettingsAction};
@@ -58,7 +59,7 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
         ),
         // The highlight moves only while a menu is open; one guard for all three.
         MenuAction::Next | MenuAction::Prev | MenuAction::Hover(_) => {
-            let Some(menu) = state.overlay.context_menu.as_mut() else {
+            let Some(menu) = state.overlay.context_menu_mut() else {
                 return fx;
             };
             match action {
@@ -70,7 +71,7 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
             }
         }
         MenuAction::Confirm => {
-            let menu = match state.overlay.context_menu.take() {
+            let menu = match state.overlay.take_context_menu() {
                 Some(m) => m,
                 Option::None => return fx,
             };
@@ -125,7 +126,7 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
             }
         }
         MenuAction::Dismiss => {
-            state.overlay.context_menu = None;
+            state.overlay.close(Modal::ContextMenu);
         }
         // Resolved in dispatch (Hover + Confirm); never reaches the reducer.
         MenuAction::ClickItem(_) => {}
@@ -144,5 +145,5 @@ fn open(state: &mut AppState, kind: MenuKind, x: u16, y: u16) {
         selected: 0,
     };
     menu.selected = menu.first_enabled();
-    state.overlay.context_menu = Some(menu);
+    state.overlay.open(ModalState::ContextMenu(menu));
 }

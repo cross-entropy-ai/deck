@@ -5,6 +5,7 @@
 use crate::app::settings::setting_rows;
 use crate::effects::{Effect, SideEffect};
 use crate::new_session::textarea_input;
+use crate::overlay::{Modal, ModalState};
 use crate::state::{step_clamped, AppState, FocusMode, MainView};
 use crate::theme::indices_for_slot;
 
@@ -19,14 +20,14 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             state.settings.reset_pages();
             state.settings.theme_picker_open = false;
             state.settings.theme_picker_selected = state.prefs.theme_index;
-            state.overlay.ssh_setting_editor = None;
+            state.overlay.close(Modal::SshSetting);
         }
         SettingsAction::Close => {
             state.main_view = MainView::Terminal;
             state.focus_mode = FocusMode::Main;
             state.settings.reset_pages();
             state.settings.theme_picker_open = false;
-            state.overlay.ssh_setting_editor = None;
+            state.overlay.close(Modal::SshSetting);
         }
         SettingsAction::OpenPage(page) => {
             state.settings.push_page(page);
@@ -77,7 +78,7 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         SettingsAction::ToggleSshConnectionReuse => {
             state.prefs.ssh_connection_reuse = !state.prefs.ssh_connection_reuse;
             if !state.prefs.ssh_connection_reuse {
-                state.overlay.port_forward = None;
+                state.overlay.close(Modal::PortForward);
             }
             fx.save_config();
         }
@@ -86,17 +87,18 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
                 crate::overlay::SshSettingField::ControlPath => &state.prefs.ssh_control_path,
                 crate::overlay::SshSettingField::ControlPersist => &state.prefs.ssh_control_persist,
             };
-            state.overlay.ssh_setting_editor =
-                Some(crate::overlay::SshSettingEditorState::new(field, value));
+            state.overlay.open(ModalState::SshSetting(
+                crate::overlay::SshSettingEditorState::new(field, value),
+            ));
         }
         SettingsAction::SshSettingInputKey(key) => {
-            if let Some(editor) = state.overlay.ssh_setting_editor.as_mut() {
+            if let Some(editor) = state.overlay.ssh_setting_editor_mut() {
                 textarea_input(&mut editor.input, key);
                 editor.error = None;
             }
         }
         SettingsAction::SshSettingConfirm => {
-            let Some(mut editor) = state.overlay.ssh_setting_editor.take() else {
+            let Some(mut editor) = state.overlay.take_ssh_setting_editor() else {
                 return fx;
             };
             let value = editor.input_str().trim().to_string();
@@ -110,7 +112,7 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             };
             if let Err(error) = validation {
                 editor.error = Some(error);
-                state.overlay.ssh_setting_editor = Some(editor);
+                state.overlay.open(ModalState::SshSetting(editor));
             } else {
                 match editor.field {
                     crate::overlay::SshSettingField::ControlPath => {
@@ -124,7 +126,7 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             }
         }
         SettingsAction::SshSettingCancel => {
-            state.overlay.ssh_setting_editor = None;
+            state.overlay.close(Modal::SshSetting);
         }
         SettingsAction::OpenAddRemotePicker => fx.push(Effect::OpenAddRemotePicker),
         // One aggregate row for every host — it opens the first host
@@ -213,14 +215,16 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         }
 
         SettingsAction::ExcludeOpen => {
-            state.overlay.exclude_editor = Some(crate::overlay::ExcludeEditorState::new());
+            state.overlay.open(ModalState::ExcludeEditor(
+                crate::overlay::ExcludeEditorState::new(),
+            ));
         }
         SettingsAction::ExcludeClose => {
-            state.overlay.exclude_editor = None;
+            state.overlay.close(Modal::ExcludeEditor);
         }
         // Every remaining action edits the open exclude editor; one guard for all.
         other => {
-            let Some(editor) = state.overlay.exclude_editor.as_mut() else {
+            let Some(editor) = state.overlay.exclude_editor_mut() else {
                 return fx;
             };
             match other {

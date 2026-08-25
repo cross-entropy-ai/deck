@@ -146,7 +146,7 @@ impl AppState {
     /// renderer gates the overlay on `Some`). Resolves via `entry_at`, so a
     /// remote row reports its name too — local and remote treated alike.
     pub fn confirm_kill_name(&self) -> Option<String> {
-        if !self.overlay.confirm_kill {
+        if !self.overlay.is(Modal::ConfirmKill) {
             return None;
         }
         Some(self.entry_at(self.focus_target()?)?.name.clone())
@@ -197,7 +197,7 @@ impl AppState {
 
     /// Map a screen position to a context menu item index.
     pub fn menu_item_at(&self, col: u16, row: u16) -> Option<usize> {
-        let menu = self.overlay.context_menu.as_ref()?;
+        let menu = self.overlay.context_menu()?;
         let items = menu.items();
         // Same rect the renderer draws into (`ui::menu::draw_context_menu`).
         let r = context_menu_rect(items, menu.x, menu.y, self.term_width, self.term_height);
@@ -359,21 +359,27 @@ impl Modal {
         let on_settings_page =
             state.main_view == MainView::Settings && state.focus_mode == FocusMode::Main;
         match self {
-            Self::SummaryPopup => state.overlay.summary_popup,
-            Self::NewSession => state.overlay.new_session.is_some(),
-            Self::AddRemote => state.overlay.add_remote.is_some(),
-            Self::MountPicker => state.overlay.mount_picker.is_some(),
-            Self::HiddenSessions => state.overlay.hidden_sessions.is_some(),
-            Self::Rename => state.overlay.renaming.is_some(),
-            Self::ContextMenu => state.overlay.context_menu.is_some(),
-            Self::PortForward => state.overlay.port_forward.is_some(),
+            // The settings page's own sub-popovers keep their cursor and scroll
+            // in `SettingsState`, so they answer from there.
             Self::ThemePicker => state.settings.theme_picker_open,
             Self::KeybindingsView => on_settings_page && state.settings.keybindings_view_open,
-            Self::ExcludeEditor => on_settings_page && state.overlay.exclude_editor.is_some(),
-            Self::SshSetting => on_settings_page && state.overlay.ssh_setting_editor.is_some(),
-            Self::SummaryLang => on_settings_page && state.overlay.summary_lang_input.is_some(),
-            Self::Help => state.overlay.show_help,
-            Self::ConfirmKill => state.overlay.confirm_kill,
+            // In the modal slot, but reachable only from the settings page: the
+            // state outlives a focus change, so the gate is what makes it inert.
+            Self::ExcludeEditor | Self::SshSetting | Self::SummaryLang => {
+                on_settings_page && state.overlay.is(self)
+            }
+            // In the modal slot, openable from anywhere. Spelled out rather
+            // than caught by `_`, so adding a modal still has to answer here.
+            Self::SummaryPopup
+            | Self::NewSession
+            | Self::AddRemote
+            | Self::MountPicker
+            | Self::HiddenSessions
+            | Self::Rename
+            | Self::ContextMenu
+            | Self::PortForward
+            | Self::Help
+            | Self::ConfirmKill => state.overlay.is(self),
         }
     }
 }

@@ -9,7 +9,7 @@ use super::{key_to_action, mouse_to_action, paste_to_action, Action, MenuAction}
 use crate::config::KeyBindingValue;
 use crate::menu::{ContextMenu, MenuKind};
 use crate::overlay::{
-    ExcludeEditorState, Modal, RenameState, SshSettingEditorState, SshSettingField,
+    ExcludeEditorState, Modal, ModalState, RenameState, SshSettingEditorState, SshSettingField,
 };
 use crate::state::{AppState, FocusMode, MainView, SessionEntry, SessionEntryKind};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -35,54 +35,62 @@ fn make_state() -> AppState {
 /// overlay/state shapes the reducers produce.
 fn open_modal(state: &mut AppState, modal: Modal) {
     match modal {
-        Modal::SummaryPopup => state.overlay.summary_popup = true,
+        Modal::SummaryPopup => state.overlay.open(ModalState::SummaryPopup),
         Modal::NewSession => {
             use crate::new_session::{make_textarea, NewSessionState, PickerFocus};
             use crate::picker::FilterPicker;
             let mut picker = FilterPicker::new(vec![]);
             picker.input = make_textarea("~/");
-            state.overlay.new_session = Some(NewSessionState {
+            state.overlay.open(ModalState::NewSession(NewSessionState {
                 name: make_textarea(""),
                 focus: PickerFocus::Name,
                 picker,
                 scroll: 0,
                 target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
-            });
+            }));
         }
         Modal::AddRemote => {
-            state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(
-                crate::system::SystemId::new("fixture"),
-                vec![],
+            state.overlay.open(ModalState::AddRemote(
+                crate::add_remote::AddRemoteState::new(
+                    crate::system::SystemId::new("fixture"),
+                    vec![],
+                ),
             ));
         }
         Modal::HiddenSessions => {
-            state.overlay.hidden_sessions = Some(crate::overlay::HiddenSessionsState::new(
-                crate::system::tmux::TmuxSystem::local_lane(),
-                &std::collections::HashSet::from(["sess-0".to_string()]),
+            state.overlay.open(ModalState::HiddenSessions(
+                crate::overlay::HiddenSessionsState::new(
+                    crate::system::tmux::TmuxSystem::local_lane(),
+                    &std::collections::HashSet::from(["sess-0".to_string()]),
+                ),
             ));
         }
         Modal::Rename => {
-            state.overlay.renaming = Some(RenameState::new_with_lane(
-                "sess-0".into(),
-                "sess-0".into(),
-                crate::system::tmux::TmuxSystem::local_lane(),
-            ));
+            state
+                .overlay
+                .open(ModalState::Rename(RenameState::new_with_lane(
+                    "sess-0".into(),
+                    "sess-0".into(),
+                    crate::system::tmux::TmuxSystem::local_lane(),
+                )));
         }
         Modal::ContextMenu => {
-            state.overlay.context_menu = Some(ContextMenu {
+            state.overlay.open(ModalState::ContextMenu(ContextMenu {
                 kind: MenuKind::Global,
                 x: 1,
                 y: 1,
                 selected: 0,
-            });
+            }));
         }
         Modal::PortForward => {
-            state.overlay.port_forward = Some(crate::forwards::PortForwardOverlay {
-                lane: crate::system::tmux::TmuxSystem::host_lane("h"),
-                selected: 0,
-                add_form: None,
-                status: None,
-            });
+            state.overlay.open(ModalState::PortForward(
+                crate::forwards::PortForwardOverlay {
+                    lane: crate::system::tmux::TmuxSystem::host_lane("h"),
+                    selected: 0,
+                    add_form: None,
+                    status: None,
+                },
+            ));
         }
         Modal::ThemePicker => state.settings.theme_picker_open = true,
         Modal::KeybindingsView => {
@@ -93,31 +101,39 @@ fn open_modal(state: &mut AppState, modal: Modal) {
         Modal::ExcludeEditor => {
             state.main_view = MainView::Settings;
             state.focus_mode = FocusMode::Main;
-            state.overlay.exclude_editor = Some(ExcludeEditorState::new());
+            state
+                .overlay
+                .open(ModalState::ExcludeEditor(ExcludeEditorState::new()));
         }
         Modal::MountPicker => {
-            state.overlay.mount_picker = Some(crate::overlay::MountPickerState::new(
-                crate::system::tmux::TmuxSystem::host_lane("prod"),
-                1,
-                crate::overlay::MountSort::default(),
+            state.overlay.open(ModalState::MountPicker(
+                crate::overlay::MountPickerState::new(
+                    crate::system::tmux::TmuxSystem::host_lane("prod"),
+                    1,
+                    crate::overlay::MountSort::default(),
+                ),
             ));
         }
         Modal::SshSetting => {
             state.main_view = MainView::Settings;
             state.focus_mode = FocusMode::Main;
-            state.overlay.ssh_setting_editor = Some(SshSettingEditorState::new(
-                SshSettingField::ControlPath,
-                crate::config::DEFAULT_SSH_CONTROL_PATH,
-            ));
+            state
+                .overlay
+                .open(ModalState::SshSetting(SshSettingEditorState::new(
+                    SshSettingField::ControlPath,
+                    crate::config::DEFAULT_SSH_CONTROL_PATH,
+                )));
         }
         Modal::SummaryLang => {
             use ratatui_textarea::TextArea;
             state.main_view = MainView::Settings;
             state.focus_mode = FocusMode::Main;
-            state.overlay.summary_lang_input = Some(TextArea::default());
+            state
+                .overlay
+                .open(ModalState::SummaryLang(TextArea::default()));
         }
-        Modal::Help => state.overlay.show_help = true,
-        Modal::ConfirmKill => state.overlay.confirm_kill = true,
+        Modal::Help => state.overlay.open(ModalState::Help),
+        Modal::ConfirmKill => state.overlay.open(ModalState::ConfirmKill),
     }
 }
 
@@ -181,7 +197,7 @@ fn escape_cancels_nested_modal_edits_before_closing_the_surface() {
 
     let mut exclude = make_state();
     open_modal(&mut exclude, Modal::ExcludeEditor);
-    exclude.overlay.exclude_editor.as_mut().unwrap().adding = true;
+    exclude.overlay.exclude_editor_mut().unwrap().adding = true;
     assert!(matches!(
         key_to_action(&esc, &exclude),
         Action::Settings(super::SettingsAction::ExcludeCancelAdd)
@@ -189,7 +205,7 @@ fn escape_cancels_nested_modal_edits_before_closing_the_surface() {
 
     let mut forward = make_state();
     open_modal(&mut forward, Modal::PortForward);
-    forward.overlay.port_forward.as_mut().unwrap().add_form =
+    forward.overlay.port_forward_mut().unwrap().add_form =
         Some(crate::forwards::PfAddForm::default_for(
             crate::forwards::ForwardMode::Local,
             crate::system::ForwardEndpointKind::Explicit,
@@ -205,7 +221,7 @@ fn escape_cancels_nested_modal_edits_before_closing_the_surface() {
 fn new_session_directory_field_confirms_on_enter_and_browses_with_arrows() {
     let mut state = make_state();
     open_modal(&mut state, Modal::NewSession);
-    state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Dir;
+    state.overlay.new_session_mut().unwrap().focus = crate::new_session::PickerFocus::Dir;
 
     // Enter finishes the job from either field; descending is `→`.
     let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
@@ -408,7 +424,7 @@ fn paste_does_not_bypass_sidebar_settings_or_modal_input_owners() {
     assert!(matches!(paste_to_action("x", &state), Action::None));
 
     state.main_view = MainView::Terminal;
-    state.overlay.show_help = true;
+    state.overlay.open(ModalState::Help);
     assert!(matches!(paste_to_action("x", &state), Action::None));
 }
 
@@ -523,7 +539,7 @@ fn new_session_clear_line_chord_routes_per_field() {
 
     // The path field clears through its own action, which also re-reads the
     // directory listing — for both spellings of the chord.
-    state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Dir;
+    state.overlay.new_session_mut().unwrap().focus = crate::new_session::PickerFocus::Dir;
     for chord in [ctrl_u, cmd_backspace] {
         assert!(matches!(
             key_to_action(&chord, &state),
@@ -546,7 +562,7 @@ fn new_session_delete_word_chord_drops_a_path_segment_in_the_directory_field() {
     ));
 
     // In the path field a word is a segment, on either delete-word key.
-    state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Dir;
+    state.overlay.new_session_mut().unwrap().focus = crate::new_session::PickerFocus::Dir;
     for chord in [ctrl_backspace, ctrl_w] {
         assert!(matches!(
             key_to_action(&chord, &state),

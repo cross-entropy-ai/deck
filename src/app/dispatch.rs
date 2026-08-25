@@ -339,12 +339,11 @@ impl App {
                 let still_current = self
                     .state
                     .overlay
-                    .new_session
-                    .as_ref()
+                    .new_session()
                     .and_then(|state| new_session_list_query(state, primary_lane.as_ref()))
                     .is_some_and(|(target_lane, expected)| target_lane == lane && expected == path);
                 if still_current {
-                    if let Some(ns) = self.state.overlay.new_session.as_mut() {
+                    if let Some(ns) = self.state.overlay.new_session_mut() {
                         match result {
                             Ok(listing) => {
                                 ns.picker.items =
@@ -769,14 +768,14 @@ impl App {
     /// `PfTaskResult` reducer writes it on worker success.
     fn pf_add_submit(&mut self) {
         if !self.state.prefs.ssh_connection_reuse {
-            if let Some(overlay) = self.state.overlay.port_forward.as_mut() {
+            if let Some(overlay) = self.state.overlay.port_forward_mut() {
                 overlay.status = Some(
                     "Enable SSH connection reuse in Settings before adding a port forward.".into(),
                 );
             }
             return;
         }
-        let Some(overlay) = self.state.overlay.port_forward.as_mut() else {
+        let Some(overlay) = self.state.overlay.port_forward_mut() else {
             return;
         };
         let Some(form) = overlay.add_form.as_mut() else {
@@ -829,7 +828,7 @@ impl App {
     /// `save_config` path.
     fn pf_delete_selected(&mut self) {
         let (lane, spec) = {
-            let Some(overlay) = self.state.overlay.port_forward.as_ref() else {
+            let Some(overlay) = self.state.overlay.port_forward() else {
                 return;
             };
             let lane = overlay.lane.clone();
@@ -856,7 +855,7 @@ impl App {
         let new_len =
             crate::app::ssh::config_adapter::forwards_for_lane(&self.state.config_remotes, &lane)
                 .map_or(0, Vec::len);
-        if let Some(overlay) = self.state.overlay.port_forward.as_mut() {
+        if let Some(overlay) = self.state.overlay.port_forward_mut() {
             if overlay.selected >= new_len {
                 overlay.selected = new_len.saturating_sub(1);
             }

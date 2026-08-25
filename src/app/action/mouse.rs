@@ -266,7 +266,7 @@ fn modal_mouse_to_action(
         }
         Modal::ContextMenu => {
             // `active_modal` only reports ContextMenu when it's open.
-            let Some(menu) = state.overlay.context_menu.as_ref() else {
+            let Some(menu) = state.overlay.context_menu() else {
                 return Action::None;
             };
             match mouse.kind {
@@ -290,7 +290,7 @@ fn modal_mouse_to_action(
             }
         }
         Modal::NewSession => {
-            if state.overlay.new_session.is_none() {
+            if state.overlay.is_not(Modal::NewSession) {
                 return Action::None;
             }
             match (mouse.kind, hit) {
@@ -318,7 +318,7 @@ fn modal_mouse_to_action(
             }
         }
         Modal::AddRemote => {
-            if state.overlay.add_remote.is_none() {
+            if state.overlay.is_not(Modal::AddRemote) {
                 return Action::None;
             }
             match (mouse.kind, hit) {
@@ -338,7 +338,7 @@ fn modal_mouse_to_action(
             }
         }
         Modal::HiddenSessions => {
-            if state.overlay.hidden_sessions.is_none() {
+            if state.overlay.is_not(Modal::HiddenSessions) {
                 return Action::None;
             }
             match (mouse.kind, hit) {
@@ -358,7 +358,7 @@ fn modal_mouse_to_action(
             }
         }
         Modal::MountPicker => {
-            if state.overlay.mount_picker.is_none() {
+            if state.overlay.is_not(Modal::MountPicker) {
                 return Action::None;
             }
             match (mouse.kind, hit) {
@@ -385,8 +385,7 @@ fn modal_mouse_to_action(
             // the user cannot see.
             let showing_list = state
                 .overlay
-                .port_forward
-                .as_ref()
+                .port_forward()
                 .is_some_and(|overlay| overlay.add_form.is_none());
             if !showing_list {
                 return Action::None;

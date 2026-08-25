@@ -1,5 +1,6 @@
 use super::{mouse_to_action, Action, NewSessionAction, SummaryAction};
 use crate::geometry::{AgentHit, AgentTarget, ListItemHit};
+use crate::overlay::{Modal, ModalState};
 use crate::state::{AppState, FocusTarget, LayoutMode, SessionEntry, SessionEntryKind};
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -65,13 +66,13 @@ fn state_with_new_session_dirs() -> AppState {
         "gamma".into(),
     ]));
     picker.input = make_textarea("~/");
-    state.overlay.new_session = Some(NewSessionState {
+    state.overlay.open(ModalState::NewSession(NewSessionState {
         name: make_textarea("session-0"),
         focus: PickerFocus::Name,
         picker,
         scroll: 0,
         target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
-    });
+    }));
     state.hit_regions.new_session_dirs = (0..4)
         .map(|index| ListItemHit {
             rect: Rect::new(20, 10 + index as u16, 24, 1),
@@ -134,7 +135,7 @@ fn directory_click_opens_that_folder_in_one_click() {
         "left-click must open the clicked row, got {action:?}"
     );
     let fx = crate::action::apply_action(&mut state, action);
-    let ns = state.overlay.new_session.as_ref().unwrap();
+    let ns = state.overlay.new_session().unwrap();
     assert_eq!(ns.input_str(), "~/beta/");
     assert_eq!(ns.focus, crate::new_session::PickerFocus::Dir);
     assert!(fx.has_reread_new_session_entries());
@@ -152,7 +153,7 @@ fn parent_row_is_clickable_even_though_the_keyboard_skips_it() {
     );
     crate::action::apply_action(&mut state, action);
     assert_eq!(
-        state.overlay.new_session.as_ref().unwrap().input_str(),
+        state.overlay.new_session().unwrap().input_str(),
         "~/../",
         "clicking `../` walks one level up"
     );
@@ -186,7 +187,7 @@ fn clicking_the_footer_create_hint_confirms() {
 #[test]
 fn wheel_over_directory_list_uses_wrapped_navigation() {
     let mut state = state_with_new_session_dirs();
-    let ns = state.overlay.new_session.as_mut().unwrap();
+    let ns = state.overlay.new_session_mut().unwrap();
     ns.focus = crate::new_session::PickerFocus::Dir;
     // `gamma`, the last row.
     ns.picker.selected = 3;
@@ -195,7 +196,7 @@ fn wheel_over_directory_list_uses_wrapped_navigation() {
     assert!(matches!(action, Action::NewSession(NewSessionAction::Next)));
     crate::action::apply_action(&mut state, action);
     assert_eq!(
-        state.overlay.new_session.as_ref().unwrap().picker.selected,
+        state.overlay.new_session().unwrap().picker.selected,
         1,
         "wrapping past the end lands on the first child, stepping over `..`"
     );
@@ -268,9 +269,11 @@ fn bordered_horizontal_divider_does_not_consume_first_pty_column() {
 
 fn state_with_add_remote() -> AppState {
     let mut state = AppState::new(120, 40);
-    state.overlay.add_remote = Some(crate::add_remote::AddRemoteState::new(
-        crate::app::ssh::config_adapter::owner(),
-        vec!["alpha".into(), "beta".into(), "gamma".into()],
+    state.overlay.open(ModalState::AddRemote(
+        crate::add_remote::AddRemoteState::new(
+            crate::app::ssh::config_adapter::owner(),
+            vec!["alpha".into(), "beta".into(), "gamma".into()],
+        ),
     ));
     state.hit_regions.add_remote.hosts = (0..3)
         .map(|index| ListItemHit {
@@ -346,17 +349,19 @@ fn state_with_mount_picker() -> AppState {
         })
         .collect();
     let mut state = AppState::new(120, 40);
-    state.overlay.mount_picker = Some(MountPickerState {
-        lane: crate::system::tmux::TmuxSystem::host_lane("devbox"),
-        generation: 1,
-        picker: crate::picker::FilterPicker::new(
-            candidates.iter().map(|c| c.label.clone()).collect(),
-        ),
-        candidates,
-        busy: None,
-        confirming: None,
-        sort: MountSort::default(),
-    });
+    state
+        .overlay
+        .open(ModalState::MountPicker(MountPickerState {
+            lane: crate::system::tmux::TmuxSystem::host_lane("devbox"),
+            generation: 1,
+            picker: crate::picker::FilterPicker::new(
+                candidates.iter().map(|c| c.label.clone()).collect(),
+            ),
+            candidates,
+            busy: None,
+            confirming: None,
+            sort: MountSort::default(),
+        }));
     state.hit_regions.mounts.rows = (0..2)
         .map(|index| ListItemHit {
             rect: Rect::new(20, 10 + index as u16, 24, 1),
@@ -387,7 +392,7 @@ fn clicking_a_candidate_that_needs_activation_still_asks_first() {
         fx.effects().is_empty(),
         "a candidate needing activation must not be started by the first click"
     );
-    let picker = state.overlay.mount_picker.as_ref().unwrap();
+    let picker = state.overlay.mount_picker().unwrap();
     assert_eq!(
         picker.confirming.as_ref().map(|c| c.id.as_str()),
         Some("stopped"),
@@ -398,7 +403,7 @@ fn clicking_a_candidate_that_needs_activation_still_asks_first() {
     let action = mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 22, 10), &state);
     let fx = crate::action::apply_action(&mut state, action);
     assert!(
-        state.overlay.mount_picker.is_none(),
+        state.overlay.is_not(Modal::MountPicker),
         "the ready candidate mounts outright"
     );
     let mounted = fx.effects().iter().find_map(|effect| match effect {
@@ -450,12 +455,14 @@ fn state_with_port_forwards() -> AppState {
             })
             .collect(),
     }];
-    state.overlay.port_forward = Some(PortForwardOverlay {
-        lane: crate::system::tmux::TmuxSystem::host_lane("devbox"),
-        selected: 0,
-        add_form: None,
-        status: None,
-    });
+    state
+        .overlay
+        .open(ModalState::PortForward(PortForwardOverlay {
+            lane: crate::system::tmux::TmuxSystem::host_lane("devbox"),
+            selected: 0,
+            add_form: None,
+            status: None,
+        }));
     state.hit_regions.port_forward.rows = (0..3)
         .map(|index| ListItemHit {
             rect: Rect::new(20, 10 + index as u16, 24, 1),
@@ -480,7 +487,7 @@ fn clicking_a_forward_focuses_it_without_deleting_it() {
         "left-click must only focus the row, got {action:?}"
     );
     crate::action::apply_action(&mut state, action);
-    assert_eq!(state.overlay.port_forward.as_ref().unwrap().selected, 2);
+    assert_eq!(state.overlay.port_forward().unwrap().selected, 2);
 
     let right = mouse_to_action(
         &ev(MouseEventKind::Down(MouseButton::Right), 22, 12),
@@ -524,7 +531,7 @@ fn a_click_past_the_end_of_the_forward_list_clamps() {
         &mut state,
         Action::Pf(crate::action::PfAction::FocusRow(99)),
     );
-    assert_eq!(state.overlay.port_forward.as_ref().unwrap().selected, 2);
+    assert_eq!(state.overlay.port_forward().unwrap().selected, 2);
 }
 
 /// The add form covers the list, so the wheel — which does not need a hit to
@@ -532,7 +539,7 @@ fn a_click_past_the_end_of_the_forward_list_clamps() {
 #[test]
 fn the_wheel_is_inert_while_the_add_form_covers_the_forward_list() {
     let mut state = state_with_port_forwards();
-    state.overlay.port_forward.as_mut().unwrap().add_form =
+    state.overlay.port_forward_mut().unwrap().add_form =
         Some(crate::forwards::PfAddForm::default_for(
             crate::forwards::ForwardMode::Local,
             crate::system::ForwardEndpointKind::Explicit,
@@ -553,9 +560,8 @@ fn state_with_hidden_picker() -> AppState {
         lane.clone(),
         ["alpha", "beta"].iter().map(|s| s.to_string()).collect(),
     );
-    state.overlay.hidden_sessions = Some(crate::overlay::HiddenSessionsState::new(
-        lane.clone(),
-        &state.hidden_sessions[&lane],
+    state.overlay.open(ModalState::HiddenSessions(
+        crate::overlay::HiddenSessionsState::new(lane.clone(), &state.hidden_sessions[&lane]),
     ));
     state.hit_regions.hidden.rows = (0..2)
         .map(|index| ListItemHit {

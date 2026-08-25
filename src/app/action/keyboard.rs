@@ -227,7 +227,7 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
             _ => MenuAction::Dismiss,
         }),
         // `active_modal` only reports PortForward when the overlay is set.
-        Modal::PortForward => match state.overlay.port_forward.as_ref() {
+        Modal::PortForward => match state.overlay.port_forward() {
             Some(overlay) => pf_key(key, overlay),
             None => Action::None,
         },
@@ -299,11 +299,7 @@ fn settings_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 }
 
 fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
-    let adding = state
-        .overlay
-        .exclude_editor
-        .as_ref()
-        .is_some_and(|e| e.adding);
+    let adding = state.overlay.exclude_editor().is_some_and(|e| e.adding);
 
     if adding {
         return match key.code {
@@ -396,8 +392,7 @@ fn new_session_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
     use crate::new_session::PickerFocus;
     let focus = state
         .overlay
-        .new_session
-        .as_ref()
+        .new_session()
         .map(|ns| ns.focus)
         .unwrap_or(PickerFocus::Name);
     match focus {

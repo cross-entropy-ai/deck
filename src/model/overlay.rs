@@ -371,27 +371,153 @@ pub struct WarningState {
     pub detail: String,
 }
 
-/// UI state for transient sidebar overlays — help, kill-confirm, rename,
-/// context menu, exclude-pattern editor. Grouped so renderer and key
-/// dispatcher have one place to ask "is any overlay active?".
+/// Declares the modal payloads once and derives the [`ModalState`] enum, its
+/// [`kind`](ModalState::kind) discriminant, and the typed accessors on
+/// [`OverlayState`] from that one list.
+///
+/// A variant with `(Type) => getter / getter_mut` carries state, plus an
+/// optional `/ taker` for the ones a caller has to move out of. A bare variant
+/// is a modal that is either up or not.
+macro_rules! modal_states {
+    ($(
+        $(#[$attr:meta])*
+        $variant:ident $(($ty:ty) => $get:ident / $get_mut:ident $(/ $take:ident)?)?
+    ),* $(,)?) => {
+        /// The one modal Deck is showing, and its state.
+        ///
+        /// One slot, not thirteen flags: two modals open at once was
+        /// representable before this and had to be resolved at read time by a
+        /// priority chain. Here it cannot be built.
+        ///
+        /// [`Modal`] is this type's discriminant. The two variants `Modal` has
+        /// and this does not — `ThemePicker` and `KeybindingsView` — are
+        /// settings-page sub-popovers whose cursor and scroll live in
+        /// `SettingsState` alongside the page they belong to.
+        // The variants differ in size by design: a picker carries a filter and
+        // its items, a confirmation carries nothing. Boxing the big ones would
+        // trade one pointer chase per access for memory this type no longer
+        // spends — the thirteen `Option` fields this replaced held every payload
+        // side by side, 8,216 bytes against 2,360 here.
+        #[allow(clippy::large_enum_variant)]
+        #[derive(Debug)]
+        pub enum ModalState {
+            $($(#[$attr])* $variant $(($ty))?),*
+        }
+
+        impl ModalState {
+            /// Which modal this is, dropping the state.
+            pub fn kind(&self) -> Modal {
+                match self {
+                    $(Self::$variant { .. } => Modal::$variant),*
+                }
+            }
+        }
+
+        impl OverlayState {
+            $($(
+                #[doc = concat!(
+                    "The open [`ModalState::", stringify!($variant), "`]'s state, or \
+                     `None` when something else (or nothing) is open."
+                )]
+                pub fn $get(&self) -> Option<&$ty> {
+                    match &self.modal {
+                        Some(ModalState::$variant(state)) => Some(state),
+                        _ => None,
+                    }
+                }
+
+                #[doc = concat!(
+                    "Mutable [`ModalState::", stringify!($variant), "`] state, or \
+                     `None` when something else (or nothing) is open."
+                )]
+                pub fn $get_mut(&mut self) -> Option<&mut $ty> {
+                    match &mut self.modal {
+                        Some(ModalState::$variant(state)) => Some(state),
+                        _ => None,
+                    }
+                }
+
+                $(
+                    #[doc = concat!(
+                        "Close [`ModalState::", stringify!($variant), "`] and hand \
+                         back its state. `None`, and nothing closed, if it was not \
+                         the open one."
+                    )]
+                    pub fn $take(&mut self) -> Option<$ty> {
+                        match self.modal.take() {
+                            Some(ModalState::$variant(state)) => Some(state),
+                            // Not ours: put back what we took.
+                            other => {
+                                self.modal = other;
+                                None
+                            }
+                        }
+                    }
+                )?
+            )?)*
+        }
+    };
+}
+
+modal_states! {
+    /// The Agents-tab summary "big view" popup.
+    SummaryPopup,
+    NewSession(NewSessionState) => new_session / new_session_mut,
+    AddRemote(crate::add_remote::AddRemoteState) => add_remote / add_remote_mut,
+    /// Picker over the lanes a system says the focused lane could mount.
+    MountPicker(MountPickerState) => mount_picker / mount_picker_mut,
+    HiddenSessions(HiddenSessionsState) => hidden_sessions / hidden_sessions_mut / take_hidden_sessions,
+    Rename(RenameState) => renaming / renaming_mut / take_renaming,
+    ContextMenu(ContextMenu) => context_menu / context_menu_mut / take_context_menu,
+    /// Port-forward overlay for a single lane. See `PortForwardOverlay`.
+    PortForward(PortForwardOverlay) => port_forward / port_forward_mut,
+    ExcludeEditor(ExcludeEditorState) => exclude_editor / exclude_editor_mut,
+    /// Settings input box for Deck's ControlPath or ControlPersist value.
+    SshSetting(SshSettingEditorState) => ssh_setting_editor / ssh_setting_editor_mut / take_ssh_setting_editor,
+    /// Settings input box for the generated-summary language (free text).
+    SummaryLang(TextArea<'static>) => summary_lang_input / summary_lang_input_mut / take_summary_lang_input,
+    Help,
+    ConfirmKill,
+}
+
+/// The transient overlay Deck is showing, if any.
+///
+/// Exactly one modal is up at a time — the field is private so that stays true
+/// — and every reader reaches its state through the generated accessors, which
+/// answer `None` unless *that* modal is the open one.
 #[derive(Debug, Default)]
 pub struct OverlayState {
-    pub show_help: bool,
-    pub confirm_kill: bool,
-    pub renaming: Option<RenameState>,
-    pub context_menu: Option<ContextMenu>,
-    pub exclude_editor: Option<ExcludeEditorState>,
-    pub new_session: Option<NewSessionState>,
-    pub add_remote: Option<crate::add_remote::AddRemoteState>,
-    /// Port-forward overlay for a single host. See `PortForwardOverlay`.
-    pub port_forward: Option<PortForwardOverlay>,
-    /// The Agents-tab summary "big view" popup is open.
-    pub summary_popup: bool,
-    /// Settings input box for the generated-summary language (free text).
-    pub summary_lang_input: Option<TextArea<'static>>,
-    /// Settings input box for Deck's ControlPath or ControlPersist value.
-    pub ssh_setting_editor: Option<SshSettingEditorState>,
-    /// Picker over the lanes a system says the focused lane could mount.
-    pub mount_picker: Option<MountPickerState>,
-    pub hidden_sessions: Option<HiddenSessionsState>,
+    modal: Option<ModalState>,
+}
+
+impl OverlayState {
+    /// Which modal is up, if any. `AppState::active_modal` is the routing
+    /// answer — it also weighs the settings-page sub-popovers and their focus
+    /// gate — so prefer that outside this module.
+    pub fn kind(&self) -> Option<Modal> {
+        self.modal.as_ref().map(ModalState::kind)
+    }
+
+    /// Whether `kind` is the modal currently up.
+    pub fn is(&self, kind: Modal) -> bool {
+        self.kind() == Some(kind)
+    }
+
+    /// Whether `kind` is *not* up — a different modal, or none at all.
+    pub fn is_not(&self, kind: Modal) -> bool {
+        !self.is(kind)
+    }
+
+    /// Show `modal`, replacing whatever was up.
+    pub fn open(&mut self, modal: ModalState) {
+        self.modal = Some(modal);
+    }
+
+    /// Close `kind` if it is what is up. A no-op otherwise, so a path tidying
+    /// up after one overlay cannot dismiss an unrelated one that opened since.
+    pub fn close(&mut self, kind: Modal) {
+        if self.is(kind) {
+            self.modal = None;
+        }
+    }
 }
