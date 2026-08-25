@@ -374,130 +374,79 @@ pub struct LaneCapabilities {
     pub mounts: bool,
 }
 
-#[derive(Clone)]
-pub struct LaneRuntime<'a> {
-    lane: LaneId,
-    catalog: Option<&'a dyn SessionCatalog>,
-    session_control: Option<&'a dyn SessionControlProvider>,
-    lane_actions: Option<&'a dyn LaneActionProvider>,
-    lane_config: Option<&'a dyn LaneConfigProvider>,
-    lane_mounts: Option<&'a dyn LaneMountProvider>,
-    focus_transport: Option<&'a dyn FocusTransportProvider>,
-    summary_transport: Option<&'a dyn SummaryTransportProvider>,
-    attachment: Option<&'a dyn AttachmentProvider>,
-    pub session_capabilities: SessionCapabilities,
-    pub lane_capabilities: LaneCapabilities,
+/// Declares the providers a lane runtime can carry, once, and derives the
+/// struct fields, the `with_*` builder steps and the accessors from that list.
+///
+/// A `System` fills in only the ones it implements, so every entry is an
+/// `Option` and every reader has to handle absence — which is the point: the
+/// shell asks a lane what it can do rather than assuming.
+macro_rules! lane_providers {
+    ($(
+        $(#[$attr:meta])*
+        $vis:vis $field:ident : $trait:ident => $with:ident
+    ),* $(,)?) => {
+        /// One lane's runtime: who answers for it, and what it can do.
+        #[derive(Clone)]
+        pub struct LaneRuntime<'a> {
+            lane: LaneId,
+            $($field: Option<&'a dyn $trait>,)*
+            pub session_capabilities: SessionCapabilities,
+            pub lane_capabilities: LaneCapabilities,
+        }
+
+        impl<'a> LaneRuntime<'a> {
+            pub fn new(lane: &LaneId) -> Self {
+                Self {
+                    lane: lane.clone(),
+                    $($field: None,)*
+                    session_capabilities: SessionCapabilities::default(),
+                    lane_capabilities: LaneCapabilities::default(),
+                }
+            }
+
+            $(
+                $(#[$attr])*
+                $vis fn $with(mut self, provider: &'a dyn $trait) -> Self {
+                    self.$field = Some(provider);
+                    self
+                }
+
+                $vis fn $field(&self) -> Option<&'a dyn $trait> {
+                    self.$field
+                }
+            )*
+
+            pub fn with_capabilities(
+                mut self,
+                session: SessionCapabilities,
+                lane: LaneCapabilities,
+            ) -> Self {
+                self.session_capabilities = session;
+                self.lane_capabilities = lane;
+                self
+            }
+
+            pub fn lane(&self) -> &LaneId {
+                &self.lane
+            }
+
+            /// Whether this lane can be asked for a session snapshot at all.
+            pub fn has_catalog(&self) -> bool {
+                self.catalog.is_some()
+            }
+        }
+    };
 }
 
-impl<'a> LaneRuntime<'a> {
-    pub fn new(lane: &LaneId) -> Self {
-        Self {
-            lane: lane.clone(),
-            catalog: None,
-            session_control: None,
-            lane_actions: None,
-            lane_config: None,
-            lane_mounts: None,
-            focus_transport: None,
-            summary_transport: None,
-            attachment: None,
-            session_capabilities: SessionCapabilities::default(),
-            lane_capabilities: LaneCapabilities::default(),
-        }
-    }
-
-    pub fn with_catalog(mut self, catalog: &'a dyn SessionCatalog) -> Self {
-        self.catalog = Some(catalog);
-        self
-    }
-
-    pub fn with_session_control(mut self, control: &'a dyn SessionControlProvider) -> Self {
-        self.session_control = Some(control);
-        self
-    }
-
-    pub fn with_lane_actions(mut self, actions: &'a dyn LaneActionProvider) -> Self {
-        self.lane_actions = Some(actions);
-        self
-    }
-
-    pub fn with_lane_config(mut self, config: &'a dyn LaneConfigProvider) -> Self {
-        self.lane_config = Some(config);
-        self
-    }
-
-    pub fn with_lane_mounts(mut self, mounts: &'a dyn LaneMountProvider) -> Self {
-        self.lane_mounts = Some(mounts);
-        self
-    }
-
-    pub(crate) fn with_focus_transport(mut self, provider: &'a dyn FocusTransportProvider) -> Self {
-        self.focus_transport = Some(provider);
-        self
-    }
-
-    pub(crate) fn with_summary_transport(
-        mut self,
-        provider: &'a dyn SummaryTransportProvider,
-    ) -> Self {
-        self.summary_transport = Some(provider);
-        self
-    }
-
-    pub fn with_attachment(mut self, provider: &'a dyn AttachmentProvider) -> Self {
-        self.attachment = Some(provider);
-        self
-    }
-
-    pub fn with_capabilities(
-        mut self,
-        session: SessionCapabilities,
-        lane: LaneCapabilities,
-    ) -> Self {
-        self.session_capabilities = session;
-        self.lane_capabilities = lane;
-        self
-    }
-
-    pub fn lane(&self) -> &LaneId {
-        &self.lane
-    }
-
-    pub fn has_catalog(&self) -> bool {
-        self.catalog.is_some()
-    }
-
-    pub fn catalog(&self) -> Option<&'a dyn SessionCatalog> {
-        self.catalog
-    }
-
-    pub fn session_control(&self) -> Option<&'a dyn SessionControlProvider> {
-        self.session_control
-    }
-
-    pub fn lane_actions(&self) -> Option<&'a dyn LaneActionProvider> {
-        self.lane_actions
-    }
-
-    pub fn lane_config(&self) -> Option<&'a dyn LaneConfigProvider> {
-        self.lane_config
-    }
-
-    pub fn lane_mounts(&self) -> Option<&'a dyn LaneMountProvider> {
-        self.lane_mounts
-    }
-
-    pub(crate) fn focus_transport(&self) -> Option<&'a dyn FocusTransportProvider> {
-        self.focus_transport
-    }
-
-    pub(crate) fn summary_transport(&self) -> Option<&'a dyn SummaryTransportProvider> {
-        self.summary_transport
-    }
-
-    pub fn attachment(&self) -> Option<&'a dyn AttachmentProvider> {
-        self.attachment
-    }
+lane_providers! {
+    pub catalog: SessionCatalog => with_catalog,
+    pub session_control: SessionControlProvider => with_session_control,
+    pub lane_actions: LaneActionProvider => with_lane_actions,
+    pub lane_config: LaneConfigProvider => with_lane_config,
+    pub lane_mounts: LaneMountProvider => with_lane_mounts,
+    pub(crate) focus_transport: FocusTransportProvider => with_focus_transport,
+    pub(crate) summary_transport: SummaryTransportProvider => with_summary_transport,
+    pub attachment: AttachmentProvider => with_attachment,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
