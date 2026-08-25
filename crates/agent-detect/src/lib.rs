@@ -40,6 +40,17 @@ pub struct PaneInfo {
     pub session: String,
     pub window: String,
     pub pane_id: String,
+    /// OSC pane title (`#{pane_title}`); empty when unset. Feeds the title
+    /// tier of [`classify_verdict`].
+    pub title: String,
+    /// `#{window_activity}` — epoch seconds of the window's last output,
+    /// on the *server's* clock. `None` when the server doesn't know the
+    /// format variable. Freshness against the same server's "now" is the
+    /// level-triggered working signal (see `docs/agent-status-plan.md`).
+    pub window_activity: Option<u64>,
+    /// `#{window_panes}`. The activity clock is window-scoped, so it is
+    /// only trustworthy for an agent that has its window to itself.
+    pub window_panes: Option<u32>,
 }
 
 /// An interactive agent located in a specific pane.
@@ -54,6 +65,11 @@ pub struct DetectedAgent {
     /// `detect_agents` has no buffer, so it leaves this `Unknown` for the
     /// gathering layer to fill in.
     pub status: AgentStatus,
+    /// The classifier saw an agent-owned viewer overlay (transcript, model
+    /// picker) that can't show live state. The gathering layer has no
+    /// memory, so the stateful side (deck's snapshot apply) resolves this
+    /// by keeping the pane's previous status; `status` is `Unknown` here.
+    pub keep_previous: bool,
 }
 
 /// Traffic-light health shown as a colored dot per agent row: green =
@@ -155,6 +171,65 @@ pub fn classify_verdict(kind: AgentKind, buffer: &str, title: Option<&str>) -> V
         AgentKind::Claude => claude_verdict(buffer, title),
         AgentKind::Codex => codex_verdict(buffer, title),
     }
+}
+
+/// How stale (seconds, on the tmux server's own clock) `#{window_activity}`
+/// may be and still count as "output is flowing". Two refresh ticks: tight
+/// enough that a finished turn goes dark quickly, loose enough that one
+/// probe's jitter doesn't flap the dot.
+pub const ACTIVITY_FRESH_WINDOW_SECS: u64 = 2;
+
+/// Whether the pane's window emitted output within the freshness window.
+/// `None` — no signal — unless every ingredient is present AND the agent has
+/// the window to itself: `#{window_activity}` is window-scoped, so in a
+/// split window a neighbor's output would masquerade as agent activity.
+/// `now` must come from the same machine's clock as `window_activity`
+/// (locally `SystemTime::now`, remotely the probe's `date +%s`), or skew
+/// becomes part of the window.
+pub fn activity_fresh(
+    window_activity: Option<u64>,
+    window_panes: Option<u32>,
+    now: Option<u64>,
+) -> Option<bool> {
+    if window_panes != Some(1) {
+        return None;
+    }
+    let (activity, now) = (window_activity?, now?);
+    Some(now.saturating_sub(activity) <= ACTIVITY_FRESH_WINDOW_SECS)
+}
+
+/// Merge the screen verdict with the activity clock into the status the
+/// sidebar shows. The ordering encodes one asymmetry, measured in
+/// `docs/agent-status-plan.md`: *lighting* Working tolerates error, but only
+/// **live** evidence may keep it lit, and only **positive** evidence may
+/// retract a source that says Working.
+///
+/// - A visible dialog outranks everything: if a blocker is on screen, the
+///   user is being waited on, whatever any clock says.
+/// - A viewer overlay yields `Unknown` + the caller-resolved
+///   [`DetectedAgent::keep_previous`] (this pure layer has no memory).
+/// - A live working tell or fresh output wins over the transcript's idle
+///   remnants: a completed-turn line from the *previous* turn stays on
+///   screen while the next turn streams, and fresh output disproves it.
+/// - The positive idle tells (completed / interrupted lines) come next —
+///   they exist to retract stale *hook* Working (a coming source), which the
+///   weak fallback must never do.
+pub fn merge_status(screen: Verdict, activity_fresh: Option<bool>) -> AgentStatus {
+    if screen.visible_blocker {
+        return AgentStatus::Waiting;
+    }
+    if screen.keep_previous {
+        return AgentStatus::Unknown;
+    }
+    if screen.status == AgentStatus::Working || activity_fresh == Some(true) {
+        return AgentStatus::Working;
+    }
+    if screen.visible_idle {
+        return AgentStatus::Idle;
+    }
+    // Weak readings pass through: a dialog-ish text match stays Waiting, an
+    // unrecognized screen stays the weak Idle, an empty capture Unknown.
+    screen.status
 }
 
 /// How many lines up from the bottom to consider at all — the capture is
@@ -544,8 +619,9 @@ pub fn detect_agents(panes: &[PaneInfo], ps_output: &str) -> Vec<DetectedAgent> 
                     window: p.window.clone(),
                     pane_id: p.pane_id.clone(),
                     // No buffer here; the gathering layer captures the pane
-                    // and fills this in via `classify_status`.
+                    // and fills these in via `classify_verdict`/`merge_status`.
                     status: AgentStatus::Unknown,
+                    keep_previous: false,
                 });
                 break; // one agent per pane
             }
@@ -634,6 +710,9 @@ mod tests {
             session: session.to_string(),
             window: window.to_string(),
             pane_id: format!("%{pid}"),
+            title: String::new(),
+            window_activity: None,
+            window_panes: None,
         }
     }
 
@@ -988,6 +1067,70 @@ mod tests {
         let stale = classify_verdict(AgentKind::Codex, idle_buffer, Some("mybox.local"));
         assert_eq!(stale.status, AgentStatus::Idle);
         assert!(!stale.visible_idle);
+    }
+
+    #[test]
+    fn activity_fresh_needs_a_sole_pane_and_both_clocks() {
+        // The window must be the agent's alone.
+        assert_eq!(activity_fresh(Some(100), Some(2), Some(100)), None);
+        assert_eq!(activity_fresh(Some(100), None, Some(100)), None);
+        // Both clock readings must exist.
+        assert_eq!(activity_fresh(None, Some(1), Some(100)), None);
+        assert_eq!(activity_fresh(Some(100), Some(1), None), None);
+        // Fresh within the window (incl. a slightly-ahead stamp), stale past it.
+        assert_eq!(activity_fresh(Some(100), Some(1), Some(101)), Some(true));
+        assert_eq!(activity_fresh(Some(101), Some(1), Some(100)), Some(true));
+        assert_eq!(
+            activity_fresh(
+                Some(100),
+                Some(1),
+                Some(100 + ACTIVITY_FRESH_WINDOW_SECS + 1)
+            ),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn merge_status_orders_the_evidence() {
+        let weak = Verdict::status(AgentStatus::Idle);
+        // Streaming blind spot: weak idle + fresh output → Working.
+        assert_eq!(merge_status(weak, Some(true)), AgentStatus::Working);
+        // No activity signal → the weak reading passes through.
+        assert_eq!(merge_status(weak, None), AgentStatus::Idle);
+        assert_eq!(merge_status(weak, Some(false)), AgentStatus::Idle);
+
+        // A visible dialog outranks fresh output (the dialog paint IS the
+        // fresh output).
+        assert_eq!(
+            merge_status(Verdict::blocker(), Some(true)),
+            AgentStatus::Waiting
+        );
+
+        // A previous turn's completed line lingers on screen while the next
+        // turn streams: fresh output disproves the idle remnant.
+        assert_eq!(
+            merge_status(Verdict::idle_tell(), Some(true)),
+            AgentStatus::Working
+        );
+        // …but once output stops, the positive idle stands.
+        assert_eq!(
+            merge_status(Verdict::idle_tell(), Some(false)),
+            AgentStatus::Idle
+        );
+        assert_eq!(merge_status(Verdict::idle_tell(), None), AgentStatus::Idle);
+
+        // Viewer overlays resolve at the stateful layer (keep_previous flag
+        // on the DetectedAgent); here they are Unknown.
+        assert_eq!(
+            merge_status(Verdict::keep_previous(), Some(true)),
+            AgentStatus::Unknown
+        );
+
+        // Weak waiting (dialog-ish text, no live footer) survives unless
+        // output is actually flowing.
+        let weak_wait = Verdict::status(AgentStatus::Waiting);
+        assert_eq!(merge_status(weak_wait, None), AgentStatus::Waiting);
+        assert_eq!(merge_status(weak_wait, Some(true)), AgentStatus::Working);
     }
 
     #[test]

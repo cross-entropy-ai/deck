@@ -324,6 +324,7 @@ fn header_shows_live_counts_without_duplicate_new_action() {
             window: "1".to_string(),
             pane_id: "%1".to_string(),
             status: crate::agent::AgentStatus::Working,
+            keep_previous: false,
         }],
     );
     state.rebuild_agent_entries();
@@ -405,6 +406,7 @@ fn agents_tab_publishes_clickable_agent_entries() {
         window: "1".to_string(),
         pane_id: pane_id.to_string(),
         status: crate::agent::AgentStatus::Idle,
+        keep_previous: false,
     };
 
     let mut state = AppState::new(100, 24);
@@ -991,6 +993,7 @@ fn the_tree_line_reaches_a_container_on_the_agents_tab_too() {
             window: "1".into(),
             pane_id: "%1".into(),
             status: AgentStatus::Working,
+            keep_previous: false,
         }],
     );
     state.rebuild_agent_entries();

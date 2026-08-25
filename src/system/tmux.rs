@@ -640,11 +640,27 @@ impl SessionCatalog for TmuxSystem {
                     session.is_current = current.as_deref() == Some(session.name.as_str());
                 }
                 let agents = ctx.probe_agents.then(|| {
-                    let mut agents =
-                        agent::detect_agents(&tmux::agent_panes(), &agent::ps_snapshot());
+                    let panes = tmux::agent_panes();
+                    let mut agents = agent::detect_agents(&panes, &agent::ps_snapshot());
+                    // The local server shares this machine's clock, so
+                    // SystemTime is the right "now" for its activity stamps.
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .ok()
+                        .map(|d| d.as_secs());
                     for detected in &mut agents {
                         if let Some(buffer) = tmux::capture_pane(&detected.pane_id) {
-                            detected.status = agent::classify_status(detected.kind, &buffer);
+                            let pane = panes.iter().find(|p| p.pane_id == detected.pane_id);
+                            let verdict = agent::classify_verdict(
+                                detected.kind,
+                                &buffer,
+                                pane.map(|p| p.title.as_str()),
+                            );
+                            let fresh = pane.and_then(|p| {
+                                agent::activity_fresh(p.window_activity, p.window_panes, now)
+                            });
+                            detected.status = agent::merge_status(verdict, fresh);
+                            detected.keep_previous = verdict.keep_previous;
                         }
                     }
                     agents

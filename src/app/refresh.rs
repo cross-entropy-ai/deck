@@ -85,7 +85,22 @@ impl App {
                 Ok(mut snapshot) => {
                     if agents_requested {
                         match snapshot.agents.take() {
-                            Some(agents) => {
+                            Some(mut agents) => {
+                                // A viewer overlay (transcript, model picker)
+                                // can't show live state; the gathering layer
+                                // is memoryless, so resolve keep_previous
+                                // here: the pane keeps what it last showed.
+                                if let Some(prev) = self.state.agents.get(&lane) {
+                                    for agent in &mut agents {
+                                        if agent.keep_previous {
+                                            if let Some(old) =
+                                                prev.iter().find(|o| o.pane_id == agent.pane_id)
+                                            {
+                                                agent.status = old.status;
+                                            }
+                                        }
+                                    }
+                                }
                                 self.state.agents.insert(lane.clone(), agents);
                             }
                             None => {

@@ -29,6 +29,13 @@ use crate::model::session::SessionSnapshot;
 /// plain underscores are safe in any remote shell.
 const AGENT_PROBE_MARKER: &str = "__DECK_AGENT_PROBE__";
 
+/// Marker separating the `ps` snapshot from the remote `date +%s` reading in
+/// the same combined call. The remote clock is what `#{window_activity}`
+/// (server-side epoch seconds) must be compared against — using the local
+/// clock would bake clock skew into the freshness window. Same shell-safety
+/// rules as [`AGENT_PROBE_MARKER`].
+const AGENT_PROBE_NOW_MARKER: &str = "__DECK_AGENT_NOW__";
+
 /// Hard cap on a single remote ssh+tmux call. Generous vs the local 1s
 /// budget because the first call may wait for the SSH master to come up.
 pub const REMOTE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -509,22 +516,50 @@ fn agent_probe_with(runner: &dyn CommandRunner, host: &str) -> Option<Vec<Detect
             "2>/dev/null",
             "||",
             "true",
+            ";",
+            "echo",
+            AGENT_PROBE_NOW_MARKER,
+            ";",
+            // The server's own "now", for judging `#{window_activity}`
+            // freshness without local/remote clock skew. `date +%s` is
+            // portable (bash/zsh/busybox); `|| true` keeps an exotic
+            // date-less image from failing the whole probe — the clock
+            // simply stays unknown there.
+            "date",
+            "+%s",
+            "2>/dev/null",
+            "||",
+            "true",
         ],
     )
     .ok()?;
-    let (panes_part, ps_part) = raw.split_once(AGENT_PROBE_MARKER)?;
+    let (panes_part, rest) = raw.split_once(AGENT_PROBE_MARKER)?;
+    let (ps_part, now_part) = rest
+        .split_once(AGENT_PROBE_NOW_MARKER)
+        .unwrap_or((rest, ""));
+    // The remote clock reading; `None` (empty/garbled) leaves activity
+    // freshness unknowable, which the merge treats as "no signal".
+    let remote_now = now_part.trim().parse::<u64>().ok();
     let panes = crate::infra::parser::pane::parse_panes(panes_part);
     let mut agents = crate::agent::detect_agents(&panes, ps_part);
 
     // Classify each agent's status from its pane buffer. One batched hop
     // captures every agent pane at once (the panes are already known from
-    // the probe), then the shared classifier runs — same as the local path.
+    // the probe), then the shared classifier + merge run — same as the local
+    // path, except "now" is the remote's own clock from this same probe.
     if !agents.is_empty() {
         let pane_ids: Vec<String> = agents.iter().map(|a| a.pane_id.clone()).collect();
         let buffers = capture_panes(host, &pane_ids);
         for a in &mut agents {
             if let Some(buf) = buffers.get(&a.pane_id) {
-                a.status = crate::agent::classify_status(a.kind, buf);
+                let pane = panes.iter().find(|p| p.pane_id == a.pane_id);
+                let verdict =
+                    crate::agent::classify_verdict(a.kind, buf, pane.map(|p| p.title.as_str()));
+                let fresh = pane.and_then(|p| {
+                    crate::agent::activity_fresh(p.window_activity, p.window_panes, remote_now)
+                });
+                a.status = crate::agent::merge_status(verdict, fresh);
+                a.keep_previous = verdict.keep_previous;
             }
         }
     }
