@@ -1,9 +1,14 @@
 ---
 name: release
-description: Cut and publish a deck release — bump the crate version, tag main, watch the GitHub Actions run that builds the binaries and updates the Homebrew tap, then rewrite the release notes. Use when asked to release, publish, ship, cut a version, tag a release, or 发布/出个新版本/触发 release.
+description: Cut and publish a deck release — bump the crate version, tag main, watch the GitHub Actions run that builds the binaries and updates the Homebrew tap, then rewrite the release notes. Use when asked to release, publish, ship, cut a version, tag a release, or 发布/出个新版本/触发 release. Args - [major|minor|patch|X.Y.Z], defaults to inferring the bump from what is unreleased.
+argument-hint: "[major|minor|patch|X.Y.Z]"
 ---
 
 # Release deck
+
+`$1` says which digit of the version moves: `major`, `minor`, `patch`, or a
+literal `X.Y.Z` (or `X.Y.Z-beta.N`) to set it outright. Left empty, step 2
+infers it from what is unreleased and says so.
 
 Releases are the **one exception** to the branch-and-PR rule in `CLAUDE.md`: the
 version bump is committed straight to `main` and the tag is pushed from there.
@@ -33,23 +38,54 @@ cargo test --workspace --all-features
 
 ## 2. Pick the version
 
-Read `git log "$PREV"..main` and choose patch / minor / major. State the number
-you picked and why before tagging — it is the one part of this that cannot be
-undone cleanly once people have pulled it.
+`$1` decides. Compute the next version from `$PREV` rather than by eye — the
+tag is the one step here that cannot be taken back cleanly once anyone has
+pulled it:
 
-A tag containing `-` (e.g. `v1.3.0-beta.1`) is a **beta**: the workflow marks
-the GitHub Release as a prerelease and writes a separate `deck-beta.rb` formula
-whose binary is `deck-beta`, so it coexists with a stable install.
+```bash
+BUMP="${1:-}"                       # major | minor | patch | X.Y.Z | empty
+BASE="${PREV#v}"; BASE="${BASE%%-*}"  # v1.3.0-beta.1 -> 1.3.0
+IFS=. read -r MA MI PA <<< "$BASE"
+case "$BUMP" in
+  major) NEXT="$((MA + 1)).0.0" ;;
+  minor) NEXT="${MA}.$((MI + 1)).0" ;;
+  patch) NEXT="${MA}.${MI}.$((PA + 1))" ;;
+  "")    NEXT="" ;;                 # infer below
+  *)     NEXT="${BUMP#v}" ;;        # set outright
+esac
+```
+
+With `$1` empty, read `git log --oneline "$PREV"..main` and infer, then **say
+which digit you picked and what in the log decided it** before going on:
+
+| what is unreleased                                    | bump    |
+| ----------------------------------------------------- | ------- |
+| anything that breaks a config file, CLI flag, or key   | `major` |
+| a `feat:` — a capability that was not there before     | `minor` |
+| only `fix:` / `docs:` / `refactor:` / `chore:` / CI    | `patch` |
+
+A version containing `-` (`1.3.0-beta.1`) is a **beta**, and only the literal
+form reaches one — there is no `beta` bump keyword, because which base it
+prereleases is a choice, not an increment. The workflow reads the `-` in the
+tag, marks the GitHub Release as a prerelease, and writes a separate
+`deck-beta.rb` formula whose binary is `deck-beta`, so it coexists with a
+stable install.
+
+Going the other way — the stable release *after* a beta — is literal too. The
+snippet strips the suffix and increments, so `patch` on top of `v1.3.0-beta.1`
+lands on `1.3.1` and steps straight past the `1.3.0` the beta was rehearsing.
+Pass `1.3.0`.
 
 ## 3. Bump, commit, push
 
 ```bash
-# The ROOT package only. crates/agent-detect and crates/agent-relay keep their
-# own 0.1.0 versions and are not part of the release number.
-sed -i '' '3s/^version = .*/version = "X.Y.Z"/' Cargo.toml   # macOS sed
-cargo check --quiet                                          # refreshes Cargo.lock
+# The ROOT package only -- line 3. crates/agent-detect and crates/agent-relay
+# keep their own 0.1.0 versions and are not part of the release number.
+sed -i '' "3s/^version = .*/version = \"${NEXT}\"/" Cargo.toml   # macOS sed
+grep -n '^version' Cargo.toml                                     # confirm before committing
+cargo check --quiet                                               # refreshes Cargo.lock
 git add Cargo.toml Cargo.lock
-git commit -m "Release vX.Y.Z"
+git commit -m "Release v${NEXT}"
 git push origin main
 ```
 
@@ -59,11 +95,11 @@ the history reads, and it is how they are found later.
 ## 4. Tag
 
 ```bash
-git tag vX.Y.Z
-git push origin vX.Y.Z
+git tag "v${NEXT}"
+git push origin "v${NEXT}"
 ```
 
-The tag must point at `main`'s HEAD, i.e. at the `Release vX.Y.Z` commit.
+The tag must point at `main`'s HEAD, i.e. at the `Release v${NEXT}` commit.
 
 ## 5. Watch the run
 
@@ -87,8 +123,8 @@ Watch it in the background rather than blocking on it.
 them with something written for users:
 
 ```bash
-git log --oneline "$PREV"..vX.Y.Z     # what actually changed
-gh release edit vX.Y.Z --notes "$(cat <<'EOF'
+git log --oneline "$PREV".."v${NEXT}"   # what actually changed
+gh release edit "v${NEXT}" --notes "$(cat <<'EOF'
 ...
 EOF
 )"

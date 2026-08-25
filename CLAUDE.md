@@ -178,7 +178,9 @@ GitHub Actions builds binaries and updates the Homebrew tap (`cross-entropy-ai/h
 
 The whole sequence — preflight gates, the version bump, the tag, watching
 the run, rewriting the notes — is the `release` skill
-(`.claude/skills/release/`). Invoke it rather than working from memory.
+(`.claude/skills/release/`). Invoke it rather than working from memory; it
+takes the digit to move as its argument (`/release minor`, `major`, `patch`,
+or a literal `X.Y.Z`) and infers one from the unreleased log if given none.
 
 ### Release notes
 
