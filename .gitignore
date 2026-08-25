@@ -2,6 +2,7 @@
 error.log
 .DS_Store
 .cursor/
-.claude/
+.claude/*
+!.claude/skills/
 scripts/*.png
 __pycache__/
