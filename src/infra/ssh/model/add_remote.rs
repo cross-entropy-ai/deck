@@ -28,11 +28,6 @@ impl AddRemoteState {
         self.picker.input_str()
     }
 
-    /// Rebuild the filtered list from the current input; clamp selection.
-    pub fn refilter(&mut self) {
-        self.picker.refilter_substring();
-    }
-
     /// The host to add on confirm: the highlighted candidate when the
     /// filtered list is non-empty, otherwise the trimmed free-text input.
     /// `None` when there is nothing to add.

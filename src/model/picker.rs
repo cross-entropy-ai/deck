@@ -9,7 +9,7 @@
 
 use ratatui_textarea::TextArea;
 
-use crate::new_session::{make_textarea, textarea_line};
+use crate::new_session::{make_textarea, textarea_input, textarea_line};
 use crate::state::{clamp_cursor, step_clamped};
 
 /// Clamp a list's scroll offset for the current shape of that list.
@@ -79,6 +79,18 @@ impl FilterPicker {
     pub fn refilter_substring(&mut self) {
         self.filtered = substring_matches(&self.items, self.input_str());
         clamp_cursor(&mut self.selected, self.filtered.len());
+    }
+
+    /// Type one key into the filter input, re-derive the list by substring
+    /// match, and drop whatever error the last action left — every picker
+    /// clears its error the moment the user types again.
+    ///
+    /// A picker with its own predicate (the new-session directory browser)
+    /// drives `input` and [`refilter`](Self::refilter) directly instead.
+    pub fn type_key(&mut self, key: crossterm::event::KeyEvent) {
+        textarea_input(&mut self.input, key);
+        self.refilter_substring();
+        self.error = None;
     }
 
     /// Move the selection by `direction` (+1 down / -1 up), clamped within

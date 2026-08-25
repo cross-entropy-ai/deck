@@ -824,11 +824,7 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
             // carrying it onto whatever is highlighted next.
             picker.confirming = None;
             match action {
-                MountAction::InputKey(key) => {
-                    textarea_input(&mut picker.picker.input, key);
-                    picker.refilter();
-                    picker.picker.error = None;
-                }
+                MountAction::InputKey(key) => picker.picker.type_key(key),
                 MountAction::Prev => picker.picker.step(-1),
                 _ => picker.picker.step(1),
             }
@@ -978,10 +974,7 @@ fn reduce_hidden(state: &mut AppState, action: HiddenAction) -> SideEffect {
                 return fx;
             };
             match action {
-                HiddenAction::InputKey(key) => {
-                    textarea_input(&mut open.picker.input, key);
-                    open.refilter();
-                }
+                HiddenAction::InputKey(key) => open.picker.type_key(key),
                 HiddenAction::Prev => open.picker.step(-1),
                 _ => open.picker.step(1),
             }
@@ -1040,11 +1033,7 @@ fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffec
                 return fx;
             };
             match action {
-                AddRemoteAction::InputKey(key) => {
-                    textarea_input(&mut ar.picker.input, key);
-                    ar.refilter();
-                    ar.picker.error = None;
-                }
+                AddRemoteAction::InputKey(key) => ar.picker.type_key(key),
                 AddRemoteAction::Prev => ar.picker.step(-1),
                 _ => ar.picker.step(1),
             }

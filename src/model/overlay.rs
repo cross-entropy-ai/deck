@@ -116,7 +116,7 @@ impl HiddenSessionsState {
         self.refilter();
     }
 
-    pub fn refilter(&mut self) {
+    fn refilter(&mut self) {
         self.picker.refilter_substring();
     }
 }
@@ -311,7 +311,7 @@ impl MountPickerState {
         self.candidates.get(index)
     }
 
-    pub fn refilter(&mut self) {
+    fn refilter(&mut self) {
         self.picker.refilter_substring();
     }
 }
