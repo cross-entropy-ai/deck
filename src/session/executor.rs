@@ -443,28 +443,54 @@ mod tests {
 
     /// A no-op backend so a submit can populate the sender map without
     /// touching tmux/ssh.
-    struct NoopBackend;
-    impl SessionControl for NoopBackend {
+    /// One `SessionControl` stand-in for the executor tests.
+    ///
+    /// The three the tests need — succeed, fail, panic — differ by a single
+    /// behaviour, not by seven method bodies each.
+    #[derive(Clone, Copy)]
+    enum Stub {
+        /// Every operation succeeds.
+        Ok,
+        /// Every operation fails with the same typed error.
+        Failing,
+        /// `switch_to` panics; everything else succeeds. Drives the
+        /// worker's panic recovery.
+        PanicsOnSwitch,
+    }
+
+    impl Stub {
+        fn result(self) -> super::super::SessionControlResult {
+            match self {
+                Self::Failing => Err(SessionControlError::new("backend unavailable")),
+                _ => Ok(()),
+            }
+        }
+    }
+
+    impl SessionControl for Stub {
         fn switch_to(&self, _name: &str) -> super::super::SessionControlResult {
-            Ok(())
+            if matches!(self, Self::PanicsOnSwitch) {
+                panic!("injected backend panic");
+            }
+            self.result()
         }
         fn rename(&self, _old: &str, _new: &str) -> super::super::SessionControlResult {
-            Ok(())
+            self.result()
         }
         fn kill(&self, _name: &str) -> super::super::SessionControlResult {
-            Ok(())
+            self.result()
         }
         fn create(&self, _name: &str, _dir: &str) -> super::super::SessionControlResult {
-            Ok(())
+            self.result()
         }
         fn persist_order(&self, _order: &[String]) -> super::super::SessionControlResult {
-            Ok(())
+            self.result()
         }
         fn list_dir(
             &self,
             _path: &str,
         ) -> super::super::SessionControlResult<super::super::DirListing> {
-            Ok(super::super::DirListing {
+            self.result().map(|()| super::super::DirListing {
                 entries: Vec::new(),
             })
         }
@@ -472,69 +498,7 @@ mod tests {
             &self,
             _local_path: &std::path::Path,
         ) -> super::super::SessionControlResult<StagedFile> {
-            Ok(StagedFile::InPlace)
-        }
-    }
-
-    struct FailingBackend;
-    impl SessionControl for FailingBackend {
-        fn switch_to(&self, _name: &str) -> super::super::SessionControlResult {
-            Err(SessionControlError::new("backend unavailable"))
-        }
-        fn rename(&self, _old: &str, _new: &str) -> super::super::SessionControlResult {
-            Err(SessionControlError::new("backend unavailable"))
-        }
-        fn kill(&self, _name: &str) -> super::super::SessionControlResult {
-            Err(SessionControlError::new("backend unavailable"))
-        }
-        fn create(&self, _name: &str, _dir: &str) -> super::super::SessionControlResult {
-            Err(SessionControlError::new("backend unavailable"))
-        }
-        fn persist_order(&self, _order: &[String]) -> super::super::SessionControlResult {
-            Err(SessionControlError::new("backend unavailable"))
-        }
-        fn list_dir(
-            &self,
-            _path: &str,
-        ) -> super::super::SessionControlResult<super::super::DirListing> {
-            Err(SessionControlError::new("backend unavailable"))
-        }
-        fn stage_file(
-            &self,
-            _local_path: &std::path::Path,
-        ) -> super::super::SessionControlResult<StagedFile> {
-            Err(SessionControlError::new("backend unavailable"))
-        }
-    }
-
-    struct PanickingBackend;
-    impl SessionControl for PanickingBackend {
-        fn switch_to(&self, _name: &str) -> super::super::SessionControlResult {
-            panic!("injected backend panic")
-        }
-        fn rename(&self, _old: &str, _new: &str) -> super::super::SessionControlResult {
-            Ok(())
-        }
-        fn kill(&self, _name: &str) -> super::super::SessionControlResult {
-            Ok(())
-        }
-        fn create(&self, _name: &str, _dir: &str) -> super::super::SessionControlResult {
-            Ok(())
-        }
-        fn persist_order(&self, _order: &[String]) -> super::super::SessionControlResult {
-            Ok(())
-        }
-        fn list_dir(
-            &self,
-            _path: &str,
-        ) -> super::super::SessionControlResult<super::super::DirListing> {
-            Ok(super::super::DirListing { entries: vec![] })
-        }
-        fn stage_file(
-            &self,
-            _local_path: &std::path::Path,
-        ) -> super::super::SessionControlResult<StagedFile> {
-            Ok(StagedFile::InPlace)
+            self.result().map(|()| StagedFile::InPlace)
         }
     }
 
@@ -571,7 +535,7 @@ mod tests {
 
         for (op, expected_operation) in cases {
             assert_eq!(
-                run(Box::new(FailingBackend), op),
+                run(Box::new(Stub::Failing), op),
                 OpOutcome::Failed {
                     operation: expected_operation,
                     error: SessionControlError::new("backend unavailable"),
@@ -584,7 +548,7 @@ mod tests {
     fn directory_listing_preserves_typed_failure() {
         assert_eq!(
             run(
-                Box::new(FailingBackend),
+                Box::new(Stub::Failing),
                 SessionOp::ListDir {
                     path: "~/missing".into(),
                 }
@@ -600,7 +564,7 @@ mod tests {
     fn successful_rename_carries_names_for_commit_on_ui_thread() {
         assert_eq!(
             run(
-                Box::new(NoopBackend),
+                Box::new(Stub::Ok),
                 SessionOp::Rename {
                     old: "before".into(),
                     new: "after".into(),
@@ -621,7 +585,7 @@ mod tests {
         let lane = crate::system::tmux::TmuxSystem::local_lane();
         let result = exec.submit_with(
             lane.clone(),
-            Box::new(NoopBackend),
+            Box::new(Stub::Ok),
             SessionOp::Switch {
                 name: "main".into(),
             },
@@ -643,7 +607,7 @@ mod tests {
         let lane = crate::system::tmux::TmuxSystem::local_lane();
         exec.submit(
             lane.clone(),
-            Box::new(PanickingBackend),
+            Box::new(Stub::PanicsOnSwitch),
             SessionOp::Switch {
                 name: "panics".into(),
             },
@@ -651,24 +615,15 @@ mod tests {
         .unwrap();
         exec.submit(
             lane.clone(),
-            Box::new(NoopBackend),
+            Box::new(Stub::Ok),
             SessionOp::Switch {
                 name: "still-runs".into(),
             },
         )
         .unwrap();
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        let mut outcomes = Vec::new();
-        while outcomes.len() < 2 && std::time::Instant::now() < deadline {
-            if let Some(outcome) = exec.try_recv() {
-                outcomes.push(outcome.result);
-            } else {
-                std::thread::sleep(std::time::Duration::from_millis(2));
-            }
-        }
         assert_eq!(
-            outcomes,
+            recv_outcomes(&exec, 2),
             vec![
                 OpOutcome::Failed {
                     operation: SessionOperation::Switch,
@@ -692,7 +647,7 @@ mod tests {
         let old = focus_target(&lane, "%old");
         exec.submit(
             lane.clone(),
-            Box::new(NoopBackend),
+            Box::new(Stub::Ok),
             SessionOp::Focus(FocusTask::with_run(old.clone(), move || {
                 old_started_tx.send(()).unwrap();
                 release_old_rx.recv().unwrap();
@@ -709,7 +664,7 @@ mod tests {
         let new = focus_target(&lane, "%new");
         exec.submit(
             lane,
-            Box::new(NoopBackend),
+            Box::new(Stub::Ok),
             SessionOp::Focus(FocusTask::with_run(new.clone(), move || {
                 new_started_tx.send(()).unwrap();
                 new_order.lock().unwrap().push("new");
@@ -746,7 +701,7 @@ mod tests {
 
         exec.submit(
             blocked_lane.clone(),
-            Box::new(NoopBackend),
+            Box::new(Stub::Ok),
             SessionOp::Focus(FocusTask::with_run(
                 focus_target(&blocked_lane, "%blocked"),
                 move || {
@@ -763,7 +718,7 @@ mod tests {
 
         exec.submit(
             free_lane.clone(),
-            Box::new(NoopBackend),
+            Box::new(Stub::Ok),
             SessionOp::Focus(FocusTask::with_run(
                 focus_target(&free_lane, "%free"),
                 move || {
@@ -787,7 +742,7 @@ mod tests {
         let lane = LaneId::new("fixture", "panic");
         exec.submit(
             lane.clone(),
-            Box::new(NoopBackend),
+            Box::new(Stub::Ok),
             SessionOp::Focus(FocusTask::with_run(focus_target(&lane, "%1"), || {
                 panic!("injected focus panic")
             })),
@@ -795,7 +750,7 @@ mod tests {
         .unwrap();
         exec.submit(
             lane.clone(),
-            Box::new(NoopBackend),
+            Box::new(Stub::Ok),
             SessionOp::Switch {
                 name: "still-runs".into(),
             },
@@ -821,7 +776,7 @@ mod tests {
         // First submit spawns the worker and caches the sender.
         exec.submit(
             lane.clone(),
-            Box::new(NoopBackend),
+            Box::new(Stub::Ok),
             SessionOp::Switch {
                 name: "main".to_string(),
             },
@@ -843,7 +798,7 @@ mod tests {
         let local_lane = crate::system::tmux::TmuxSystem::local_lane();
         exec.submit(
             local_lane.clone(),
-            Box::new(NoopBackend),
+            Box::new(Stub::Ok),
             SessionOp::Switch {
                 name: "local".to_string(),
             },
