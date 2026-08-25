@@ -155,7 +155,7 @@ pub(super) fn draw_active_modal(
                     menu.x,
                     menu.y,
                     menu.selected,
-                    menu.items(),
+                    &menu.items(),
                     &menu.disabled(),
                     theme,
                 );

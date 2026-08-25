@@ -833,7 +833,7 @@ fn dismiss_help() {
 }
 
 #[test]
-fn open_local_divider_menu_greys_what_the_local_lane_cannot_do() {
+fn open_local_divider_menu_offers_only_what_the_local_lane_can_do() {
     let mut state = make_test_state(1);
     // What the real local lane reports: no ssh connection to hang a port
     // forward off, but an engine right here to mount containers on.
@@ -859,14 +859,21 @@ fn open_local_divider_menu_greys_what_the_local_lane_cannot_do() {
         menu.items()[menu.selected],
         crate::menu::MenuItem::NewSession
     );
-    assert!(menu
-        .disabled()
-        .contains(&crate::menu::MenuItem::PortForward));
-    assert!(menu
-        .disabled()
-        .contains(&crate::menu::MenuItem::RemoveFromList));
-    // Being the local lane greys nothing on its own: containers mount here too.
+    // Neither applies to the machine Deck is running on: there is no ssh
+    // connection to forward over, and the local lane is not in the list it
+    // would be removed from. Absent, not greyed.
+    assert_eq!(
+        menu.items(),
+        vec![
+            crate::menu::MenuItem::NewSession,
+            crate::menu::MenuItem::Containers,
+            crate::menu::MenuItem::ShowHidden,
+        ]
+    );
+    // Containers mount right here, so that one is live.
     assert!(!menu.disabled().contains(&crate::menu::MenuItem::Containers));
+    // Nothing is hidden yet, so the way back from `Hide` is shown but inert.
+    assert!(menu.disabled().contains(&crate::menu::MenuItem::ShowHidden));
 }
 
 #[test]
@@ -2221,7 +2228,7 @@ fn host_divider_menu_has_new_session_first_and_remove_last() {
 }
 
 #[test]
-fn host_divider_menu_greys_port_forward_when_reuse_is_off() {
+fn host_divider_menu_drops_port_forward_when_reuse_is_off() {
     use crate::menu::{MenuItem, MenuKind};
     let menu = MenuKind::LaneDivider {
         lane: crate::system::tmux::TmuxSystem::host_lane("h"),
@@ -2230,13 +2237,18 @@ fn host_divider_menu_greys_port_forward_when_reuse_is_off() {
         mounts_enabled: true,
         has_hidden: false,
     };
-    assert!(menu.disabled().contains(&MenuItem::PortForward));
+    // Absent, not greyed — the same call `ssh::divider` makes for the badge.
+    assert!(!menu.items().contains(&MenuItem::PortForward));
+    // What the lane can still do is there and live.
+    assert!(menu.items().contains(&MenuItem::NewSession));
+    assert!(menu.items().contains(&MenuItem::Containers));
+    assert!(menu.items().contains(&MenuItem::RemoveFromList));
     assert!(!menu.disabled().contains(&MenuItem::NewSession));
     assert!(!menu.disabled().contains(&MenuItem::RemoveFromList));
 }
 
 #[test]
-fn divider_menu_greys_port_forward_for_a_lane_without_its_own_connection() {
+fn divider_menu_drops_port_forward_for_a_lane_without_its_own_connection() {
     use crate::menu::MenuItem;
     // The reducer must consult the lane's capability, not just the reuse pref:
     // a container lane rides its host's socket, so submitting a forward for it
@@ -2276,7 +2288,9 @@ fn divider_menu_greys_port_forward_for_a_lane_without_its_own_connection() {
         }),
     );
     let menu = state.overlay.context_menu.as_ref().expect("menu open");
-    assert!(menu.kind.disabled().contains(&MenuItem::PortForward));
+    assert!(!menu.kind.items().contains(&MenuItem::PortForward));
+    // A container is still something you can unmount.
+    assert!(menu.kind.items().contains(&MenuItem::RemoveFromList));
 
     // Opening the overlay directly is refused for the same reason.
     apply_action(&mut state, Action::Pf(PfAction::Open(container)));
@@ -2653,7 +2667,7 @@ fn a_running_candidate_mounts_on_the_first_enter() {
 }
 
 #[test]
-fn host_divider_menu_greys_containers_when_the_system_offers_none() {
+fn host_divider_menu_drops_containers_when_the_system_offers_none() {
     use crate::menu::{MenuItem, MenuKind};
     let menu = MenuKind::LaneDivider {
         lane: crate::system::tmux::TmuxSystem::host_lane("h"),
@@ -2662,9 +2676,10 @@ fn host_divider_menu_greys_containers_when_the_system_offers_none() {
         mounts_enabled: false,
         has_hidden: false,
     };
-    assert!(menu.disabled().contains(&MenuItem::Containers));
-    assert!(!menu.disabled().contains(&MenuItem::PortForward));
-    // The local divider can mount nothing and forward nothing.
+    assert!(!menu.items().contains(&MenuItem::Containers));
+    assert!(menu.items().contains(&MenuItem::PortForward));
+    // A lane that can mount nothing and forward nothing is left with the two
+    // things every lane can do, and nothing to explain away.
     let local = MenuKind::LaneDivider {
         lane: crate::system::tmux::TmuxSystem::local_lane(),
         primary: true,
@@ -2672,8 +2687,10 @@ fn host_divider_menu_greys_containers_when_the_system_offers_none() {
         mounts_enabled: false,
         has_hidden: false,
     };
-    assert!(local.disabled().contains(&MenuItem::Containers));
-    assert!(local.items().contains(&MenuItem::NewSession));
+    assert_eq!(
+        local.items(),
+        vec![MenuItem::NewSession, MenuItem::ShowHidden]
+    );
 }
 
 #[test]

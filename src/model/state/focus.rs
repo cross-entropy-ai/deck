@@ -251,7 +251,7 @@ impl AppState {
         let menu = self.overlay.context_menu.as_ref()?;
         let items = menu.items();
         // Same rect the renderer draws into (`ui::menu::draw_context_menu`).
-        let r = context_menu_rect(items, menu.x, menu.y, self.term_width, self.term_height);
+        let r = context_menu_rect(&items, menu.x, menu.y, self.term_width, self.term_height);
         if r.width < 2 || r.height < 2 {
             return None;
         }

@@ -17,15 +17,6 @@ pub(crate) const PLACEHOLDER_DISABLED_ITEMS: &[MenuItem] = SESSION_MENU_ITEMS;
 // still fine.
 const LAST_REMOTE_SESSION_DISABLED: &[MenuItem] = &[MenuItem::Close];
 const RENAME_DISABLED: &[MenuItem] = &[MenuItem::Rename];
-// Host divider [...] menu acts on the whole remote *group*. RemoveFromList
-// is equivalent to `deck remote remove <host>`.
-const HOST_DIVIDER_MENU_ITEMS: &[MenuItem] = &[
-    MenuItem::NewSession,
-    MenuItem::Containers,
-    MenuItem::PortForward,
-    MenuItem::ShowHidden,
-    MenuItem::RemoveFromList,
-];
 // Right-click on blank sidebar space / the persistent footer button. Put the
 // primary creation action first; the explicit "local" label distinguishes it
 // from the per-host divider's NewSession action.
@@ -103,49 +94,62 @@ pub enum MenuKind {
 }
 
 impl MenuKind {
-    pub fn items(&self) -> &'static [MenuItem] {
-        match self {
-            MenuKind::Session { .. } => SESSION_MENU_ITEMS,
-            MenuKind::Global => GLOBAL_MENU_ITEMS,
-            MenuKind::LaneDivider { .. } => HOST_DIVIDER_MENU_ITEMS,
-        }
-    }
-
-    /// Items that are shown but greyed-out / unselectable: session menus
-    /// carry a per-row set, and a divider greys whatever its lane cannot do.
+    /// The items this menu shows, in order.
     ///
-    /// Built rather than picked from a static table: the divider's greyed set
-    /// is four independent flags, and enumerating their combinations was
-    /// already at four constants before `Show hidden` would have made it eight.
-    pub fn disabled(&self) -> Vec<MenuItem> {
+    /// A divider menu lists what its lane can *do*: an action the lane could
+    /// never perform is absent, not greyed. Greying is for an action the lane
+    /// has but has nothing to apply it to right now — see [`Self::disabled`].
+    /// The divider buttons already work this way (`ssh::divider` omits the
+    /// forward badge rather than dimming it), and a menu that greyed five
+    /// items to offer one read as a list of things Deck had broken.
+    pub fn items(&self) -> Vec<MenuItem> {
         match self {
-            MenuKind::Session { disabled, .. } => disabled.to_vec(),
-            MenuKind::Global => Vec::new(),
+            MenuKind::Session { .. } => SESSION_MENU_ITEMS.to_vec(),
+            MenuKind::Global => GLOBAL_MENU_ITEMS.to_vec(),
             MenuKind::LaneDivider {
                 primary,
                 port_forward_enabled,
                 mounts_enabled,
-                has_hidden,
                 ..
             } => {
-                let mut out = Vec::new();
-                // Both key off the lane's own capability, never off "is this
-                // the local lane": deck mounts containers on this machine too,
-                // and the local lane already answers `false` to port forwards.
-                if !mounts_enabled {
+                // Order is fixed; only membership varies.
+                let mut out = vec![MenuItem::NewSession];
+                if *mounts_enabled {
                     out.push(MenuItem::Containers);
                 }
-                if !port_forward_enabled {
+                // No ssh connection anywhere in reach (the local lane, a
+                // container on it), or reuse turned off: `ssh -O` has nothing
+                // to talk to, so there is no forward to offer.
+                if *port_forward_enabled {
                     out.push(MenuItem::PortForward);
                 }
-                if !has_hidden {
-                    out.push(MenuItem::ShowHidden);
-                }
+                out.push(MenuItem::ShowHidden);
                 // The local lane is not in the list it would be removed from.
-                if *primary {
+                if !*primary {
                     out.push(MenuItem::RemoveFromList);
                 }
                 out
+            }
+        }
+    }
+
+    /// Items that are shown but greyed-out / unselectable.
+    ///
+    /// A session menu carries a per-row set. A divider greys exactly one
+    /// thing: `Show hidden` with nothing hidden — an action the lane has, with
+    /// nothing to apply it to. It stays visible so the way back from `Hide` is
+    /// somewhere you can find it before you need it. Everything a lane cannot
+    /// do at all is absent instead — see [`Self::items`].
+    pub fn disabled(&self) -> Vec<MenuItem> {
+        match self {
+            MenuKind::Session { disabled, .. } => disabled.to_vec(),
+            MenuKind::Global => Vec::new(),
+            MenuKind::LaneDivider { has_hidden, .. } => {
+                if *has_hidden {
+                    Vec::new()
+                } else {
+                    vec![MenuItem::ShowHidden]
+                }
             }
         }
     }
@@ -181,7 +185,7 @@ pub struct ContextMenu {
 }
 
 impl ContextMenu {
-    pub fn items(&self) -> &'static [MenuItem] {
+    pub fn items(&self) -> Vec<MenuItem> {
         self.kind.items()
     }
 

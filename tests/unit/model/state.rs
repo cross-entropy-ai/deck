@@ -749,7 +749,7 @@ fn sidebar_footer_height_matches_renderer() {
 }
 
 #[test]
-fn local_divider_menu_greys_only_what_the_lane_cannot_do() {
+fn local_divider_menu_lists_only_what_the_lane_can_do() {
     use crate::menu::{ContextMenu, MenuItem, MenuKind};
     let menu = ContextMenu {
         kind: MenuKind::LaneDivider {
@@ -765,18 +765,18 @@ fn local_divider_menu_greys_only_what_the_lane_cannot_do() {
         y: 0,
         selected: 1,
     };
-    // Same item list as a host divider...
-    assert!(menu.items().contains(&MenuItem::NewSession));
-    assert!(menu.items().contains(&MenuItem::PortForward));
-    assert!(menu.items().contains(&MenuItem::RemoveFromList));
-    // ...greyed per capability, not per "is this local": only the forward it
-    // cannot make, and the list it is not in, go grey.
-    assert!(menu.disabled().contains(&MenuItem::PortForward));
-    assert!(menu.disabled().contains(&MenuItem::RemoveFromList));
-    assert!(!menu.disabled().contains(&MenuItem::NewSession));
-    assert!(!menu.disabled().contains(&MenuItem::Containers));
-    // Hidden sessions are restorable here — that menu is the only way back.
-    assert!(!menu.disabled().contains(&MenuItem::ShowHidden));
+    // The forward it cannot make and the list it is not in are gone, not
+    // greyed: a menu is what the lane can do, not a tour of what it can't.
+    assert_eq!(
+        menu.items(),
+        vec![
+            MenuItem::NewSession,
+            MenuItem::Containers,
+            MenuItem::ShowHidden,
+        ]
+    );
+    // With something hidden, every remaining item is live.
+    assert!(menu.disabled().is_empty());
     // The initial highlight lands on the first enabled item.
     assert_eq!(menu.items()[menu.first_enabled()], MenuItem::NewSession);
 }
