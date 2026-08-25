@@ -1,8 +1,7 @@
 use super::*;
+use crate::testing::exit_status;
 
 use std::io;
-use std::os::unix::process::ExitStatusExt;
-use std::process::ExitStatus;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -53,10 +52,6 @@ impl CommandRunner for FakeRunner {
             .take()
             .expect("fake result should be provided")
     }
-}
-
-fn exit_status(code: i32) -> ExitStatus {
-    ExitStatus::from_raw(code << 8)
 }
 
 #[test]

@@ -10,15 +10,7 @@ use crate::state::{
     AppState, FocusMode, LayoutMode, MainView, SessionEntry, SessionEntryKind, SettingsPage,
     ViewMode, NO_SESSIONS_LABEL,
 };
-
-fn make_session(name: &str) -> SessionEntry {
-    SessionEntry {
-        lane: crate::system::tmux::TmuxSystem::local_lane(),
-        name: name.to_string(),
-        dir: format!("/tmp/{}", name),
-        kind: SessionEntryKind::Live { is_current: false },
-    }
-}
+use crate::testing::local_session as make_session;
 
 /// Mark the entry at flat index `i` as the current local session.
 fn set_current(state: &mut AppState, i: usize) {

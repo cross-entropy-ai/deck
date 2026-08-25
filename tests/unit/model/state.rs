@@ -1,4 +1,5 @@
 use super::*;
+use crate::testing::{local_session as make_session, remote_row};
 
 #[test]
 fn generic_session_and_effect_dtos_do_not_regain_host_sentinels() {
@@ -48,15 +49,6 @@ fn generic_session_and_effect_dtos_do_not_regain_host_sentinels() {
     }
 }
 
-fn make_session(name: &str) -> SessionEntry {
-    SessionEntry {
-        lane: crate::system::tmux::TmuxSystem::local_lane(),
-        name: name.to_string(),
-        dir: format!("/tmp/{name}"),
-        kind: SessionEntryKind::Live { is_current: false },
-    }
-}
-
 #[test]
 fn unknown_lane_titles_are_neutral_and_distinct() {
     let state = AppState::new(80, 24);
@@ -95,25 +87,6 @@ fn make_state(
     state.session_order = state.entries.iter().map(|s| s.name.clone()).collect();
     state.clamp_projects_focus();
     state
-}
-
-fn kind_for(unreachable: bool, loading: bool) -> SessionEntryKind {
-    if unreachable {
-        SessionEntryKind::Unreachable
-    } else if loading {
-        SessionEntryKind::Connecting
-    } else {
-        SessionEntryKind::Live { is_current: false }
-    }
-}
-
-fn remote_row(host: &str, unreachable: bool, loading: bool) -> SessionEntry {
-    SessionEntry {
-        lane: crate::system::tmux::TmuxSystem::host_lane(host),
-        name: "s".to_string(),
-        dir: "/tmp".to_string(),
-        kind: kind_for(unreachable, loading),
-    }
 }
 
 /// Set the remote rows on a freshly-built state, keeping the local block

@@ -1,9 +1,8 @@
 use super::*;
 use crate::focus::FOCUS_EXACT_MARKER;
 use crate::infra::command::Output;
+use crate::testing::exit_status;
 use crate::tmux::PaneFocus;
-use std::os::unix::process::ExitStatusExt;
-use std::process::ExitStatus;
 use std::sync::Mutex;
 
 /// Run the unified focus rule over the remote (ssh) transport.
@@ -42,10 +41,6 @@ fn active_target_with(
             marker_id,
         },
     )
-}
-
-fn exit_status(code: i32) -> ExitStatus {
-    ExitStatus::from_raw(code << 8)
 }
 
 /// Hands back the configured result for the `list-sessions` call and

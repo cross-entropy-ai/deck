@@ -18,6 +18,10 @@ pub(crate) use model::{
 };
 pub(crate) use ui::bridge;
 
+#[cfg(test)]
+#[path = "../tests/unit/support.rs"]
+mod testing;
+
 mod cli;
 use cli::{parse_args, ParsedCommand};
 

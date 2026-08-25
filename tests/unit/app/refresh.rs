@@ -1,24 +1,6 @@
 use super::{lanes_needing_respawn, mark_connecting_rows};
 use crate::state::{SessionEntry, SessionEntryKind};
-
-fn kind_for(unreachable: bool, loading: bool) -> SessionEntryKind {
-    if unreachable {
-        SessionEntryKind::Unreachable
-    } else if loading {
-        SessionEntryKind::Connecting
-    } else {
-        SessionEntryKind::Live { is_current: false }
-    }
-}
-
-fn row(host: &str, unreachable: bool, loading: bool) -> SessionEntry {
-    SessionEntry {
-        lane: crate::system::tmux::TmuxSystem::host_lane(host),
-        name: "s".to_string(),
-        dir: "/tmp".to_string(),
-        kind: kind_for(unreachable, loading),
-    }
-}
+use crate::testing::remote_row as row;
 
 /// The synthetic row for a reachable host with no tmux server up.
 fn no_sessions_row(host: &str) -> SessionEntry {
