@@ -508,9 +508,13 @@ fn idle_summary_card_collapses_until_an_agent_exists() {
 fn scroll_summary_clamps_to_max() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.hit_regions.summary.max_scroll = 3;
-    state.scroll_summary(-5);
+    state
+        .summary
+        .scroll_by(-5, state.hit_regions.summary.max_scroll);
     assert_eq!(state.summary.scroll, 0, "can't scroll above the top");
-    state.scroll_summary(10);
+    state
+        .summary
+        .scroll_by(10, state.hit_regions.summary.max_scroll);
     assert_eq!(state.summary.scroll, 3, "clamped to max offset");
 }
 
@@ -1296,13 +1300,13 @@ fn agents_probe_interval_cycles_and_labels() {
 
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
     state.prefs.agents_probe_interval_secs = 2;
-    state.cycle_agents_probe_interval(1);
+    state.prefs.cycle_agents_probe_interval(1);
     assert_eq!(state.prefs.agents_probe_interval_secs, 5);
-    state.cycle_agents_probe_interval(-1);
+    state.prefs.cycle_agents_probe_interval(-1);
     assert_eq!(state.prefs.agents_probe_interval_secs, 2);
     // Wraps at the ends.
     state.prefs.agents_probe_interval_secs = 1;
-    state.cycle_agents_probe_interval(-1);
+    state.prefs.cycle_agents_probe_interval(-1);
     assert_eq!(state.prefs.agents_probe_interval_secs, 10);
 }
 
@@ -1312,11 +1316,11 @@ fn cycling_walks_both_highlight_candidates_and_wraps() {
     // press has to land on the other one and come back.
     let mut state = AppState::new(80, 24);
     assert_eq!(state.prefs.session_highlight, SessionHighlight::Solid);
-    state.cycle_session_highlight(1);
+    state.prefs.cycle_session_highlight(1);
     assert_eq!(state.prefs.session_highlight, SessionHighlight::Subtle);
-    state.cycle_session_highlight(1);
+    state.prefs.cycle_session_highlight(1);
     assert_eq!(state.prefs.session_highlight, SessionHighlight::Solid);
-    state.cycle_session_highlight(-1);
+    state.prefs.cycle_session_highlight(-1);
     assert_eq!(state.prefs.session_highlight, SessionHighlight::Subtle);
 }
 

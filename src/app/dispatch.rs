@@ -569,7 +569,7 @@ impl App {
         }
         // Drop signals + detaches (never joins) — see `Worker`'s Drop.
         self.summary_worker = None;
-        self.state.cancel_summary();
+        self.state.summary.cancel();
     }
 
     /// Resolve a backend-owned focus transport through the lane runtime and

@@ -65,19 +65,19 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             }
         }
         SettingsAction::CycleFrameRateLimit(direction) => {
-            state.cycle_frame_rate_limit(direction);
+            state.prefs.cycle_frame_rate_limit(direction);
             fx.save_config();
         }
         SettingsAction::CycleAgentsProbeInterval(direction) => {
-            state.cycle_agents_probe_interval(direction);
+            state.prefs.cycle_agents_probe_interval(direction);
             fx.save_config();
         }
         SettingsAction::CycleSessionHighlight(direction) => {
-            state.cycle_session_highlight(direction);
+            state.prefs.cycle_session_highlight(direction);
             fx.save_config();
         }
         SettingsAction::CycleSummaryAgent(direction) => {
-            state.cycle_summary_agent(direction);
+            state.prefs.cycle_summary_agent(direction);
             fx.save_config();
         }
         SettingsAction::ToggleSummary => {

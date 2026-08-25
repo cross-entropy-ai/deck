@@ -541,6 +541,33 @@ impl Prefs {
         }
     }
 
+    pub fn cycle_frame_rate_limit(&mut self, direction: i32) {
+        let cur = option_row(&FRAME_RATE_LIMIT_OPTIONS, self.frame_rate_limit);
+        self.frame_rate_limit = cycle_option(&FRAME_RATE_LIMIT_OPTIONS, cur, direction).0;
+    }
+
+    pub fn cycle_agents_probe_interval(&mut self, direction: i32) {
+        let cur = option_row(
+            &AGENTS_PROBE_INTERVAL_OPTIONS,
+            self.agents_probe_interval_secs,
+        );
+        self.agents_probe_interval_secs =
+            cycle_option(&AGENTS_PROBE_INTERVAL_OPTIONS, cur, direction).0;
+    }
+
+    pub fn cycle_session_highlight(&mut self, direction: i32) {
+        self.session_highlight =
+            cycle_option(&SessionHighlight::ALL, self.session_highlight, direction);
+    }
+
+    pub fn cycle_summary_agent(&mut self, direction: i32) {
+        self.summary_agent = cycle_option(
+            &crate::summary_card::SummaryAgent::ALL,
+            self.summary_agent,
+            direction,
+        );
+    }
+
     /// The theme index a picker slot currently holds.
     pub fn theme_slot(&self, slot: crate::theme::ThemeSlot) -> usize {
         match slot {
@@ -918,36 +945,6 @@ impl AppState {
             }
         }
         false
-    }
-
-    pub fn cycle_frame_rate_limit(&mut self, direction: i32) {
-        let cur = option_row(&FRAME_RATE_LIMIT_OPTIONS, self.prefs.frame_rate_limit);
-        self.prefs.frame_rate_limit = cycle_option(&FRAME_RATE_LIMIT_OPTIONS, cur, direction).0;
-    }
-
-    pub fn cycle_agents_probe_interval(&mut self, direction: i32) {
-        let cur = option_row(
-            &AGENTS_PROBE_INTERVAL_OPTIONS,
-            self.prefs.agents_probe_interval_secs,
-        );
-        self.prefs.agents_probe_interval_secs =
-            cycle_option(&AGENTS_PROBE_INTERVAL_OPTIONS, cur, direction).0;
-    }
-
-    pub fn cycle_session_highlight(&mut self, direction: i32) {
-        self.prefs.session_highlight = cycle_option(
-            &SessionHighlight::ALL,
-            self.prefs.session_highlight,
-            direction,
-        );
-    }
-
-    pub fn cycle_summary_agent(&mut self, direction: i32) {
-        self.prefs.summary_agent = cycle_option(
-            &crate::summary_card::SummaryAgent::ALL,
-            self.prefs.summary_agent,
-            direction,
-        );
     }
 
     /// Whether the Agents tab is the active sidebar view. The tab selector only

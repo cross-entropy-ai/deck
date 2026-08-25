@@ -75,3 +75,32 @@ pub struct SummaryCard {
     pub popup_scroll: usize,
     pub popup_max_scroll: usize,
 }
+
+impl SummaryCard {
+    /// Apply a wheel/keyboard scroll delta to the card's text.
+    ///
+    /// `max` is the overflow the renderer measured for the current width, so
+    /// it comes from the caller rather than the card.
+    pub fn scroll_by(&mut self, delta: i32, max: usize) {
+        self.scroll = crate::bounds::scroll_clamped(self.scroll, delta, max);
+    }
+
+    /// Move the summary card off `Generating` back to the pre-generation state
+    /// (Idle / prior Ready / Error), used on a mid-flight cancel. The App side
+    /// drops the worker (killing the selected agent CLI); this is the pure state
+    /// half. No-op unless currently generating.
+    pub fn cancel(&mut self) {
+        if self.state != SummaryState::Generating {
+            return;
+        }
+        self.state = self.before_generating.take().unwrap_or_default();
+        self.scroll = 0;
+    }
+
+    /// Apply a scroll delta to the popup's text, clamped to the max the
+    /// popup renderer captured.
+    pub fn scroll_popup_by(&mut self, delta: i32) {
+        self.popup_scroll =
+            crate::bounds::scroll_clamped(self.popup_scroll, delta, self.popup_max_scroll);
+    }
+}

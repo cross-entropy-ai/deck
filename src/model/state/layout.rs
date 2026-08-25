@@ -5,7 +5,7 @@
 //! callers still reach them as `state.sidebar_layout(..)` etc.
 
 use super::*;
-use crate::bounds::{clamp_set, scroll_clamped};
+use crate::bounds::clamp_set;
 
 impl AppState {
     /// `BasicItem` for one session row. Expanded carries the name plus a dim
@@ -403,37 +403,6 @@ impl AppState {
     pub fn summary_height_for_drag(&self, row: u16) -> u16 {
         let bottom = self.hit_regions.summary.card.map_or(0, |r| r.y + r.height);
         bottom.saturating_sub(row).saturating_sub(3)
-    }
-
-    /// Apply a wheel/keyboard scroll delta to the Summary text, clamped to
-    /// the captured max offset.
-    pub fn scroll_summary(&mut self, delta: i32) {
-        self.summary.scroll = scroll_clamped(
-            self.summary.scroll,
-            delta,
-            self.hit_regions.summary.max_scroll,
-        );
-    }
-
-    /// Move the summary card off `Generating` back to the pre-generation state
-    /// (Idle / prior Ready / Error), used on a mid-flight cancel. The App side
-    /// drops the worker (killing the selected agent CLI); this is the pure state
-    /// half. No-op unless currently generating.
-    pub fn cancel_summary(&mut self) {
-        if self.summary.state != SummaryState::Generating {
-            return;
-        }
-        self.summary.state = self.summary.before_generating.take().unwrap_or_default();
-        self.summary.scroll = 0;
-    }
-
-    /// Apply a scroll delta to the summary popup, clamped to its max.
-    pub fn scroll_summary_popup(&mut self, delta: i32) {
-        self.summary.popup_scroll = scroll_clamped(
-            self.summary.popup_scroll,
-            delta,
-            self.summary.popup_max_scroll,
-        );
     }
 
     /// Build the Agents-tab layout: Expanded uses a local/host divider per

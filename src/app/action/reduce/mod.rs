@@ -660,7 +660,9 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
         SummaryAction::Cancel => {}
         SummaryAction::Scroll(delta) => {
             state.last_scroll = std::time::Instant::now();
-            state.scroll_summary(delta);
+            state
+                .summary
+                .scroll_by(delta, state.hit_regions.summary.max_scroll);
         }
         SummaryAction::OpenPopup => {
             if matches!(
@@ -675,7 +677,7 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
             state.overlay.close(Modal::SummaryPopup);
         }
         SummaryAction::ScrollPopup(delta) => {
-            state.scroll_summary_popup(delta);
+            state.summary.scroll_popup_by(delta);
         }
         SummaryAction::StartDrag => {
             state.summary.dragging = true;

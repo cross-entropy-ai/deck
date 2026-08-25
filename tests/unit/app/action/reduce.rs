@@ -2938,13 +2938,13 @@ mod agents_tab {
         state.summary.state = prior.clone();
         state.summary.before_generating = Some(prior.clone());
         state.summary.state = SummaryState::Generating;
-        state.cancel_summary();
+        state.summary.cancel();
         assert_eq!(state.summary.state, prior);
 
         // Cancel is a no-op when not generating.
         let mut idle = make_test_state(0);
         idle.summary.state = SummaryState::Idle;
-        idle.cancel_summary();
+        idle.summary.cancel();
         assert_eq!(idle.summary.state, SummaryState::Idle);
     }
 
