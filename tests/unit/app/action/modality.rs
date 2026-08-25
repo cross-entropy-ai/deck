@@ -531,3 +531,26 @@ fn new_session_clear_line_chord_routes_per_field() {
         ));
     }
 }
+
+#[test]
+fn new_session_delete_word_chord_drops_a_path_segment_in_the_directory_field() {
+    let mut state = make_state();
+    open_modal(&mut state, Modal::NewSession);
+    let ctrl_backspace = KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL);
+    let ctrl_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
+
+    // In the name field the chord is an ordinary word delete for the widget.
+    assert!(matches!(
+        key_to_action(&ctrl_backspace, &state),
+        Action::NewSession(super::NewSessionAction::InputKey(k)) if k == ctrl_backspace
+    ));
+
+    // In the path field a word is a segment, on either delete-word key.
+    state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Dir;
+    for chord in [ctrl_backspace, ctrl_w] {
+        assert!(matches!(
+            key_to_action(&chord, &state),
+            Action::NewSession(super::NewSessionAction::DeleteSegment)
+        ));
+    }
+}

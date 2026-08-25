@@ -415,7 +415,9 @@ fn name_field_key_to_action(key: &KeyEvent) -> Action {
 }
 
 fn dir_field_key_to_action(key: &KeyEvent) -> Action {
+    use crate::new_session::{field_chord, FieldChord};
     use crossterm::event::KeyModifiers;
+    let chord = field_chord(key);
     match key.code {
         // Enter creates the session, from either field — browsing is what the
         // arrows are for. Overloading Enter onto "descend, or go up when `../`
@@ -427,12 +429,15 @@ fn dir_field_key_to_action(key: &KeyEvent) -> Action {
         KeyCode::Down => Action::NewSession(NewSessionAction::Next),
         KeyCode::Left => Action::NewSession(NewSessionAction::DirUp),
         KeyCode::Right => Action::NewSession(NewSessionAction::DirEnter),
-        // The chord every field clears on; the path field answers it with
-        // its own action so the directory listing is re-read as well.
-        _ if crate::new_session::is_clear_line_key(key) => {
-            Action::NewSession(NewSessionAction::Clear)
-        }
+        // The chords every field shares, answered with this field's own
+        // actions so the directory listing is re-read too. A path segment is
+        // this field's word: `Ctrl-W` (the widget's delete-word) and the
+        // `Ctrl-Backspace` chord both drop one.
+        _ if chord == Some(FieldChord::ClearLine) => Action::NewSession(NewSessionAction::Clear),
         KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Action::NewSession(NewSessionAction::DeleteSegment)
+        }
+        _ if chord == Some(FieldChord::DeleteWordBack) => {
             Action::NewSession(NewSessionAction::DeleteSegment)
         }
         _ => Action::NewSession(NewSessionAction::InputKey(*key)),

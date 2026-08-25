@@ -114,33 +114,54 @@ pub fn textarea_line<'a>(ta: &'a TextArea<'a>) -> &'a str {
     ta.lines().first().map_or("", String::as_str)
 }
 
-/// Whether `key` is the clear-the-line chord every single-line field honours:
-/// `Ctrl-U` (the readline/zsh binding, and Claude Code's) or `Cmd-Backspace`
-/// (the macOS text-field gesture). A terminal speaking the kitty keyboard
-/// protocol — which deck requests — reports the latter as `Backspace` with a
-/// SUPER modifier; Ghostty's default keybind sends it as `Ctrl-U` instead, so
-/// both spellings land here.
-pub fn is_clear_line_key(key: &KeyEvent) -> bool {
-    match key.code {
-        KeyCode::Char('u') => key.modifiers.contains(KeyModifiers::CONTROL),
-        KeyCode::Backspace => key
-            .modifiers
-            .intersects(KeyModifiers::SUPER | KeyModifiers::META | KeyModifiers::HYPER),
-        _ => false,
-    }
+/// The editing chords deck adds on top of the widget's own binding set
+/// (`Ctrl-W`/`Alt-Backspace` delete a word, `Ctrl-A`/`Ctrl-E` jump, arrows
+/// move, …), honoured by every single-line field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldChord {
+    /// `Ctrl-U` (the readline/zsh binding, and Claude Code's) or
+    /// `Cmd-Backspace` (the macOS text-field gesture): empty the line.
+    ClearLine,
+    /// `Ctrl-Backspace`: delete the word before the cursor.
+    DeleteWordBack,
+    /// `Ctrl-Delete` (forward delete): delete the word after the cursor.
+    DeleteWordForward,
 }
 
-/// Feed one key to a single-line field. deck's own chords come first —
-/// `Ctrl-U` / `Cmd-Backspace` clear the line, where the crate would read
-/// `Ctrl-U` as undo — and everything else is the crate's default binding set
-/// (`Ctrl-W` deletes a word, `Ctrl-A`/`Ctrl-E` jump, arrows move, …). Every
-/// field routes its keys through here, so a chord is added in one place.
-/// Returns whether the text changed.
+/// Recognise one of deck's chords in `key`.
+///
+/// The modifier spellings rely on the kitty keyboard protocol, which deck
+/// requests: such a terminal reports `Cmd` as SUPER and `Ctrl-Backspace` as
+/// `Backspace`+CONTROL — a key the widget itself leaves unbound. A legacy
+/// terminal folds `Ctrl-Backspace` into `Ctrl-H` (one character back) and
+/// never passes `Cmd` on at all; Ghostty's default keybind sends
+/// `Cmd-Backspace` as `Ctrl-U`, which is why both spellings clear.
+pub fn field_chord(key: &KeyEvent) -> Option<FieldChord> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let cmd = key
+        .modifiers
+        .intersects(KeyModifiers::SUPER | KeyModifiers::META | KeyModifiers::HYPER);
+    Some(match key.code {
+        KeyCode::Char('u') if ctrl => FieldChord::ClearLine,
+        KeyCode::Backspace if cmd => FieldChord::ClearLine,
+        KeyCode::Backspace if ctrl => FieldChord::DeleteWordBack,
+        KeyCode::Delete if ctrl => FieldChord::DeleteWordForward,
+        _ => return None,
+    })
+}
+
+/// Feed one key to a single-line field. deck's own chords ([`FieldChord`])
+/// come first — the widget would read `Ctrl-U` as undo and ignore
+/// `Ctrl-Backspace` — and everything else is the widget's default binding
+/// set. Every field routes its keys through here, so a chord is added in one
+/// place. Returns whether the text changed.
 pub fn textarea_input(ta: &mut TextArea<'static>, key: KeyEvent) -> bool {
-    if is_clear_line_key(&key) {
-        return clear_textarea(ta);
+    match field_chord(&key) {
+        Some(FieldChord::ClearLine) => clear_textarea(ta),
+        Some(FieldChord::DeleteWordBack) => ta.delete_word(),
+        Some(FieldChord::DeleteWordForward) => ta.delete_next_word(),
+        None => ta.input(key),
     }
-    ta.input(key)
 }
 
 /// Empty a single-line field, wherever the cursor was. Goes through the

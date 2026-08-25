@@ -3289,3 +3289,38 @@ fn pf_add_input_clear_line_chord_empties_a_port_field() {
         assert_eq!(form.field_text(field), "", "{field:?} after {chord:?}");
     }
 }
+
+fn ctrl_backspace() -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Backspace,
+        crossterm::event::KeyModifiers::CONTROL,
+    )
+}
+
+#[test]
+fn rename_ctrl_backspace_deletes_the_last_word() {
+    let mut state = make_test_state(1);
+    state.overlay.renaming = Some(rename_state("hello world"));
+    apply_action(&mut state, Action::RenameInputKey(ctrl_backspace()));
+    assert_eq!(rename_input_text(&state), "hello ");
+}
+
+#[test]
+fn pf_add_input_ctrl_backspace_reaches_a_port_field() {
+    use crate::forwards::PfField;
+    let mut state = make_test_state(0);
+    open_form_with_focus(&mut state, PfField::ListenPort, "8080");
+    crate::action::apply_action(
+        &mut state,
+        Action::Pf(PfAction::AddInputKey(ctrl_backspace())),
+    );
+    let form = state
+        .overlay
+        .port_forward
+        .as_ref()
+        .unwrap()
+        .add_form
+        .as_ref()
+        .unwrap();
+    assert_eq!(form.field_text(PfField::ListenPort), "");
+}

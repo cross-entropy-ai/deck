@@ -219,26 +219,50 @@ fn filtering_the_parent_row_away_gives_its_row_back_to_the_children() {
 }
 
 #[test]
-fn clear_line_chord_is_ctrl_u_or_cmd_backspace() {
-    let ctrl_u = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL);
-    let cmd_backspace = KeyEvent::new(KeyCode::Backspace, KeyModifiers::SUPER);
-    assert!(is_clear_line_key(&ctrl_u));
-    assert!(is_clear_line_key(&cmd_backspace));
+fn field_chord_recognises_decks_chords_and_nothing_else() {
+    let chord = |code, mods| field_chord(&KeyEvent::new(code, mods));
+    assert_eq!(
+        chord(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        Some(FieldChord::ClearLine)
+    );
+    assert_eq!(
+        chord(KeyCode::Backspace, KeyModifiers::SUPER),
+        Some(FieldChord::ClearLine)
+    );
+    assert_eq!(
+        chord(KeyCode::Backspace, KeyModifiers::CONTROL),
+        Some(FieldChord::DeleteWordBack)
+    );
+    assert_eq!(
+        chord(KeyCode::Delete, KeyModifiers::CONTROL),
+        Some(FieldChord::DeleteWordForward)
+    );
 
-    // A plain `u`, a plain Backspace, and Alt-Backspace (delete word) are
-    // ordinary edits, not the clear.
-    assert!(!is_clear_line_key(&KeyEvent::new(
-        KeyCode::Char('u'),
-        KeyModifiers::NONE
-    )));
-    assert!(!is_clear_line_key(&KeyEvent::new(
-        KeyCode::Backspace,
-        KeyModifiers::NONE
-    )));
-    assert!(!is_clear_line_key(&KeyEvent::new(
-        KeyCode::Backspace,
-        KeyModifiers::ALT
-    )));
+    // A plain `u`, plain Backspace/Delete, and Alt-Backspace (the widget's own
+    // delete-word) are ordinary edits the widget keeps.
+    assert_eq!(chord(KeyCode::Char('u'), KeyModifiers::NONE), None);
+    assert_eq!(chord(KeyCode::Backspace, KeyModifiers::NONE), None);
+    assert_eq!(chord(KeyCode::Delete, KeyModifiers::NONE), None);
+    assert_eq!(chord(KeyCode::Backspace, KeyModifiers::ALT), None);
+}
+
+#[test]
+fn textarea_input_ctrl_backspace_and_ctrl_delete_remove_one_word() {
+    let mut ta = make_textarea("foo bar baz");
+    let ctrl_backspace = KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL);
+    assert!(textarea_input(&mut ta, ctrl_backspace));
+    assert_eq!(textarea_line(&ta), "foo bar ");
+    assert!(textarea_input(&mut ta, ctrl_backspace));
+    assert_eq!(textarea_line(&ta), "foo ");
+
+    let mut ta = make_textarea("foo bar baz");
+    ta.move_cursor(CursorMove::Head);
+    let ctrl_delete = KeyEvent::new(KeyCode::Delete, KeyModifiers::CONTROL);
+    assert!(textarea_input(&mut ta, ctrl_delete));
+    assert_eq!(textarea_line(&ta), " bar baz");
+    // Nothing ahead of the cursor: nothing to delete.
+    ta.move_cursor(CursorMove::End);
+    assert!(!textarea_input(&mut ta, ctrl_delete));
 }
 
 #[test]
