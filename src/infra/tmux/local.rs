@@ -110,6 +110,14 @@ pub fn capture_pane(pane_id: &str) -> Option<String> {
     tmux(&["capture-pane", "-p", "-J", "-t", pane_id])
 }
 
+/// How many panes on the local server carry a `@deck_hook_alive` mark —
+/// live proof the agent hooks have actually run (see `deck hooks status`).
+/// `None` when there is no server to ask.
+pub fn hook_alive_panes() -> Option<usize> {
+    tmux(&["list-panes", "-a", "-F", "#{@deck_hook_alive}"])
+        .map(|raw| raw.lines().filter(|l| !l.trim().is_empty()).count())
+}
+
 /// The tmux session deck is running inside, if any — resolved from
 /// `$TMUX_PANE` (the pane id tmux exports to its child). `None` when not
 /// under tmux. deck excludes this session from the sidebar and never

@@ -10,7 +10,8 @@ pub(crate) use infra::guards::{instance_guard, terminal_guard};
 pub(crate) use infra::ssh::model::{add_remote, forwards};
 pub(crate) use infra::tmux::{local as tmux, remote as remote_tmux};
 pub(crate) use infra::{
-    agent, focus, pty, refresh, self_update, seqlog, shutdown, ssh, summary, update, worker,
+    agent, agent_hooks, focus, pty, refresh, self_update, seqlog, shutdown, ssh, summary, update,
+    worker,
 };
 pub(crate) use model::{
     config, effects, exclude, geometry, keybindings, lane, lane_state, menu, new_session, overlay,
@@ -39,6 +40,9 @@ fn main() -> io::Result<()> {
         Ok(Some(ParsedCommand::RemoteList)) => {
             cli::run_remote_list();
             return Ok(());
+        }
+        Ok(Some(ParsedCommand::Hooks(action, host))) => {
+            std::process::exit(cli::run_hooks(action, host.as_deref()));
         }
         Ok(Some(ParsedCommand::UpgradeSelf(version))) => {
             match self_update::run_self_upgrade(&version) {
