@@ -100,9 +100,18 @@ pub enum Action {
 
     Quit,
 
-    /// Settings page and its sub-overlays (theme picker, keybindings view,
-    /// exclude editor).
+    /// The settings page itself: navigation and the rows it toggles.
+    /// Each sub-overlay it can open has its own variant below.
     Settings(SettingsAction),
+    /// Theme picker. Openable from the settings page or straight from the
+    /// sidebar (`t`), which is why it is not a settings action.
+    ThemePicker(ThemePickerAction),
+    /// Read-only keybindings viewer.
+    Keybindings(KeybindingsAction),
+    /// Text editor for one of Deck's OpenSSH connection-reuse values.
+    SshSetting(SshSettingAction),
+    /// Exclude-pattern editor.
+    Exclude(ExcludeAction),
     /// Agents-tab summary card, popup, and language editor.
     Summary(SummaryAction),
     /// Lane-keyed new-session picker.
@@ -128,31 +137,9 @@ pub enum SettingsAction {
     Next,
     Prev,
     Adjust,
-    /// Open the theme picker for one slot: the fixed theme (the sidebar `t`
-    /// key and the "Theme" row) or the dark/light slot "follow terminal" mode
-    /// chooses from.
-    OpenThemePicker(crate::theme::ThemeSlot),
-    /// Turn "follow terminal" mode on/off. Turning it on re-probes the host
-    /// terminal's background.
-    ToggleThemeAuto,
-    CloseThemePicker,
-    ThemePickerNext,
-    ThemePickerPrev,
-    ConfirmThemePicker,
-
-    OpenKeybindingsView,
-    CloseKeybindingsView,
-    KeybindingsScrollUp,
-    KeybindingsScrollDown,
-
     ToggleUpdateCheck,
     /// Toggle Deck-owned SSH ControlMaster reuse for remote operations.
     ToggleSshConnectionReuse,
-    /// Edit one of Deck's text-valued SSH connection-reuse settings.
-    OpenSshSettingEditor(crate::overlay::SshSettingField),
-    SshSettingInputKey(crossterm::event::KeyEvent),
-    SshSettingConfirm,
-    SshSettingCancel,
     CycleFrameRateLimit(i32),
     /// Cycle the Agents-tab probe interval (settings, left/right).
     CycleAgentsProbeInterval(i32),
@@ -166,16 +153,56 @@ pub enum SettingsAction {
     OpenAddRemotePicker,
     /// Open a configured lane's port-forward overlay.
     OpenPortForwards,
+}
 
-    ExcludeOpen,
-    ExcludeClose,
-    ExcludeNext,
-    ExcludePrev,
-    ExcludeStartAdd,
-    ExcludeDelete,
-    ExcludeInputKey(crossterm::event::KeyEvent),
-    ExcludeConfirm,
-    ExcludeCancelAdd,
+/// The theme picker overlay. Its cursor and chosen slot live in
+/// `SettingsState`, but it opens from the sidebar too, so it is not nested
+/// under [`SettingsAction`].
+#[derive(Debug)]
+pub enum ThemePickerAction {
+    /// Open for one slot: the fixed theme (the sidebar `t` key and the "Theme"
+    /// row) or the dark/light slot "follow terminal" mode chooses from.
+    Open(crate::theme::ThemeSlot),
+    /// Turn "follow terminal" mode on/off. Turning it on re-probes the host
+    /// terminal's background.
+    ToggleAuto,
+    Close,
+    Next,
+    Prev,
+    Confirm,
+}
+
+/// The read-only keybindings viewer.
+#[derive(Debug)]
+pub enum KeybindingsAction {
+    Open,
+    Close,
+    ScrollUp,
+    ScrollDown,
+}
+
+/// The text editor for one of Deck's OpenSSH connection-reuse values.
+#[derive(Debug)]
+pub enum SshSettingAction {
+    Open(crate::overlay::SshSettingField),
+    InputKey(crossterm::event::KeyEvent),
+    Confirm,
+    Cancel,
+}
+
+/// The exclude-pattern editor. `StartAdd`/`CancelAdd` enter and leave its
+/// nested add mode; the rest act on the pattern list.
+#[derive(Debug)]
+pub enum ExcludeAction {
+    Open,
+    Close,
+    Next,
+    Prev,
+    StartAdd,
+    CancelAdd,
+    Delete,
+    InputKey(crossterm::event::KeyEvent),
+    Confirm,
 }
 
 #[derive(Debug)]

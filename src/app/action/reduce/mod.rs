@@ -5,8 +5,9 @@ use crate::overlay::{Modal, ModalState};
 use crate::state::{AppState, FocusMode, LayoutMode, MainView, SidebarTab, ViewMode};
 
 use super::{
-    Action, AddRemoteAction, HiddenAction, MenuAction, MountAction, NewSessionAction, PfAction,
-    SettingsAction, SummaryAction,
+    Action, AddRemoteAction, ExcludeAction, HiddenAction, KeybindingsAction, MenuAction,
+    MountAction, NewSessionAction, PfAction, SettingsAction, SshSettingAction, SummaryAction,
+    ThemePickerAction,
 };
 
 mod menu;
@@ -510,6 +511,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             fx.save_config();
         }
         Action::Settings(a) => return settings::reduce_settings(state, a),
+        Action::ThemePicker(a) => return settings::reduce_theme_picker(state, a),
+        Action::Keybindings(a) => return settings::reduce_keybindings(state, a),
+        Action::SshSetting(a) => return settings::reduce_ssh_setting(state, a),
+        Action::Exclude(a) => return settings::reduce_exclude(state, a),
         Action::Summary(a) => return reduce_summary(state, a),
 
         Action::TriggerUpgrade | Action::AbortUpgrade => {}

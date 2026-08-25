@@ -6,8 +6,8 @@ use crate::overlay::Modal;
 use crate::state::{AppState, FocusMode, MainView};
 
 use super::{
-    Action, AddRemoteAction, MenuAction, MountAction, NewSessionAction, PfAction, SettingsAction,
-    SummaryAction,
+    Action, AddRemoteAction, ExcludeAction, KeybindingsAction, MenuAction, MountAction,
+    NewSessionAction, PfAction, SettingsAction, SshSettingAction, SummaryAction, ThemePickerAction,
 };
 
 pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
@@ -165,9 +165,9 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
         Command::ReorderUp => Action::ReorderSession(-1),
         Command::ReorderDown => Action::ReorderSession(1),
         Command::OpenSettings => Action::Settings(SettingsAction::Open),
-        Command::OpenThemePicker => Action::Settings(SettingsAction::OpenThemePicker(
-            crate::theme::ThemeSlot::Fixed,
-        )),
+        Command::OpenThemePicker => {
+            Action::ThemePicker(ThemePickerAction::Open(crate::theme::ThemeSlot::Fixed))
+        }
         Command::ToggleBorders => Action::ToggleBorders,
         Command::ToggleLayout => Action::ToggleLayout,
         Command::ToggleViewMode => Action::ToggleViewMode,
@@ -248,9 +248,9 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
             _ => Action::Mount(MountAction::InputKey(*key)),
         },
         Modal::SshSetting => match key.code {
-            KeyCode::Enter => Action::Settings(SettingsAction::SshSettingConfirm),
-            KeyCode::Esc => Action::Settings(SettingsAction::SshSettingCancel),
-            _ => Action::Settings(SettingsAction::SshSettingInputKey(*key)),
+            KeyCode::Enter => Action::SshSetting(SshSettingAction::Confirm),
+            KeyCode::Esc => Action::SshSetting(SshSettingAction::Cancel),
+            _ => Action::SshSetting(SshSettingAction::InputKey(*key)),
         },
         Modal::SummaryLang => match key.code {
             KeyCode::Enter => Action::Summary(SummaryAction::LanguageConfirm),
@@ -303,33 +303,33 @@ fn exclude_editor_key_to_action(key: &KeyEvent, state: &AppState) -> Action {
 
     if adding {
         return match key.code {
-            KeyCode::Enter => Action::Settings(SettingsAction::ExcludeConfirm),
-            _ => Action::Settings(SettingsAction::ExcludeInputKey(*key)),
+            KeyCode::Enter => Action::Exclude(ExcludeAction::Confirm),
+            _ => Action::Exclude(ExcludeAction::InputKey(*key)),
         };
     }
 
-    Action::Settings(match (nav_key(key), key.code) {
-        (Some(Nav::Down), _) => SettingsAction::ExcludeNext,
-        (Some(Nav::Up), _) => SettingsAction::ExcludePrev,
-        (_, KeyCode::Char('a')) => SettingsAction::ExcludeStartAdd,
-        (_, KeyCode::Char('d' | 'x')) => SettingsAction::ExcludeDelete,
+    Action::Exclude(match (nav_key(key), key.code) {
+        (Some(Nav::Down), _) => ExcludeAction::Next,
+        (Some(Nav::Up), _) => ExcludeAction::Prev,
+        (_, KeyCode::Char('a')) => ExcludeAction::StartAdd,
+        (_, KeyCode::Char('d' | 'x')) => ExcludeAction::Delete,
         _ => return Action::None,
     })
 }
 
 fn keybindings_view_key_to_action(key: &KeyEvent) -> Action {
-    Action::Settings(match nav_key(key) {
-        Some(Nav::Down) => SettingsAction::KeybindingsScrollDown,
-        Some(Nav::Up) => SettingsAction::KeybindingsScrollUp,
+    Action::Keybindings(match nav_key(key) {
+        Some(Nav::Down) => KeybindingsAction::ScrollDown,
+        Some(Nav::Up) => KeybindingsAction::ScrollUp,
         _ => return Action::None,
     })
 }
 
 fn theme_picker_key_to_action(key: &KeyEvent) -> Action {
-    Action::Settings(match (nav_key(key), key.code) {
-        (Some(Nav::Down | Nav::Right), _) => SettingsAction::ThemePickerNext,
-        (Some(Nav::Up | Nav::Left), _) => SettingsAction::ThemePickerPrev,
-        (Some(Nav::Confirm), _) | (_, KeyCode::Char(' ')) => SettingsAction::ConfirmThemePicker,
+    Action::ThemePicker(match (nav_key(key), key.code) {
+        (Some(Nav::Down | Nav::Right), _) => ThemePickerAction::Next,
+        (Some(Nav::Up | Nav::Left), _) => ThemePickerAction::Prev,
+        (Some(Nav::Confirm), _) | (_, KeyCode::Char(' ')) => ThemePickerAction::Confirm,
         _ => return Action::None,
     })
 }

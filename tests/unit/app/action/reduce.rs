@@ -1,6 +1,6 @@
 use super::{
-    apply_action, Action, MenuAction, MountAction, NewSessionAction, PfAction, SettingsAction,
-    SummaryAction,
+    apply_action, Action, ExcludeAction, MenuAction, MountAction, NewSessionAction, PfAction,
+    SettingsAction, SshSettingAction, SummaryAction, ThemePickerAction,
 };
 use crate::effects::Effect;
 use crate::overlay::RenameState;
@@ -632,9 +632,7 @@ fn open_theme_picker_from_sidebar_bypasses_settings() {
     state.main_view = MainView::Terminal;
     apply_action(
         &mut state,
-        Action::Settings(SettingsAction::OpenThemePicker(
-            crate::theme::ThemeSlot::Fixed,
-        )),
+        Action::ThemePicker(ThemePickerAction::Open(crate::theme::ThemeSlot::Fixed)),
     );
     assert!(state.settings.theme_picker_open);
     // The picker overlays the current view rather than entering the
@@ -649,10 +647,7 @@ fn confirm_theme_picker_selects_theme_and_saves() {
     state.prefs.theme_index = 0;
     state.settings.theme_picker_open = true;
     state.settings.theme_picker_selected = 3;
-    let fx = apply_action(
-        &mut state,
-        Action::Settings(SettingsAction::ConfirmThemePicker),
-    );
+    let fx = apply_action(&mut state, Action::ThemePicker(ThemePickerAction::Confirm));
     assert!(!state.settings.theme_picker_open);
     assert!(!fx.has_save_config());
 }
@@ -663,10 +658,7 @@ fn theme_picker_next_previews_theme_immediately() {
     state.prefs.theme_index = 0;
     state.settings.theme_picker_open = true;
     state.settings.theme_picker_selected = 0;
-    let fx = apply_action(
-        &mut state,
-        Action::Settings(SettingsAction::ThemePickerNext),
-    );
+    let fx = apply_action(&mut state, Action::ThemePicker(ThemePickerAction::Next));
     assert_eq!(state.settings.theme_picker_selected, 1);
     assert_eq!(state.prefs.theme_index, 1);
     assert!(fx.has_save_config());
@@ -688,24 +680,18 @@ fn dark_and_light_theme_pickers_only_navigate_matching_themes() {
     state.prefs.dark_theme_index = dark[0];
     apply_action(
         &mut state,
-        Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Dark)),
+        Action::ThemePicker(ThemePickerAction::Open(ThemeSlot::Dark)),
     );
-    apply_action(
-        &mut state,
-        Action::Settings(SettingsAction::ThemePickerNext),
-    );
+    apply_action(&mut state, Action::ThemePicker(ThemePickerAction::Next));
     assert_eq!(state.settings.theme_picker_selected, 1);
     assert_eq!(state.prefs.dark_theme_index, dark[1]);
 
     state.prefs.light_theme_index = light[0];
     apply_action(
         &mut state,
-        Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Light)),
+        Action::ThemePicker(ThemePickerAction::Open(ThemeSlot::Light)),
     );
-    apply_action(
-        &mut state,
-        Action::Settings(SettingsAction::ThemePickerNext),
-    );
+    apply_action(&mut state, Action::ThemePicker(ThemePickerAction::Next));
     assert_eq!(state.settings.theme_picker_selected, 1);
     assert_eq!(state.prefs.light_theme_index, light[1]);
 }
@@ -720,7 +706,7 @@ fn filtered_theme_picker_restores_the_saved_theme_cursor() {
 
     apply_action(
         &mut state,
-        Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Light)),
+        Action::ThemePicker(ThemePickerAction::Open(ThemeSlot::Light)),
     );
 
     assert_eq!(state.settings.theme_picker_selected, 2);
@@ -736,10 +722,7 @@ fn theme_picker_next_at_end_still_saves() {
     state.prefs.theme_index = last;
     state.settings.theme_picker_open = true;
     state.settings.theme_picker_selected = last;
-    let fx = apply_action(
-        &mut state,
-        Action::Settings(SettingsAction::ThemePickerNext),
-    );
+    let fx = apply_action(&mut state, Action::ThemePicker(ThemePickerAction::Next));
     assert_eq!(
         state.settings.theme_picker_selected, last,
         "stays pinned at the end"
@@ -1114,9 +1097,9 @@ fn open_close_exclude_editor() {
     let mut state = make_test_state(1);
     state.main_view = MainView::Settings;
     state.settings.set_selected(4);
-    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
+    apply_action(&mut state, Action::Exclude(ExcludeAction::Open));
     assert!(state.overlay.is(Modal::ExcludeEditor));
-    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeClose));
+    apply_action(&mut state, Action::Exclude(ExcludeAction::Close));
     assert!(state.overlay.is_not(Modal::ExcludeEditor));
 }
 
@@ -1125,21 +1108,18 @@ fn exclude_editor_add_pattern() {
     use crossterm::event::KeyCode;
     let mut state = make_test_state(1);
     state.prefs.exclude_patterns = vec!["_*".to_string()];
-    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
-    apply_action(
-        &mut state,
-        Action::Settings(SettingsAction::ExcludeStartAdd),
-    );
+    apply_action(&mut state, Action::Exclude(ExcludeAction::Open));
+    apply_action(&mut state, Action::Exclude(ExcludeAction::StartAdd));
     assert!(state.overlay.exclude_editor().unwrap().adding);
     apply_action(
         &mut state,
-        Action::Settings(SettingsAction::ExcludeInputKey(key(KeyCode::Char('t')))),
+        Action::Exclude(ExcludeAction::InputKey(key(KeyCode::Char('t')))),
     );
     apply_action(
         &mut state,
-        Action::Settings(SettingsAction::ExcludeInputKey(key(KeyCode::Char('*')))),
+        Action::Exclude(ExcludeAction::InputKey(key(KeyCode::Char('*')))),
     );
-    let fx = apply_action(&mut state, Action::Settings(SettingsAction::ExcludeConfirm));
+    let fx = apply_action(&mut state, Action::Exclude(ExcludeAction::Confirm));
     assert_eq!(state.prefs.exclude_patterns, vec!["_*", "t*"]);
     assert!(fx.has_save_config());
     assert!(fx.has_refresh_sessions());
@@ -1150,9 +1130,9 @@ fn exclude_editor_add_pattern() {
 fn exclude_editor_delete_pattern() {
     let mut state = make_test_state(1);
     state.prefs.exclude_patterns = vec!["_*".to_string(), "scratch*".to_string()];
-    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
+    apply_action(&mut state, Action::Exclude(ExcludeAction::Open));
     state.overlay.exclude_editor_mut().unwrap().selected = 0;
-    let fx = apply_action(&mut state, Action::Settings(SettingsAction::ExcludeDelete));
+    let fx = apply_action(&mut state, Action::Exclude(ExcludeAction::Delete));
     assert_eq!(state.prefs.exclude_patterns, vec!["scratch*"]);
     assert!(fx.has_save_config());
     assert!(fx.has_refresh_sessions());
@@ -1163,18 +1143,15 @@ fn exclude_editor_invalid_regex_shows_error() {
     use crossterm::event::KeyCode;
     let mut state = make_test_state(1);
     state.prefs.exclude_patterns = vec![];
-    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeOpen));
-    apply_action(
-        &mut state,
-        Action::Settings(SettingsAction::ExcludeStartAdd),
-    );
+    apply_action(&mut state, Action::Exclude(ExcludeAction::Open));
+    apply_action(&mut state, Action::Exclude(ExcludeAction::StartAdd));
     for ch in "/[invalid/".chars() {
         apply_action(
             &mut state,
-            Action::Settings(SettingsAction::ExcludeInputKey(key(KeyCode::Char(ch)))),
+            Action::Exclude(ExcludeAction::InputKey(key(KeyCode::Char(ch)))),
         );
     }
-    apply_action(&mut state, Action::Settings(SettingsAction::ExcludeConfirm));
+    apply_action(&mut state, Action::Exclude(ExcludeAction::Confirm));
     let editor = state.overlay.exclude_editor().unwrap();
     assert!(editor.adding);
     assert!(editor.error.is_some());
@@ -1538,10 +1515,7 @@ fn ssh_control_path_and_duration_are_editable_and_validated() {
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     let editor = state.overlay.ssh_setting_editor_mut().unwrap();
     editor.input = crate::new_session::make_textarea("$HOME/.cache/deck/cm-%C");
-    let fx = apply_action(
-        &mut state,
-        Action::Settings(SettingsAction::SshSettingConfirm),
-    );
+    let fx = apply_action(&mut state, Action::SshSetting(SshSettingAction::Confirm));
     assert_eq!(state.prefs.ssh_control_path, "$HOME/.cache/deck/cm-%C");
     assert!(state.overlay.is_not(Modal::SshSetting));
     assert!(fx.has_save_config());
@@ -1550,10 +1524,7 @@ fn ssh_control_path_and_duration_are_editable_and_validated() {
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     state.overlay.ssh_setting_editor_mut().unwrap().input =
         crate::new_session::make_textarea("1h30m");
-    let fx = apply_action(
-        &mut state,
-        Action::Settings(SettingsAction::SshSettingConfirm),
-    );
+    let fx = apply_action(&mut state, Action::SshSetting(SshSettingAction::Confirm));
     assert_eq!(state.prefs.ssh_control_persist, "1h30m");
     assert!(fx.has_save_config());
 
@@ -1561,10 +1532,7 @@ fn ssh_control_path_and_duration_are_editable_and_validated() {
     apply_action(&mut state, Action::Settings(SettingsAction::Adjust));
     state.overlay.ssh_setting_editor_mut().unwrap().input =
         crate::new_session::make_textarea("tomorrow");
-    let fx = apply_action(
-        &mut state,
-        Action::Settings(SettingsAction::SshSettingConfirm),
-    );
+    let fx = apply_action(&mut state, Action::SshSetting(SshSettingAction::Confirm));
     assert!(!fx.has_save_config());
     assert!(state.overlay.ssh_setting_editor().unwrap().error.is_some());
     assert_eq!(state.prefs.ssh_control_persist, "1h30m");

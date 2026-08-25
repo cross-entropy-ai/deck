@@ -9,7 +9,10 @@
 //! dynamic text (frame-rate caveat, update-check "last checked" line) stays
 //! beside the value and action it describes.
 
-use crate::action::{Action, SettingsAction, SummaryAction};
+use crate::action::{
+    Action, ExcludeAction, KeybindingsAction, SettingsAction, SshSettingAction, SummaryAction,
+    ThemePickerAction,
+};
 use crate::state::{AppState, LayoutMode, SettingsPage, ViewMode};
 use crate::theme::{ThemeSlot, THEMES};
 
@@ -56,13 +59,13 @@ pub const SETTING_ROWS: &[SettingRow] = &[
         label: "Exclude",
         value: |s| format!("{} patterns", s.prefs.exclude_patterns.len()),
         help: |_| "Enter opens the pattern editor".to_string(),
-        adjust: || Action::Settings(SettingsAction::ExcludeOpen),
+        adjust: || Action::Exclude(ExcludeAction::Open),
     },
     SettingRow {
         label: "Keybindings",
         value: |_| "View".to_string(),
         help: |_| "Enter shows current key bindings".to_string(),
-        adjust: || Action::Settings(SettingsAction::OpenKeybindingsView),
+        adjust: || Action::Keybindings(KeybindingsAction::Open),
     },
     SettingRow {
         label: "Update check",
@@ -166,28 +169,28 @@ const AUTO_THEME_ROW: SettingRow = SettingRow {
         }
     },
     help: |_| "Follow the terminal's own background color (OSC 11)".to_string(),
-    adjust: || Action::Settings(SettingsAction::ToggleThemeAuto),
+    adjust: || Action::ThemePicker(ThemePickerAction::ToggleAuto),
 };
 
 const FIXED_THEME_ROW: SettingRow = SettingRow {
     label: "Theme",
     value: |s| THEMES[s.prefs.theme_index].name.to_string(),
     help: |_| "Theme used while Auto theme is off".to_string(),
-    adjust: || Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Fixed)),
+    adjust: || Action::ThemePicker(ThemePickerAction::Open(ThemeSlot::Fixed)),
 };
 
 const DARK_THEME_ROW: SettingRow = SettingRow {
     label: "Dark theme",
     value: |s| THEMES[s.prefs.dark_theme_index].name.to_string(),
     help: |_| "Theme used when the terminal background is dark".to_string(),
-    adjust: || Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Dark)),
+    adjust: || Action::ThemePicker(ThemePickerAction::Open(ThemeSlot::Dark)),
 };
 
 const LIGHT_THEME_ROW: SettingRow = SettingRow {
     label: "Light theme",
     value: |s| THEMES[s.prefs.light_theme_index].name.to_string(),
     help: |_| "Theme used when the terminal background is light".to_string(),
-    adjust: || Action::Settings(SettingsAction::OpenThemePicker(ThemeSlot::Light)),
+    adjust: || Action::ThemePicker(ThemePickerAction::Open(ThemeSlot::Light)),
 };
 
 const TRANSPARENT_BACKGROUND_ROW: SettingRow = SettingRow {
@@ -260,7 +263,7 @@ const SSH_CONTROL_PATH_ROW: SettingRow = SettingRow {
     value: |s| s.prefs.ssh_control_path.clone(),
     help: |_| "Deck-owned OpenSSH ControlPath; Enter edits the socket location".to_string(),
     adjust: || {
-        Action::Settings(SettingsAction::OpenSshSettingEditor(
+        Action::SshSetting(SshSettingAction::Open(
             crate::overlay::SshSettingField::ControlPath,
         ))
     },
@@ -271,7 +274,7 @@ const SSH_CONTROL_PERSIST_ROW: SettingRow = SettingRow {
     value: |s| s.prefs.ssh_control_persist.clone(),
     help: |_| "OpenSSH ControlPersist idle time, e.g. 10m, 1h30m, or yes; Enter edits".to_string(),
     adjust: || {
-        Action::Settings(SettingsAction::OpenSshSettingEditor(
+        Action::SshSetting(SshSettingAction::Open(
             crate::overlay::SshSettingField::ControlPersist,
         ))
     },

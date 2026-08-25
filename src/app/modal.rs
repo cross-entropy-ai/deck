@@ -6,8 +6,8 @@ use ratatui::layout::Rect;
 use ratatui::Frame;
 
 use crate::action::{
-    Action, AddRemoteAction, MenuAction, MountAction, NewSessionAction, PfAction, SettingsAction,
-    SummaryAction,
+    Action, AddRemoteAction, ExcludeAction, KeybindingsAction, MenuAction, MountAction,
+    NewSessionAction, PfAction, SshSettingAction, SummaryAction, ThemePickerAction,
 };
 use crate::geometry::KillConfirmHits;
 use crate::overlay::Modal;
@@ -84,23 +84,23 @@ pub(super) fn close_action(modal: Modal, state: &AppState) -> Action {
             };
             Action::Pf(action)
         }
-        Modal::ThemePicker => Action::Settings(SettingsAction::CloseThemePicker),
-        Modal::KeybindingsView => Action::Settings(SettingsAction::CloseKeybindingsView),
+        Modal::ThemePicker => Action::ThemePicker(ThemePickerAction::Close),
+        Modal::KeybindingsView => Action::Keybindings(KeybindingsAction::Close),
         Modal::ExcludeEditor => {
             let action = if state
                 .overlay
                 .exclude_editor()
                 .is_some_and(|editor| editor.adding)
             {
-                SettingsAction::ExcludeCancelAdd
+                ExcludeAction::CancelAdd
             } else {
-                SettingsAction::ExcludeClose
+                ExcludeAction::Close
             };
-            Action::Settings(action)
+            Action::Exclude(action)
         }
         Modal::MountPicker => Action::Mount(MountAction::Close),
         Modal::HiddenSessions => Action::Hidden(crate::action::HiddenAction::Close),
-        Modal::SshSetting => Action::Settings(SettingsAction::SshSettingCancel),
+        Modal::SshSetting => Action::SshSetting(SshSettingAction::Cancel),
         Modal::SummaryLang => Action::Summary(SummaryAction::LanguageCancel),
         Modal::Help => Action::DismissHelp,
         Modal::ConfirmKill => Action::CancelKill,

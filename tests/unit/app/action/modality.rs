@@ -5,7 +5,7 @@
 //! of representative inputs — so help / confirm-kill / the settings input
 //! boxes can't leak global keys and clicks behind the overlay.
 
-use super::{key_to_action, mouse_to_action, paste_to_action, Action, MenuAction};
+use super::{key_to_action, mouse_to_action, paste_to_action, Action, ExcludeAction, MenuAction};
 use crate::config::KeyBindingValue;
 use crate::menu::{ContextMenu, MenuKind};
 use crate::overlay::{
@@ -200,7 +200,7 @@ fn escape_cancels_nested_modal_edits_before_closing_the_surface() {
     exclude.overlay.exclude_editor_mut().unwrap().adding = true;
     assert!(matches!(
         key_to_action(&esc, &exclude),
-        Action::Settings(super::SettingsAction::ExcludeCancelAdd)
+        Action::Exclude(ExcludeAction::CancelAdd)
     ));
 
     let mut forward = make_state();
