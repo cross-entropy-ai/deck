@@ -6,6 +6,44 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::ExitStatus;
 use std::sync::Mutex;
 
+/// Run the unified focus rule over the remote (ssh) transport.
+///
+/// Production focus goes through `crate::focus::run_focus`, which picks the
+/// transport itself. These two pin the remote arm so the tests below can
+/// drive it with a `FakeRunner` and assert the ssh command's shape.
+fn focus_pane_with(
+    runner: &dyn CommandRunner,
+    host: &str,
+    marker_id: u64,
+    session: &str,
+    pane_id: &str,
+) -> crate::tmux::PaneFocus {
+    crate::focus::run_focus_with(
+        runner,
+        &crate::focus::FocusTransport::Remote {
+            host: host.to_string(),
+            marker_id,
+        },
+        session,
+        pane_id,
+    )
+}
+
+/// The active-target probe over the same transport.
+fn active_target_with(
+    runner: &dyn CommandRunner,
+    host: &str,
+    marker_id: u64,
+) -> Option<crate::focus::ActiveTarget> {
+    crate::focus::active_target_with(
+        runner,
+        &crate::focus::FocusTransport::Remote {
+            host: host.to_string(),
+            marker_id,
+        },
+    )
+}
+
 fn exit_status(code: i32) -> ExitStatus {
     ExitStatus::from_raw(code << 8)
 }

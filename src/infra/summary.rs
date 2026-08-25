@@ -287,7 +287,6 @@ fn write_log_entry(dir: &std::path::Path, enabled: bool, millis: u128, body: &st
 
 /// Create `path` mode 0600 and write `body`, so the captured buffers are
 /// owner-readable only (closes the world-readable `/tmp` hole).
-#[cfg(unix)]
 fn write_owner_only(path: &std::path::Path, body: &str) -> std::io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let mut f = std::fs::OpenOptions::new()
@@ -297,11 +296,6 @@ fn write_owner_only(path: &std::path::Path, body: &str) -> std::io::Result<()> {
         .mode(0o600)
         .open(path)?;
     f.write_all(body.as_bytes())
-}
-
-#[cfg(not(unix))]
-fn write_owner_only(path: &std::path::Path, body: &str) -> std::io::Result<()> {
-    std::fs::write(path, body)
 }
 
 /// Keep only the newest `keep` `summary-*.md` entries in `dir`, deleting the

@@ -264,37 +264,19 @@ fn remove_lock_file(path: &Path) -> io::Result<()> {
     fs::remove_file(path)
 }
 
-#[cfg(unix)]
 fn fallback_lock_dir() -> PathBuf {
     PathBuf::from("/tmp")
 }
 
-#[cfg(not(unix))]
-fn fallback_lock_dir() -> PathBuf {
-    std::env::temp_dir()
-}
-
-#[cfg(unix)]
 fn current_user_id() -> u32 {
     unsafe { libc::geteuid() }
 }
 
-#[cfg(not(unix))]
-fn current_user_id() -> u32 {
-    std::process::id()
-}
-
-#[cfg(unix)]
 fn runtime_dir_is_suitable(path: &Path, uid: u32) -> bool {
     let Ok(metadata) = fs::metadata(path) else {
         return false;
     };
     metadata.is_dir() && metadata.uid() == uid && metadata.permissions().mode() & 0o077 == 0
-}
-
-#[cfg(not(unix))]
-fn runtime_dir_is_suitable(path: &Path, _uid: u32) -> bool {
-    path.is_dir()
 }
 
 impl Drop for InstanceGuard {

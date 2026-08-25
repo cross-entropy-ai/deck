@@ -159,34 +159,10 @@ impl SideEffect {
     effect_finders! {
         first_kill_session: KillSession => &KillRequest;
         first_rename_session: RenameSession => &RenameRequest;
-    }
-
-    pub fn first_activated_session(&self) -> Option<&SessionId> {
-        self.effects.iter().find_map(|effect| match effect {
-            Effect::ActivateSession(id) => Some(id),
-            _ => None,
-        })
-    }
-
-    pub fn first_lane_placeholder(&self) -> Option<&LaneId> {
-        self.effects.iter().find_map(|effect| match effect {
-            Effect::ShowLanePlaceholder(lane) => Some(lane),
-            _ => None,
-        })
-    }
-
-    pub fn first_saved_session_order(&self) -> Option<&LaneId> {
-        self.effects.iter().find_map(|effect| match effect {
-            Effect::SaveSessionOrder(lane) => Some(lane),
-            _ => None,
-        })
-    }
-
-    pub fn first_removed_lane(&self) -> Option<&LaneId> {
-        self.effects.iter().find_map(|effect| match effect {
-            Effect::RemoveLane(lane) => Some(lane),
-            _ => None,
-        })
+        first_activated_session: ActivateSession => &SessionId;
+        first_lane_placeholder: ShowLanePlaceholder => &LaneId;
+        first_saved_session_order: SaveSessionOrder => &LaneId;
+        first_removed_lane: RemoveLane => &LaneId;
     }
 
     effect_predicates! {

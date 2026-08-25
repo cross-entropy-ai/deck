@@ -1496,46 +1496,6 @@ fn switch_client_with(
     run_ssh(runner, host, &[cmd.as_str()]).map(|_| ())
 }
 
-/// Test seam: run the unified focus rule over the remote (ssh) transport.
-/// Production focus goes through [`crate::focus::run_focus`]; this wrapper
-/// lets the remote-transport tests drive the shared rule with a
-/// `FakeRunner` and assert the emitted ssh command's shape.
-#[cfg(test)]
-fn focus_pane_with(
-    runner: &dyn CommandRunner,
-    host: &str,
-    marker_id: u64,
-    session: &str,
-    pane_id: &str,
-) -> crate::tmux::PaneFocus {
-    crate::focus::run_focus_with(
-        runner,
-        &crate::focus::FocusTransport::Remote {
-            host: host.to_string(),
-            marker_id,
-        },
-        session,
-        pane_id,
-    )
-}
-
-/// Test seam: the active-target probe over the remote (ssh) transport, the
-/// twin of [`focus_pane_with`].
-#[cfg(test)]
-fn active_target_with(
-    runner: &dyn CommandRunner,
-    host: &str,
-    marker_id: u64,
-) -> Option<crate::focus::ActiveTarget> {
-    crate::focus::active_target_with(
-        runner,
-        &crate::focus::FocusTransport::Remote {
-            host: host.to_string(),
-            marker_id,
-        },
-    )
-}
-
 /// Kill a session on the remote tmux server. `(host, name)` uniquely
 /// identifies it: `name` is unique within a server (tmux's constraint),
 /// `host` picks the server.
