@@ -5,6 +5,7 @@
 //! callers still reach them as `state.sidebar_layout(..)` etc.
 
 use super::*;
+use crate::bounds::{clamp_set, scroll_clamped};
 
 impl AppState {
     /// `BasicItem` for one session row. Expanded carries the name plus a dim

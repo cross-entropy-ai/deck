@@ -9,8 +9,8 @@
 
 use ratatui_textarea::TextArea;
 
+use crate::bounds::{clamp_cursor, step_clamped};
 use crate::new_session::{make_textarea, textarea_input, textarea_line};
-use crate::state::{clamp_cursor, step_clamped};
 
 /// Clamp a list's scroll offset for the current shape of that list.
 ///

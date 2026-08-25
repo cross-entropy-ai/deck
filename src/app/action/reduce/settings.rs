@@ -8,10 +8,11 @@
 //! page's state and vocabulary, not because they are the same thing.
 
 use crate::app::settings::setting_rows;
+use crate::bounds::step_clamped;
 use crate::effects::{Effect, SideEffect};
 use crate::new_session::textarea_input;
 use crate::overlay::{Modal, ModalState};
-use crate::state::{step_clamped, AppState, FocusMode, MainView};
+use crate::state::{AppState, FocusMode, MainView};
 use crate::theme::indices_for_slot;
 
 use super::{

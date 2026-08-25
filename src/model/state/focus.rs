@@ -4,6 +4,7 @@
 //! `state`; these are inherent methods reachable as `state.focus_target()` etc.
 
 use super::*;
+use crate::bounds::clamp_cursor;
 
 impl AppState {
     /// Focused remote placeholder row, if any. These occupy normal focus slots
