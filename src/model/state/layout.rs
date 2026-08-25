@@ -374,37 +374,6 @@ impl AppState {
         )
     }
 
-    /// Whether `pos` falls anywhere on the Summary card. Used by the wheel path
-    /// to route scroll to the card text. Checked directly, not via
-    /// `HitRegions::hit` priority: the card rect spans the whole Agents-tab
-    /// viewport, and the rows/dividers over it outrank it for *clicks* but not
-    /// the wheel.
-    pub fn summary_card_at(&self, col: u16, row: u16) -> bool {
-        let pos = Position::new(col, row);
-        self.hit_regions
-            .summary
-            .card
-            .is_some_and(|r| r.contains(pos))
-    }
-
-    /// Whether `(col, row)` is on the card's top drag-handle row. The card
-    /// is pinned to the bottom, so its top edge is the resize boundary.
-    pub fn summary_resize_at(&self, col: u16, row: u16) -> bool {
-        self.hit_regions
-            .summary
-            .card
-            .is_some_and(|r| row == r.y && col >= r.x && col < r.x + r.width)
-    }
-
-    /// New body height implied by dragging the top handle to `row`. The card
-    /// bottom is anchored to the footer, so dragging the top up grows the card:
-    /// `body = (card_bottom - row) - chrome` (chrome = handle, title, blank).
-    /// Clamped by `set_summary_height`.
-    pub fn summary_height_for_drag(&self, row: u16) -> u16 {
-        let bottom = self.hit_regions.summary.card.map_or(0, |r| r.y + r.height);
-        bottom.saturating_sub(row).saturating_sub(3)
-    }
-
     /// Build the Agents-tab layout: Expanded uses a local/host divider per
     /// section; Compact omits dividers and prefixes each single-line row with
     /// its origin. Every row maps 1:1 to a stored `agent_entries` element so

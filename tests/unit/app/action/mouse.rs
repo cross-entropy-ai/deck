@@ -18,7 +18,7 @@ fn state_with_agent_over_card() -> AppState {
         width: 28,
         height: 8,
     });
-    state.hit_regions.summary.max_scroll = 5;
+    state.summary.max_scroll = 5;
     state.hit_regions.agents = vec![AgentHit {
         rect: Rect {
             x: 2,

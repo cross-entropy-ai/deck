@@ -56,13 +56,13 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         // before the sidebar separator since the handle lives inside the
         // sidebar, not at its right gap.
         MouseEventKind::Down(MouseButton::Left)
-            if state.summary_resize_at(mouse.column, mouse.row) =>
+            if state.hit_regions.summary.resize_at(mouse.column, mouse.row) =>
         {
             return Action::Summary(SummaryAction::StartDrag);
         }
         MouseEventKind::Drag(MouseButton::Left) if state.summary.dragging => {
             return Action::Summary(SummaryAction::Resize(
-                state.summary_height_for_drag(mouse.row),
+                state.hit_regions.summary.height_for_drag(mouse.row),
             ));
         }
         MouseEventKind::Up(MouseButton::Left) if state.summary.dragging => {
@@ -103,8 +103,8 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
                 // directly rather than via `hit()`, where overlaid agent
                 // rows/dividers would outrank it — the wheel must scroll the
                 // summary anywhere over the card.
-                if state.hit_regions.summary.max_scroll > 0
-                    && state.summary_card_at(mouse.column, mouse.row)
+                if state.summary.max_scroll > 0
+                    && state.hit_regions.summary.card_at(mouse.column, mouse.row)
                 {
                     return match mouse.kind {
                         MouseEventKind::ScrollUp => Action::Summary(SummaryAction::Scroll(-1)),

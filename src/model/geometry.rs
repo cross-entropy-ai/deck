@@ -666,8 +666,38 @@ pub struct SummaryHits {
     pub popup: Option<Rect>,
     /// The card's full rect, for routing wheel events to text scrolling.
     pub card: Option<Rect>,
-    /// Max scroll offset for the Ready text at this width (0 = no overflow).
+    /// Overflow the renderer measured for the Ready text at this width
+    /// (0 = it fits). Carried out with the rects, then copied onto the card by
+    /// the render loop, the same way the popup's bound is.
     pub max_scroll: usize,
+}
+
+impl SummaryHits {
+    /// Whether `pos` falls anywhere on the Summary card. Used by the wheel path
+    /// to route scroll to the card text. Checked directly, not via
+    /// `HitRegions::hit` priority: the card rect spans the whole Agents-tab
+    /// viewport, and the rows/dividers over it outrank it for *clicks* but not
+    /// the wheel.
+    pub fn card_at(&self, col: u16, row: u16) -> bool {
+        let pos = Position::new(col, row);
+        self.card.is_some_and(|r| r.contains(pos))
+    }
+
+    /// Whether `(col, row)` is on the card's top drag-handle row. The card
+    /// is pinned to the bottom, so its top edge is the resize boundary.
+    pub fn resize_at(&self, col: u16, row: u16) -> bool {
+        self.card
+            .is_some_and(|r| row == r.y && col >= r.x && col < r.x + r.width)
+    }
+
+    /// New body height implied by dragging the top handle to `row`. The card
+    /// bottom is anchored to the footer, so dragging the top up grows the card:
+    /// `body = (card_bottom - row) - chrome` (chrome = handle, title, blank).
+    /// Clamped by `set_summary_height`.
+    pub fn height_for_drag(&self, row: u16) -> u16 {
+        let bottom = self.card.map_or(0, |r| r.y + r.height);
+        bottom.saturating_sub(row).saturating_sub(3)
+    }
 }
 
 /// The add-remote picker's click targets: one per visible host, plus the

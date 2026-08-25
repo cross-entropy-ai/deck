@@ -69,8 +69,11 @@ pub struct SummaryCard {
     /// True while dragging the card's bottom edge to resize it.
     pub dragging: bool,
     /// Scroll offset (in wrapped text rows) of the Ready summary's content,
-    /// when it overflows the card's fixed text area.
+    /// when it overflows the card's fixed text area, and the overflow the
+    /// renderer last measured for it. The card is the only thing that needs
+    /// the bound, so it lives here rather than with the click rects.
     pub scroll: usize,
+    pub max_scroll: usize,
     /// Scroll offset of the summary popup's text, and its captured max.
     pub popup_scroll: usize,
     pub popup_max_scroll: usize,

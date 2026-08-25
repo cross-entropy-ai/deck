@@ -355,6 +355,7 @@ impl App {
             }
         })?;
 
+        self.state.summary.max_scroll = captured_hits.summary.max_scroll;
         self.state.hit_regions = captured_hits;
         self.state.summary.popup_max_scroll = captured_summary_popup_max_scroll;
 

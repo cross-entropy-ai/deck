@@ -660,9 +660,7 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
         SummaryAction::Cancel => {}
         SummaryAction::Scroll(delta) => {
             state.pointer.last_scroll = std::time::Instant::now();
-            state
-                .summary
-                .scroll_by(delta, state.hit_regions.summary.max_scroll);
+            state.summary.scroll_by(delta, state.summary.max_scroll);
         }
         SummaryAction::OpenPopup => {
             if matches!(

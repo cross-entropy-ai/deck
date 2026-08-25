@@ -507,14 +507,10 @@ fn idle_summary_card_collapses_until_an_agent_exists() {
 #[test]
 fn scroll_summary_clamps_to_max() {
     let mut state = make_state(LayoutMode::Horizontal, false, 80, 24);
-    state.hit_regions.summary.max_scroll = 3;
-    state
-        .summary
-        .scroll_by(-5, state.hit_regions.summary.max_scroll);
+    state.summary.max_scroll = 3;
+    state.summary.scroll_by(-5, state.summary.max_scroll);
     assert_eq!(state.summary.scroll, 0, "can't scroll above the top");
-    state
-        .summary
-        .scroll_by(10, state.hit_regions.summary.max_scroll);
+    state.summary.scroll_by(10, state.summary.max_scroll);
     assert_eq!(state.summary.scroll, 3, "clamped to max offset");
 }
 

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::bounds::{clamp_set, cycle_option};
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui_sectioned_list::widget::BasicItem;
 use ratatui_sectioned_list::ItemKind;
 use serde::{Deserialize, Serialize};
