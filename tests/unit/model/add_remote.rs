@@ -1,20 +1,7 @@
-use crate::add_remote::{filter_hosts, AddRemoteState};
+use crate::add_remote::AddRemoteState;
 
 fn hosts() -> Vec<String> {
     vec!["prod-web-1".into(), "prod-web-2".into(), "staging".into()]
-}
-
-#[test]
-fn filter_empty_matches_all() {
-    assert_eq!(filter_hosts(&hosts(), ""), vec![0, 1, 2]);
-    assert_eq!(filter_hosts(&hosts(), "   "), vec![0, 1, 2]);
-}
-
-#[test]
-fn filter_is_case_insensitive_substring() {
-    assert_eq!(filter_hosts(&hosts(), "WEB"), vec![0, 1]);
-    assert_eq!(filter_hosts(&hosts(), "stag"), vec![2]);
-    assert!(filter_hosts(&hosts(), "nope").is_empty());
 }
 
 #[test]

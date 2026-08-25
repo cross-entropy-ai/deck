@@ -117,15 +117,7 @@ impl HiddenSessionsState {
     }
 
     pub fn refilter(&mut self) {
-        let needle = self.picker.input_str().to_lowercase();
-        self.picker.refilter(move |items, _| {
-            items
-                .iter()
-                .enumerate()
-                .filter(|(_, item)| item.to_lowercase().contains(&needle))
-                .map(|(index, _)| index)
-                .collect()
-        });
+        self.picker.refilter_substring();
     }
 }
 
@@ -320,15 +312,7 @@ impl MountPickerState {
     }
 
     pub fn refilter(&mut self) {
-        let needle = self.picker.input_str().to_lowercase();
-        self.picker.refilter(move |items, _| {
-            items
-                .iter()
-                .enumerate()
-                .filter(|(_, item)| item.to_lowercase().contains(&needle))
-                .map(|(index, _)| index)
-                .collect()
-        });
+        self.picker.refilter_substring();
     }
 }
 

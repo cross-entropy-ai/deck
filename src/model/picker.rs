@@ -1,9 +1,10 @@
 //! A generic filter-picker: a text input over a fixed list of string items,
 //! a derived `filtered` index list, a clamped selection, and a pending error.
-//! The new-session dir browser and add-remote host picker both embed one,
-//! each supplying its own filter predicate (`filter_entries` / `filter_hosts`)
-//! so only the recompute + clamp + step plumbing is shared. The exclude-pattern
-//! editor doesn't use this (no live filter, an `adding` sub-mode) — see
+//! Several overlays embed one. Most want plain case-insensitive substring
+//! matching and call [`FilterPicker::refilter_substring`]; the new-session dir
+//! browser has its own predicate (`filter_entries`) and calls
+//! [`FilterPicker::refilter`] with it. The exclude-pattern editor doesn't use
+//! this at all (no live filter, an `adding` sub-mode) — see
 //! `overlay::ExcludeEditorState`.
 
 use ratatui_textarea::TextArea;
@@ -71,6 +72,15 @@ impl FilterPicker {
         clamp_cursor(&mut self.selected, self.filtered.len());
     }
 
+    /// Recompute `filtered` by case-insensitive substring match on the input,
+    /// then clamp `selected`. The default for a picker over plain names.
+    ///
+    /// The needle is trimmed, so a stray space does not empty the list.
+    pub fn refilter_substring(&mut self) {
+        self.filtered = substring_matches(&self.items, self.input_str());
+        clamp_cursor(&mut self.selected, self.filtered.len());
+    }
+
     /// Move the selection by `direction` (+1 down / -1 up), clamped within
     /// `0..filtered.len()` (no wrap). A no-op when the list is empty.
     pub fn step(&mut self, direction: i32) {
@@ -98,6 +108,18 @@ impl FilterPicker {
         let idx = *self.filtered.get(self.selected)?;
         self.items.get(idx).map(String::as_str)
     }
+}
+
+/// Indices of `items` containing `needle`, compared case-insensitively. An
+/// empty or all-whitespace needle matches everything.
+pub fn substring_matches(items: &[String], needle: &str) -> Vec<usize> {
+    let needle = needle.trim().to_lowercase();
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| needle.is_empty() || item.to_lowercase().contains(&needle))
+        .map(|(index, _)| index)
+        .collect()
 }
 
 #[cfg(test)]

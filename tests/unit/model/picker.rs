@@ -1,19 +1,8 @@
 use crate::new_session::make_textarea;
-use crate::picker::{clamp_list_scroll, FilterPicker};
+use crate::picker::{clamp_list_scroll, substring_matches, FilterPicker};
 
 fn items() -> Vec<String> {
     vec!["alpha".into(), "alpine".into(), "beta".into()]
-}
-
-/// Case-insensitive substring filter, used to drive `refilter` in tests.
-fn substr(items: &[String], needle: &str) -> Vec<usize> {
-    let needle = needle.to_ascii_lowercase();
-    items
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| needle.is_empty() || s.to_ascii_lowercase().contains(&needle))
-        .map(|(i, _)| i)
-        .collect()
 }
 
 #[test]
@@ -29,7 +18,7 @@ fn refilter_recomputes_and_clamps_selected() {
     let mut p = FilterPicker::new(items());
     p.selected = 2;
     p.input = make_textarea("alp");
-    p.refilter(substr);
+    p.refilter(substring_matches);
     // "alpha" + "alpine" match; selected was past the new end, clamped down.
     assert_eq!(p.filtered, vec![0, 1]);
     assert_eq!(p.selected, 1);
@@ -41,7 +30,7 @@ fn refilter_empty_match_resets_selection() {
     let mut p = FilterPicker::new(items());
     p.selected = 2;
     p.input = make_textarea("zzz");
-    p.refilter(substr);
+    p.refilter(substring_matches);
     assert!(p.filtered.is_empty());
     assert_eq!(p.selected, 0);
     assert_eq!(p.selected_item(), None);
@@ -100,4 +89,22 @@ fn clamp_list_scroll_keeps_the_pinned_row_out_of_the_window() {
     assert_eq!(clamp_list_scroll(9, 3, 8, 1), 1);
     // Degenerate: the pinned row is the only row there is.
     assert_eq!(clamp_list_scroll(0, 1, 8, 1), 1);
+}
+
+fn hosts() -> Vec<String> {
+    vec!["prod-web-1".into(), "prod-web-2".into(), "staging".into()]
+}
+
+#[test]
+fn substring_match_on_empty_needle_matches_all() {
+    assert_eq!(substring_matches(&hosts(), ""), vec![0, 1, 2]);
+    assert_eq!(substring_matches(&hosts(), "   "), vec![0, 1, 2]);
+}
+
+#[test]
+fn substring_match_is_case_insensitive_and_trimmed() {
+    assert_eq!(substring_matches(&hosts(), "WEB"), vec![0, 1]);
+    assert_eq!(substring_matches(&hosts(), "stag"), vec![2]);
+    assert_eq!(substring_matches(&hosts(), "  stag  "), vec![2]);
+    assert!(substring_matches(&hosts(), "nope").is_empty());
 }

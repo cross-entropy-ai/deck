@@ -30,7 +30,7 @@ impl AddRemoteState {
 
     /// Rebuild the filtered list from the current input; clamp selection.
     pub fn refilter(&mut self) {
-        self.picker.refilter(filter_hosts);
+        self.picker.refilter_substring();
     }
 
     /// The host to add on confirm: the highlighted candidate when the
@@ -43,18 +43,6 @@ impl AddRemoteState {
         let typed = self.input_str().trim();
         (!typed.is_empty()).then(|| typed.to_string())
     }
-}
-
-/// Indices of `hosts` whose name contains `needle` (case-insensitive). An
-/// empty/whitespace needle matches everything.
-pub fn filter_hosts(hosts: &[String], needle: &str) -> Vec<usize> {
-    let needle = needle.trim().to_ascii_lowercase();
-    hosts
-        .iter()
-        .enumerate()
-        .filter(|(_, h)| needle.is_empty() || h.to_ascii_lowercase().contains(&needle))
-        .map(|(i, _)| i)
-        .collect()
 }
 
 #[cfg(test)]
