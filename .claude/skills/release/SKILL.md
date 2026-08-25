@@ -1,14 +1,19 @@
 ---
 name: release
-description: Cut and publish a deck release — bump the crate version, tag main, watch the GitHub Actions run that builds the binaries and updates the Homebrew tap, then rewrite the release notes. Use when asked to release, publish, ship, cut a version, tag a release, or 发布/出个新版本/触发 release. Args - [major|minor|patch|X.Y.Z], defaults to inferring the bump from what is unreleased.
+description: Cut and publish a deck release — bump the crate version, tag main, watch the GitHub Actions run that builds the binaries and updates the Homebrew tap, then rewrite the release notes.
+when_to_use: Use when the user wants to ship a new version of deck. Examples: "cut a release", "release this", "publish v1.3", "发布一个新版本", "出个 patch 版本", "触发 release". Takes the digit to move as its argument — major, minor, patch, or a literal X.Y.Z — and infers one from the unreleased log if given none.
 argument-hint: "[major|minor|patch|X.Y.Z]"
+arguments:
+  - bump
 ---
 
 # Release deck
 
-`$1` says which digit of the version moves: `major`, `minor`, `patch`, or a
-literal `X.Y.Z` (or `X.Y.Z-beta.N`) to set it outright. Left empty, step 2
-infers it from what is unreleased and says so.
+## Inputs
+
+- `$bump`: which digit of the version moves — `major`, `minor`, `patch`, or a
+  literal `X.Y.Z` (or `X.Y.Z-beta.N`) to set it outright. Empty is fine: step 2
+  infers it from what is unreleased and says so.
 
 Releases are the **one exception** to the branch-and-PR rule in `CLAUDE.md`: the
 version bump is committed straight to `main` and the tag is pushed from there.
@@ -38,12 +43,12 @@ cargo test --workspace --all-features
 
 ## 2. Pick the version
 
-`$1` decides. Compute the next version from `$PREV` rather than by eye — the
-tag is the one step here that cannot be taken back cleanly once anyone has
+`$bump` decides. Compute the next version from `$PREV` rather than by eye —
+the tag is the one step here that cannot be taken back cleanly once anyone has
 pulled it:
 
 ```bash
-BUMP="${1:-}"                       # major | minor | patch | X.Y.Z | empty
+BUMP="$bump"                          # major | minor | patch | X.Y.Z | empty
 BASE="${PREV#v}"; BASE="${BASE%%-*}"  # v1.3.0-beta.1 -> 1.3.0
 IFS=. read -r MA MI PA <<< "$BASE"
 case "$BUMP" in
@@ -55,8 +60,8 @@ case "$BUMP" in
 esac
 ```
 
-With `$1` empty, read `git log --oneline "$PREV"..main` and infer, then **say
-which digit you picked and what in the log decided it** before going on:
+With `$bump` empty, read `git log --oneline "$PREV"..main` and infer, then
+**say which digit you picked and what in the log decided it** before going on:
 
 | what is unreleased                                    | bump    |
 | ----------------------------------------------------- | ------- |
