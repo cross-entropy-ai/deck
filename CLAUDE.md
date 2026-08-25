@@ -176,6 +176,10 @@ git push origin vX.Y.Z
 
 GitHub Actions builds binaries and updates the Homebrew tap (`cross-entropy-ai/homebrew-tap`). See `docs/release.md`.
 
+The whole sequence — preflight gates, the version bump, the tag, watching
+the run, rewriting the notes — is the `release` skill
+(`.claude/skills/release/`). Invoke it rather than working from memory.
+
 ### Release notes
 
 After the release run finishes, update that release's notes to describe what
