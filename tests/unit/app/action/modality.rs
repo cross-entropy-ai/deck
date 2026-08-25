@@ -7,6 +7,7 @@
 
 use super::{key_to_action, mouse_to_action, paste_to_action, Action, ExcludeAction, MenuAction};
 use crate::config::KeyBindingValue;
+use crate::geometry::HitRegions;
 use crate::menu::{ContextMenu, MenuKind};
 use crate::overlay::{
     ExcludeEditorState, Modal, ModalState, RenameState, SshSettingEditorState, SshSettingField,
@@ -448,6 +449,7 @@ fn session_row_coord(state: &AppState) -> (u16, u16) {
             mouse_to_action(
                 &mouse_at(MouseEventKind::Down(MouseButton::Left), 2, row),
                 state,
+                &HitRegions::default(),
             ),
             Action::SidebarClickSession(_) | Action::StartProjectDrag(_)
         ) {
@@ -473,11 +475,11 @@ fn no_modal_leaks_a_forbidden_mouse_action() {
     // menu). If this ever stops holding, the coordinate is wrong and the
     // modal assertions below would be vacuous — fail loudly here instead.
     assert!(
-        is_forbidden(&mouse_to_action(&inputs[0], &base)),
+        is_forbidden(&mouse_to_action(&inputs[0], &base, &HitRegions::default())),
         "fixture sanity: left-click on a session row must be forbidden with no modal"
     );
     assert!(
-        is_forbidden(&mouse_to_action(&inputs[1], &base)),
+        is_forbidden(&mouse_to_action(&inputs[1], &base, &HitRegions::default())),
         "fixture sanity: right-click on a session row must be forbidden with no modal"
     );
 
@@ -488,7 +490,7 @@ fn no_modal_leaks_a_forbidden_mouse_action() {
         // the modal even sees it.
         state.pointer.last_scroll = Instant::now() - Duration::from_millis(200);
         for ev in &inputs {
-            let action = mouse_to_action(ev, &state);
+            let action = mouse_to_action(ev, &state, &HitRegions::default());
             assert!(
                 !is_forbidden(&action),
                 "{modal:?}: mouse {:?} leaked forbidden action {action:?}",

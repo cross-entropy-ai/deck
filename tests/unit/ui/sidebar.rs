@@ -453,15 +453,15 @@ fn agents_tab_publishes_clickable_agent_entries() {
 
     // End-to-end: clicking the LAST agent row (across the host divider)
     // yields a switch to *that* agent's pane, not a neighbor's.
-    state.hit_regions = captured;
-    let last = state.hit_regions.agents.last().unwrap().rect;
+    let hits = captured;
+    let last = hits.agents.last().unwrap().rect;
     let click = crossterm::event::MouseEvent {
         kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
         column: last.x,
         row: last.y,
         modifiers: crossterm::event::KeyModifiers::NONE,
     };
-    match crate::action::mouse_to_action(&click, &state) {
+    match crate::action::mouse_to_action(&click, &state, &hits) {
         crate::action::Action::SwitchToAgentPane(t) => {
             assert_eq!(t.pane_id, "%9");
             assert_eq!(t.lane, crate::system::tmux::TmuxSystem::host_lane("h1"));
@@ -618,7 +618,7 @@ fn remote_divider_shows_forward_count() {
 
     // Clicking the badge opens the host's port-forward overlay.
     let badge_rect = badge.rect;
-    state.hit_regions = captured;
+    let hits = captured;
     let click = crossterm::event::MouseEvent {
         kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
         column: badge_rect.x,
@@ -628,7 +628,7 @@ fn remote_divider_shows_forward_count() {
     // The click yields a typed lane action carrying the lane + backend id;
     // the tmux System turns "forwards" into the
     // port-forward overlay (verified in the system's own tests).
-    match crate::action::mouse_to_action(&click, &state) {
+    match crate::action::mouse_to_action(&click, &state, &hits) {
         crate::action::Action::InvokeLane { lane, action, .. } => {
             assert_eq!(action.as_str(), "forwards");
             assert_eq!(TmuxSystem::host_of(&lane), Some("h1"));

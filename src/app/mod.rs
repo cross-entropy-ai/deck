@@ -128,6 +128,11 @@ pub struct App {
     /// Set once the host terminal has reported its scheme by any route. Releases
     /// the first frame, which is held until then (see `THEME_RESOLVE_GRACE`).
     pub(super) scheme_resolved: bool,
+    /// Every clickable region the last frame published, captured whole by the
+    /// render loop and consulted by mouse dispatch. Frame-scoped, so it lives
+    /// here rather than on `AppState`: it describes what is painted right now,
+    /// not anything the application knows about itself.
+    pub(super) hit_regions: crate::geometry::HitRegions,
 }
 
 impl App {
@@ -286,6 +291,7 @@ impl App {
             suppress_next_periodic_refresh: false,
             scheme_via_protocol: false,
             scheme_resolved: false,
+            hit_regions: crate::geometry::HitRegions::default(),
         };
 
         // "Follow terminal" resolves a frame later: `run` asks on its first

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::geometry::{
     context_menu_rect, shorten_dir, tab_bar_layout, tab_label, AgentEntry, AgentEntryKind,
-    AgentTarget, BuiltLayout, HitRegions, SectionLayoutOpts, SectionMeta, SidebarLayout,
+    AgentTarget, BuiltLayout, SectionLayoutOpts, SectionMeta, SidebarLayout,
 };
 use crate::keybindings::Keybindings;
 use crate::lane::LaneId;
@@ -654,12 +654,6 @@ pub struct AppState {
     pub update_available: Option<UpdateStatus>,
     pub update_last_checked_secs: Option<u64>,
 
-    /// Every clickable region the sidebar publishes, captured whole each frame
-    /// by the render loop and consulted by mouse dispatch via [`HitRegions::hit`].
-    /// One field, not a dozen — geometry can't drift since all rect tests decode
-    /// from here.
-    pub hit_regions: HitRegions,
-
     /// Result of the most recent manual config reload. Rendered in the
     /// sidebar footer and auto-cleared by the main loop after a short
     /// TTL — see `RELOAD_STATUS_OK_TTL` / `RELOAD_STATUS_ERR_TTL`.
@@ -774,7 +768,6 @@ impl AppState {
             keybindings: Keybindings::default(),
             update_available: None,
             update_last_checked_secs: None,
-            hit_regions: HitRegions::default(),
             reload_status: None,
             reload_status_at: None,
             config_remotes: Vec::new(),

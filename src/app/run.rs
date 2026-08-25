@@ -424,7 +424,8 @@ impl App {
                         r.apply(&mut needs_render, &mut force_render);
                     }
                     Event::Mouse(mouse) => {
-                        let action = action::mouse_to_action(&mouse, &self.state);
+                        let action =
+                            action::mouse_to_action(&mouse, &self.state, &self.hit_regions);
                         if self.warning_state.is_some() && Self::warning_blocks_action(&action) {
                             continue;
                         }

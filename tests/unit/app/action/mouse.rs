@@ -1,5 +1,5 @@
 use super::{mouse_to_action, Action, NewSessionAction, SummaryAction};
-use crate::geometry::{AgentHit, AgentTarget, ListItemHit};
+use crate::geometry::{AgentHit, AgentTarget, HitRegions, ListItemHit};
 use crate::overlay::{Modal, ModalState};
 use crate::state::{AppState, FocusTarget, LayoutMode, SessionEntry, SessionEntryKind};
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -10,16 +10,17 @@ use std::time::{Duration, Instant};
 /// viewport and an agent row is drawn *inside* the card's rect — the exact
 /// geometry where wheel-scroll routing must not follow `HitRegions::hit`
 /// priority (agent rows outrank the card for clicks).
-fn state_with_agent_over_card() -> AppState {
+fn state_with_agent_over_card() -> (AppState, HitRegions) {
+    let mut hits = HitRegions::default();
     let mut state = AppState::new(120, 40);
-    state.hit_regions.summary.card = Some(Rect {
+    hits.summary.card = Some(Rect {
         x: 0,
         y: 2,
         width: 28,
         height: 8,
     });
     state.summary.max_scroll = 5;
-    state.hit_regions.agents = vec![AgentHit {
+    hits.agents = vec![AgentHit {
         rect: Rect {
             x: 2,
             y: 5,
@@ -32,7 +33,7 @@ fn state_with_agent_over_card() -> AppState {
             pane_id: "%1".into(),
         },
     }];
-    state
+    (state, hits)
 }
 
 fn state_with_projects() -> AppState {
@@ -53,7 +54,8 @@ fn state_with_projects() -> AppState {
     state
 }
 
-fn state_with_new_session_dirs() -> AppState {
+fn state_with_new_session_dirs() -> (AppState, HitRegions) {
+    let mut hits = HitRegions::default();
     use crate::new_session::{make_textarea, NewSessionState, PickerFocus};
     use crate::picker::FilterPicker;
 
@@ -73,13 +75,13 @@ fn state_with_new_session_dirs() -> AppState {
         scroll: 0,
         target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
     }));
-    state.hit_regions.new_session_dirs = (0..4)
+    hits.new_session_dirs = (0..4)
         .map(|index| ListItemHit {
             rect: Rect::new(20, 10 + index as u16, 24, 1),
             index,
         })
         .collect();
-    state
+    (state, hits)
 }
 
 fn screen_row_for(state: &AppState, target: usize) -> u16 {
@@ -99,11 +101,11 @@ fn ev(kind: MouseEventKind, col: u16, row: u16) -> MouseEvent {
 
 #[test]
 fn wheel_over_agent_row_inside_card_scrolls_summary() {
-    let mut state = state_with_agent_over_card();
+    let (mut state, hits) = state_with_agent_over_card();
     // Clear the scroll throttle so the wheel event isn't swallowed.
     state.pointer.last_scroll = Instant::now() - Duration::from_millis(200);
     // (4, 5) is inside both the agent rect and the card rect.
-    let action = mouse_to_action(&ev(MouseEventKind::ScrollUp, 4, 5), &state);
+    let action = mouse_to_action(&ev(MouseEventKind::ScrollUp, 4, 5), &state, &hits);
     assert!(
         matches!(action, Action::Summary(SummaryAction::Scroll(-1))),
         "wheel over an agent row that overlaps the card must scroll the summary, got {action:?}"
@@ -112,10 +114,14 @@ fn wheel_over_agent_row_inside_card_scrolls_summary() {
 
 #[test]
 fn left_click_over_agent_row_inside_card_still_selects_agent() {
-    let state = state_with_agent_over_card();
+    let (state, hits) = state_with_agent_over_card();
     // The same overlapping point: a *click* must still win for the agent
     // row (click priority is unchanged), not get hijacked by the card.
-    let action = mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 4, 5), &state);
+    let action = mouse_to_action(
+        &ev(MouseEventKind::Down(MouseButton::Left), 4, 5),
+        &state,
+        &hits,
+    );
     match action {
         Action::SwitchToAgentPane(t) => assert_eq!(t.session, "a"),
         other => panic!("left-click on an agent row must select it, got {other:?}"),
@@ -124,12 +130,12 @@ fn left_click_over_agent_row_inside_card_still_selects_agent() {
 
 #[test]
 fn directory_click_opens_that_folder_in_one_click() {
-    let mut state = state_with_new_session_dirs();
+    let (mut state, hits) = state_with_new_session_dirs();
     // Row 12 is `beta`, and nothing is highlighted there first: a click acts
     // on the row it landed on rather than selecting and waiting for a second.
     let beta = ev(MouseEventKind::Down(MouseButton::Left), 22, 12);
 
-    let action = mouse_to_action(&beta, &state);
+    let action = mouse_to_action(&beta, &state, &hits);
     assert!(
         matches!(action, Action::NewSession(NewSessionAction::DirOpen(2))),
         "left-click must open the clicked row, got {action:?}"
@@ -143,10 +149,10 @@ fn directory_click_opens_that_folder_in_one_click() {
 
 #[test]
 fn parent_row_is_clickable_even_though_the_keyboard_skips_it() {
-    let mut state = state_with_new_session_dirs();
+    let (mut state, hits) = state_with_new_session_dirs();
     let parent = ev(MouseEventKind::Down(MouseButton::Left), 22, 10);
 
-    let action = mouse_to_action(&parent, &state);
+    let action = mouse_to_action(&parent, &state, &hits);
     assert!(
         matches!(action, Action::NewSession(NewSessionAction::DirOpen(0))),
         "clicking `../` must be routed, got {action:?}"
@@ -161,10 +167,11 @@ fn parent_row_is_clickable_even_though_the_keyboard_skips_it() {
 
 #[test]
 fn right_click_on_a_folder_creates_the_session_in_it() {
-    let state = state_with_new_session_dirs();
+    let (state, hits) = state_with_new_session_dirs();
     let action = mouse_to_action(
         &ev(MouseEventKind::Down(MouseButton::Right), 22, 12),
         &state,
+        &hits,
     );
     assert!(
         matches!(action, Action::NewSession(NewSessionAction::CreateIn(2))),
@@ -174,10 +181,14 @@ fn right_click_on_a_folder_creates_the_session_in_it() {
 
 #[test]
 fn clicking_the_footer_create_hint_confirms() {
-    let mut state = state_with_new_session_dirs();
-    state.hit_regions.new_session_create = Some(Rect::new(20, 20, 8, 1));
+    let (state, mut hits) = state_with_new_session_dirs();
+    hits.new_session_create = Some(Rect::new(20, 20, 8, 1));
 
-    let action = mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 22, 20), &state);
+    let action = mouse_to_action(
+        &ev(MouseEventKind::Down(MouseButton::Left), 22, 20),
+        &state,
+        &hits,
+    );
     assert!(
         matches!(action, Action::NewSession(NewSessionAction::Confirm)),
         "the footer's `⏎ create` hint must be clickable, got {action:?}"
@@ -186,13 +197,13 @@ fn clicking_the_footer_create_hint_confirms() {
 
 #[test]
 fn wheel_over_directory_list_uses_wrapped_navigation() {
-    let mut state = state_with_new_session_dirs();
+    let (mut state, hits) = state_with_new_session_dirs();
     let ns = state.overlay.new_session_mut().unwrap();
     ns.focus = crate::new_session::PickerFocus::Dir;
     // `gamma`, the last row.
     ns.picker.selected = 3;
 
-    let action = mouse_to_action(&ev(MouseEventKind::ScrollDown, 22, 12), &state);
+    let action = mouse_to_action(&ev(MouseEventKind::ScrollDown, 22, 12), &state, &hits);
     assert!(matches!(action, Action::NewSession(NewSessionAction::Next)));
     crate::action::apply_action(&mut state, action);
     assert_eq!(
@@ -204,6 +215,7 @@ fn wheel_over_directory_list_uses_wrapped_navigation() {
 
 #[test]
 fn project_press_drag_release_uses_deferred_drag_actions() {
+    let hits = HitRegions::default();
     let mut state = state_with_projects();
     let first_row = screen_row_for(&state, 0);
     let third_row = screen_row_for(&state, 2);
@@ -211,6 +223,7 @@ fn project_press_drag_release_uses_deferred_drag_actions() {
     let down = mouse_to_action(
         &ev(MouseEventKind::Down(MouseButton::Left), 4, first_row),
         &state,
+        &hits,
     );
     assert!(matches!(down, Action::StartProjectDrag(row) if row == first_row));
     crate::action::apply_action(&mut state, down);
@@ -219,6 +232,7 @@ fn project_press_drag_release_uses_deferred_drag_actions() {
     let drag = mouse_to_action(
         &ev(MouseEventKind::Drag(MouseButton::Left), 4, third_row),
         &state,
+        &hits,
     );
     assert!(matches!(drag, Action::UpdateProjectDrag(row) if row == third_row));
     crate::action::apply_action(&mut state, drag);
@@ -232,6 +246,7 @@ fn project_press_drag_release_uses_deferred_drag_actions() {
         mouse_to_action(
             &ev(MouseEventKind::Up(MouseButton::Left), 4, third_row),
             &state,
+            &hits,
         ),
         Action::FinishProjectDrag
     ));
@@ -239,6 +254,7 @@ fn project_press_drag_release_uses_deferred_drag_actions() {
 
 #[test]
 fn project_drag_keeps_last_valid_target_over_divider() {
+    let _hits = HitRegions::default();
     let mut state = state_with_projects();
     let first_row = screen_row_for(&state, 0);
     let second_row = screen_row_for(&state, 1);
@@ -250,24 +266,34 @@ fn project_drag_keeps_last_valid_target_over_divider() {
 
 #[test]
 fn bordered_horizontal_divider_does_not_consume_first_pty_column() {
+    let hits = HitRegions::default();
     let mut state = AppState::new(120, 40);
     state.prefs.layout_mode = LayoutMode::Horizontal;
     state.prefs.show_borders = true;
     state.prefs.sidebar_width = 28;
 
     assert!(matches!(
-        mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 28, 1), &state),
+        mouse_to_action(
+            &ev(MouseEventKind::Down(MouseButton::Left), 28, 1),
+            &state,
+            &hits
+        ),
         Action::StartDrag
     ));
 
-    let action = mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 29, 1), &state);
+    let action = mouse_to_action(
+        &ev(MouseEventKind::Down(MouseButton::Left), 29, 1),
+        &state,
+        &hits,
+    );
     match action {
         Action::ForwardMouse(bytes) => assert_eq!(bytes, b"\x1b[<0;1;1M"),
         other => panic!("first PTY column must receive the click, got {other:?}"),
     }
 }
 
-fn state_with_add_remote() -> AppState {
+fn state_with_add_remote() -> (AppState, HitRegions) {
+    let mut hits = HitRegions::default();
     let mut state = AppState::new(120, 40);
     state.overlay.open(ModalState::AddRemote(
         crate::add_remote::AddRemoteState::new(
@@ -275,24 +301,28 @@ fn state_with_add_remote() -> AppState {
             vec!["alpha".into(), "beta".into(), "gamma".into()],
         ),
     ));
-    state.hit_regions.add_remote.hosts = (0..3)
+    hits.add_remote.hosts = (0..3)
         .map(|index| ListItemHit {
             rect: Rect::new(20, 10 + index as u16, 24, 1),
             index,
         })
         .collect();
-    state.hit_regions.add_remote.add = Some(Rect::new(20, 20, 5, 1));
-    state.hit_regions.add_remote.cancel = Some(Rect::new(40, 20, 8, 1));
-    state
+    hits.add_remote.add = Some(Rect::new(20, 20, 5, 1));
+    hits.add_remote.cancel = Some(Rect::new(40, 20, 8, 1));
+    (state, hits)
 }
 
 /// A host row offers exactly one thing, so a click delivers it whole: no
 /// highlight-then-confirm, the way clicking a directory in New Session opens it.
 #[test]
 fn clicking_a_remote_host_adds_it_without_a_second_click() {
-    let mut state = state_with_add_remote();
+    let (mut state, hits) = state_with_add_remote();
 
-    let action = mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 22, 11), &state);
+    let action = mouse_to_action(
+        &ev(MouseEventKind::Down(MouseButton::Left), 22, 11),
+        &state,
+        &hits,
+    );
     assert!(
         matches!(
             action,
@@ -315,9 +345,13 @@ fn clicking_a_remote_host_adds_it_without_a_second_click() {
 
 #[test]
 fn add_remote_footer_hints_are_buttons() {
-    let state = state_with_add_remote();
+    let (state, hits) = state_with_add_remote();
 
-    let add = mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 21, 20), &state);
+    let add = mouse_to_action(
+        &ev(MouseEventKind::Down(MouseButton::Left), 21, 20),
+        &state,
+        &hits,
+    );
     assert!(
         matches!(
             add,
@@ -325,7 +359,11 @@ fn add_remote_footer_hints_are_buttons() {
         ),
         "`[Enter] Add` must be clickable, got {add:?}"
     );
-    let cancel = mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 42, 20), &state);
+    let cancel = mouse_to_action(
+        &ev(MouseEventKind::Down(MouseButton::Left), 42, 20),
+        &state,
+        &hits,
+    );
     assert!(
         matches!(
             cancel,
@@ -335,7 +373,8 @@ fn add_remote_footer_hints_are_buttons() {
     );
 }
 
-fn state_with_mount_picker() -> AppState {
+fn state_with_mount_picker() -> (AppState, HitRegions) {
+    let mut hits = HitRegions::default();
     use crate::overlay::{MountPickerState, MountSort};
     use crate::system::MountCandidate;
 
@@ -362,13 +401,13 @@ fn state_with_mount_picker() -> AppState {
             confirming: None,
             sort: MountSort::default(),
         }));
-    state.hit_regions.mounts.rows = (0..2)
+    hits.mounts.rows = (0..2)
         .map(|index| ListItemHit {
             rect: Rect::new(20, 10 + index as u16, 24, 1),
             index,
         })
         .collect();
-    state
+    (state, hits)
 }
 
 /// Mounting a stopped container starts it on someone else's host, so it keeps
@@ -376,10 +415,10 @@ fn state_with_mount_picker() -> AppState {
 /// that prompt is up re-aims it, so a misclick cannot start the wrong one.
 #[test]
 fn clicking_a_candidate_that_needs_activation_still_asks_first() {
-    let mut state = state_with_mount_picker();
+    let (mut state, hits) = state_with_mount_picker();
 
     let click_stopped = ev(MouseEventKind::Down(MouseButton::Left), 22, 11);
-    let action = mouse_to_action(&click_stopped, &state);
+    let action = mouse_to_action(&click_stopped, &state, &hits);
     assert!(
         matches!(
             action,
@@ -400,7 +439,11 @@ fn clicking_a_candidate_that_needs_activation_still_asks_first() {
     );
 
     // Landing somewhere else abandons the prompt rather than answering it.
-    let action = mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 22, 10), &state);
+    let action = mouse_to_action(
+        &ev(MouseEventKind::Down(MouseButton::Left), 22, 10),
+        &state,
+        &hits,
+    );
     let fx = crate::action::apply_action(&mut state, action);
     assert!(
         state.overlay.is_not(Modal::MountPicker),
@@ -419,12 +462,12 @@ fn clicking_a_candidate_that_needs_activation_still_asks_first() {
 
 #[test]
 fn clicking_the_pending_candidate_again_answers_the_prompt() {
-    let mut state = state_with_mount_picker();
+    let (mut state, hits) = state_with_mount_picker();
     let click_stopped = ev(MouseEventKind::Down(MouseButton::Left), 22, 11);
 
-    let action = mouse_to_action(&click_stopped, &state);
+    let action = mouse_to_action(&click_stopped, &state, &hits);
     crate::action::apply_action(&mut state, action);
-    let action = mouse_to_action(&click_stopped, &state);
+    let action = mouse_to_action(&click_stopped, &state, &hits);
     let fx = crate::action::apply_action(&mut state, action);
 
     assert!(
@@ -437,7 +480,8 @@ fn clicking_the_pending_candidate_again_answers_the_prompt() {
     );
 }
 
-fn state_with_port_forwards() -> AppState {
+fn state_with_port_forwards() -> (AppState, HitRegions) {
+    let mut hits = HitRegions::default();
     use crate::forwards::{ForwardMode, ForwardSpec, PortForwardOverlay};
 
     let mut state = AppState::new(120, 40);
@@ -463,25 +507,29 @@ fn state_with_port_forwards() -> AppState {
             add_form: None,
             status: None,
         }));
-    state.hit_regions.port_forward.rows = (0..3)
+    hits.port_forward.rows = (0..3)
         .map(|index| ListItemHit {
             rect: Rect::new(20, 10 + index as u16, 24, 1),
             index,
         })
         .collect();
-    state.hit_regions.port_forward.add = Some(Rect::new(20, 20, 7, 1));
-    state.hit_regions.port_forward.delete = Some(Rect::new(30, 20, 10, 1));
-    state.hit_regions.port_forward.close = Some(Rect::new(44, 20, 11, 1));
-    state
+    hits.port_forward.add = Some(Rect::new(20, 20, 7, 1));
+    hits.port_forward.delete = Some(Rect::new(30, 20, 10, 1));
+    hits.port_forward.close = Some(Rect::new(44, 20, 11, 1));
+    (state, hits)
 }
 
 /// Deleting a forward is destructive and cannot be undone, so a row click only
 /// moves focus — the delete stays behind its own labelled button.
 #[test]
 fn clicking_a_forward_focuses_it_without_deleting_it() {
-    let mut state = state_with_port_forwards();
+    let (mut state, hits) = state_with_port_forwards();
 
-    let action = mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 22, 12), &state);
+    let action = mouse_to_action(
+        &ev(MouseEventKind::Down(MouseButton::Left), 22, 12),
+        &state,
+        &hits,
+    );
     assert!(
         matches!(action, Action::Pf(crate::action::PfAction::FocusRow(2))),
         "left-click must only focus the row, got {action:?}"
@@ -492,6 +540,7 @@ fn clicking_a_forward_focuses_it_without_deleting_it() {
     let right = mouse_to_action(
         &ev(MouseEventKind::Down(MouseButton::Right), 22, 12),
         &state,
+        &hits,
     );
     assert!(
         matches!(right, Action::None),
@@ -501,11 +550,12 @@ fn clicking_a_forward_focuses_it_without_deleting_it() {
 
 #[test]
 fn port_forward_footer_hints_are_buttons() {
-    let state = state_with_port_forwards();
+    let (state, hits) = state_with_port_forwards();
     let click = |col| {
         mouse_to_action(
             &ev(MouseEventKind::Down(MouseButton::Left), col, 20),
             &state,
+            &hits,
         )
     };
 
@@ -526,7 +576,7 @@ fn port_forward_footer_hints_are_buttons() {
 /// A stale click must never reach a row the current frame does not draw.
 #[test]
 fn a_click_past_the_end_of_the_forward_list_clamps() {
-    let mut state = state_with_port_forwards();
+    let (mut state, _hits) = state_with_port_forwards();
     crate::action::apply_action(
         &mut state,
         Action::Pf(crate::action::PfAction::FocusRow(99)),
@@ -538,7 +588,7 @@ fn a_click_past_the_end_of_the_forward_list_clamps() {
 /// route — must not move a selection the user cannot see behind it.
 #[test]
 fn the_wheel_is_inert_while_the_add_form_covers_the_forward_list() {
-    let mut state = state_with_port_forwards();
+    let (mut state, hits) = state_with_port_forwards();
     state.overlay.port_forward_mut().unwrap().add_form =
         Some(crate::forwards::PfAddForm::default_for(
             crate::forwards::ForwardMode::Local,
@@ -546,14 +596,15 @@ fn the_wheel_is_inert_while_the_add_form_covers_the_forward_list() {
             "h1",
         ));
 
-    let action = mouse_to_action(&ev(MouseEventKind::ScrollDown, 22, 12), &state);
+    let action = mouse_to_action(&ev(MouseEventKind::ScrollDown, 22, 12), &state, &hits);
     assert!(
         matches!(action, Action::None),
         "the wheel must not reach the list under the form, got {action:?}"
     );
 }
 
-fn state_with_hidden_picker() -> AppState {
+fn state_with_hidden_picker() -> (AppState, HitRegions) {
+    let mut hits = HitRegions::default();
     let lane = crate::system::tmux::TmuxSystem::local_lane();
     let mut state = AppState::new(120, 40);
     state.hidden_sessions.insert(
@@ -563,24 +614,28 @@ fn state_with_hidden_picker() -> AppState {
     state.overlay.open(ModalState::HiddenSessions(
         crate::overlay::HiddenSessionsState::new(lane.clone(), &state.hidden_sessions[&lane]),
     ));
-    state.hit_regions.hidden.rows = (0..2)
+    hits.hidden.rows = (0..2)
         .map(|index| ListItemHit {
             rect: Rect::new(20, 10 + index as u16, 24, 1),
             index,
         })
         .collect();
-    state.hit_regions.hidden.restore_all = Some(Rect::new(20, 20, 6, 1));
-    state.hit_regions.hidden.cancel = Some(Rect::new(30, 20, 8, 1));
-    state
+    hits.hidden.restore_all = Some(Rect::new(20, 20, 6, 1));
+    hits.hidden.cancel = Some(Rect::new(30, 20, 8, 1));
+    (state, hits)
 }
 
 /// One click restores, the same gesture a host row in Add Remote takes — and it
 /// restores the row under the cursor, not whatever was highlighted.
 #[test]
 fn clicking_a_hidden_name_restores_that_one() {
-    let mut state = state_with_hidden_picker();
+    let (mut state, hits) = state_with_hidden_picker();
 
-    let action = mouse_to_action(&ev(MouseEventKind::Down(MouseButton::Left), 22, 11), &state);
+    let action = mouse_to_action(
+        &ev(MouseEventKind::Down(MouseButton::Left), 22, 11),
+        &state,
+        &hits,
+    );
     assert!(
         matches!(
             action,
@@ -600,11 +655,12 @@ fn clicking_a_hidden_name_restores_that_one() {
 
 #[test]
 fn hidden_picker_footer_hints_are_buttons() {
-    let state = state_with_hidden_picker();
+    let (state, hits) = state_with_hidden_picker();
     let click = |col| {
         mouse_to_action(
             &ev(MouseEventKind::Down(MouseButton::Left), col, 20),
             &state,
+            &hits,
         )
     };
 

@@ -1,6 +1,6 @@
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
-use crate::geometry::HitKind;
+use crate::geometry::{HitKind, HitRegions};
 use crate::overlay::Modal;
 use crate::state::{AppState, FocusTarget, LayoutMode, MainView};
 
@@ -9,11 +9,16 @@ use super::{
     PfAction, SettingsAction, SummaryAction,
 };
 
-pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
+/// Map a mouse event to an intent.
+///
+/// `hits` is the frame the renderer just published. It is passed in rather
+/// than read off `AppState` because it is not application state: it describes
+/// what is currently painted, and it is stale the moment the next frame is.
+pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState, hits: &HitRegions) -> Action {
     // Single resolver for every rect-based button/region the sidebar publishes.
     // Button rects and session-row dispatch run only when no modal is up, so
     // they can't be clicked through an overlay (mouse half of bug #7).
-    let hit = state.hit_regions.hit(mouse.column, mouse.row);
+    let hit = hits.hit(mouse.column, mouse.row);
 
     // Resolve `active_modal` before any button-rect or session-row hit test.
     // Most overlays swallow all mouse; confirm-kill / summary-popup /
@@ -56,13 +61,13 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         // before the sidebar separator since the handle lives inside the
         // sidebar, not at its right gap.
         MouseEventKind::Down(MouseButton::Left)
-            if state.hit_regions.summary.resize_at(mouse.column, mouse.row) =>
+            if hits.summary.resize_at(mouse.column, mouse.row) =>
         {
             return Action::Summary(SummaryAction::StartDrag);
         }
         MouseEventKind::Drag(MouseButton::Left) if state.summary.dragging => {
             return Action::Summary(SummaryAction::Resize(
-                state.hit_regions.summary.height_for_drag(mouse.row),
+                hits.summary.height_for_drag(mouse.row),
             ));
         }
         MouseEventKind::Up(MouseButton::Left) if state.summary.dragging => {
@@ -103,9 +108,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
                 // directly rather than via `hit()`, where overlaid agent
                 // rows/dividers would outrank it — the wheel must scroll the
                 // summary anywhere over the card.
-                if state.summary.max_scroll > 0
-                    && state.hit_regions.summary.card_at(mouse.column, mouse.row)
-                {
+                if state.summary.max_scroll > 0 && hits.summary.card_at(mouse.column, mouse.row) {
                     return match mouse.kind {
                         MouseEventKind::ScrollUp => Action::Summary(SummaryAction::Scroll(-1)),
                         _ => Action::Summary(SummaryAction::Scroll(1)),
@@ -130,7 +133,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         // returns indices into the registry's vecs.
         match hit {
             Some(HitKind::Divider(i)) => {
-                let dh = &state.hit_regions.dividers[i];
+                let dh = &hits.dividers[i];
                 // The shell doesn't interpret the command — it hands the
                 // button's lane + command to the owning System (decision A).
                 // `y + 1` opens any positioned UI just below the button.
@@ -144,7 +147,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
                 };
             }
             Some(HitKind::Agent(i)) => {
-                return Action::SwitchToAgentPane(state.hit_regions.agents[i].target.clone());
+                return Action::SwitchToAgentPane(hits.agents[i].target.clone());
             }
             _ => {}
         }
