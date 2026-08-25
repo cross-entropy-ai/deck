@@ -3219,3 +3219,73 @@ fn the_divider_item_is_gated_on_the_lane_actually_hiding_something() {
     assert!(divider(false).disabled().contains(&MenuItem::ShowHidden));
     assert!(!divider(true).disabled().contains(&MenuItem::ShowHidden));
 }
+
+fn ctrl_u() -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('u'),
+        crossterm::event::KeyModifiers::CONTROL,
+    )
+}
+
+fn cmd_backspace() -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Backspace,
+        crossterm::event::KeyModifiers::SUPER,
+    )
+}
+
+#[test]
+fn new_session_clear_line_chord_empties_the_name_field_only() {
+    let mut state = picker_state_with("~/foo/", vec![]);
+    state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Name;
+    state.overlay.new_session.as_mut().unwrap().name =
+        crate::new_session::make_textarea("session-7");
+
+    apply_action(
+        &mut state,
+        Action::NewSession(NewSessionAction::InputKey(ctrl_u())),
+    );
+    assert_eq!(ns_name_str(&state), "");
+    assert_eq!(ns_input_str(&state), "~/foo/"); // dir untouched
+
+    state.overlay.new_session.as_mut().unwrap().name =
+        crate::new_session::make_textarea("session-8");
+    apply_action(
+        &mut state,
+        Action::NewSession(NewSessionAction::InputKey(cmd_backspace())),
+    );
+    assert_eq!(ns_name_str(&state), "");
+}
+
+#[test]
+fn rename_clear_line_chord_empties_the_input() {
+    let mut state = make_test_state(1);
+    state.overlay.renaming = Some(rename_state("hello"));
+    apply_action(&mut state, Action::RenameInputKey(ctrl_u()));
+    assert_eq!(rename_input_text(&state), "");
+}
+
+#[test]
+fn pf_add_input_clear_line_chord_empties_a_port_field() {
+    use crate::forwards::PfField;
+    // The port fields screen non-digit characters; the chord is a command,
+    // not a character, so it must get through to clear the field.
+    for (chord, field, initial) in [
+        (ctrl_u(), PfField::ListenPort, "8080"),
+        (cmd_backspace(), PfField::TargetPort, "443"),
+        (ctrl_u(), PfField::TargetHost, "db.internal"),
+    ] {
+        let mut state = make_test_state(0);
+        open_form_with_focus(&mut state, field, initial);
+        crate::action::apply_action(&mut state, Action::Pf(PfAction::AddInputKey(chord)));
+        let form = state
+            .overlay
+            .port_forward
+            .as_ref()
+            .unwrap()
+            .add_form
+            .as_ref()
+            .unwrap();
+        assert_eq!(form.field_text(field), "", "{field:?} after {chord:?}");
+    }
+}

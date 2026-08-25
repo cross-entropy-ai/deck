@@ -427,7 +427,9 @@ fn dir_field_key_to_action(key: &KeyEvent) -> Action {
         KeyCode::Down => Action::NewSession(NewSessionAction::Next),
         KeyCode::Left => Action::NewSession(NewSessionAction::DirUp),
         KeyCode::Right => Action::NewSession(NewSessionAction::DirEnter),
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        // The chord every field clears on; the path field answers it with
+        // its own action so the directory listing is re-read as well.
+        _ if crate::new_session::is_clear_line_key(key) => {
             Action::NewSession(NewSessionAction::Clear)
         }
         KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {

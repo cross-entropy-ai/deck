@@ -217,3 +217,61 @@ fn filtering_the_parent_row_away_gives_its_row_back_to_the_children() {
     assert_eq!(ns.scroll, 0);
     assert_eq!(ns.entry_at(ns.picker.selected), Some("src"));
 }
+
+#[test]
+fn clear_line_chord_is_ctrl_u_or_cmd_backspace() {
+    let ctrl_u = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL);
+    let cmd_backspace = KeyEvent::new(KeyCode::Backspace, KeyModifiers::SUPER);
+    assert!(is_clear_line_key(&ctrl_u));
+    assert!(is_clear_line_key(&cmd_backspace));
+
+    // A plain `u`, a plain Backspace, and Alt-Backspace (delete word) are
+    // ordinary edits, not the clear.
+    assert!(!is_clear_line_key(&KeyEvent::new(
+        KeyCode::Char('u'),
+        KeyModifiers::NONE
+    )));
+    assert!(!is_clear_line_key(&KeyEvent::new(
+        KeyCode::Backspace,
+        KeyModifiers::NONE
+    )));
+    assert!(!is_clear_line_key(&KeyEvent::new(
+        KeyCode::Backspace,
+        KeyModifiers::ALT
+    )));
+}
+
+#[test]
+fn textarea_input_clear_chord_empties_the_line_from_any_cursor_position() {
+    let mut ta = make_textarea("hello world");
+    ta.move_cursor(CursorMove::Head);
+    ta.move_cursor(CursorMove::WordForward);
+    assert_ne!(ta.cursor().1, 0, "cursor sits mid-line before the clear");
+
+    let ctrl_u = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL);
+    assert!(textarea_input(&mut ta, ctrl_u));
+    assert_eq!(textarea_line(&ta), "");
+    // Clearing an already empty line changes nothing.
+    assert!(!textarea_input(&mut ta, ctrl_u));
+
+    let mut ta = make_textarea("~/projects/deck");
+    let cmd_backspace = KeyEvent::new(KeyCode::Backspace, KeyModifiers::SUPER);
+    assert!(textarea_input(&mut ta, cmd_backspace));
+    assert_eq!(textarea_line(&ta), "");
+}
+
+#[test]
+fn textarea_input_defers_every_other_key_to_the_widget() {
+    let mut ta = make_textarea("foo bar");
+    // Ctrl-W is the widget's delete-word; a plain character inserts.
+    textarea_input(
+        &mut ta,
+        KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+    );
+    assert_eq!(textarea_line(&ta), "foo ");
+    textarea_input(
+        &mut ta,
+        KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+    );
+    assert_eq!(textarea_line(&ta), "foo x");
+}

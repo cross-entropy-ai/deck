@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui_textarea::{CursorMove, TextArea};
 
 use crate::picker::FilterPicker;
@@ -111,6 +112,43 @@ pub fn make_textarea(s: &str) -> TextArea<'static> {
 /// First (only) line of a single-line `TextArea`, as a borrowed `&str`.
 pub fn textarea_line<'a>(ta: &'a TextArea<'a>) -> &'a str {
     ta.lines().first().map_or("", String::as_str)
+}
+
+/// Whether `key` is the clear-the-line chord every single-line field honours:
+/// `Ctrl-U` (the readline/zsh binding, and Claude Code's) or `Cmd-Backspace`
+/// (the macOS text-field gesture). A terminal speaking the kitty keyboard
+/// protocol — which deck requests — reports the latter as `Backspace` with a
+/// SUPER modifier; Ghostty's default keybind sends it as `Ctrl-U` instead, so
+/// both spellings land here.
+pub fn is_clear_line_key(key: &KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Char('u') => key.modifiers.contains(KeyModifiers::CONTROL),
+        KeyCode::Backspace => key
+            .modifiers
+            .intersects(KeyModifiers::SUPER | KeyModifiers::META | KeyModifiers::HYPER),
+        _ => false,
+    }
+}
+
+/// Feed one key to a single-line field. deck's own chords come first —
+/// `Ctrl-U` / `Cmd-Backspace` clear the line, where the crate would read
+/// `Ctrl-U` as undo — and everything else is the crate's default binding set
+/// (`Ctrl-W` deletes a word, `Ctrl-A`/`Ctrl-E` jump, arrows move, …). Every
+/// field routes its keys through here, so a chord is added in one place.
+/// Returns whether the text changed.
+pub fn textarea_input(ta: &mut TextArea<'static>, key: KeyEvent) -> bool {
+    if is_clear_line_key(&key) {
+        return clear_textarea(ta);
+    }
+    ta.input(key)
+}
+
+/// Empty a single-line field, wherever the cursor was. Goes through the
+/// crate's own kill so the text lands in its yank buffer and `Ctrl-Y` can
+/// bring it back. Returns whether anything was removed.
+pub fn clear_textarea(ta: &mut TextArea<'static>) -> bool {
+    ta.move_cursor(CursorMove::End);
+    ta.delete_line_by_head()
 }
 
 /// Resolve a user-typed path to an absolute, normalized `PathBuf`. Leading

@@ -505,3 +505,29 @@ fn dropped_image_path_is_a_paste_under_the_same_policy() {
         Action::None
     ));
 }
+
+#[test]
+fn new_session_clear_line_chord_routes_per_field() {
+    let mut state = make_state();
+    open_modal(&mut state, Modal::NewSession);
+    let ctrl_u = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL);
+    let cmd_backspace = KeyEvent::new(KeyCode::Backspace, KeyModifiers::SUPER);
+
+    // The name field is an ordinary text field: the chord reaches the widget.
+    for chord in [ctrl_u, cmd_backspace] {
+        assert!(matches!(
+            key_to_action(&chord, &state),
+            Action::NewSession(super::NewSessionAction::InputKey(k)) if k == chord
+        ));
+    }
+
+    // The path field clears through its own action, which also re-reads the
+    // directory listing — for both spellings of the chord.
+    state.overlay.new_session.as_mut().unwrap().focus = crate::new_session::PickerFocus::Dir;
+    for chord in [ctrl_u, cmd_backspace] {
+        assert!(matches!(
+            key_to_action(&chord, &state),
+            Action::NewSession(super::NewSessionAction::Clear)
+        ));
+    }
+}

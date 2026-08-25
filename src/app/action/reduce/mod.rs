@@ -1,5 +1,5 @@
 use crate::effects::{Effect, KillRequest, RenameRequest, SideEffect};
-use crate::new_session::textarea_line;
+use crate::new_session::{textarea_input, textarea_line};
 use crate::overlay::RenameState;
 use crate::state::{AppState, FocusMode, LayoutMode, MainView, SidebarTab, ViewMode};
 
@@ -403,7 +403,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         }
         Action::RenameInputKey(key) => {
             if let Some(ref mut r) = state.overlay.renaming {
-                r.input.input(key);
+                textarea_input(&mut r.input, key);
             }
         }
         Action::RenameConfirm => {
@@ -660,7 +660,7 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
         }
         SummaryAction::LanguageInputKey(key) => {
             if let Some(ref mut ta) = state.overlay.summary_lang_input {
-                ta.input(key);
+                textarea_input(ta, key);
             }
         }
         SummaryAction::LanguageConfirm => {
@@ -707,13 +707,13 @@ fn reduce_new_session(state: &mut AppState, action: NewSessionAction) -> SideEff
             use crate::new_session::PickerFocus;
             match ns.focus {
                 PickerFocus::Name => {
-                    ns.name.input(key);
+                    textarea_input(&mut ns.name, key);
                 }
                 PickerFocus::Dir => {
                     let parent_before = crate::new_session::split_input(ns.input_str())
                         .0
                         .to_string();
-                    ns.picker.input.input(key);
+                    textarea_input(&mut ns.picker.input, key);
                     ns.refilter();
                     let parent_after = crate::new_session::split_input(ns.input_str())
                         .0
@@ -818,7 +818,7 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
             picker.confirming = None;
             match action {
                 MountAction::InputKey(key) => {
-                    picker.picker.input.input(key);
+                    textarea_input(&mut picker.picker.input, key);
                     picker.refilter();
                     picker.picker.error = None;
                 }
@@ -971,7 +971,7 @@ fn reduce_hidden(state: &mut AppState, action: HiddenAction) -> SideEffect {
             };
             match action {
                 HiddenAction::InputKey(key) => {
-                    open.picker.input.input(key);
+                    textarea_input(&mut open.picker.input, key);
                     open.refilter();
                 }
                 HiddenAction::Prev => open.picker.step(-1),
@@ -1033,7 +1033,7 @@ fn reduce_add_remote(state: &mut AppState, action: AddRemoteAction) -> SideEffec
             };
             match action {
                 AddRemoteAction::InputKey(key) => {
-                    ar.picker.input.input(key);
+                    textarea_input(&mut ar.picker.input, key);
                     ar.refilter();
                     ar.picker.error = None;
                 }

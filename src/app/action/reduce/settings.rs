@@ -4,6 +4,7 @@
 
 use crate::app::settings::setting_rows;
 use crate::effects::{Effect, SideEffect};
+use crate::new_session::textarea_input;
 use crate::state::{step_clamped, AppState, FocusMode, MainView};
 use crate::theme::indices_for_slot;
 
@@ -90,7 +91,7 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         }
         SettingsAction::SshSettingInputKey(key) => {
             if let Some(editor) = state.overlay.ssh_setting_editor.as_mut() {
-                editor.input.input(key);
+                textarea_input(&mut editor.input, key);
                 editor.error = None;
             }
         }
@@ -252,7 +253,7 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
                 }
                 SettingsAction::ExcludeInputKey(key) => {
                     if editor.adding {
-                        editor.input.input(key);
+                        textarea_input(&mut editor.input, key);
                         editor.error = None;
                     }
                 }

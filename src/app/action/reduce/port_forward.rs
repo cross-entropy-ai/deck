@@ -182,9 +182,22 @@ fn set_mode(f: &mut PfAddForm, delta: i32) {
 /// fields and whitespace on every field, and rolls back any input that would
 /// push a port outside `u16` range.
 fn handle_pf_input(f: &mut PfAddForm, key: crossterm::event::KeyEvent) {
-    use crossterm::event::KeyCode;
+    use crossterm::event::{KeyCode, KeyModifiers};
     let port_field = matches!(f.focus, PfField::ListenPort | PfField::TargetPort);
-    if let KeyCode::Char(c) = key.code {
+    // Only a key that would insert text is screened. A `Ctrl`/`Alt` chord is
+    // an editing command (clear the line, delete a word, jump), never a
+    // character, so it passes — a port field must be clearable like any other.
+    let typed = match key.code {
+        KeyCode::Char(c)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            Some(c)
+        }
+        _ => None,
+    };
+    if let Some(c) = typed {
         if port_field && !c.is_ascii_digit() {
             return;
         }
@@ -199,7 +212,7 @@ fn handle_pf_input(f: &mut PfAddForm, key: crossterm::event::KeyEvent) {
         return;
     };
     let snapshot = ta.clone();
-    ta.input(key);
+    crate::new_session::textarea_input(ta, key);
 
     // Rollback if a port field was driven outside `u16` by this keystroke.
     // Empty is fine (in-progress typing); anything that parses as u16
