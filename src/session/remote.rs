@@ -28,27 +28,23 @@ impl RemoteControl {
 impl SessionControl for RemoteControl {
     fn switch_to(&self, name: &str) -> SessionControlResult {
         remote_tmux::switch_client(&self.host, self.marker_id, name)
-            .map_err(|error| SessionControlError::new(error.to_string()))
+            .map_err(SessionControlError::from)
     }
 
     fn rename(&self, old: &str, new: &str) -> SessionControlResult {
-        remote_tmux::rename_session(&self.host, old, new)
-            .map_err(|error| SessionControlError::new(error.to_string()))
+        remote_tmux::rename_session(&self.host, old, new).map_err(SessionControlError::from)
     }
 
     fn kill(&self, name: &str) -> SessionControlResult {
-        remote_tmux::kill_session(&self.host, name)
-            .map_err(|error| SessionControlError::new(error.to_string()))
+        remote_tmux::kill_session(&self.host, name).map_err(SessionControlError::from)
     }
 
     fn create(&self, name: &str, dir: &str) -> SessionControlResult {
-        remote_tmux::new_session(&self.host, name, dir)
-            .map_err(|error| SessionControlError::new(error.to_string()))
+        remote_tmux::new_session(&self.host, name, dir).map_err(SessionControlError::from)
     }
 
     fn persist_order(&self, order: &[String]) -> SessionControlResult {
-        remote_tmux::persist_session_order(&self.host, order)
-            .map_err(|error| SessionControlError::new(error.to_string()))
+        remote_tmux::persist_session_order(&self.host, order).map_err(SessionControlError::from)
     }
 
     fn list_dir(&self, path: &str) -> SessionControlResult<DirListing> {

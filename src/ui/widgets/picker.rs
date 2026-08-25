@@ -136,7 +136,10 @@ pub fn draw_filter_picker(
 
     if let Some(err) = picker.error {
         Paragraph::new(Span::styled(
-            format!("{}Error  {err}", " ".repeat(label_width + 5)),
+            format!(
+                "{}Error  {err}",
+                " ".repeat(super::form_content_offset(label_width))
+            ),
             Style::default().fg(theme.error),
         ))
         .render(rows[idx], frame.buffer_mut());

@@ -17,7 +17,9 @@ use crate::ui::widgets::{
 
 const OVERLAY_WIDTH: u16 = 64;
 const FORM_LABEL_WIDTH: usize = 12;
-const FORM_CONTENT_OFFSET: u16 = FORM_LABEL_WIDTH as u16 + 5;
+fn form_content_offset() -> u16 {
+    crate::ui::widgets::form_content_offset(FORM_LABEL_WIDTH) as u16
+}
 /// The list footer, whose hints double as its buttons.
 const ADD_HINT: &str = "[A] Add";
 const DELETE_HINT: &str = "[D] Delete";
@@ -255,11 +257,11 @@ fn draw_form(buf: &mut Buffer, area: Rect, form: &PfAddForm, status: Option<&str
             theme.error
         };
         let inset = Rect {
-            x: rows[9].x + FORM_CONTENT_OFFSET,
+            x: rows[9].x + form_content_offset(),
             y: rows[9].y,
             width: rows[9]
                 .width
-                .saturating_sub(FORM_CONTENT_OFFSET.saturating_add(2)),
+                .saturating_sub(form_content_offset().saturating_add(2)),
             height: rows[9].height,
         };
         let status_label = if s.starts_with("applying") {

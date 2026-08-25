@@ -30,26 +30,25 @@ impl SessionControl for LocalControl {
         } else {
             tmux::switch_client_for_tty(&self.client_tty, name)
         }
-        .map_err(|error| SessionControlError::new(error.to_string()))
+        .map_err(SessionControlError::from)
     }
 
     fn rename(&self, old: &str, new: &str) -> SessionControlResult {
-        tmux::rename_session(old, new).map_err(|error| SessionControlError::new(error.to_string()))
+        tmux::rename_session(old, new).map_err(SessionControlError::from)
     }
 
     fn kill(&self, name: &str) -> SessionControlResult {
-        tmux::kill_session(name).map_err(|error| SessionControlError::new(error.to_string()))
+        tmux::kill_session(name).map_err(SessionControlError::from)
     }
 
     fn create(&self, name: &str, dir: &str) -> SessionControlResult {
         tmux::new_session(name, dir)
             .map(|_| ())
-            .map_err(|error| SessionControlError::new(error.to_string()))
+            .map_err(SessionControlError::from)
     }
 
     fn persist_order(&self, order: &[String]) -> SessionControlResult {
-        tmux::persist_session_order(order)
-            .map_err(|error| SessionControlError::new(error.to_string()))
+        tmux::persist_session_order(order).map_err(SessionControlError::from)
     }
 
     fn list_dir(&self, path: &str) -> SessionControlResult<DirListing> {

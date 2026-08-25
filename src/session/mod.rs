@@ -36,6 +36,14 @@ impl std::fmt::Display for SessionControlError {
 
 impl std::error::Error for SessionControlError {}
 
+/// Every backend reports a failed command the same way: the command error's
+/// own words. Spelling that out per call was eleven copies of one `map_err`.
+impl From<crate::infra::command::CommandError> for SessionControlError {
+    fn from(error: crate::infra::command::CommandError) -> Self {
+        Self::new(error.to_string())
+    }
+}
+
 pub type SessionControlResult<T = ()> = Result<T, SessionControlError>;
 
 /// Successful directory-browser response. A named type keeps the control

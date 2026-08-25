@@ -66,30 +66,26 @@ pub(super) fn reduce_pf(state: &mut AppState, action: PfAction) -> SideEffect {
                 _ => o.add_form = None,
             }
         }
-        // The renderer publishes a row only for a forward it drew, so the index
-        // is in range; clamping anyway keeps a stale frame's click harmless.
-        PfAction::FocusRow(index) => {
-            let lane = state
+        // Both moves need the row count first, which needs the lane, which is
+        // borrowed from the same overlay they then write to.
+        //
+        // The renderer publishes a row only for a forward it drew, so a
+        // clicked index is in range; clamping anyway keeps a stale frame's
+        // click harmless.
+        PfAction::FocusRow(_) | PfAction::FocusDown => {
+            let Some(lane) = state
                 .overlay
                 .port_forward()
-                .map(|overlay| overlay.lane.clone());
-            if let Some(lane) = lane {
-                let len = forwards_len(state, &lane);
-                if let Some(o) = state.overlay.port_forward_mut() {
-                    o.selected = index.min(len.saturating_sub(1));
-                }
-            }
-        }
-        PfAction::FocusDown => {
-            let lane = state
-                .overlay
-                .port_forward()
-                .map(|overlay| overlay.lane.clone());
-            if let Some(lane) = lane {
-                let len = forwards_len(state, &lane);
-                if let Some(o) = state.overlay.port_forward_mut() {
-                    o.selected = step_clamped(o.selected, len, 1);
-                }
+                .map(|overlay| overlay.lane.clone())
+            else {
+                return fx;
+            };
+            let len = forwards_len(state, &lane);
+            if let Some(o) = state.overlay.port_forward_mut() {
+                o.selected = match action {
+                    PfAction::FocusRow(index) => index.min(len.saturating_sub(1)),
+                    _ => step_clamped(o.selected, len, 1),
+                };
             }
         }
 

@@ -211,14 +211,25 @@ fn load_lane_state() -> Result<crate::lane_state::LaneState, String> {
     Ok(state)
 }
 
-pub(crate) fn run_remote_add(host: &str) -> i32 {
-    let mut state = match load_lane_state() {
-        Ok(s) => s,
+/// Load the lane state for a command that is about to rewrite it, reporting
+/// the refusal itself. `None` means the caller should exit non-zero.
+///
+/// An unreadable file is never edited: a subcommand that wrote its own view
+/// over one would drop whatever the user actually has there.
+fn lane_state_for_edit() -> Option<crate::lane_state::LaneState> {
+    match load_lane_state() {
+        Ok(state) => Some(state),
         Err(e) => {
             eprintln!("deck: cannot read config ({e}); refusing to modify it.");
             eprintln!("deck: fix ~/.config/deck/config.yaml by hand, then retry.");
-            return 1;
+            None
         }
+    }
+}
+
+pub(crate) fn run_remote_add(host: &str) -> i32 {
+    let Some(mut state) = lane_state_for_edit() else {
+        return 1;
     };
     let mut remotes = state.to_remote_configs();
     if remotes.iter().any(|r| r.host == host) {
@@ -274,13 +285,8 @@ pub(crate) fn run_remote_list() {
 }
 
 pub(crate) fn run_remote_remove(host: &str) -> i32 {
-    let mut state = match load_lane_state() {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("deck: cannot read config ({e}); refusing to modify it.");
-            eprintln!("deck: fix ~/.config/deck/config.yaml by hand, then retry.");
-            return 1;
-        }
+    let Some(mut state) = lane_state_for_edit() else {
+        return 1;
     };
     let before = state.remotes.len();
     state.remotes.retain(|remote| remote.host != host);

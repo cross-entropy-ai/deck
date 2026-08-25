@@ -51,6 +51,16 @@ pub fn form_label_span(
     )
 }
 
+/// Columns a [`form_label_span`] occupies for a `label_width`-wide label.
+///
+/// The five columns of chrome are the leading space, the focus marker, the
+/// space after it, and the two trailing spaces — read them off the `format!`
+/// above rather than counting them again at each call site, which is where
+/// the number used to be written by hand three times.
+pub fn form_content_offset(label_width: usize) -> usize {
+    label_width + 5
+}
+
 /// Render a semantic form field with a fixed label column, an explicit focus
 /// rail, and standard enabled/disabled input colors.
 pub fn form_field_row(

@@ -361,7 +361,7 @@ pub fn draw_ssh_setting_editor(
     theme: &Theme,
 ) {
     const LABEL_WIDTH: usize = 14;
-    const CONTENT_OFFSET: usize = LABEL_WIDTH + 5;
+    let content_offset = super::widgets::form_content_offset(LABEL_WIDTH);
     let (title, label, description, desired_width) = match editor.field {
         crate::overlay::SshSettingField::ControlPath => (
             "SSH Control Path",
@@ -415,7 +415,7 @@ pub fn draw_ssh_setting_editor(
     let mut next = 3;
     if let Some(error) = editor.error {
         Paragraph::new(Line::from(Span::styled(
-            format!("{}Error  {error}", " ".repeat(CONTENT_OFFSET)),
+            format!("{}Error  {error}", " ".repeat(content_offset)),
             Style::default().fg(theme.error).bg(theme.elevated),
         )))
         .wrap(Wrap { trim: true })

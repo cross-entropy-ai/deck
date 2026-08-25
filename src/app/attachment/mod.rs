@@ -367,7 +367,9 @@ impl AttachmentManager {
 
     /// tmux/SSH adapter boundary. Generic App callers pass only a LaneId.
     fn remote_host(lane: &LaneId) -> Option<&str> {
-        (lane.system() == crate::system::tmux::TMUX && lane.lane() != "local").then(|| lane.lane())
+        (lane.system() == crate::system::tmux::TMUX
+            && lane.lane() != crate::remote_tmux::LOCAL_HOST)
+            .then(|| lane.lane())
     }
 }
 
