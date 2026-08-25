@@ -19,6 +19,7 @@ use crate::update::{UpdateCheckMode, UpdateStatus};
 
 mod focus;
 mod layout;
+mod modal;
 mod pointer;
 
 // --- Constants ---

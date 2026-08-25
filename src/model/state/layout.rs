@@ -1,8 +1,9 @@
 //! `AppState` methods that build the sidebar/agents layout: per-row
-//! `BasicItem` construction, section assembly, the summary-card geometry,
-//! and the `*_layout` entry points the renderer/hit-testers consume. Split
-//! out of `state` to shrink the core module; these are inherent methods, so
-//! callers still reach them as `state.sidebar_layout(..)` etc.
+//! `BasicItem` construction, section assembly, agent-entry assembly, the
+//! summary card's height, and the `*_layout` entry points the renderer and
+//! hit-testers consume. Split out of `state` to shrink the core module; these
+//! are inherent methods, so callers still reach them as
+//! `state.sidebar_layout(..)` etc.
 
 use super::*;
 use crate::bounds::clamp_set;
