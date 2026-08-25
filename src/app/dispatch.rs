@@ -52,7 +52,7 @@ impl App {
                 false
             }
             Action::FinishProjectDrag => {
-                let Some(movement) = self.state.project_drag.finish() else {
+                let Some(movement) = self.state.pointer.project_drag.finish() else {
                     return false;
                 };
                 if movement.from == movement.to {

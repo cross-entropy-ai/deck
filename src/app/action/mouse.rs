@@ -74,19 +74,19 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
             }
             return Action::StartDrag;
         }
-        MouseEventKind::Drag(MouseButton::Left) if state.dragging_separator => {
+        MouseEventKind::Drag(MouseButton::Left) if state.pointer.dragging_separator => {
             return match state.effective_layout_mode() {
                 LayoutMode::Horizontal => Action::ResizeSidebar(mouse.column + 1),
                 LayoutMode::Vertical => Action::ResizeSidebarHeight(mouse.row + 1),
             };
         }
-        MouseEventKind::Up(MouseButton::Left) if state.dragging_separator => {
+        MouseEventKind::Up(MouseButton::Left) if state.pointer.dragging_separator => {
             return Action::StopDrag;
         }
-        MouseEventKind::Drag(MouseButton::Left) if state.project_drag.is_active() => {
+        MouseEventKind::Drag(MouseButton::Left) if state.pointer.project_drag.is_active() => {
             return Action::UpdateProjectDrag(mouse.row);
         }
-        MouseEventKind::Up(MouseButton::Left) if state.project_drag.is_active() => {
+        MouseEventKind::Up(MouseButton::Left) if state.pointer.project_drag.is_active() => {
             return Action::FinishProjectDrag;
         }
         _ => {}
@@ -95,7 +95,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
     if in_sidebar {
         match mouse.kind {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                if state.last_scroll.elapsed().as_millis() < 80 {
+                if state.pointer.last_scroll.elapsed().as_millis() < 80 {
                     return Action::None;
                 }
                 // Wheel over the Summary card scrolls its text (when it
@@ -209,7 +209,7 @@ pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
         };
     }
 
-    if !in_sidebar && !on_separator && !state.dragging_separator {
+    if !in_sidebar && !on_separator && !state.pointer.dragging_separator {
         if state.main_view == MainView::Settings {
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
                 return Action::SetFocusMain;

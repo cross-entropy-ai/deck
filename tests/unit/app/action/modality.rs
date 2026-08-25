@@ -486,7 +486,7 @@ fn no_modal_leaks_a_forbidden_mouse_action() {
         open_modal(&mut state, modal);
         // Clear the wheel throttle so the scroll event isn't dropped before
         // the modal even sees it.
-        state.last_scroll = Instant::now() - Duration::from_millis(200);
+        state.pointer.last_scroll = Instant::now() - Duration::from_millis(200);
         for ev in &inputs {
             let action = mouse_to_action(ev, &state);
             assert!(

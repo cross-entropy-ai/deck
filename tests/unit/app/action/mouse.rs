@@ -101,7 +101,7 @@ fn ev(kind: MouseEventKind, col: u16, row: u16) -> MouseEvent {
 fn wheel_over_agent_row_inside_card_scrolls_summary() {
     let mut state = state_with_agent_over_card();
     // Clear the scroll throttle so the wheel event isn't swallowed.
-    state.last_scroll = Instant::now() - Duration::from_millis(200);
+    state.pointer.last_scroll = Instant::now() - Duration::from_millis(200);
     // (4, 5) is inside both the agent rect and the card rect.
     let action = mouse_to_action(&ev(MouseEventKind::ScrollUp, 4, 5), &state);
     assert!(
@@ -214,7 +214,7 @@ fn project_press_drag_release_uses_deferred_drag_actions() {
     );
     assert!(matches!(down, Action::StartProjectDrag(row) if row == first_row));
     crate::action::apply_action(&mut state, down);
-    assert_eq!(state.project_drag.source(), Some(0));
+    assert_eq!(state.pointer.project_drag.source(), Some(0));
 
     let drag = mouse_to_action(
         &ev(MouseEventKind::Drag(MouseButton::Left), 4, third_row),
@@ -222,7 +222,7 @@ fn project_press_drag_release_uses_deferred_drag_actions() {
     );
     assert!(matches!(drag, Action::UpdateProjectDrag(row) if row == third_row));
     crate::action::apply_action(&mut state, drag);
-    assert_eq!(state.project_drag.target(), Some(2));
+    assert_eq!(state.pointer.project_drag.target(), Some(2));
     assert_eq!(
         state.focused, 2,
         "drop target is highlighted while dragging"
@@ -245,7 +245,7 @@ fn project_drag_keeps_last_valid_target_over_divider() {
     crate::action::apply_action(&mut state, Action::StartProjectDrag(first_row));
     crate::action::apply_action(&mut state, Action::UpdateProjectDrag(second_row));
     crate::action::apply_action(&mut state, Action::UpdateProjectDrag(0));
-    assert_eq!(state.project_drag.target(), Some(1));
+    assert_eq!(state.pointer.project_drag.target(), Some(1));
 }
 
 #[test]

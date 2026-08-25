@@ -368,7 +368,7 @@ impl App {
 
             // A held press produces no further events, so the drag indicators
             // need this tick to appear once their delay elapses.
-            if self.state.tick_project_drag(Instant::now()) {
+            if self.state.pointer.tick_drag(Instant::now()) {
                 redraw = Redraw::Force;
             }
 

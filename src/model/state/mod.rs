@@ -4,7 +4,7 @@ use std::time::Instant;
 use crate::bounds::{clamp_set, cycle_option};
 use ratatui::layout::{Position, Rect};
 use ratatui_sectioned_list::widget::BasicItem;
-use ratatui_sectioned_list::{ItemKind, RowDragState};
+use ratatui_sectioned_list::ItemKind;
 use serde::{Deserialize, Serialize};
 
 use crate::geometry::{
@@ -19,6 +19,7 @@ use crate::update::{UpdateCheckMode, UpdateStatus};
 
 mod focus;
 mod layout;
+mod pointer;
 
 // --- Constants ---
 
@@ -594,6 +595,8 @@ impl Prefs {
 
 // --- AppState ---
 
+pub use pointer::PointerState;
+
 pub struct AppState {
     // Session data
     /// Unified session store: local entries first (`host == None`), then each
@@ -632,14 +635,9 @@ pub struct AppState {
     /// scroll, drag, pre-generation snapshot). See [`SummaryCard`]. Persisted
     /// summary settings (prompt/model/height/language) live in `prefs`.
     pub summary: SummaryCard,
-    pub dragging_separator: bool,
-    /// Press/drag/release state for direct project-row reordering. Geometry
-    /// and hit-testing are owned by `ratatui-sectioned-list`.
-    pub project_drag: RowDragState,
-    /// Grab time while the drag indicators are still *pending*, cleared once
-    /// they become visible. So `is_active() && this.is_none()` means "draw the
-    /// `↕`/`▸` markers" — see [`AppState::project_drag_indicators`].
-    project_drag_pending: Option<Instant>,
+    /// What the pointer is doing: separator drag, row drag, scroll throttle.
+    /// See [`PointerState`].
+    pub pointer: PointerState,
 
     /// Transient sidebar overlays — help, kill-confirm, rename, context
     /// menu, exclude editor. See `OverlayState`.
@@ -648,9 +646,6 @@ pub struct AppState {
     // Terminal dimensions
     pub term_width: u16,
     pub term_height: u16,
-
-    // Scroll throttle
-    pub last_scroll: Instant,
 
     // Config
     pub keybindings: Keybindings,
@@ -772,13 +767,10 @@ impl AppState {
             settings: SettingsState::default(),
             agent_focused: 0,
             summary: SummaryCard::default(),
-            dragging_separator: false,
-            project_drag: RowDragState::new(),
-            project_drag_pending: None,
+            pointer: PointerState::default(),
             overlay: OverlayState::default(),
             term_width,
             term_height,
-            last_scroll: Instant::now(),
             keybindings: Keybindings::default(),
             update_available: None,
             update_last_checked_secs: None,
@@ -818,8 +810,7 @@ impl AppState {
         self.prefs = Prefs::from_config(cfg, theme_index);
         if self.prefs.sidebar_collapsed {
             self.focus_mode = FocusMode::Main;
-            self.dragging_separator = false;
-            self.project_drag.cancel();
+            self.pointer.cancel_drag();
         }
         self.keybindings = keybindings;
         // Theme indices may have shifted; keep the picker's cursor valid.
@@ -1100,55 +1091,24 @@ impl AppState {
         built.layout.row_at_y(viewport_y, scroll).map(FocusTarget)
     }
 
-    /// Start direct manipulation on the project row under `row`. The drag is
-    /// live immediately (so a fast drag still reorders); only its indicators
-    /// wait for `PROJECT_DRAG_INDICATOR_DELAY`.
+    /// Start direct manipulation on the project row under `row`, hit-testing
+    /// it against the current layout first.
     pub fn start_project_drag(&mut self, row: u16, now: Instant) -> Option<usize> {
         let Some((built, viewport_y, scroll, _)) = self.session_row_hit(row) else {
-            self.project_drag.cancel();
-            self.project_drag_pending = None;
+            self.pointer.cancel_drag();
             return None;
         };
-        let hit = self.project_drag.begin(&built.layout, viewport_y, scroll);
-        self.project_drag_pending = hit.is_some().then_some(now);
-        hit
+        self.pointer
+            .begin_drag(&built.layout, viewport_y, scroll, now)
     }
 
-    /// Track the last valid project row visited by an active drag. Reaching a
-    /// different row reveals the indicators right away: the pointer has left
-    /// the pressed row, so this is a reorder and not a click.
+    /// Track the last valid project row an active drag has visited. A row that
+    /// misses the list leaves the previous target standing.
     pub fn update_project_drag(&mut self, row: u16) -> Option<usize> {
         let Some((built, viewport_y, scroll, _)) = self.session_row_hit(row) else {
-            return self.project_drag.target();
+            return self.pointer.drag_target();
         };
-        let target = self.project_drag.update(&built.layout, viewport_y, scroll);
-        if target != self.project_drag.source() {
-            self.project_drag_pending = None;
-        }
-        target
-    }
-
-    /// Source and target rows for the drag indicators, or `None` while no drag
-    /// is active or its reveal delay hasn't elapsed.
-    pub fn project_drag_indicators(&self) -> Option<(usize, usize)> {
-        if self.project_drag_pending.is_some() {
-            return None;
-        }
-        self.project_drag.source().zip(self.project_drag.target())
-    }
-
-    /// Reveal the drag indicators once the press has been held long enough.
-    /// Returns whether this tick made them appear, so the caller can redraw —
-    /// holding still produces no events of its own.
-    pub fn tick_project_drag(&mut self, now: Instant) -> bool {
-        let Some(pending) = self.project_drag_pending else {
-            return false;
-        };
-        if now.saturating_duration_since(pending) >= PROJECT_DRAG_INDICATOR_DELAY {
-            self.project_drag_pending = None;
-            return true;
-        }
-        false
+        self.pointer.update_drag(&built.layout, viewport_y, scroll)
     }
 
     /// Whether `row` falls on a group divider header (`@local` / `@host`).

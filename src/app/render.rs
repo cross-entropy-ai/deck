@@ -89,7 +89,7 @@ impl App {
 
         let update_available = s.update_available.as_ref();
         let reload_status = s.reload_status.as_ref();
-        let dragging_sep = s.dragging_separator;
+        let dragging_sep = s.pointer.dragging_separator;
 
         let mut captured_hits = crate::geometry::HitRegions::default();
         let mut captured_summary_popup_max_scroll: usize = 0;
@@ -152,7 +152,7 @@ impl App {
             let tab_labels = self.state.tab_labels();
             let agent_entries = self.state.agent_entries.as_slice();
             let focus_target = self.state.focus_target();
-            let project_drag = self.state.project_drag_indicators();
+            let project_drag = self.state.pointer.drag_indicators();
             let summary_card_height = self.state.summary_card_height();
             let sidebar_overlay = if show_help {
                 ui::SidebarOverlay::Help

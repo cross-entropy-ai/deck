@@ -403,11 +403,11 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::FocusNext => focus_next(state, &mut fx),
         Action::FocusPrev => focus_prev(state, &mut fx),
         Action::ScrollUp => {
-            state.last_scroll = std::time::Instant::now();
+            state.pointer.last_scroll = std::time::Instant::now();
             focus_prev(state, &mut fx);
         }
         Action::ScrollDown => {
-            state.last_scroll = std::time::Instant::now();
+            state.pointer.last_scroll = std::time::Instant::now();
             focus_next(state, &mut fx);
         }
         Action::FocusIndex(idx) => {
@@ -484,8 +484,8 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             state.prefs.sidebar_collapsed = !state.prefs.sidebar_collapsed;
             if state.prefs.sidebar_collapsed {
                 state.focus_mode = FocusMode::Main;
-                state.dragging_separator = false;
-                state.project_drag.cancel();
+                state.pointer.dragging_separator = false;
+                state.pointer.project_drag.cancel();
             } else if state.prefs.sidebar_tab == SidebarTab::Agents {
                 fx.refresh_sessions();
             }
@@ -587,10 +587,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::StartDrag => {
-            state.dragging_separator = true;
+            state.pointer.dragging_separator = true;
         }
         Action::StopDrag => {
-            state.dragging_separator = false;
+            state.pointer.dragging_separator = false;
             fx.save_config();
         }
         Action::StartProjectDrag(row) => {
@@ -659,7 +659,7 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
         SummaryAction::Generate => {}
         SummaryAction::Cancel => {}
         SummaryAction::Scroll(delta) => {
-            state.last_scroll = std::time::Instant::now();
+            state.pointer.last_scroll = std::time::Instant::now();
             state
                 .summary
                 .scroll_by(delta, state.hit_regions.summary.max_scroll);
