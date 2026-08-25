@@ -20,9 +20,8 @@ pub enum Action {
     ScrollDown,
 
     SwitchProject,
-    KillSession,
-    ConfirmKill,
-    CancelKill,
+    /// The kill-confirmation overlay, from asking to answering.
+    Kill(KillAction),
     ReorderSession(i32),
     ReorderSessionTo(usize),
     /// Ask the owning runtime to remove a configured lane.
@@ -32,10 +31,8 @@ pub enum Action {
     HideSession,
     /// The hidden-session restore picker.
     Hidden(HiddenAction),
-    StartRename,
-    RenameInputKey(crossterm::event::KeyEvent),
-    RenameConfirm,
-    RenameCancel,
+    /// The session-rename overlay.
+    Rename(RenameAction),
 
     ToggleLayout,
     /// Collapse/expand the whole horizontal sidebar.
@@ -54,8 +51,8 @@ pub enum Action {
     AbortUpgrade,
     ReloadConfig,
 
-    ToggleHelp,
-    DismissHelp,
+    /// The keybindings help overlay.
+    Help(HelpAction),
 
     SetFocusMain,
     ToggleFocus,
@@ -153,6 +150,33 @@ pub enum SettingsAction {
     OpenAddRemotePicker,
     /// Open a configured lane's port-forward overlay.
     OpenPortForwards,
+}
+
+/// The kill-confirmation overlay.
+///
+/// `Ask` is the sidebar gesture that raises it (the `x` key, the context
+/// menu's "Close"); the other two answer it.
+#[derive(Debug)]
+pub enum KillAction {
+    Ask,
+    Confirm,
+    Cancel,
+}
+
+/// The session-rename overlay.
+#[derive(Debug)]
+pub enum RenameAction {
+    Start,
+    InputKey(crossterm::event::KeyEvent),
+    Confirm,
+    Cancel,
+}
+
+/// The keybindings help overlay.
+#[derive(Debug)]
+pub enum HelpAction {
+    Open,
+    Close,
 }
 
 /// The theme picker overlay. Its cursor and chosen slot live in

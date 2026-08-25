@@ -7,7 +7,7 @@ use crate::menu::{session_menu_disabled, ContextMenu, MenuItem, MenuKind};
 use crate::overlay::{Modal, ModalState};
 use crate::state::AppState;
 
-use super::{apply_action, Action, MenuAction, SettingsAction};
+use super::{apply_action, Action, KillAction, MenuAction, RenameAction, SettingsAction};
 
 pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffect {
     let mut fx = SideEffect::default();
@@ -86,9 +86,11 @@ pub(super) fn reduce_menu(state: &mut AppState, action: MenuAction) -> SideEffec
                     state.focused = focus.0;
                     match selected_item {
                         Some(MenuItem::Rename) => {
-                            fx.merge(apply_action(state, Action::StartRename))
+                            fx.merge(apply_action(state, Action::Rename(RenameAction::Start)))
                         }
-                        Some(MenuItem::Close) => fx.merge(apply_action(state, Action::KillSession)),
+                        Some(MenuItem::Close) => {
+                            fx.merge(apply_action(state, Action::Kill(KillAction::Ask)))
+                        }
                         Some(MenuItem::Hide) => fx.merge(apply_action(state, Action::HideSession)),
                         _ => {}
                     }

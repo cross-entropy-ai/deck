@@ -5,9 +5,9 @@ use crate::overlay::{Modal, ModalState};
 use crate::state::{AppState, FocusMode, LayoutMode, MainView, SidebarTab, ViewMode};
 
 use super::{
-    Action, AddRemoteAction, ExcludeAction, HiddenAction, KeybindingsAction, MenuAction,
-    MountAction, NewSessionAction, PfAction, SettingsAction, SshSettingAction, SummaryAction,
-    ThemePickerAction,
+    Action, AddRemoteAction, ExcludeAction, HelpAction, HiddenAction, KeybindingsAction,
+    KillAction, MenuAction, MountAction, NewSessionAction, PfAction, RenameAction, SettingsAction,
+    SshSettingAction, SummaryAction, ThemePickerAction,
 };
 
 mod menu;
@@ -209,39 +209,15 @@ fn reorder_session_to(state: &mut AppState, target: usize, fx: &mut SideEffect) 
     fx.push(Effect::SaveSessionOrder(lane));
 }
 
-pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
+/// The kill-confirmation overlay: ask, then answer.
+///
+/// `can_kill_focused` gates both the ask and the confirm — a stale or
+/// synthesized confirm must not fire on a placeholder row, a lane's last live
+/// session, or the last primary one.
+fn reduce_kill(state: &mut AppState, action: KillAction) -> SideEffect {
     let mut fx = SideEffect::default();
-
     match action {
-        Action::FocusNext => focus_next(state, &mut fx),
-        Action::FocusPrev => focus_prev(state, &mut fx),
-        Action::ScrollUp => {
-            state.last_scroll = std::time::Instant::now();
-            focus_prev(state, &mut fx);
-        }
-        Action::ScrollDown => {
-            state.last_scroll = std::time::Instant::now();
-            focus_next(state, &mut fx);
-        }
-        Action::FocusIndex(idx) => {
-            // Mouse clicks pass a unified flat index (local rows then remotes);
-            // number-key shortcuts resolve their visible slot to the same flat
-            // index. Reject a collapsed target here too, so a stale mapper or
-            // synthetic action cannot move the cursor onto a hidden row.
-            if idx < state.focusable_count() && !state.is_focus_collapsed(idx) {
-                state.set_cursor(idx);
-            }
-        }
-
-        Action::SwitchProject => {
-            if state.agents_tab_active() {
-                // Agents tab: Enter (and number-jump) focuses the pane.
-                fill_switch_agent_effect(state, &mut fx);
-            } else if fill_switch_effect(state, &mut fx) {
-                fx.refresh_sessions();
-            }
-        }
-        Action::KillSession => {
+        KillAction::Ask => {
             // Sessions only — the Agents tab has no kill action.
             if state.agents_tab_active() {
                 return fx;
@@ -253,7 +229,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 state.overlay.open(ModalState::ConfirmKill);
             }
         }
-        Action::ConfirmKill => {
+        KillAction::Confirm => {
             // Always dismiss the overlay first, even when the kill is then
             // blocked (defense in depth: a stale or forced confirm shouldn't
             // fire on a placeholder, a host's last session, or the last local
@@ -341,9 +317,118 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 fx.refresh_sessions();
             }
         }
-        Action::CancelKill => {
+        KillAction::Cancel => {
             state.overlay.close(Modal::ConfirmKill);
         }
+    }
+    fx
+}
+
+/// The session-rename overlay.
+fn reduce_rename(state: &mut AppState, action: RenameAction) -> SideEffect {
+    let mut fx = SideEffect::default();
+    match action {
+        RenameAction::Start => {
+            if state.agents_tab_active() {
+                return fx;
+            }
+            let Some(target) = state.focus_target() else {
+                return fx;
+            };
+            let Some(entry) = state.entry_at(target) else {
+                return fx;
+            };
+            // Don't rename a synthetic placeholder row (no real session).
+            if !entry.is_attachable() || !state.session_capabilities(&entry.lane).rename {
+                return fx;
+            }
+            let name = entry.name.clone();
+            let lane = entry.lane.clone();
+            state
+                .overlay
+                .open(ModalState::Rename(RenameState::new_with_lane(
+                    name.clone(),
+                    name,
+                    lane,
+                )));
+        }
+        RenameAction::InputKey(key) => {
+            if let Some(r) = state.overlay.renaming_mut() {
+                textarea_input(&mut r.input, key);
+            }
+        }
+        RenameAction::Confirm => {
+            if let Some(r) = state.overlay.take_renaming() {
+                let new_name = textarea_line(&r.input).trim().to_string();
+                // Skip no-op renames.
+                if new_name == r.original_name {
+                    return fx;
+                }
+
+                let existing = state
+                    .entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.is_attachable()
+                            && entry.lane == r.lane
+                            && entry.name != r.original_name
+                    })
+                    .map(|entry| entry.name.as_str());
+                if let Some(error) =
+                    crate::new_session::validate_unique_session_name(&new_name, existing)
+                {
+                    state.show_warning(error);
+                    state.overlay.open(ModalState::Rename(r));
+                    return fx;
+                }
+
+                fx.push(Effect::RenameSession(RenameRequest {
+                    old_name: r.original_name,
+                    new_name,
+                    lane: r.lane,
+                }));
+            }
+        }
+        RenameAction::Cancel => {
+            state.overlay.close(Modal::Rename);
+        }
+    }
+    fx
+}
+
+pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
+    let mut fx = SideEffect::default();
+
+    match action {
+        Action::FocusNext => focus_next(state, &mut fx),
+        Action::FocusPrev => focus_prev(state, &mut fx),
+        Action::ScrollUp => {
+            state.last_scroll = std::time::Instant::now();
+            focus_prev(state, &mut fx);
+        }
+        Action::ScrollDown => {
+            state.last_scroll = std::time::Instant::now();
+            focus_next(state, &mut fx);
+        }
+        Action::FocusIndex(idx) => {
+            // Mouse clicks pass a unified flat index (local rows then remotes);
+            // number-key shortcuts resolve their visible slot to the same flat
+            // index. Reject a collapsed target here too, so a stale mapper or
+            // synthetic action cannot move the cursor onto a hidden row.
+            if idx < state.focusable_count() && !state.is_focus_collapsed(idx) {
+                state.set_cursor(idx);
+            }
+        }
+
+        Action::SwitchProject => {
+            if state.agents_tab_active() {
+                // Agents tab: Enter (and number-jump) focuses the pane.
+                fill_switch_agent_effect(state, &mut fx);
+            } else if fill_switch_effect(state, &mut fx) {
+                fx.refresh_sessions();
+            }
+        }
+        Action::Kill(a) => return reduce_kill(state, a),
         // Hiding is a boundary, not a view filter: the entry leaves `entries`
         // now rather than after the next refresh, so nothing — an in-flight
         // capture, a reorder, a stray keypress — can act on a session the user
@@ -385,70 +470,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
             }
         }
         Action::ReorderSessionTo(target) => reorder_session_to(state, target, &mut fx),
-        Action::StartRename => {
-            if state.agents_tab_active() {
-                return fx;
-            }
-            let Some(target) = state.focus_target() else {
-                return fx;
-            };
-            let Some(entry) = state.entry_at(target) else {
-                return fx;
-            };
-            // Don't rename a synthetic placeholder row (no real session).
-            if !entry.is_attachable() || !state.session_capabilities(&entry.lane).rename {
-                return fx;
-            }
-            let name = entry.name.clone();
-            let lane = entry.lane.clone();
-            state
-                .overlay
-                .open(ModalState::Rename(RenameState::new_with_lane(
-                    name.clone(),
-                    name,
-                    lane,
-                )));
-        }
-        Action::RenameInputKey(key) => {
-            if let Some(r) = state.overlay.renaming_mut() {
-                textarea_input(&mut r.input, key);
-            }
-        }
-        Action::RenameConfirm => {
-            if let Some(r) = state.overlay.take_renaming() {
-                let new_name = textarea_line(&r.input).trim().to_string();
-                // Skip no-op renames.
-                if new_name == r.original_name {
-                    return fx;
-                }
-
-                let existing = state
-                    .entries
-                    .iter()
-                    .filter(|entry| {
-                        entry.is_attachable()
-                            && entry.lane == r.lane
-                            && entry.name != r.original_name
-                    })
-                    .map(|entry| entry.name.as_str());
-                if let Some(error) =
-                    crate::new_session::validate_unique_session_name(&new_name, existing)
-                {
-                    state.show_warning(error);
-                    state.overlay.open(ModalState::Rename(r));
-                    return fx;
-                }
-
-                fx.push(Effect::RenameSession(RenameRequest {
-                    old_name: r.original_name,
-                    new_name,
-                    lane: r.lane,
-                }));
-            }
-        }
-        Action::RenameCancel => {
-            state.overlay.close(Modal::Rename);
-        }
+        Action::Rename(a) => return reduce_rename(state, a),
 
         Action::ToggleLayout => {
             state.prefs.layout_mode = match state.prefs.layout_mode {
@@ -521,10 +543,10 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
 
         Action::NewSession(a) => return reduce_new_session(state, a),
 
-        Action::ToggleHelp => {
+        Action::Help(HelpAction::Open) => {
             state.overlay.open(ModalState::Help);
         }
-        Action::DismissHelp => {
+        Action::Help(HelpAction::Close) => {
             state.overlay.close(Modal::Help);
         }
 

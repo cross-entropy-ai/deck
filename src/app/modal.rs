@@ -6,8 +6,9 @@ use ratatui::layout::Rect;
 use ratatui::Frame;
 
 use crate::action::{
-    Action, AddRemoteAction, ExcludeAction, KeybindingsAction, MenuAction, MountAction,
-    NewSessionAction, PfAction, SshSettingAction, SummaryAction, ThemePickerAction,
+    Action, AddRemoteAction, ExcludeAction, HelpAction, KeybindingsAction, KillAction, MenuAction,
+    MountAction, NewSessionAction, PfAction, RenameAction, SshSettingAction, SummaryAction,
+    ThemePickerAction,
 };
 use crate::geometry::KillConfirmHits;
 use crate::overlay::Modal;
@@ -70,7 +71,7 @@ pub(super) fn close_action(modal: Modal, state: &AppState) -> Action {
         Modal::SummaryPopup => Action::Summary(SummaryAction::ClosePopup),
         Modal::NewSession => Action::NewSession(NewSessionAction::Close),
         Modal::AddRemote => Action::AddRemote(AddRemoteAction::Close),
-        Modal::Rename => Action::RenameCancel,
+        Modal::Rename => Action::Rename(RenameAction::Cancel),
         Modal::ContextMenu => Action::Menu(MenuAction::Dismiss),
         Modal::PortForward => {
             let action = if state
@@ -102,8 +103,8 @@ pub(super) fn close_action(modal: Modal, state: &AppState) -> Action {
         Modal::HiddenSessions => Action::Hidden(crate::action::HiddenAction::Close),
         Modal::SshSetting => Action::SshSetting(SshSettingAction::Cancel),
         Modal::SummaryLang => Action::Summary(SummaryAction::LanguageCancel),
-        Modal::Help => Action::DismissHelp,
-        Modal::ConfirmKill => Action::CancelKill,
+        Modal::Help => Action::Help(HelpAction::Close),
+        Modal::ConfirmKill => Action::Kill(KillAction::Cancel),
     }
 }
 

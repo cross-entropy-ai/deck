@@ -5,8 +5,8 @@ use crate::overlay::Modal;
 use crate::state::{AppState, FocusTarget, LayoutMode, MainView};
 
 use super::{
-    Action, AddRemoteAction, HiddenAction, MenuAction, MountAction, NewSessionAction, PfAction,
-    SettingsAction, SummaryAction,
+    Action, AddRemoteAction, HiddenAction, KillAction, MenuAction, MountAction, NewSessionAction,
+    PfAction, SettingsAction, SummaryAction,
 };
 
 pub fn mouse_to_action(mouse: &MouseEvent, state: &AppState) -> Action {
@@ -247,8 +247,8 @@ fn modal_mouse_to_action(
             // nothing punches through a pending destructive confirmation.
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
                 match hit {
-                    Some(HitKind::KillYes) => return Action::ConfirmKill,
-                    Some(HitKind::KillNo) => return Action::CancelKill,
+                    Some(HitKind::KillYes) => return Action::Kill(KillAction::Confirm),
+                    Some(HitKind::KillNo) => return Action::Kill(KillAction::Cancel),
                     _ => {}
                 }
             }

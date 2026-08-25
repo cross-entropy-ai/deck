@@ -6,8 +6,9 @@ use crate::overlay::Modal;
 use crate::state::{AppState, FocusMode, MainView};
 
 use super::{
-    Action, AddRemoteAction, ExcludeAction, KeybindingsAction, MenuAction, MountAction,
-    NewSessionAction, PfAction, SettingsAction, SshSettingAction, SummaryAction, ThemePickerAction,
+    Action, AddRemoteAction, ExcludeAction, HelpAction, KeybindingsAction, KillAction, MenuAction,
+    MountAction, NewSessionAction, PfAction, RenameAction, SettingsAction, SshSettingAction,
+    SummaryAction, ThemePickerAction,
 };
 
 pub fn key_to_action(key: &KeyEvent, state: &AppState) -> Action {
@@ -161,7 +162,7 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
                 .expect("select-session command has a visible row slot"),
             state,
         ),
-        Command::KillSession => Action::KillSession,
+        Command::KillSession => Action::Kill(KillAction::Ask),
         Command::ReorderUp => Action::ReorderSession(-1),
         Command::ReorderDown => Action::ReorderSession(1),
         Command::OpenSettings => Action::Settings(SettingsAction::Open),
@@ -172,7 +173,7 @@ fn command_to_action(cmd: Command, state: &AppState) -> Action {
         Command::ToggleLayout => Action::ToggleLayout,
         Command::ToggleViewMode => Action::ToggleViewMode,
         Command::ToggleSidebarTab => Action::ToggleSidebarTab,
-        Command::ToggleHelp => Action::ToggleHelp,
+        Command::ToggleHelp => Action::Help(HelpAction::Open),
         Command::FocusMain => Action::SetFocusMain,
         Command::Quit => Action::Quit,
         Command::ToggleFocus => Action::ToggleFocus,
@@ -217,8 +218,8 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
         Modal::AddRemote => add_remote_key_to_action(key),
         Modal::HiddenSessions => hidden_key_to_action(key),
         Modal::Rename => match key.code {
-            KeyCode::Enter => Action::RenameConfirm,
-            _ => Action::RenameInputKey(*key),
+            KeyCode::Enter => Action::Rename(RenameAction::Confirm),
+            _ => Action::Rename(RenameAction::InputKey(*key)),
         },
         Modal::ContextMenu => Action::Menu(match nav_key(key) {
             Some(Nav::Down) => MenuAction::Next,
@@ -256,12 +257,12 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
             KeyCode::Enter => Action::Summary(SummaryAction::LanguageConfirm),
             _ => Action::Summary(SummaryAction::LanguageInputKey(*key)),
         },
-        Modal::Help => Action::DismissHelp,
+        Modal::Help => Action::Help(HelpAction::Close),
         Modal::ConfirmKill => {
             if key.code == KeyCode::Char('y') {
-                Action::ConfirmKill
+                Action::Kill(KillAction::Confirm)
             } else {
-                Action::CancelKill
+                Action::Kill(KillAction::Cancel)
             }
         }
     }

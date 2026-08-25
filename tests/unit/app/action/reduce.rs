@@ -1,6 +1,7 @@
 use super::{
-    apply_action, Action, ExcludeAction, MenuAction, MountAction, NewSessionAction, PfAction,
-    SettingsAction, SshSettingAction, SummaryAction, ThemePickerAction,
+    apply_action, Action, ExcludeAction, HelpAction, KillAction, MenuAction, MountAction,
+    NewSessionAction, PfAction, RenameAction, SettingsAction, SshSettingAction, SummaryAction,
+    ThemePickerAction,
 };
 use crate::effects::Effect;
 use crate::overlay::RenameState;
@@ -189,9 +190,9 @@ fn unsupported_session_mutations_are_disabled_and_reducer_guarded() {
     assert!(menu.disabled().contains(&crate::menu::MenuItem::Rename));
     assert!(menu.disabled().contains(&crate::menu::MenuItem::Close));
 
-    apply_action(&mut state, Action::StartRename);
+    apply_action(&mut state, Action::Rename(RenameAction::Start));
     assert!(state.overlay.is_not(Modal::Rename));
-    apply_action(&mut state, Action::KillSession);
+    apply_action(&mut state, Action::Kill(KillAction::Ask));
     assert!(!state.overlay.is(Modal::ConfirmKill));
 }
 
@@ -291,7 +292,7 @@ fn focus_index_into_collapsed_group_is_ignored() {
 fn kill_session_requires_confirmation() {
     let mut state = make_test_state(3);
     state.focused = 1;
-    let fx = apply_action(&mut state, Action::KillSession);
+    let fx = apply_action(&mut state, Action::Kill(KillAction::Ask));
     assert!(state.overlay.is(Modal::ConfirmKill));
     assert!(fx.first_kill_session().is_none());
 }
@@ -299,7 +300,7 @@ fn kill_session_requires_confirmation() {
 #[test]
 fn kill_single_session_prevented() {
     let mut state = make_test_state(1);
-    apply_action(&mut state, Action::KillSession);
+    apply_action(&mut state, Action::Kill(KillAction::Ask));
     assert!(!state.overlay.is(Modal::ConfirmKill));
 }
 
@@ -308,7 +309,7 @@ fn confirm_kill_current_session_sets_switch_target() {
     let mut state = make_test_state(3);
     state.focused = 0; // sess-0 is the current (attached) session
     state.overlay.open(ModalState::ConfirmKill);
-    let fx = apply_action(&mut state, Action::ConfirmKill);
+    let fx = apply_action(&mut state, Action::Kill(KillAction::Confirm));
     assert!(!state.overlay.is(Modal::ConfirmKill));
     let kill = fx.first_kill_session().unwrap();
     assert_eq!(kill.name, "sess-0");
@@ -321,7 +322,7 @@ fn confirm_kill_noncurrent_session_keeps_view() {
     let mut state = make_test_state(3);
     state.focused = 1; // sess-1 is NOT the current session
     state.overlay.open(ModalState::ConfirmKill);
-    let fx = apply_action(&mut state, Action::ConfirmKill);
+    let fx = apply_action(&mut state, Action::Kill(KillAction::Confirm));
     let kill = fx.first_kill_session().unwrap();
     assert_eq!(kill.name, "sess-1");
     // Killing a non-current row must not yank the main view to a neighbor.
@@ -337,7 +338,7 @@ fn kill_keyboard_blocked_on_remote_placeholder() {
         .entries
         .push(remote_row("remote-a", NO_SESSIONS_LABEL));
     state.focused = state.local_count();
-    let fx = apply_action(&mut state, Action::KillSession);
+    let fx = apply_action(&mut state, Action::Kill(KillAction::Ask));
     assert!(!state.overlay.is(Modal::ConfirmKill));
     assert!(fx.first_kill_session().is_none());
 }
@@ -348,7 +349,7 @@ fn kill_keyboard_blocked_on_last_remote_session() {
     let mut state = make_test_state(1);
     state.entries.push(remote_row("remote-a", "solo"));
     state.focused = state.local_count();
-    apply_action(&mut state, Action::KillSession);
+    apply_action(&mut state, Action::Kill(KillAction::Ask));
     assert!(!state.overlay.is(Modal::ConfirmKill));
 }
 
@@ -360,7 +361,7 @@ fn kill_keyboard_allowed_on_remote_session_with_sibling() {
     state.entries.push(remote_row("remote-a", "first"));
     state.entries.push(remote_row("remote-a", "second"));
     state.focused = state.local_count();
-    apply_action(&mut state, Action::KillSession);
+    apply_action(&mut state, Action::Kill(KillAction::Ask));
     assert!(state.overlay.is(Modal::ConfirmKill));
 }
 
@@ -373,7 +374,7 @@ fn confirm_remote_kill_selects_a_sibling_on_the_same_host() {
     state.focused = state.local_count();
     state.overlay.open(ModalState::ConfirmKill);
 
-    let fx = apply_action(&mut state, Action::ConfirmKill);
+    let fx = apply_action(&mut state, Action::Kill(KillAction::Confirm));
     let kill = fx.first_kill_session().unwrap();
 
     assert_eq!(
@@ -394,7 +395,7 @@ fn confirm_kill_blocked_on_remote_placeholder() {
         .push(remote_row("remote-a", NO_SESSIONS_LABEL));
     state.focused = state.local_count();
     state.overlay.open(ModalState::ConfirmKill);
-    let fx = apply_action(&mut state, Action::ConfirmKill);
+    let fx = apply_action(&mut state, Action::Kill(KillAction::Confirm));
     assert!(fx.first_kill_session().is_none());
 }
 
@@ -402,7 +403,7 @@ fn confirm_kill_blocked_on_remote_placeholder() {
 fn cancel_kill_clears_flag() {
     let mut state = make_test_state(3);
     state.overlay.open(ModalState::ConfirmKill);
-    apply_action(&mut state, Action::CancelKill);
+    apply_action(&mut state, Action::Kill(KillAction::Cancel));
     assert!(!state.overlay.is(Modal::ConfirmKill));
 }
 
@@ -812,7 +813,7 @@ fn quit_signals_quit() {
 fn dismiss_help() {
     let mut state = make_test_state(1);
     state.overlay.open(ModalState::Help);
-    apply_action(&mut state, Action::DismissHelp);
+    apply_action(&mut state, Action::Help(HelpAction::Close));
     assert!(!state.overlay.is(Modal::Help));
 }
 
@@ -1596,7 +1597,10 @@ fn rename_input_key_appends_char() {
     state
         .overlay
         .open(ModalState::Rename(rename_state("hello")));
-    apply_action(&mut state, Action::RenameInputKey(key(KeyCode::Char('!'))));
+    apply_action(
+        &mut state,
+        Action::Rename(RenameAction::InputKey(key(KeyCode::Char('!')))),
+    );
     assert_eq!(rename_input_text(&state), "hello!");
 }
 
@@ -1610,7 +1614,7 @@ fn rename_confirm_produces_side_effect() {
     );
     assert_eq!(rs.original_name, "old");
     state.overlay.open(ModalState::Rename(rs));
-    let fx = apply_action(&mut state, Action::RenameConfirm);
+    let fx = apply_action(&mut state, Action::Rename(RenameAction::Confirm));
     assert!(state.overlay.is_not(Modal::Rename));
     let req = fx.first_rename_session().expect("rename_session effect");
     assert_eq!(req.old_name, "old");
@@ -1621,7 +1625,7 @@ fn rename_confirm_produces_side_effect() {
 fn rename_confirm_noop_when_unchanged() {
     let mut state = make_test_state(1);
     state.overlay.open(ModalState::Rename(rename_state("same")));
-    let fx = apply_action(&mut state, Action::RenameConfirm);
+    let fx = apply_action(&mut state, Action::Rename(RenameAction::Confirm));
     assert!(state.overlay.is_not(Modal::Rename));
     assert!(fx.first_rename_session().is_none());
 }
@@ -1637,7 +1641,7 @@ fn rename_confirm_rejects_invalid_name_and_keeps_editor_open() {
             crate::system::tmux::TmuxSystem::local_lane(),
         )));
 
-    let fx = apply_action(&mut state, Action::RenameConfirm);
+    let fx = apply_action(&mut state, Action::Rename(RenameAction::Confirm));
 
     assert!(fx.first_rename_session().is_none());
     assert_eq!(rename_input_text(&state), "invalid.name");
@@ -1658,7 +1662,7 @@ fn rename_confirm_rejects_duplicate_on_same_backend() {
             crate::system::tmux::TmuxSystem::local_lane(),
         )));
 
-    let fx = apply_action(&mut state, Action::RenameConfirm);
+    let fx = apply_action(&mut state, Action::Rename(RenameAction::Confirm));
 
     assert!(fx.first_rename_session().is_none());
     assert!(state.overlay.is(Modal::Rename));
@@ -1674,7 +1678,7 @@ fn rename_cancel_clears_overlay() {
     state
         .overlay
         .open(ModalState::Rename(rename_state("hello")));
-    apply_action(&mut state, Action::RenameCancel);
+    apply_action(&mut state, Action::Rename(RenameAction::Cancel));
     assert!(state.overlay.is_not(Modal::Rename));
 }
 
@@ -3013,7 +3017,7 @@ mod agents_tab {
             .agents
             .insert(crate::system::tmux::lane(None), vec![agent("a", "%1")]);
         apply_action(&mut state, Action::SelectTab(SidebarTab::Agents));
-        apply_action(&mut state, Action::KillSession);
+        apply_action(&mut state, Action::Kill(KillAction::Ask));
         assert!(
             !state.overlay.is(Modal::ConfirmKill),
             "no kill prompt on the Agents tab"
@@ -3197,7 +3201,7 @@ fn rename_clear_line_chord_empties_the_input() {
     state
         .overlay
         .open(ModalState::Rename(rename_state("hello")));
-    apply_action(&mut state, Action::RenameInputKey(ctrl_u()));
+    apply_action(&mut state, Action::Rename(RenameAction::InputKey(ctrl_u())));
     assert_eq!(rename_input_text(&state), "");
 }
 
@@ -3238,7 +3242,10 @@ fn rename_ctrl_backspace_deletes_the_last_word() {
     state
         .overlay
         .open(ModalState::Rename(rename_state("hello world")));
-    apply_action(&mut state, Action::RenameInputKey(ctrl_backspace()));
+    apply_action(
+        &mut state,
+        Action::Rename(RenameAction::InputKey(ctrl_backspace())),
+    );
     assert_eq!(rename_input_text(&state), "hello ");
 }
 
