@@ -130,66 +130,15 @@ impl AppState {
     }
 
     /// The highest-priority full-input modal currently open, or `None` when the
-    /// sidebar/PTY takes input directly. The order below is the source of truth
-    /// for rendering and input routing. The modal renderer plus both input
-    /// mappers consult this first, so priority here decides which single overlay
-    /// is visible and swallows a key/click when several backing flags are set.
-    ///
-    /// The settings sub-modals (KeybindingsView / ExcludeEditor / SshSetting /
-    /// SummaryLang)
-    /// count only while the settings page owns focus (`MainView::Settings` +
-    /// `FocusMode::Main`); elsewhere their backing fields are stale and must not
-    /// gate input. Everything above them is a standalone overlay openable from
-    /// the sidebar.
+    /// sidebar/PTY takes input directly. [`Modal::PRIORITY`] is the source of
+    /// truth for the order; the modal renderer plus both input mappers consult
+    /// this first, so priority there decides which single overlay is visible and
+    /// swallows a key/click when several backing flags are set.
     pub fn active_modal(&self) -> Option<Modal> {
-        if self.overlay.summary_popup {
-            return Some(Modal::SummaryPopup);
-        }
-        if self.overlay.new_session.is_some() {
-            return Some(Modal::NewSession);
-        }
-        if self.overlay.add_remote.is_some() {
-            return Some(Modal::AddRemote);
-        }
-        if self.overlay.mount_picker.is_some() {
-            return Some(Modal::MountPicker);
-        }
-        if self.overlay.hidden_sessions.is_some() {
-            return Some(Modal::HiddenSessions);
-        }
-        if self.overlay.renaming.is_some() {
-            return Some(Modal::Rename);
-        }
-        if self.overlay.context_menu.is_some() {
-            return Some(Modal::ContextMenu);
-        }
-        if self.overlay.port_forward.is_some() {
-            return Some(Modal::PortForward);
-        }
-        if self.settings.theme_picker_open {
-            return Some(Modal::ThemePicker);
-        }
-        if self.main_view == MainView::Settings && self.focus_mode == FocusMode::Main {
-            if self.settings.keybindings_view_open {
-                return Some(Modal::KeybindingsView);
-            }
-            if self.overlay.exclude_editor.is_some() {
-                return Some(Modal::ExcludeEditor);
-            }
-            if self.overlay.ssh_setting_editor.is_some() {
-                return Some(Modal::SshSetting);
-            }
-            if self.overlay.summary_lang_input.is_some() {
-                return Some(Modal::SummaryLang);
-            }
-        }
-        if self.overlay.show_help {
-            return Some(Modal::Help);
-        }
-        if self.overlay.confirm_kill {
-            return Some(Modal::ConfirmKill);
-        }
-        None
+        Modal::PRIORITY
+            .iter()
+            .copied()
+            .find(|modal| modal.is_open(self))
     }
 
     /// Session name for the kill-confirmation overlay: the focused row's name,
@@ -390,5 +339,41 @@ impl AppState {
                 (1usize, local_count)
             }
         });
+    }
+}
+
+impl Modal {
+    /// Whether this modal's backing state is currently open.
+    ///
+    /// Exhaustive by construction: a new [`Modal`] variant does not compile
+    /// until it says how to tell whether it is showing. That is the check the
+    /// old hand-written if-chain could not give — a forgotten branch there just
+    /// made the modal invisible to input routing.
+    ///
+    /// The settings sub-modals (KeybindingsView / ExcludeEditor / SshSetting /
+    /// SummaryLang) count only while the settings page owns focus
+    /// (`MainView::Settings` + `FocusMode::Main`); elsewhere their backing
+    /// fields are stale and must not gate input. The theme picker is not gated:
+    /// it is reachable as a standalone overlay.
+    fn is_open(self, state: &AppState) -> bool {
+        let on_settings_page =
+            state.main_view == MainView::Settings && state.focus_mode == FocusMode::Main;
+        match self {
+            Self::SummaryPopup => state.overlay.summary_popup,
+            Self::NewSession => state.overlay.new_session.is_some(),
+            Self::AddRemote => state.overlay.add_remote.is_some(),
+            Self::MountPicker => state.overlay.mount_picker.is_some(),
+            Self::HiddenSessions => state.overlay.hidden_sessions.is_some(),
+            Self::Rename => state.overlay.renaming.is_some(),
+            Self::ContextMenu => state.overlay.context_menu.is_some(),
+            Self::PortForward => state.overlay.port_forward.is_some(),
+            Self::ThemePicker => state.settings.theme_picker_open,
+            Self::KeybindingsView => on_settings_page && state.settings.keybindings_view_open,
+            Self::ExcludeEditor => on_settings_page && state.overlay.exclude_editor.is_some(),
+            Self::SshSetting => on_settings_page && state.overlay.ssh_setting_editor.is_some(),
+            Self::SummaryLang => on_settings_page && state.overlay.summary_lang_input.is_some(),
+            Self::Help => state.overlay.show_help,
+            Self::ConfirmKill => state.overlay.confirm_kill,
+        }
     }
 }

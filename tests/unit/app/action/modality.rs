@@ -144,8 +144,8 @@ fn is_forbidden(a: &Action) -> bool {
     )
 }
 
-fn all_modals() -> [Modal; 15] {
-    Modal::ALL
+fn all_modals() -> impl Iterator<Item = Modal> {
+    Modal::PRIORITY.iter().copied()
 }
 
 #[test]

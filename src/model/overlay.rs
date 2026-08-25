@@ -8,57 +8,53 @@ use crate::forwards::PortForwardOverlay;
 use crate::menu::ContextMenu;
 use crate::new_session::{make_textarea, textarea_line, NewSessionState};
 
-/// The full-input modal overlays, in the one priority order rendering and both
-/// input mappers consult. `AppState::active_modal` resolves the highest-
-/// priority active overlay; the renderer paints only that modal, while keyboard
-/// and mouse mappers route to it before any global keybinding or button-rect
-/// test. One visible modal therefore owns all input behind it (bug #7).
-/// NOTE: not the update-warning popup, which is a selective gate
-/// (`App::warning_state` + `warning_blocks_action`) and stays out of this enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Modal {
+/// Declares the formal modals once, **in priority order**, and derives both the
+/// [`Modal`] enum and [`Modal::PRIORITY`] from that one list. A new modal is one
+/// line here; there is no second inventory to forget.
+macro_rules! modals {
+    ($($variant:ident),* $(,)?) => {
+        /// The full-input modal overlays, in the one priority order rendering and
+        /// both input mappers consult. [`AppState::active_modal`] resolves the
+        /// highest-priority open overlay; the renderer paints only that modal,
+        /// while keyboard and mouse mappers route to it before any global
+        /// keybinding or button-rect test. One visible modal therefore owns all
+        /// input behind it (bug #7).
+        ///
+        /// NOTE: not the update-warning popup, which is a selective gate
+        /// (`App::warning_state` + `warning_blocks_action`) and stays out of this
+        /// enum.
+        ///
+        /// [`AppState::active_modal`]: crate::state::AppState::active_modal
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum Modal {
+            $($variant),*
+        }
+
+        impl Modal {
+            /// Every formal modal, highest priority first — the single
+            /// inventory. `active_modal` walks it; exhaustive tests iterate it.
+            /// Generated with the enum, so the two cannot drift.
+            pub const PRIORITY: &'static [Self] = &[$(Self::$variant),*];
+        }
+    };
+}
+
+modals! {
     SummaryPopup,
     NewSession,
     AddRemote,
+    MountPicker,
+    HiddenSessions,
     Rename,
     ContextMenu,
     PortForward,
     ThemePicker,
     KeybindingsView,
     ExcludeEditor,
-    MountPicker,
-    HiddenSessions,
     SshSetting,
     SummaryLang,
     Help,
     ConfirmKill,
-}
-
-impl Modal {
-    /// Every formal modal, in the same priority order as
-    /// [`AppState::active_modal`](crate::state::AppState::active_modal).
-    ///
-    /// Keeping the inventory on the type lets exhaustive tests and shared
-    /// modal infrastructure iterate it without maintaining a second hand-
-    /// written list that can drift when a variant is added.
-    #[cfg(test)]
-    pub const ALL: [Self; 15] = [
-        Self::SummaryPopup,
-        Self::NewSession,
-        Self::AddRemote,
-        Self::Rename,
-        Self::ContextMenu,
-        Self::PortForward,
-        Self::ThemePicker,
-        Self::KeybindingsView,
-        Self::ExcludeEditor,
-        Self::MountPicker,
-        Self::HiddenSessions,
-        Self::SshSetting,
-        Self::SummaryLang,
-        Self::Help,
-        Self::ConfirmKill,
-    ];
 }
 
 /// UI state for an in-progress rename.
