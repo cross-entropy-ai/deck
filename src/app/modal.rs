@@ -303,6 +303,23 @@ mod tests {
     use ratatui::buffer::Buffer;
     use ratatui::Terminal;
 
+    /// Draw the active modal into a 100x30 test terminal and hand back what it
+    /// painted along with the regions it published.
+    ///
+    /// Every test here needs the same five lines; keeping them in one place
+    /// means a change to `draw_active_modal`'s shape lands once.
+    fn render(state: &AppState, layout_mode: LayoutMode) -> (Buffer, RenderedModal) {
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        let mut rendered = RenderedModal::default();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                rendered = draw_active_modal(frame, state, area, area, layout_mode, &THEMES[0]);
+            })
+            .unwrap();
+        (terminal.backend().buffer().clone(), rendered)
+    }
+
     fn buffer_text(buffer: &Buffer) -> String {
         (0..buffer.area.height)
             .flat_map(|y| (0..buffer.area.width).map(move |x| buffer[(x, y)].symbol()))
@@ -352,31 +369,15 @@ mod tests {
                 sort: MountSort::default(),
             }));
 
-        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-        let mut rendered = RenderedModal::default();
-        terminal
-            .draw(|frame| {
-                let area = frame.area();
-                rendered = draw_active_modal(
-                    frame,
-                    &state,
-                    area,
-                    area,
-                    LayoutMode::Horizontal,
-                    &THEMES[0],
-                );
-            })
-            .unwrap();
-
-        let buffer = terminal.backend().buffer();
+        let (buffer, rendered) = render(&state, LayoutMode::Horizontal);
         let hits = &rendered.mounts;
         assert!(!hits.rows.is_empty(), "scrolled list must publish rows");
         for row in &hits.rows {
             assert!(
-                painted(buffer, row.rect).contains(&format!("container-{:02}", row.index)),
+                painted(&buffer, row.rect).contains(&format!("container-{:02}", row.index)),
                 "row {} must cover the candidate it resolves to, painted {:?}",
                 row.index,
-                painted(buffer, row.rect)
+                painted(&buffer, row.rect)
             );
         }
         assert!(
@@ -390,7 +391,7 @@ mod tests {
             (hits.cancel, "\u{238b} cancel"),
         ] {
             let rect = rect.expect("footer button published");
-            assert_eq!(painted(buffer, rect), label);
+            assert_eq!(painted(&buffer, rect), label);
         }
     }
 
@@ -405,39 +406,23 @@ mod tests {
             crate::add_remote::AddRemoteState::new(crate::app::ssh::config_adapter::owner(), hosts),
         ));
 
-        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-        let mut rendered = RenderedModal::default();
-        terminal
-            .draw(|frame| {
-                let area = frame.area();
-                rendered = draw_active_modal(
-                    frame,
-                    &state,
-                    area,
-                    area,
-                    LayoutMode::Horizontal,
-                    &THEMES[0],
-                );
-            })
-            .unwrap();
-
-        let buffer = terminal.backend().buffer();
+        let (buffer, rendered) = render(&state, LayoutMode::Horizontal);
         let hits = &rendered.add_remote;
         assert_eq!(hits.hosts.len(), 4);
         for row in &hits.hosts {
             assert!(
-                painted(buffer, row.rect).contains(&format!("host-{}", row.index)),
+                painted(&buffer, row.rect).contains(&format!("host-{}", row.index)),
                 "row {} painted {:?}",
                 row.index,
-                painted(buffer, row.rect)
+                painted(&buffer, row.rect)
             );
         }
         assert_eq!(
-            painted(buffer, hits.add.expect("add button published")),
+            painted(&buffer, hits.add.expect("add button published")),
             "[Enter] Add"
         );
         assert_eq!(
-            painted(buffer, hits.cancel.expect("cancel button published")),
+            painted(&buffer, hits.cancel.expect("cancel button published")),
             "[Esc] Cancel"
         );
     }
@@ -452,27 +437,11 @@ mod tests {
         add_remote.picker.error = Some("Host is already configured".to_string());
         state.overlay.open(ModalState::AddRemote(add_remote));
 
-        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-        let mut rendered = RenderedModal::default();
-        terminal
-            .draw(|frame| {
-                let area = frame.area();
-                rendered = draw_active_modal(
-                    frame,
-                    &state,
-                    area,
-                    area,
-                    LayoutMode::Horizontal,
-                    &THEMES[0],
-                );
-            })
-            .unwrap();
-
-        let buffer = terminal.backend().buffer();
+        let (buffer, rendered) = render(&state, LayoutMode::Horizontal);
         let error_y = (0..buffer.area.height)
             .find(|&y| {
                 (0..buffer.area.width)
-                    .map(|x| buffer[(x, y)].symbol())
+                    .map(|x| (&buffer)[(x, y)].symbol())
                     .collect::<String>()
                     .contains("Error  Host is already configured")
             })
@@ -518,24 +487,9 @@ mod tests {
             "the replaced modal must not still be readable"
         );
 
-        let backend = TestBackend::new(100, 30);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let mut rendered = RenderedModal::default();
-        terminal
-            .draw(|frame| {
-                let area = frame.area();
-                rendered = draw_active_modal(
-                    frame,
-                    &state,
-                    area,
-                    area,
-                    LayoutMode::Horizontal,
-                    &THEMES[0],
-                );
-            })
-            .unwrap();
+        let (buffer, rendered) = render(&state, LayoutMode::Horizontal);
 
-        let text = buffer_text(terminal.backend().buffer());
+        let text = buffer_text(&buffer);
         assert!(
             text.contains("New session"),
             "active modal missing: {text:?}"
@@ -551,7 +505,6 @@ mod tests {
         // for, so reordering the footer text can't leave a click target
         // pointing at blank space.
         let create = rendered.new_session_create.expect("create hint published");
-        let buffer = terminal.backend().buffer();
         let painted: String = (create.x..create.right())
             .map(|x| buffer[(x, create.y)].symbol())
             .collect();
@@ -593,31 +546,14 @@ mod tests {
         let mut state = AppState::new(100, 30);
         state.overlay.open(ModalState::NewSession(ns));
 
-        let backend = TestBackend::new(100, 30);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let mut rendered = RenderedModal::default();
-        terminal
-            .draw(|frame| {
-                let area = frame.area();
-                rendered = draw_active_modal(
-                    frame,
-                    &state,
-                    area,
-                    area,
-                    LayoutMode::Horizontal,
-                    &THEMES[0],
-                );
-            })
-            .unwrap();
+        let (buffer, rendered) = render(&state, LayoutMode::Horizontal);
 
         assert_eq!(rendered.new_session_dirs.len(), DIRECTORY_VIEW_ROWS);
         let first = rendered.new_session_dirs[0];
         assert_eq!(first.index, 0, "row 0 must still resolve to the parent row");
-
-        let buffer = terminal.backend().buffer();
         let painted_row = |rect: ratatui::layout::Rect| -> String {
             (rect.x..rect.right())
-                .map(|x| buffer[(x, rect.y)].symbol())
+                .map(|x| (&buffer)[(x, rect.y)].symbol())
                 .collect::<String>()
                 .trim()
                 .to_string()
@@ -644,7 +580,7 @@ mod tests {
         // Both footer rows must fit at this popup width, `⎋ cancel` included.
         // `modal_footer` clips silently, so without this the tail of a row can
         // disappear with nothing to show that it did.
-        let text = buffer_text(buffer);
+        let text = buffer_text(&buffer);
         for row in [
             "⏎ create · →← folder · ↑↓ move · ⎋ cancel",
             "\u{25d6} folder · \u{25d7} create",
@@ -677,24 +613,9 @@ mod tests {
                 target_lane: Some(crate::system::tmux::TmuxSystem::local_lane()),
             }));
 
-            let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-            let mut rendered = RenderedModal::default();
-            terminal
-                .draw(|frame| {
-                    let area = frame.area();
-                    rendered = draw_active_modal(
-                        frame,
-                        &state,
-                        area,
-                        area,
-                        LayoutMode::Horizontal,
-                        &THEMES[0],
-                    );
-                })
-                .unwrap();
+            let (buffer, rendered) = render(&state, LayoutMode::Horizontal);
 
             let create = rendered.new_session_create.expect("create hint published");
-            let buffer = terminal.backend().buffer();
             let row: Vec<&str> = (0..buffer.area.width)
                 .map(|x| buffer[(x, create.y)].symbol())
                 .collect();
@@ -744,21 +665,7 @@ mod tests {
 
             let mut state = AppState::new(100, 30);
             state.overlay.open(ModalState::NewSession(ns));
-            let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-            let mut rendered = RenderedModal::default();
-            terminal
-                .draw(|frame| {
-                    let area = frame.area();
-                    rendered = draw_active_modal(
-                        frame,
-                        &state,
-                        area,
-                        area,
-                        LayoutMode::Horizontal,
-                        &THEMES[0],
-                    );
-                })
-                .unwrap();
+            let (_buffer, rendered) = render(&state, LayoutMode::Horizontal);
             rendered.new_session_create.expect("footer published").y
         };
 
@@ -782,18 +689,9 @@ mod tests {
         }];
         state.overlay.open(ModalState::ConfirmKill);
 
-        let backend = TestBackend::new(100, 30);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let mut rendered = RenderedModal::default();
-        terminal
-            .draw(|frame| {
-                let area = frame.area();
-                rendered =
-                    draw_active_modal(frame, &state, area, area, LayoutMode::Vertical, &THEMES[0]);
-            })
-            .unwrap();
+        let (buffer, rendered) = render(&state, LayoutMode::Vertical);
 
-        let text = buffer_text(terminal.backend().buffer());
+        let text = buffer_text(&buffer);
         assert!(
             text.contains("Close victim"),
             "confirm modal missing: {text:?}"

@@ -207,10 +207,23 @@ mod tests {
     use super::*;
     use crate::agent::AgentStatus;
     use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
     use ratatui::style::Color;
     use ratatui::text::{Line, Span, Text};
     use ratatui::Terminal;
     use ratatui_sectioned_list::widget::BasicItem;
+
+    /// Draw `props` into a `width`x`height` test terminal and hand back what
+    /// it painted. Every test here varies only the props.
+    fn render(width: u16, height: u16, theme: &Theme, props: SessionsProps<'_>) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw_sessions(frame, frame.area(), theme, props);
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
 
     /// The fg color the leading dot ends up with, or `None` if uncolored. Input
     /// mirrors `basic_style`'s shape: span[0] marker, span[1] starts with the
@@ -247,28 +260,20 @@ mod tests {
                 .color(Color::Rgb(90, 91, 92)),
         );
 
-        let backend = TestBackend::new(20, 3);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                draw_sessions(
-                    frame,
-                    frame.area(),
-                    &theme,
-                    SessionsProps {
-                        built: &built,
-                        focus_target: Some(FocusTarget(0)),
-                        sidebar_active: true,
-                        project_drag: None,
-                        agents_tab: false,
-                        agent_entries: &[],
-                        highlight: SessionHighlight::Solid,
-                    },
-                );
-            })
-            .unwrap();
-
-        let buffer = terminal.backend().buffer();
+        let buffer = render(
+            20,
+            3,
+            &theme,
+            SessionsProps {
+                built: &built,
+                focus_target: Some(FocusTarget(0)),
+                sidebar_active: true,
+                project_drag: None,
+                agents_tab: false,
+                agent_entries: &[],
+                highlight: SessionHighlight::Solid,
+            },
+        );
         let title = &buffer[(2, 0)];
         let detail = &buffer[(4, 1)];
         assert_eq!(title.symbol(), "a");
@@ -288,26 +293,20 @@ mod tests {
                 .line("~")
                 .color(Color::Rgb(90, 91, 92)),
         );
-        let mut terminal = Terminal::new(TestBackend::new(20, 3)).unwrap();
-        terminal
-            .draw(|frame| {
-                draw_sessions(
-                    frame,
-                    frame.area(),
-                    theme,
-                    SessionsProps {
-                        built: &built,
-                        focus_target: Some(FocusTarget(0)),
-                        sidebar_active: true,
-                        project_drag: None,
-                        agents_tab: false,
-                        agent_entries: &[],
-                        highlight,
-                    },
-                );
-            })
-            .unwrap();
-        terminal.backend().buffer().clone()
+        render(
+            20,
+            3,
+            theme,
+            SessionsProps {
+                built: &built,
+                focus_target: Some(FocusTarget(0)),
+                sidebar_active: true,
+                project_drag: None,
+                agents_tab: false,
+                agent_entries: &[],
+                highlight,
+            },
+        )
     }
 
     #[test]
@@ -353,28 +352,20 @@ mod tests {
             .layout
             .push_row_auto(BasicItem::new("alpha").line("~"));
 
-        let backend = TestBackend::new(20, 3);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                draw_sessions(
-                    frame,
-                    frame.area(),
-                    &theme,
-                    SessionsProps {
-                        built: &built,
-                        focus_target: Some(FocusTarget(0)),
-                        sidebar_active: false,
-                        project_drag: None,
-                        agents_tab: false,
-                        agent_entries: &[],
-                        highlight: SessionHighlight::Solid,
-                    },
-                );
-            })
-            .unwrap();
-
-        let buffer = terminal.backend().buffer();
+        let buffer = render(
+            20,
+            3,
+            &theme,
+            SessionsProps {
+                built: &built,
+                focus_target: Some(FocusTarget(0)),
+                sidebar_active: false,
+                project_drag: None,
+                agents_tab: false,
+                agent_entries: &[],
+                highlight: SessionHighlight::Solid,
+            },
+        );
         let title = &buffer[(2, 0)];
         let detail = &buffer[(4, 1)];
         let marker = &buffer[(0, 0)];
@@ -395,28 +386,20 @@ mod tests {
         built.layout.push_row_auto(BasicItem::new("beta"));
         built.layout.push_row_auto(BasicItem::new("gamma"));
 
-        let backend = TestBackend::new(20, 5);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                draw_sessions(
-                    frame,
-                    frame.area(),
-                    theme,
-                    SessionsProps {
-                        built: &built,
-                        focus_target: Some(FocusTarget(2)),
-                        sidebar_active: true,
-                        project_drag: Some((0, 2)),
-                        agents_tab: false,
-                        agent_entries: &[],
-                        highlight: SessionHighlight::Solid,
-                    },
-                );
-            })
-            .unwrap();
-
-        let buffer = terminal.backend().buffer();
+        let buffer = render(
+            20,
+            5,
+            theme,
+            SessionsProps {
+                built: &built,
+                focus_target: Some(FocusTarget(2)),
+                sidebar_active: true,
+                project_drag: Some((0, 2)),
+                agents_tab: false,
+                agent_entries: &[],
+                highlight: SessionHighlight::Solid,
+            },
+        );
         let source = buffer
             .content()
             .iter()
