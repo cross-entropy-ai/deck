@@ -833,8 +833,14 @@ fn dismiss_help() {
 }
 
 #[test]
-fn open_local_divider_menu_greys_remote_items_and_starts_on_new_session() {
+fn open_local_divider_menu_greys_what_the_local_lane_cannot_do() {
     let mut state = make_test_state(1);
+    // What the real local lane reports: no ssh connection to hang a port
+    // forward off, but an engine right here to mount containers on.
+    for section in &mut state.system_sections {
+        section.lane_capabilities.port_forwards = false;
+        section.lane_capabilities.mounts = true;
+    }
     apply_action(
         &mut state,
         Action::Menu(MenuAction::OpenLaneDivider {
@@ -859,6 +865,8 @@ fn open_local_divider_menu_greys_remote_items_and_starts_on_new_session() {
     assert!(menu
         .disabled()
         .contains(&crate::menu::MenuItem::RemoveFromList));
+    // Being the local lane greys nothing on its own: containers mount here too.
+    assert!(!menu.disabled().contains(&crate::menu::MenuItem::Containers));
 }
 
 #[test]

@@ -731,7 +731,7 @@ mod tests {
     }
 
     #[test]
-    fn local_tmux_divider_is_a_single_direct_new_session_action() {
+    fn local_tmux_divider_offers_a_direct_new_session_and_its_menu() {
         // `configure` replaces the process-wide container-options table
         // wholesale, so it has to take the lock even when the case under test
         // is the *local* divider and the remote list is empty: without it, this
@@ -742,8 +742,15 @@ mod tests {
         system.configure(&Config::default(), &[]);
         let lane = tmux::TmuxSystem::local_lane();
         let section = system.section_for(&lane).expect("local section");
-        assert_eq!(section.buttons.len(), 1);
-        assert_eq!(section.buttons[0].glyph, "+");
+        // `+` is the one-click common case; `…` is the rest of the lane's
+        // actions — `Show hidden` among them, the only way back from hiding a
+        // local session, so this lane must never be left without it.
+        let glyphs: Vec<&str> = section
+            .buttons
+            .iter()
+            .map(|button| button.glyph.as_str())
+            .collect();
+        assert_eq!(glyphs, vec!["+", "…"]);
 
         let intents = system.invoke(
             &lane,
@@ -751,6 +758,18 @@ mod tests {
             LaneActionAnchor { x: 4, y: 5 },
         );
         assert_eq!(intents, vec![LaneShellIntent::OpenNewSession]);
+
+        let intents = system.invoke(
+            &lane,
+            &section.buttons[1].action,
+            LaneActionAnchor { x: 4, y: 5 },
+        );
+        assert_eq!(
+            intents,
+            vec![LaneShellIntent::OpenContextMenu {
+                anchor: LaneActionAnchor { x: 4, y: 5 }
+            }]
+        );
     }
 
     #[test]

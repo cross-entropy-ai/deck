@@ -182,10 +182,13 @@ fn new_session_button() -> SectionButton {
     }
 }
 
-/// Build one lane's [`SectionDef`]. The local lane is flush with a direct
-/// new-session button; a remote lane takes the ssh-registered buttons (the `⇄N` forward
-/// count + reconnect, from `crate::ssh::divider`), then the menu button. This
-/// fn doesn't know which remote buttons exist — ssh decides.
+/// Build one lane's [`SectionDef`]. Every lane ends in the `…` menu button —
+/// that menu is where `Show hidden` restores what the session menu hid, so a
+/// lane without it is a lane whose hidden sessions are gone for good. The local
+/// lane leads with a direct new-session button; a remote lane takes the
+/// ssh-registered buttons (the `⇄N` forward count + reconnect, from
+/// `crate::ssh::divider`) instead. This fn doesn't know which remote buttons
+/// exist — ssh decides.
 fn section_def(remotes: &[RemoteConfig], lane: &LaneId, ssh_connection_reuse: bool) -> SectionDef {
     match TmuxSystem::host_of(lane) {
         None => SectionDef {
@@ -193,7 +196,7 @@ fn section_def(remotes: &[RemoteConfig], lane: &LaneId, ssh_connection_reuse: bo
             title: "local".to_string(),
             parent: None,
             divider_title: None,
-            buttons: vec![new_session_button()],
+            buttons: vec![new_session_button(), menu_button()],
             top_margin: false,
             primary: true,
             session_capabilities: tmux_session_capabilities(),
