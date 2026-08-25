@@ -51,6 +51,11 @@ pub struct PaneInfo {
     /// `#{window_panes}`. The activity clock is window-scoped, so it is
     /// only trustworthy for an agent that has its window to itself.
     pub window_panes: Option<u32>,
+    /// Raw `@deck_agent_state` pane user option ("working@<epoch>",
+    /// "blocked@<epoch>", "idle@<epoch>"), written by deck's optional agent
+    /// lifecycle hooks; empty when unset. Decoded by [`hook_status`] against
+    /// the same server's clock as [`PaneInfo::window_activity`].
+    pub hook_state: String,
 }
 
 /// An interactive agent located in a specific pane.
@@ -173,6 +178,35 @@ pub fn classify_verdict(kind: AgentKind, buffer: &str, title: Option<&str>) -> V
     }
 }
 
+/// How long a hook-reported Working stays credible. Short on purpose: hooks
+/// are edge-triggered and every user-driven termination (Esc, permission
+/// deny, kill) fires no closing event at all, so an unrefreshed Working must
+/// die on its own. The cost of expiry is small — a genuinely running turn is
+/// re-lit by the screen or the activity clock.
+pub const HOOK_WORKING_TTL_SECS: u64 = 60;
+
+/// How long a hook-reported Blocked stays credible. Longer than Working —
+/// a dialog is a stable state and the pane emits nothing while it waits —
+/// but bounded, because denying the dialog also fires no event.
+pub const HOOK_BLOCKED_TTL_SECS: u64 = 600;
+
+/// Decode a pane's `@deck_agent_state` value ("<state>@<epoch>") into a
+/// status, or `None` when unset, garbled, or expired. `now` is the owning
+/// tmux server's clock (the hook stamps with the same machine's `date +%s`).
+/// Idle never expires: it is the ground state the weak screen fallback
+/// agrees with anyway, so staleness costs nothing.
+pub fn hook_status(raw: &str, now: Option<u64>) -> Option<AgentStatus> {
+    let (state, epoch) = raw.trim().split_once('@')?;
+    let epoch = epoch.trim().parse::<u64>().ok()?;
+    let age = now?.saturating_sub(epoch);
+    match state {
+        "working" if age <= HOOK_WORKING_TTL_SECS => Some(AgentStatus::Working),
+        "blocked" if age <= HOOK_BLOCKED_TTL_SECS => Some(AgentStatus::Waiting),
+        "idle" => Some(AgentStatus::Idle),
+        _ => None,
+    }
+}
+
 /// How stale (seconds, on the tmux server's own clock) `#{window_activity}`
 /// may be and still count as "output is flowing". Two refresh ticks: tight
 /// enough that a finished turn goes dark quickly, loose enough that one
@@ -214,7 +248,11 @@ pub fn activity_fresh(
 /// - The positive idle tells (completed / interrupted lines) come next —
 ///   they exist to retract stale *hook* Working (a coming source), which the
 ///   weak fallback must never do.
-pub fn merge_status(screen: Verdict, activity_fresh: Option<bool>) -> AgentStatus {
+pub fn merge_status(
+    screen: Verdict,
+    activity_fresh: Option<bool>,
+    hook: Option<AgentStatus>,
+) -> AgentStatus {
     if screen.visible_blocker {
         return AgentStatus::Waiting;
     }
@@ -226,6 +264,14 @@ pub fn merge_status(screen: Verdict, activity_fresh: Option<bool>) -> AgentStatu
     }
     if screen.visible_idle {
         return AgentStatus::Idle;
+    }
+    // The hook sits below the positive idle tells on purpose: Esc and
+    // permission-deny fire no closing event, so the interrupt/completed
+    // lines are what retract a stale hook Working. The price is that a
+    // hook can't light a streaming turn past a lingering completed line —
+    // the activity clock (above) is the primary streaming closer.
+    if let Some(hook) = hook {
+        return hook;
     }
     // Weak readings pass through: a dialog-ish text match stays Waiting, an
     // unrecognized screen stays the weak Idle, an empty capture Unknown.
@@ -713,6 +759,7 @@ mod tests {
             title: String::new(),
             window_activity: None,
             window_panes: None,
+            hook_state: String::new(),
         }
     }
 
@@ -953,10 +1000,17 @@ mod tests {
         let v = classify_verdict(AgentKind::Claude, prose, None);
         assert_eq!(v.status, AgentStatus::Waiting);
         assert!(!v.visible_blocker);
+        // The room a weak Waiting leaves, now that there is something to fill
+        // it: a live source outranks the lingering line, and its absence
+        // leaves the screen's own reading standing.
+        assert_eq!(merge_status(v, Some(true), None), AgentStatus::Working);
+        assert_eq!(merge_status(v, None, None), AgentStatus::Waiting);
 
-        // Real dialog chrome stays a hard blocker.
+        // Real dialog chrome stays a hard blocker, even over fresh output.
         let dialog = " Do you want to proceed?\n ❯ 1. Yes\n   2. No";
-        assert!(classify_verdict(AgentKind::Claude, dialog, None).visible_blocker);
+        let v = classify_verdict(AgentKind::Claude, dialog, None);
+        assert!(v.visible_blocker);
+        assert_eq!(merge_status(v, Some(true), None), AgentStatus::Waiting);
     }
 
     #[test]
@@ -1094,43 +1148,98 @@ mod tests {
     fn merge_status_orders_the_evidence() {
         let weak = Verdict::status(AgentStatus::Idle);
         // Streaming blind spot: weak idle + fresh output → Working.
-        assert_eq!(merge_status(weak, Some(true)), AgentStatus::Working);
+        assert_eq!(merge_status(weak, Some(true), None), AgentStatus::Working);
         // No activity signal → the weak reading passes through.
-        assert_eq!(merge_status(weak, None), AgentStatus::Idle);
-        assert_eq!(merge_status(weak, Some(false)), AgentStatus::Idle);
+        assert_eq!(merge_status(weak, None, None), AgentStatus::Idle);
+        assert_eq!(merge_status(weak, Some(false), None), AgentStatus::Idle);
 
         // A visible dialog outranks fresh output (the dialog paint IS the
         // fresh output).
         assert_eq!(
-            merge_status(Verdict::blocker(), Some(true)),
+            merge_status(Verdict::blocker(), Some(true), None),
             AgentStatus::Waiting
         );
 
         // A previous turn's completed line lingers on screen while the next
         // turn streams: fresh output disproves the idle remnant.
         assert_eq!(
-            merge_status(Verdict::idle_tell(), Some(true)),
+            merge_status(Verdict::idle_tell(), Some(true), None),
             AgentStatus::Working
         );
         // …but once output stops, the positive idle stands.
         assert_eq!(
-            merge_status(Verdict::idle_tell(), Some(false)),
+            merge_status(Verdict::idle_tell(), Some(false), None),
             AgentStatus::Idle
         );
-        assert_eq!(merge_status(Verdict::idle_tell(), None), AgentStatus::Idle);
+        assert_eq!(
+            merge_status(Verdict::idle_tell(), None, None),
+            AgentStatus::Idle
+        );
 
         // Viewer overlays resolve at the stateful layer (keep_previous flag
         // on the DetectedAgent); here they are Unknown.
         assert_eq!(
-            merge_status(Verdict::keep_previous(), Some(true)),
+            merge_status(Verdict::keep_previous(), Some(true), None),
             AgentStatus::Unknown
         );
 
         // Weak waiting (dialog-ish text, no live footer) survives unless
         // output is actually flowing.
         let weak_wait = Verdict::status(AgentStatus::Waiting);
-        assert_eq!(merge_status(weak_wait, None), AgentStatus::Waiting);
-        assert_eq!(merge_status(weak_wait, Some(true)), AgentStatus::Working);
+        assert_eq!(merge_status(weak_wait, None, None), AgentStatus::Waiting);
+        assert_eq!(
+            merge_status(weak_wait, Some(true), None),
+            AgentStatus::Working
+        );
+
+        // A fresh hook lights the streaming blind spot when the activity
+        // clock has no signal (split window, old tmux) ...
+        assert_eq!(
+            merge_status(weak, None, Some(AgentStatus::Working)),
+            AgentStatus::Working
+        );
+        // ... but the positive idle tells retract it: Esc and permission-deny
+        // fire no closing hook event, so the screen is what turns it off.
+        assert_eq!(
+            merge_status(Verdict::idle_tell(), None, Some(AgentStatus::Working)),
+            AgentStatus::Idle
+        );
+        // A visible dialog outranks a hook that still says working.
+        assert_eq!(
+            merge_status(Verdict::blocker(), None, Some(AgentStatus::Working)),
+            AgentStatus::Waiting
+        );
+    }
+
+    #[test]
+    fn hook_status_decodes_and_expires() {
+        let now = Some(1_000_000u64);
+        // Fresh reports of each state.
+        assert_eq!(
+            hook_status("working@999990", now),
+            Some(AgentStatus::Working)
+        );
+        assert_eq!(
+            hook_status("blocked@999500", now),
+            Some(AgentStatus::Waiting)
+        );
+        // Working expires fast (a killed agent never sends Stop) ...
+        assert_eq!(hook_status("working@999000", now), None);
+        // ... blocked lives longer but is bounded (deny fires no event) ...
+        assert_eq!(hook_status("blocked@990000", now), None);
+        // ... idle never expires: it is the ground state anyway.
+        assert_eq!(hook_status("idle@1", now), Some(AgentStatus::Idle));
+        // Unset, garbled, unknown token, or clockless -> no signal.
+        assert_eq!(hook_status("", now), None);
+        assert_eq!(hook_status("working", now), None);
+        assert_eq!(hook_status("working@soon", now), None);
+        assert_eq!(hook_status("resting@999990", now), None);
+        assert_eq!(hook_status("working@999990", None), None);
+        // A slightly-ahead stamp (clock granularity) still reads fresh.
+        assert_eq!(
+            hook_status("working@1000001", now),
+            Some(AgentStatus::Working)
+        );
     }
 
     #[test]

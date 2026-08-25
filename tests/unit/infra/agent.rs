@@ -9,6 +9,7 @@ fn pane(pid: u32, session: &str, window: &str) -> PaneInfo {
         title: String::new(),
         window_activity: None,
         window_panes: None,
+        hook_state: String::new(),
     }
 }
 
