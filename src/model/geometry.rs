@@ -718,70 +718,36 @@ fn row_at(rows: &[ListItemHit], pos: Position) -> Option<usize> {
         .map(|row| row.index)
 }
 
-impl AddRemoteHits {
-    fn hit(&self, pos: Position) -> Option<HitKind> {
-        if let Some(index) = row_at(&self.hosts, pos) {
-            return Some(HitKind::AddRemoteHost(index));
-        }
-        if self.add.is_some_and(|r| r.contains(pos)) {
-            return Some(HitKind::AddRemoteAdd);
-        }
-        if self.cancel.is_some_and(|r| r.contains(pos)) {
-            return Some(HitKind::AddRemoteCancel);
-        }
-        None
-    }
+/// Every picker-shaped overlay publishes the same thing: a list of rows, then
+/// a few footer hints that double as buttons. Their `hit` walks differ only in
+/// which [`HitKind`] each part lands on, so declare that mapping once instead
+/// of writing the same walk per picker. Row hits win over buttons, matching the
+/// order the renderers paint in.
+macro_rules! picker_hits {
+    ($(
+        $ty:ident { $rows:ident => $row_kind:ident $(, $button:ident => $kind:ident)* $(,)? }
+    )*) => {
+        $(impl $ty {
+            fn hit(&self, pos: Position) -> Option<HitKind> {
+                if let Some(index) = row_at(&self.$rows, pos) {
+                    return Some(HitKind::$row_kind(index));
+                }
+                $(
+                    if self.$button.is_some_and(|rect| rect.contains(pos)) {
+                        return Some(HitKind::$kind);
+                    }
+                )*
+                None
+            }
+        })*
+    };
 }
 
-impl HiddenHits {
-    fn hit(&self, pos: Position) -> Option<HitKind> {
-        if let Some(index) = row_at(&self.rows, pos) {
-            return Some(HitKind::HiddenRow(index));
-        }
-        if self.restore_all.is_some_and(|r| r.contains(pos)) {
-            return Some(HitKind::HiddenRestoreAll);
-        }
-        if self.cancel.is_some_and(|r| r.contains(pos)) {
-            return Some(HitKind::HiddenCancel);
-        }
-        None
-    }
-}
-
-impl MountHits {
-    fn hit(&self, pos: Position) -> Option<HitKind> {
-        if let Some(index) = row_at(&self.rows, pos) {
-            return Some(HitKind::MountRow(index));
-        }
-        if self.mount.is_some_and(|r| r.contains(pos)) {
-            return Some(HitKind::MountConfirm);
-        }
-        if self.sort.is_some_and(|r| r.contains(pos)) {
-            return Some(HitKind::MountSort);
-        }
-        if self.cancel.is_some_and(|r| r.contains(pos)) {
-            return Some(HitKind::MountCancel);
-        }
-        None
-    }
-}
-
-impl PfHits {
-    fn hit(&self, pos: Position) -> Option<HitKind> {
-        if let Some(index) = row_at(&self.rows, pos) {
-            return Some(HitKind::PfRow(index));
-        }
-        if self.add.is_some_and(|r| r.contains(pos)) {
-            return Some(HitKind::PfAdd);
-        }
-        if self.delete.is_some_and(|r| r.contains(pos)) {
-            return Some(HitKind::PfDelete);
-        }
-        if self.close.is_some_and(|r| r.contains(pos)) {
-            return Some(HitKind::PfClose);
-        }
-        None
-    }
+picker_hits! {
+    AddRemoteHits { hosts => AddRemoteHost, add => AddRemoteAdd, cancel => AddRemoteCancel }
+    HiddenHits { rows => HiddenRow, restore_all => HiddenRestoreAll, cancel => HiddenCancel }
+    MountHits { rows => MountRow, mount => MountConfirm, sort => MountSort, cancel => MountCancel }
+    PfHits { rows => PfRow, add => PfAdd, delete => PfDelete, close => PfClose }
 }
 
 /// Every clickable region published for one frame. The sidebar provides the

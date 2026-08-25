@@ -27,6 +27,41 @@ pub(super) struct RenderedModal {
     pub port_forward: crate::geometry::PfHits,
 }
 
+impl RenderedModal {
+    /// Fold what the modal painted this frame into the frame's hit registry,
+    /// and hand back the summary popup's scroll bound.
+    ///
+    /// Destructured with no `..`, so a new field on this struct does not
+    /// compile until it says where it lands. The render loop used to copy the
+    /// fields across one line each, which a new modal's click targets could
+    /// silently miss.
+    pub(super) fn publish(self, hits: &mut crate::geometry::HitRegions) -> usize {
+        let Self {
+            summary_popup_max_scroll,
+            kill_hits,
+            new_session_dirs,
+            new_session_create,
+            add_remote,
+            mounts,
+            hidden,
+            port_forward,
+        } = self;
+        hits.new_session_dirs = new_session_dirs;
+        hits.new_session_create = new_session_create;
+        hits.add_remote = add_remote;
+        hits.mounts = mounts;
+        hits.hidden = hidden;
+        hits.port_forward = port_forward;
+        // The sidebar publishes its own kill buttons in the horizontal layout,
+        // where the confirmation is drawn inline instead of as a modal. Only
+        // overwrite when this frame's modal actually drew them.
+        if kill_hits.is_some() {
+            hits.kill = kill_hits;
+        }
+        summary_popup_max_scroll
+    }
+}
+
 /// One close/cancel policy for every formal modal. Keyboard routing handles
 /// Esc before modal-specific keys, so forms cannot drift on whether it closes
 /// the surface or only cancels their nested edit mode.
