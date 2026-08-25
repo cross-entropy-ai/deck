@@ -177,9 +177,6 @@ impl App {
                             crate::system::LaneShellIntent::OpenPortForwards => {
                                 self.dispatch(Action::Pf(PfAction::Open(lane.clone())));
                             }
-                            crate::system::LaneShellIntent::OpenNewSession => {
-                                self.open_new_session_picker(lane.clone());
-                            }
                             crate::system::LaneShellIntent::OpenContextMenu { anchor } => {
                                 self.dispatch(Action::Menu(MenuAction::OpenLaneDivider {
                                     lane: lane.clone(),
