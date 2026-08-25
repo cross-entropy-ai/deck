@@ -112,6 +112,17 @@ impl Ticker {
     }
 }
 
+/// What a blocked input does while the update warning is up.
+///
+/// The warning owns the screen but not the keyboard, so a key or paste that
+/// it swallows also returns focus to the sidebar, where its own accept/dismiss
+/// keys live. A swallowed click has nowhere to send focus and is just dropped.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Blocked {
+    ToSidebar,
+    Ignore,
+}
+
 impl App {
     /// Pull newly-spawned attachment PTYs into the map. The manager gates each
     /// event by spawn generation (bug #20): a stale in-flight
@@ -409,49 +420,29 @@ impl App {
             }
 
             if event::poll(Duration::from_millis(POLL_MS))? {
-                match event::read()? {
+                // The three input events share a tail — map to an intent,
+                // drop it while a warning is up, otherwise dispatch — and
+                // differ only in the mapper and in what a blocked input does.
+                // A blocked key or paste sends focus back to the sidebar,
+                // where the warning's own keys are; a blocked click is simply
+                // ignored.
+                let mapped = match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        let action = action::key_to_action(&key, &self.state);
-                        if self.warning_state.is_some() && Self::warning_blocks_action(&action) {
-                            self.state.focus_mode = FocusMode::Sidebar;
-                            Redraw::Force.apply(&mut needs_render, &mut force_render);
-                            continue;
-                        }
-                        let (quit, r) = self.handle_input_action(action);
-                        if quit {
-                            break;
-                        }
-                        r.apply(&mut needs_render, &mut force_render);
+                        Some((action::key_to_action(&key, &self.state), Blocked::ToSidebar))
                     }
-                    Event::Mouse(mouse) => {
-                        let action =
-                            action::mouse_to_action(&mouse, &self.state, &self.hit_regions);
-                        if self.warning_state.is_some() && Self::warning_blocks_action(&action) {
-                            continue;
-                        }
-                        let (quit, r) = self.handle_input_action(action);
-                        if quit {
-                            break;
-                        }
-                        r.apply(&mut needs_render, &mut force_render);
-                    }
-                    Event::Paste(text) => {
-                        let action = action::paste_to_action(&text, &self.state);
-                        if self.warning_state.is_some() && Self::warning_blocks_action(&action) {
-                            self.state.focus_mode = FocusMode::Sidebar;
-                            Redraw::Force.apply(&mut needs_render, &mut force_render);
-                            continue;
-                        }
-                        let (quit, r) = self.handle_input_action(action);
-                        if quit {
-                            break;
-                        }
-                        r.apply(&mut needs_render, &mut force_render);
-                    }
+                    Event::Mouse(mouse) => Some((
+                        action::mouse_to_action(&mouse, &self.state, &self.hit_regions),
+                        Blocked::Ignore,
+                    )),
+                    Event::Paste(text) => Some((
+                        action::paste_to_action(&text, &self.state),
+                        Blocked::ToSidebar,
+                    )),
                     Event::Resize(w, h) => {
                         self.dispatch(Action::Resize(w, h));
                         needs_render = true;
                         force_render = true;
+                        None
                     }
                     // The terminal telling us its scheme changed (DEC mode 2031,
                     // enabled by `TerminalGuard`). This is the good path: no
@@ -463,6 +454,7 @@ impl App {
                             Redraw::No
                         };
                         redraw.apply(&mut needs_render, &mut force_render);
+                        None
                     }
                     // The fallback answer, for the many terminals that report a
                     // background color but not a scheme.
@@ -473,13 +465,32 @@ impl App {
                             Redraw::No
                         };
                         redraw.apply(&mut needs_render, &mut force_render);
+                        None
                     }
                     // Coming back from wherever the user just flipped their
                     // system appearance: re-ask right away rather than waiting
                     // out the tick. Terminals that push (mode 2031) have already
                     // told us and will answer this with the same value.
-                    Event::FocusGained if self.state.prefs.theme_auto => self.query_color_scheme(),
-                    _ => {}
+                    Event::FocusGained if self.state.prefs.theme_auto => {
+                        self.query_color_scheme();
+                        None
+                    }
+                    _ => None,
+                };
+
+                if let Some((action, blocked)) = mapped {
+                    if self.warning_state.is_some() && Self::warning_blocks_action(&action) {
+                        if blocked == Blocked::ToSidebar {
+                            self.state.focus_mode = FocusMode::Sidebar;
+                            Redraw::Force.apply(&mut needs_render, &mut force_render);
+                        }
+                        continue;
+                    }
+                    let (quit, r) = self.handle_input_action(action);
+                    if quit {
+                        break;
+                    }
+                    r.apply(&mut needs_render, &mut force_render);
                 }
             }
 

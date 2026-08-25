@@ -109,70 +109,72 @@ pub struct RealRunner;
 
 impl CommandRunner for RealRunner {
     fn run(&self, program: &str, args: &[&str], timeout: Duration) -> Result<Output, CommandError> {
-        // `unchecked()` so a non-zero exit surfaces as a captured Output
-        // we classify ourselves (into `NonZero`) rather than a duct error.
-        let handle = duct::cmd(program, args.iter().copied())
-            .stdin_null()
-            .stdout_capture()
-            .stderr_capture()
-            .unchecked()
-            .start()
-            .map_err(|source| CommandError::Spawn {
-                program: program.to_string(),
-                source,
-            })?;
-        wait_bounded(handle, program, timeout)
+        spawn_bounded(program, args, Stdin::Null, timeout)
     }
 }
 
-/// Run `program` with its stdin fed from `stdin_file`, bounded exactly like
-/// [`RealRunner::run`].
+/// Where a bounded command's stdin comes from. The only thing the three
+/// spawn paths disagree about.
+enum Stdin<'a> {
+    /// Nothing to read: the ordinary argv-only call.
+    Null,
+    /// Streamed off disk — staging a dropped file onto a lane, where the
+    /// bytes are far too large to survive as an argv token.
+    File(&'a Path),
+    /// Streamed from memory — installing the container-side agent relay,
+    /// whose bytes deck carries embedded rather than reading off disk.
+    Bytes(Vec<u8>),
+}
+
+/// Spawn `program` with captured output and wait for it, bounded by `timeout`.
+///
+/// `unchecked()` so a non-zero exit surfaces as a captured `Output` we
+/// classify ourselves (into `NonZero`) rather than as a duct error.
+fn spawn_bounded(
+    program: &str,
+    args: &[&str],
+    stdin: Stdin<'_>,
+    timeout: Duration,
+) -> Result<Output, CommandError> {
+    let cmd = duct::cmd(program, args.iter().copied());
+    let cmd = match stdin {
+        Stdin::Null => cmd.stdin_null(),
+        Stdin::File(path) => cmd.stdin_path(path),
+        Stdin::Bytes(bytes) => cmd.stdin_bytes(bytes),
+    };
+    let handle = cmd
+        .stdout_capture()
+        .stderr_capture()
+        .unchecked()
+        .start()
+        .map_err(|source| CommandError::Spawn {
+            program: program.to_string(),
+            source,
+        })?;
+    wait_bounded(handle, program, timeout)
+}
+
+/// Run `program` with its stdin fed from `stdin_file`.
 ///
 /// Deliberately a free function rather than a [`CommandRunner`] method: the
-/// trait stays argv-only (see this module's docs), and streaming a file in is
-/// what one caller needs — staging a dropped file onto a lane, where the bytes
-/// are far too large to survive as an argv token.
+/// trait stays argv-only (see this module's docs).
 pub(crate) fn run_with_stdin_file(
     program: &str,
     args: &[&str],
     stdin_file: &Path,
     timeout: Duration,
 ) -> Result<Output, CommandError> {
-    let handle = duct::cmd(program, args.iter().copied())
-        .stdin_path(stdin_file)
-        .stdout_capture()
-        .stderr_capture()
-        .unchecked()
-        .start()
-        .map_err(|source| CommandError::Spawn {
-            program: program.to_string(),
-            source,
-        })?;
-    wait_bounded(handle, program, timeout)
+    spawn_bounded(program, args, Stdin::File(stdin_file), timeout)
 }
 
-/// Run `program` with its stdin fed from memory, bounded exactly like
-/// [`run_with_stdin_file`].
-///
-/// The second streaming caller: installing the container-side agent relay, whose
-/// bytes deck carries embedded rather than reading off disk.
+/// Run `program` with its stdin fed from memory.
 pub(crate) fn run_with_stdin_bytes(
     program: &str,
     args: &[&str],
     stdin_bytes: Vec<u8>,
     timeout: Duration,
 ) -> Result<Output, CommandError> {
-    let handle = duct::cmd(program, args.iter().copied())
-        .stdin_bytes(stdin_bytes)
-        .stdout_capture()
-        .stderr_capture()
-        .unchecked()
-        .start()
-        .map_err(|source| CommandError::Spawn {
-            program: program.to_string(),
-            source,
-        })?;
-    wait_bounded(handle, program, timeout)
+    spawn_bounded(program, args, Stdin::Bytes(stdin_bytes), timeout)
 }
 
 /// Wait for `handle` up to `timeout`, classifying the exit like every other
