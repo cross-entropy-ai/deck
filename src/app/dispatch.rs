@@ -102,9 +102,6 @@ impl App {
                 fx.has_quit()
             }
             Action::TriggerUpgrade => {
-                use crate::self_update::{
-                    detect_install_method, manual_upgrade_hint, target_triple, InstallMethod,
-                };
                 let Some(latest) = self
                     .state
                     .update_available
@@ -113,47 +110,19 @@ impl App {
                 else {
                     return false;
                 };
-                // (program, args). For a direct download we re-exec our own
-                // binary in a hidden `__upgrade-self` mode driving the
-                // `self_update` crate, so its progress renders live in the
-                // upgrade pane and it replaces the binary in place.
-                let (program, args_owned): (String, Vec<String>) = match detect_install_method() {
-                    InstallMethod::Brew => (
-                        "brew".to_string(),
-                        vec![
-                            "upgrade".to_string(),
-                            "cross-entropy-ai/tap/deck".to_string(),
-                        ],
-                    ),
-                    InstallMethod::DirectDownload => {
-                        if target_triple().is_none() {
-                            self.warning_state =
-                                Some(crate::overlay::WarningState {
-                                    text: "Unsupported platform",
-                                    detail: "deck doesn't ship a prebuilt binary for this \
-                                             platform. Rebuild from source via \
-                                             `cargo install --git https://github.com/cross-entropy-ai/deck`."
-                                        .to_string(),
-                                });
-                            return false;
-                        }
-                        let exe = std::env::current_exe()
-                            .map(|p| p.to_string_lossy().into_owned())
-                            .unwrap_or_else(|_| "deck".to_string());
-                        (exe, vec!["__upgrade-self".to_string(), latest.clone()])
-                    }
-                    InstallMethod::Manual => {
-                        // We can't write to where deck lives (e.g.
-                        // /usr/local/bin without brew). Point the user at
-                        // the install methods instead.
-                        self.warning_state = Some(crate::overlay::WarningState {
-                            text: "deck can't self-update from this location",
-                            detail: manual_upgrade_hint(&latest),
-                        });
-                        return false;
-                    }
+                let plan = super::upgrade::plan_upgrade(
+                    crate::self_update::detect_install_method(),
+                    &latest,
+                    crate::self_update::target_triple(),
+                    std::env::current_exe()
+                        .ok()
+                        .map(|p| p.to_string_lossy().into_owned()),
+                );
+                let super::upgrade::UpgradePlan::Run { program, args } = plan else {
+                    self.warning_state = plan.warning();
+                    return false;
                 };
-                let args_ref: Vec<&str> = args_owned.iter().map(String::as_str).collect();
+                let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
                 if let Err(e) = self.spawn_upgrade_pty(&program, &args_ref) {
                     self.state
                         .show_warning(format!("upgrade failed to start: {e}"));
@@ -767,53 +736,54 @@ impl App {
     /// status "applying...". **Lazy persist:** config is NOT modified here; the
     /// `PfTaskResult` reducer writes it on worker success.
     fn pf_add_submit(&mut self) {
-        if !self.state.prefs.ssh_connection_reuse {
-            if let Some(overlay) = self.state.overlay.port_forward_mut() {
-                overlay.status = Some(
-                    "Enable SSH connection reuse in Settings before adding a port forward.".into(),
-                );
-            }
+        use crate::forwards::PfSubmit;
+
+        let Some(lane) = self
+            .state
+            .overlay
+            .port_forward()
+            .map(|overlay| overlay.lane.clone())
+        else {
             return;
-        }
+        };
+        // Read the lane's forwards before taking the &mut below: `overlay`
+        // borrows `self.state`, so only a disjoint field borrow compiles.
+        let existing =
+            crate::app::ssh::config_adapter::forwards_for_lane(&self.state.config_remotes, &lane)
+                .map(|forwards| forwards.to_vec())
+                .unwrap_or_default();
+        let reuse_enabled = self.state.prefs.ssh_connection_reuse;
+
         let Some(overlay) = self.state.overlay.port_forward_mut() else {
             return;
         };
-        let Some(form) = overlay.add_form.as_mut() else {
-            return;
+        let plan = match overlay.add_form.as_ref() {
+            Some(form) => form.plan_submit(reuse_enabled, &existing),
+            // Reuse being off is reported even with no form open, so the
+            // Settings hint is the answer either way.
+            None if !reuse_enabled => PfSubmit::Refuse {
+                status: "Enable SSH connection reuse in Settings before adding a port forward."
+                    .to_string(),
+                focus: None,
+            },
+            None => return,
         };
-        if form.submitting {
-            return; // ignore double-Enter
-        }
-        let spec = match form.validate() {
-            Ok(s) => s,
-            Err(e) => {
-                form.focus = e.field();
-                overlay.status = Some(e.message().to_string());
+
+        let spec = match plan {
+            PfSubmit::Ignore => return,
+            PfSubmit::Refuse { status, focus } => {
+                overlay.status = Some(status);
+                if let (Some(field), Some(form)) = (focus, overlay.add_form.as_mut()) {
+                    form.focus = field;
+                }
                 return;
             }
+            PfSubmit::Add(spec) => spec,
         };
-        let lane = overlay.lane.clone();
-        // Reject a forward whose listen identity (mode + bind addr + listen
-        // port) is already configured, before bothering ssh — else the user
-        // sees a cryptic "bind: Address already in use", or a silent no-op when
-        // ssh treats it as idempotent.
-        // Not `state.remote_config()` — `overlay` holds a live &mut
-        // into `self.state`, so only a disjoint field borrow compiles here.
-        let already_exists =
-            crate::app::ssh::config_adapter::forwards_for_lane(&self.state.config_remotes, &lane)
-                .is_some_and(|forwards| {
-                    forwards
-                        .iter()
-                        .any(|forward| forward.same_listen_identity(&spec))
-                });
-        if already_exists {
-            overlay.status = Some(format!(
-                "Port {} is already being forwarded.",
-                spec.listen_port
-            ));
-            return;
+
+        if let Some(form) = overlay.add_form.as_mut() {
+            form.submitting = true;
         }
-        form.submitting = true;
         overlay.status = Some("applying...".into());
         let Some(endpoint) =
             crate::app::ssh::config_adapter::forward_endpoint(&self.state.config_remotes, &lane)

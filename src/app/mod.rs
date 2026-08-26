@@ -17,6 +17,7 @@ mod run;
 pub mod settings;
 mod terminal;
 mod update;
+mod upgrade;
 
 use std::collections::BTreeMap;
 use std::io;

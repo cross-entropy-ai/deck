@@ -119,6 +119,21 @@ pub enum PfField {
     TargetPort,
 }
 
+/// What [`PfAddForm::plan_submit`] decided.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PfSubmit {
+    /// Ask the worker to add this forward.
+    Add(ForwardSpec),
+    /// Refuse, showing `status`; `focus` moves the cursor to the field at
+    /// fault when there is one.
+    Refuse {
+        status: String,
+        focus: Option<PfField>,
+    },
+    /// A submit already in flight. Say nothing and change nothing.
+    Ignore,
+}
+
 /// One input field, backed by `ratatui-textarea`. Each field carries
 /// its own cursor and edit history; the keyboard dispatcher feeds key
 /// events to whichever one is focused.
@@ -295,6 +310,46 @@ impl PfAddForm {
                 })
             }
         }
+    }
+
+    /// What submitting this form should do, given whether connection reuse is
+    /// on and what the lane already forwards.
+    ///
+    /// Every reason to refuse is decided here, before anything reaches ssh: a
+    /// bad field, a duplicate listener, or reuse being off — the last two
+    /// would otherwise surface as a cryptic `bind: Address already in use`, or
+    /// as nothing at all when ssh treats the request as idempotent.
+    pub fn plan_submit(&self, reuse_enabled: bool, existing: &[ForwardSpec]) -> PfSubmit {
+        if !reuse_enabled {
+            return PfSubmit::Refuse {
+                status: "Enable SSH connection reuse in Settings before adding a port forward."
+                    .to_string(),
+                focus: None,
+            };
+        }
+        if self.submitting {
+            // A second Enter while the first is still out.
+            return PfSubmit::Ignore;
+        }
+        let spec = match self.validate() {
+            Ok(spec) => spec,
+            Err(error) => {
+                return PfSubmit::Refuse {
+                    status: error.message().to_string(),
+                    focus: Some(error.field()),
+                }
+            }
+        };
+        if existing
+            .iter()
+            .any(|forward| forward.same_listen_identity(&spec))
+        {
+            return PfSubmit::Refuse {
+                status: format!("Port {} is already being forwarded.", spec.listen_port),
+                focus: None,
+            };
+        }
+        PfSubmit::Add(spec)
     }
 }
 
