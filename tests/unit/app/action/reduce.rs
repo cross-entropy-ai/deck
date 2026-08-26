@@ -3328,3 +3328,80 @@ fn dispatch_only_actions_stay_inert() {
         );
     }
 }
+
+/// Killing a row moves the cursor onto a survivor *before* the kill lands.
+///
+/// The next refresh re-anchors focus by session identity, so whatever the
+/// cursor is on when the reducer returns is the identity it tries to keep. On
+/// the doomed row that identity is about to vanish and the re-anchor falls
+/// back; on a survivor it is exactly right.
+#[test]
+fn killing_a_session_leaves_the_cursor_on_a_survivor() {
+    let mut state = make_test_state(3);
+    state.focused = 1;
+    state.overlay.open(ModalState::ConfirmKill);
+    apply_action(&mut state, Action::Kill(KillAction::Confirm));
+    assert_eq!(
+        state.entries[state.focused].name, "sess-2",
+        "the cursor must move off the row being killed"
+    );
+}
+
+/// Killing the last row on a lane falls back to the one before it, since
+/// there is nothing after.
+#[test]
+fn killing_the_last_row_falls_back_to_the_previous_one() {
+    let mut state = make_test_state(3);
+    state.focused = 2;
+    state.overlay.open(ModalState::ConfirmKill);
+    apply_action(&mut state, Action::Kill(KillAction::Confirm));
+    assert_eq!(state.entries[state.focused].name, "sess-1");
+}
+
+/// The survivor is looked for on the killed row's own lane, never across the
+/// list — so a kill at the end of one lane's block does not land the cursor on
+/// the next lane's first row.
+#[test]
+fn the_survivor_is_found_on_the_killed_rows_own_lane() {
+    let mut state = make_test_state(1);
+    state.entries.push(remote_row("h1", "a"));
+    state.entries.push(remote_row("h1", "b"));
+    state.entries.push(remote_row("h2", "elsewhere"));
+    // The last row of h1's block, with h2's block right after it.
+    state.focused = state.local_count() + 1;
+    state.overlay.open(ModalState::ConfirmKill);
+
+    let fx = apply_action(&mut state, Action::Kill(KillAction::Confirm));
+    assert_eq!(fx.first_kill_session().unwrap().name, "b");
+    assert_eq!(
+        state.entries[state.focused].name, "a",
+        "must fall back within h1, not forward into h2"
+    );
+}
+
+/// The manual display order belongs to the primary lane alone — every other
+/// lane persists its order to its own server — so a remote kill must not
+/// touch it.
+#[test]
+fn a_kill_off_the_primary_lane_leaves_the_manual_order_alone() {
+    let mut state = make_test_state(2);
+    state.entries.push(remote_row("h1", "a"));
+    state.entries.push(remote_row("h1", "b"));
+    let order_before = state.session_order.clone();
+    state.focused = state.local_count();
+    state.overlay.open(ModalState::ConfirmKill);
+
+    apply_action(&mut state, Action::Kill(KillAction::Confirm));
+    assert_eq!(state.session_order, order_before);
+}
+
+/// A primary-lane kill does drop the name, so the order it persists doesn't
+/// carry a session that no longer exists.
+#[test]
+fn a_primary_lane_kill_drops_the_name_from_the_manual_order() {
+    let mut state = make_test_state(3);
+    state.focused = 1;
+    state.overlay.open(ModalState::ConfirmKill);
+    apply_action(&mut state, Action::Kill(KillAction::Confirm));
+    assert!(!state.session_order.iter().any(|n| n == "sess-1"));
+}

@@ -245,77 +245,66 @@ fn reduce_kill(state: &mut AppState, action: KillAction) -> SideEffect {
                 return fx;
             };
             let lane = entry.lane.clone();
-            if state.is_primary_entry(entry) {
-                let name = entry.name.clone();
-                let killing_current = entry.is_current();
-                // Locals occupy the front of `entries`; the cursor is on
-                // a local row here (host == None), so its neighbors are
-                // also local. Clamp the neighbor search to the local block.
-                let local_count = state.local_count();
+            let name = entry.name.clone();
+            let killing_current = entry.is_current();
+            let on_primary = state.is_primary_lane(&lane);
 
-                let next_focused = if state.focused + 1 < local_count {
-                    state.focused
-                } else {
-                    state.focused.saturating_sub(1)
-                };
-
-                // Pre-switch off the doomed session only when deck is
-                // attached to it. Killing a non-current row leaves the main
-                // view where it is — see KillRequest.switch_to.
-                let switch_to = if killing_current {
-                    let alt_idx = if state.focused + 1 < local_count {
-                        Some(state.focused + 1)
-                    } else if state.focused > 0 {
-                        Some(state.focused - 1)
-                    } else {
-                        None
-                    };
-                    alt_idx
-                        .and_then(|i| state.entries.get(i))
-                        .map(|e| e.name.clone())
-                } else {
-                    None
-                };
-
-                state.session_order.retain(|n| n != &name);
-                state.focused = next_focused.min(local_count.saturating_sub(1));
-
-                fx.push(Effect::KillSession(KillRequest {
-                    name,
-                    lane,
-                    switch_to,
-                }));
-                fx.refresh_sessions();
-            } else {
-                let name = entry.name.clone();
-                let lane_indices: Vec<usize> = state
-                    .entries
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, candidate)| {
-                        (candidate.lane == lane && candidate.is_attachable()).then_some(idx)
-                    })
-                    .collect();
-                let lane_pos = lane_indices.iter().position(|idx| *idx == state.focused);
-                let alternative_idx = lane_pos.and_then(|pos| {
-                    lane_indices
+            // The row to fall back to is the next attachable row on the same
+            // lane, or the previous one. Scoped by lane rather than by index
+            // range: the primary lane's rows happen to be a prefix of
+            // `entries`, but a reducer relying on that is relying on how the
+            // refresh happens to lay the list out.
+            let lane_rows: Vec<usize> = state
+                .entries
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, candidate)| {
+                    (candidate.lane == lane && candidate.is_attachable()).then_some(idx)
+                })
+                .collect();
+            let alternative = lane_rows
+                .iter()
+                .position(|idx| *idx == state.focused)
+                .and_then(|pos| {
+                    lane_rows
                         .get(pos + 1)
-                        .or_else(|| pos.checked_sub(1).and_then(|prev| lane_indices.get(prev)))
+                        .or_else(|| pos.checked_sub(1).and_then(|prev| lane_rows.get(prev)))
                         .copied()
                 });
-                let switch_to = alternative_idx
-                    .and_then(|idx| state.entries.get(idx))
-                    .map(|candidate| candidate.name.clone());
-                if let Some(idx) = alternative_idx {
-                    state.focused = idx;
-                }
-                fx.push(Effect::KillSession(KillRequest {
-                    name,
-                    lane,
-                    switch_to,
-                }));
-                fx.refresh_sessions();
+
+            // Hand the main view over only when it is showing the row being
+            // killed; killing any other row leaves the view where it is.
+            //
+            // On the primary lane the row says so itself. Off it, `is_current`
+            // is never set — deck runs no client there to be current *in* — so
+            // the question can't be asked of the row, and a kill on such a lane
+            // hands over unconditionally.
+            let switch_to = (killing_current || !on_primary)
+                .then(|| {
+                    alternative
+                        .and_then(|idx| state.entries.get(idx))
+                        .map(|candidate| candidate.name.clone())
+                })
+                .flatten();
+
+            // Move onto the survivor now, so the identity the next refresh
+            // re-anchors on is a session that will still be there.
+            if let Some(idx) = alternative {
+                state.focused = idx;
             }
+            if on_primary {
+                // Manual display order is the primary lane's alone; other
+                // lanes persist their order to their own server.
+                state.session_order.retain(|n| n != &name);
+                state.clamp_projects_focus();
+            }
+
+            fx.push(Effect::KillSession(KillRequest {
+                name,
+                lane,
+                switch_to,
+            }));
+            fx.refresh_sessions();
         }
         KillAction::Cancel => {
             state.overlay.close(Modal::ConfirmKill);
