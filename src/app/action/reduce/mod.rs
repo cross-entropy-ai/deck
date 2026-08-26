@@ -539,8 +539,6 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::Exclude(a) => return settings::reduce_exclude(state, a),
         Action::Summary(a) => return reduce_summary(state, a),
 
-        Action::TriggerUpgrade | Action::AbortUpgrade => {}
-
         Action::NewSession(a) => return reduce_new_session(state, a),
 
         Action::Help(HelpAction::Open) => {
@@ -605,31 +603,15 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
                 state.focused = idx;
             }
         }
-        // App::dispatch consumes the library's RowMove so an unchanged drag
-        // can retain ordinary click-to-switch behavior.
-        Action::FinishProjectDrag => {}
-
         Action::Resize(w, h) => {
             state.term_width = w;
             state.term_height = h;
             fx.resize_pty(true);
         }
 
-        Action::ForwardKey(_) | Action::ForwardMouse(_) => {}
-        Action::SidebarClickSession(_)
-        | Action::NumberKeyJump(_)
-        | Action::SwitchToAgentPane(_) => {}
-
         Action::Quit => {
             fx.push(Effect::Quit);
         }
-
-        // Handled entirely in dispatch (needs App-level access to raw
-        // keybindings, PTY, etc.).
-        Action::ReloadConfig => {}
-        // Same: staging a dropped file needs the filesystem and the lane the
-        // pane on screen belongs to, neither of which is `AppState`.
-        Action::PasteImagePath { .. } => {}
 
         Action::InvokeLane {
             lane,
@@ -646,6 +628,26 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::Hidden(a) => return reduce_hidden(state, a),
         Action::Mount(a) => return reduce_mount(state, a),
 
+        // Dispatch-only. Each of these needs something `AppState` is not — a
+        // PTY to write to, the filesystem, the raw keybindings, the drag
+        // machine's own result — so `App::dispatch` handles it and the
+        // reducer never sees it. They are listed rather than caught by `_`
+        // so a new action still has to say which side it belongs on, and
+        // gathered here rather than scattered so the set is visible: to know
+        // what one of these does, read `dispatch.rs` and nothing else.
+        //
+        // `dispatch_only_actions_stay_inert` pins that they change nothing.
+        Action::TriggerUpgrade
+        | Action::AbortUpgrade
+        | Action::ForwardKey(_)
+        | Action::ForwardMouse(_)
+        | Action::SidebarClickSession(_)
+        | Action::NumberKeyJump(_)
+        | Action::SwitchToAgentPane(_)
+        | Action::FinishProjectDrag
+        | Action::ReloadConfig
+        | Action::PasteImagePath { .. } => {}
+
         Action::None => {}
     }
 
@@ -656,8 +658,9 @@ fn reduce_summary(state: &mut AppState, action: SummaryAction) -> SideEffect {
     let mut fx = SideEffect::default();
     match action {
         // Kicked off / torn down in dispatch (needs App-level worker access).
-        SummaryAction::Generate => {}
-        SummaryAction::Cancel => {}
+        // Dispatch-only, like the block in `apply_action`: generating needs a
+        // worker and cancelling needs to kill it.
+        SummaryAction::Generate | SummaryAction::Cancel => {}
         SummaryAction::Scroll(delta) => {
             state.pointer.last_scroll = std::time::Instant::now();
             state.summary.scroll_by(delta, state.summary.max_scroll);

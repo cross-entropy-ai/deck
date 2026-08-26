@@ -156,6 +156,11 @@ macro_rules! effect_predicates {
 
 #[cfg(test)]
 impl SideEffect {
+    /// Whether nothing at all was requested.
+    pub fn is_empty(&self) -> bool {
+        self.effects.is_empty()
+    }
+
     effect_finders! {
         first_kill_session: KillSession => &KillRequest;
         first_rename_session: RenameSession => &RenameRequest;

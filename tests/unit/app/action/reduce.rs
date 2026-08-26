@@ -3259,3 +3259,72 @@ fn pf_add_input_ctrl_backspace_reaches_a_port_field() {
         .unwrap();
     assert_eq!(form.field_text(PfField::ListenPort), "");
 }
+
+/// The actions `App::dispatch` handles before the reducer is asked must stay
+/// inert here, or they would be acted on twice — once in dispatch and once on
+/// the way through the reducer.
+///
+/// Their arm in `apply_action` is empty by design; this is what stops someone
+/// filling it in without noticing dispatch already did the work.
+#[test]
+fn dispatch_only_actions_stay_inert() {
+    let cases: Vec<(&str, Action)> = vec![
+        ("TriggerUpgrade", Action::TriggerUpgrade),
+        ("AbortUpgrade", Action::AbortUpgrade),
+        ("ForwardKey", Action::ForwardKey(b"x".to_vec())),
+        ("ForwardMouse", Action::ForwardMouse(b"x".to_vec())),
+        ("SidebarClickSession", Action::SidebarClickSession(0)),
+        ("NumberKeyJump", Action::NumberKeyJump(0)),
+        (
+            "SwitchToAgentPane",
+            Action::SwitchToAgentPane(crate::geometry::AgentTarget {
+                lane: crate::system::tmux::TmuxSystem::local_lane(),
+                session: "s".into(),
+                pane_id: "%1".into(),
+            }),
+        ),
+        ("FinishProjectDrag", Action::FinishProjectDrag),
+        ("ReloadConfig", Action::ReloadConfig),
+        (
+            "PasteImagePath",
+            Action::PasteImagePath {
+                path: "/tmp/x.png".into(),
+                raw: "/tmp/x.png".into(),
+            },
+        ),
+        (
+            "Summary(Generate)",
+            Action::Summary(SummaryAction::Generate),
+        ),
+        ("Summary(Cancel)", Action::Summary(SummaryAction::Cancel)),
+    ];
+
+    for (name, action) in cases {
+        let mut state = make_test_state(3);
+        let before = (
+            state.focused,
+            state.current_session.clone(),
+            state.entries.len(),
+            state.main_view,
+            state.focus_mode,
+            state.overlay.kind(),
+        );
+        let fx = apply_action(&mut state, action);
+        assert!(
+            fx.is_empty(),
+            "{name} must produce no effects in the reducer"
+        );
+        assert_eq!(
+            before,
+            (
+                state.focused,
+                state.current_session.clone(),
+                state.entries.len(),
+                state.main_view,
+                state.focus_mode,
+                state.overlay.kind(),
+            ),
+            "{name} must leave the reducer's state alone"
+        );
+    }
+}
