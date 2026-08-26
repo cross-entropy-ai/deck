@@ -365,13 +365,13 @@ pub enum MountAction {
     Discovered {
         lane: crate::lane::LaneId,
         generation: u64,
-        result: Result<Vec<crate::system::MountCandidate>, String>,
+        result: Result<Vec<crate::system::MountCandidate>, crate::system::CatalogError>,
     },
     Activated {
         lane: crate::lane::LaneId,
         generation: u64,
         candidate: String,
-        result: Result<(), String>,
+        result: Result<(), crate::system::CatalogError>,
     },
 }
 

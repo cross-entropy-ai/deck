@@ -216,7 +216,9 @@ impl App {
                             self.dispatch(Action::Mount(MountAction::Discovered {
                                 lane: lane.clone(),
                                 generation: *generation,
-                                result: Err("this lane cannot mount anything".into()),
+                                result: Err(crate::system::CatalogError::Backend(
+                                    "this lane cannot mount anything".to_string(),
+                                )),
                             }));
                         }
                     }
@@ -235,7 +237,9 @@ impl App {
                             lane: lane.clone(),
                             generation: *generation,
                             candidate: candidate.clone(),
-                            result: Err("this lane cannot mount anything".into()),
+                            result: Err(crate::system::CatalogError::Backend(
+                                "this lane cannot mount anything".to_string(),
+                            )),
                         }));
                     }
                 },

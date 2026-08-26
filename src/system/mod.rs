@@ -210,11 +210,11 @@ pub trait LaneMountProvider: Send + Sync {
     /// What `lane` could mount right now. **Blocking** — the shell runs it on a
     /// worker thread, like [`SessionCatalog::snapshot`]. The error is shown to
     /// the user verbatim, so it should read as a reason, not a stack.
-    fn discover(&self, lane: &LaneId) -> Result<Vec<MountCandidate>, String>;
+    fn discover(&self, lane: &LaneId) -> Result<Vec<MountCandidate>, CatalogError>;
 
     /// Bring a candidate into a mountable state. **Blocking**, and only called
     /// for a candidate that declared `needs_activation` after the user agreed.
-    fn activate(&self, lane: &LaneId, candidate: &str) -> Result<(), String>;
+    fn activate(&self, lane: &LaneId, candidate: &str) -> Result<(), CatalogError>;
 
     /// Record the candidate as a linked lane and return its id, writing it
     /// into the lane set the caller then persists.
@@ -294,6 +294,27 @@ pub(crate) trait SummaryTransportProvider: Send + Sync {
 pub enum AttachmentRole {
     Primary,
     Managed,
+}
+
+impl AttachmentRole {
+    /// Title and detail for the main pane when this attachment is down.
+    ///
+    /// The two differ in what the user can do about it, which is a property of
+    /// the role rather than of any one lane: deck's own terminal has nothing
+    /// to attach to until a session exists, while a mounted attachment has a
+    /// connection to bring back. A third role would have to answer here too.
+    pub fn unavailable_message(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Primary => (
+                "No local sessions",
+                "Create one from the sidebar to attach here",
+            ),
+            Self::Managed => (
+                "Attachment unavailable",
+                "Reconnect this lane from its sidebar divider",
+            ),
+        }
+    }
 }
 
 /// Declares that a lane owns a terminal attachment and how the shell mounts

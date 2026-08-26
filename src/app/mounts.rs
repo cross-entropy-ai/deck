@@ -16,6 +16,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use crate::lane::LaneId;
+use crate::system::CatalogError;
 use crate::system::{LaneMountProvider, MountCandidate};
 
 /// One answer from a worker thread.
@@ -23,14 +24,14 @@ pub(in crate::app) enum MountEvent {
     Discovered {
         lane: LaneId,
         generation: u64,
-        result: Result<Vec<MountCandidate>, String>,
+        result: Result<Vec<MountCandidate>, CatalogError>,
     },
     /// An activation finished. `Ok` means the candidate is now mountable.
     Activated {
         lane: LaneId,
         generation: u64,
         candidate: String,
-        result: Result<(), String>,
+        result: Result<(), CatalogError>,
     },
 }
 
@@ -71,7 +72,7 @@ impl MountWorker {
             let _ = self.tx.send(MountEvent::Discovered {
                 lane: LaneId::new("", ""),
                 generation,
-                result: Err(error.to_string()),
+                result: Err(CatalogError::Backend(error.to_string())),
             });
         }
     }
@@ -101,7 +102,7 @@ impl MountWorker {
                 lane: LaneId::new("", ""),
                 generation,
                 candidate: String::new(),
-                result: Err(error.to_string()),
+                result: Err(CatalogError::Backend(error.to_string())),
             });
         }
     }

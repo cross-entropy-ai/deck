@@ -939,7 +939,7 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
                 Ok(candidates) => picker.set_candidates(candidates),
                 Err(error) => {
                     picker.busy = None;
-                    picker.picker.error = Some(error);
+                    picker.picker.error = Some(error.to_string());
                 }
             }
         }
@@ -961,7 +961,7 @@ fn reduce_mount(state: &mut AppState, action: MountAction) -> SideEffect {
                     state.overlay.close(Modal::MountPicker);
                     fx.push(Effect::MountLane { lane, candidate });
                 }
-                Err(error) => picker.picker.error = Some(error),
+                Err(error) => picker.picker.error = Some(error.to_string()),
             }
         }
     }

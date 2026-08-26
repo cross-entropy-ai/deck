@@ -288,17 +288,13 @@ impl App {
             // deck stays open on a dead local pane instead of quitting.
             if warning_state.is_none() && main_view == MainView::Terminal && active_attachment_dead
             {
-                let is_primary = active_lane == *self.attachments.primary_lane();
-                let title = if is_primary {
-                    "No local sessions"
+                let role = if active_lane == *self.attachments.primary_lane() {
+                    crate::system::AttachmentRole::Primary
                 } else {
-                    "Attachment unavailable"
+                    crate::system::AttachmentRole::Managed
                 };
-                let detail = attachment_failure.as_deref().unwrap_or(if is_primary {
-                    "Create one from the sidebar to attach here"
-                } else {
-                    "Reconnect this lane from its sidebar divider"
-                });
+                let (title, fallback) = role.unavailable_message();
+                let detail = attachment_failure.as_deref().unwrap_or(fallback);
                 draw_center_message(frame, main_inner, title, detail, theme);
             }
 

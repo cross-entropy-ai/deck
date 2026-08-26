@@ -467,7 +467,7 @@ fn entry_for<'a>(remotes: &'a mut Vec<RemoteConfig>, host: &str) -> Option<&'a m
 }
 
 impl LaneMountProvider for TmuxSystem {
-    fn discover(&self, lane: &LaneId) -> Result<Vec<MountCandidate>, String> {
+    fn discover(&self, lane: &LaneId) -> Result<Vec<MountCandidate>, CatalogError> {
         let Some(host) = Self::engine_host_of(lane) else {
             return Ok(Vec::new());
         };
@@ -501,11 +501,15 @@ impl LaneMountProvider for TmuxSystem {
             .collect())
     }
 
-    fn activate(&self, lane: &LaneId, candidate: &str) -> Result<(), String> {
-        let host = Self::engine_host_of(lane).ok_or("a container cannot hold containers")?;
-        let (engine, name) =
-            parse_mount_candidate(candidate).ok_or("malformed container candidate")?;
-        crate::remote_tmux::start_container(host, engine, name)
+    fn activate(&self, lane: &LaneId, candidate: &str) -> Result<(), CatalogError> {
+        let host = Self::engine_host_of(lane).ok_or_else(|| {
+            CatalogError::Backend("a container cannot hold containers".to_string())
+        })?;
+        let (engine, name) = parse_mount_candidate(candidate)
+            .ok_or_else(|| CatalogError::Backend("malformed container candidate".to_string()))?;
+        // Starting one goes over ssh, so a failure here is the host being
+        // out of reach as often as the engine refusing.
+        crate::remote_tmux::start_container(host, engine, name).map_err(CatalogError::Unreachable)
     }
 
     fn mount(
