@@ -131,44 +131,27 @@ impl App {
         // a forward would silently drop the new rule.
         let ssh_forwards_rebuilt = self.reconfigure_ssh_if_needed(&cfg, stop_hosts);
 
-        // Hosts only in old → stop the ControlMaster deck opened for them.
-        // Iterating the host list (not remote ids) keeps the `host#container`
-        // encoding inside the tmux system: container lanes ride their host's
-        // master, so they never own one to stop.
-        for old in &old_remotes {
-            if !new_remotes.iter().any(|n| n.host == old.host)
-                && !ssh_forwards_rebuilt
-                && cfg.ssh_connection_reuse
-            {
-                let _ =
-                    self.port_forward_tx
-                        .send(crate::app::ssh::port_forward_task::Op::StopHost {
-                            target: crate::app::ssh::port_forward_task::MasterTarget {
-                                lane: crate::system::tmux::TmuxSystem::host_lane(&old.host),
-                                host: old.host.clone(),
-                            },
-                        });
-            }
+        let changes = plan_lane_changes(
+            &old_remotes,
+            &new_remotes,
+            ssh_forwards_rebuilt,
+            cfg.ssh_connection_reuse,
+        );
+        for host in &changes.stop_hosts {
+            let _ = self
+                .port_forward_tx
+                .send(crate::app::ssh::port_forward_task::Op::StopHost {
+                    target: crate::app::ssh::port_forward_task::MasterTarget {
+                        lane: crate::system::tmux::TmuxSystem::host_lane(host),
+                        host: host.clone(),
+                    },
+                });
         }
-
-        // Remote ids (each host plus its containers) only in old → offboard
-        // that lane's runtime state.
-        let old_ids = crate::system::tmux::remote_ids(&old_remotes);
-        let new_ids = crate::system::tmux::remote_ids(&new_remotes);
-        for old in &old_ids {
-            if !new_ids.contains(old) {
-                let lane = crate::system::tmux::TmuxSystem::host_lane(old);
-                self.offboard_remote_host(&lane);
-            }
+        for id in &changes.offboard {
+            self.offboard_remote_host(&crate::system::tmux::TmuxSystem::host_lane(id));
         }
-
-        // Remote ids only in new → seed runtime state + spawn the PTY so
-        // selecting the new section actually connects without a deck
-        // restart.
-        for new in &new_ids {
-            if !old_ids.contains(new) {
-                self.onboard_lane(&crate::system::tmux::TmuxSystem::host_lane(new));
-            }
+        for id in &changes.onboard {
+            self.onboard_lane(&crate::system::tmux::TmuxSystem::host_lane(id));
         }
 
         // While reuse is off, forward rules remain persisted but inactive.
@@ -235,3 +218,64 @@ impl App {
         self.request_refresh();
     }
 }
+
+/// What a config reload has to do about lanes that came or went.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct LaneChanges {
+    /// Hosts whose ControlMaster deck opened and should now close.
+    ///
+    /// Hosts, not lane ids: a container lane rides its host's master, so it
+    /// never owns one to stop. That keeps the `host#container` encoding inside
+    /// the tmux system rather than out here.
+    pub stop_hosts: Vec<String>,
+    /// Lane ids to tear the runtime state down for.
+    pub offboard: Vec<String>,
+    /// Lane ids to seed and connect, so selecting the new section works
+    /// without a restart.
+    pub onboard: Vec<String>,
+}
+
+/// Diff the remote set a reload replaced.
+///
+/// `forwards_rebuilt` is true only when the worker is already rebuilding every
+/// forward from scratch — socket replaced, or reuse just came on — in which
+/// case the masters are going down anyway and stopping them individually would
+/// be redundant. A ControlPersist-only edit does *not* set it, so the per-host
+/// work below still has to run for that case.
+pub(super) fn plan_lane_changes(
+    old: &[crate::config::RemoteConfig],
+    new: &[crate::config::RemoteConfig],
+    forwards_rebuilt: bool,
+    reuse_enabled: bool,
+) -> LaneChanges {
+    let stop_hosts = if forwards_rebuilt || !reuse_enabled {
+        Vec::new()
+    } else {
+        old.iter()
+            .filter(|o| !new.iter().any(|n| n.host == o.host))
+            .map(|o| o.host.clone())
+            .collect()
+    };
+
+    // Each host plus its containers, so a container removed on its own is
+    // offboarded even though its host stayed.
+    let old_ids = crate::system::tmux::remote_ids(old);
+    let new_ids = crate::system::tmux::remote_ids(new);
+    LaneChanges {
+        stop_hosts,
+        offboard: old_ids
+            .iter()
+            .filter(|id| !new_ids.contains(id))
+            .cloned()
+            .collect(),
+        onboard: new_ids
+            .iter()
+            .filter(|id| !old_ids.contains(id))
+            .cloned()
+            .collect(),
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/app/reload.rs"]
+mod tests;
