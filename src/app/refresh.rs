@@ -148,19 +148,12 @@ impl App {
                 }
             }
 
-            self.state.entries.retain(|entry| entry.lane != lane);
-            self.state.entries.extend(fresh);
+            self.state.replace_lane_rows(&lane, fresh);
         }
 
-        // Keep all lane blocks in registry order even though foreground and
-        // background batches settle at different times.
-        self.state.entries.sort_by_key(|entry| {
-            self.state
-                .system_sections
-                .iter()
-                .position(|section| section.lane == entry.lane)
-                .unwrap_or(usize::MAX)
-        });
+        // Foreground and background batches settle at different times, so the
+        // blocks need putting back in registry order once the round is in.
+        self.state.restore_lane_order();
 
         if primary_refreshed {
             self.state.sync_order();

@@ -272,6 +272,35 @@ impl AppState {
         }
     }
 
+    /// Swap `lane`'s rows for `fresh`, leaving every other lane alone.
+    ///
+    /// `entries` is one flat list with an invariant: each lane's rows are
+    /// contiguous, and the blocks run in `system_sections` order. This half
+    /// keeps a lane's rows together; [`restore_lane_order`] puts the blocks
+    /// back in order afterwards. Refreshes land per lane, in whatever order
+    /// the workers finish, so both halves have to be somebody's job.
+    ///
+    /// [`restore_lane_order`]: AppState::restore_lane_order
+    pub fn replace_lane_rows(&mut self, lane: &LaneId, fresh: Vec<SessionEntry>) {
+        self.entries.retain(|entry| entry.lane != *lane);
+        self.entries.extend(fresh);
+    }
+
+    /// Put the lane blocks back into `system_sections` order.
+    ///
+    /// A lane with no section — one removed by a reload while its refresh was
+    /// in flight — sorts to the end rather than to the front, so a stale block
+    /// cannot displace a live one before the next round drops it.
+    pub fn restore_lane_order(&mut self) {
+        let position = |lane: &LaneId| {
+            self.system_sections
+                .iter()
+                .position(|section| section.lane == *lane)
+                .unwrap_or(usize::MAX)
+        };
+        self.entries.sort_by_key(|entry| position(&entry.lane));
+    }
+
     pub fn sync_order(&mut self) {
         let names: Vec<String> = self.local_entries().map(|e| e.name.clone()).collect();
         self.session_order.retain(|n| names.contains(n));

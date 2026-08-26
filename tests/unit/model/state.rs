@@ -1577,3 +1577,105 @@ fn auto_theme_follows_the_probed_terminal_background() {
     assert!(!state.prefs.theme_auto);
     assert_eq!(state.active_theme_index(), 3);
 }
+
+// --- lane-block reconciliation ---
+
+/// A minimal section for `lane`, enough to place its block in the order.
+fn section_for(lane: crate::lane::LaneId) -> crate::system::SectionDef {
+    crate::system::SectionDef {
+        lane,
+        title: String::new(),
+        parent: None,
+        divider_title: None,
+        buttons: Vec::new(),
+        top_margin: false,
+        primary: false,
+        session_capabilities: crate::system::SessionCapabilities::default(),
+        lane_capabilities: crate::system::LaneCapabilities::default(),
+    }
+}
+
+fn row_on(lane: &crate::lane::LaneId, name: &str) -> SessionEntry {
+    SessionEntry {
+        lane: lane.clone(),
+        name: name.to_string(),
+        dir: "/tmp".to_string(),
+        kind: SessionEntryKind::Live { is_current: false },
+    }
+}
+
+fn lanes_of(state: &AppState) -> Vec<String> {
+    state
+        .entries
+        .iter()
+        .map(|entry| format!("{}:{}", entry.lane.lane(), entry.name))
+        .collect()
+}
+
+/// Two lanes, ordered `a` then `b`, each with one row.
+fn two_lane_state() -> (AppState, crate::lane::LaneId, crate::lane::LaneId) {
+    use crate::system::tmux::TmuxSystem;
+    let (a, b) = (TmuxSystem::host_lane("a"), TmuxSystem::host_lane("b"));
+    let mut state = AppState::new(80, 24);
+    state.system_sections = vec![section_for(a.clone()), section_for(b.clone())];
+    state.entries = vec![row_on(&a, "a1"), row_on(&b, "b1")];
+    (state, a, b)
+}
+
+#[test]
+fn replacing_a_lanes_rows_leaves_the_other_lanes_alone() {
+    let (mut state, a, _b) = two_lane_state();
+    state.replace_lane_rows(&a, vec![row_on(&a, "a2"), row_on(&a, "a3")]);
+    state.restore_lane_order();
+    assert_eq!(lanes_of(&state), vec!["a:a2", "a:a3", "b:b1"]);
+}
+
+/// A lane that came back empty loses its rows rather than keeping the last
+/// ones it had — the whole point of replacing rather than merging.
+#[test]
+fn a_lane_that_refreshes_empty_loses_its_rows() {
+    let (mut state, a, _b) = two_lane_state();
+    state.replace_lane_rows(&a, Vec::new());
+    assert_eq!(lanes_of(&state), vec!["b:b1"]);
+}
+
+/// Refreshes land per lane in whatever order the workers finish, so a late
+/// first lane must not end up after a lane that is meant to follow it.
+#[test]
+fn a_lane_refreshing_last_still_sorts_back_to_its_place() {
+    let (mut state, a, b) = two_lane_state();
+    state.replace_lane_rows(&b, vec![row_on(&b, "b2")]);
+    state.replace_lane_rows(&a, vec![row_on(&a, "a2")]);
+    assert_eq!(
+        lanes_of(&state),
+        vec!["b:b2", "a:a2"],
+        "replacing alone appends, so the order is wrong until restored"
+    );
+    state.restore_lane_order();
+    assert_eq!(lanes_of(&state), vec!["a:a2", "b:b2"]);
+}
+
+/// A reload can drop a lane while its refresh is in flight. The stale block
+/// sorts to the end, never ahead of a live one.
+#[test]
+fn rows_for_a_lane_with_no_section_sort_last() {
+    let (mut state, a, _b) = two_lane_state();
+    let gone = crate::system::tmux::TmuxSystem::host_lane("gone");
+    state.entries.insert(0, row_on(&gone, "ghost"));
+    state.restore_lane_order();
+    assert_eq!(lanes_of(&state), vec!["a:a1", "b:b1", "gone:ghost"]);
+    // And the next round for a real lane still lands in the right place.
+    state.replace_lane_rows(&a, vec![row_on(&a, "a2")]);
+    state.restore_lane_order();
+    assert_eq!(lanes_of(&state), vec!["a:a2", "b:b1", "gone:ghost"]);
+}
+
+/// Reordering must be stable: rows within one lane keep the order the
+/// snapshot gave them.
+#[test]
+fn restoring_the_order_keeps_each_lanes_rows_as_they_came() {
+    let (mut state, a, _b) = two_lane_state();
+    state.replace_lane_rows(&a, vec![row_on(&a, "z"), row_on(&a, "m"), row_on(&a, "a")]);
+    state.restore_lane_order();
+    assert_eq!(lanes_of(&state), vec!["a:z", "a:m", "a:a", "b:b1"]);
+}
