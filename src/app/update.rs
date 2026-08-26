@@ -17,6 +17,59 @@ fn apply_config_save_result(
     }
 }
 
+/// What an update tick should do about the checker, decided before any of it
+/// happens.
+///
+/// The three are not exclusive: a tick can both spawn the checker and ask it
+/// something, or spawn it and deliberately stay quiet.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct CheckPlan {
+    /// Tear the running checker down — update-check was turned off.
+    pub stop: bool,
+    /// Spawn the checker. It parks on `recv`, costing nothing until asked.
+    pub spawn: bool,
+    /// Ask for a fresh check now.
+    pub request: bool,
+}
+
+/// Decide the tick.
+///
+/// `since_last_request` is `None` when deck has never asked in this run. That
+/// is the case worth being careful about: a fresh cache back-dates the
+/// timestamp at startup precisely so the first ticks stay quiet, so `None`
+/// means update-check was *off* at startup and has just been switched on —
+/// the one time an immediate check is right.
+///
+/// Spawning without asking matters for two reasons the comments in
+/// `tick_update_check` record: asking on every launch would hit GitHub each
+/// time even with a warm cache, and an in-flight request blocks teardown until
+/// the HTTP call returns.
+pub(super) fn plan_check(
+    mode: crate::update::UpdateCheckMode,
+    has_checker: bool,
+    since_last_request: Option<Duration>,
+) -> CheckPlan {
+    if mode == crate::update::UpdateCheckMode::Disabled {
+        return CheckPlan {
+            stop: has_checker,
+            ..CheckPlan::default()
+        };
+    }
+    let spawn = !has_checker;
+    // A just-enabled check asks at once; otherwise the interval gate decides,
+    // and it only applies once there is something to ask.
+    let request = if spawn && since_last_request.is_none() {
+        true
+    } else {
+        since_last_request.is_some_and(|elapsed| elapsed >= UPDATE_CHECK_INTERVAL)
+    };
+    CheckPlan {
+        stop: false,
+        spawn,
+        request,
+    }
+}
+
 impl App {
     pub(super) fn config_snapshot(&self) -> crate::config::Config {
         self.state.prefs.to_config(self.raw_keybindings.clone())
@@ -118,37 +171,23 @@ impl App {
 
     pub(super) fn tick_update_check(&mut self) -> bool {
         let mut changed = false;
-        match self.state.prefs.update_check_mode {
-            crate::update::UpdateCheckMode::Disabled => {
-                if self.update_checker.is_some() {
-                    self.update_checker = None;
-                    self.last_update_request = None;
-                    changed = true;
-                }
-                return changed;
-            }
-            crate::update::UpdateCheckMode::Enabled => {
-                if self.update_checker.is_none() {
-                    // Spawn the worker (idle, parked on recv) but DON'T request
-                    // here. A fresh cache back-dated `last_update_request` to
-                    // skip the network until the cache ages out; the interval
-                    // gate below decides when a real check fires. Requesting at
-                    // startup would hit GitHub each launch (cache dead) and arm
-                    // the Drop-join stall (an in-flight request blocks teardown
-                    // until the HTTP returns).
-                    self.update_checker = Some(spawn_checker());
-                    // No prior timestamp means update-check was off at startup
-                    // and just toggled on — check once now. The fresh-cache
-                    // path already set `last_update_request`, so this fires
-                    // only on a genuine enable.
-                    if self.last_update_request.is_none() {
-                        self.request_update_check_now();
-                    }
-                }
-            }
+        let plan = plan_check(
+            self.state.prefs.update_check_mode,
+            self.update_checker.is_some(),
+            self.last_update_request.map(|at| at.elapsed()),
+        );
+        if plan.stop {
+            self.update_checker = None;
+            self.last_update_request = None;
+            return true;
         }
-
-        if let Some(ref checker) = self.update_checker {
+        if plan.spawn {
+            self.update_checker = Some(spawn_checker());
+        }
+        let Some(ref checker) = self.update_checker else {
+            return changed;
+        };
+        {
             while let Some(result) = checker.try_recv() {
                 match result {
                     UpdateResult::Ok {
@@ -174,10 +213,8 @@ impl App {
             }
         }
 
-        if let Some(last) = self.last_update_request {
-            if last.elapsed() >= UPDATE_CHECK_INTERVAL && self.update_checker.is_some() {
-                self.request_update_check_now();
-            }
+        if plan.request {
+            self.request_update_check_now();
         }
         changed
     }
@@ -266,5 +303,91 @@ mod config_save_tests {
 
         assert_eq!(seen, Some(new_mtime));
         assert!(state.reload_status.is_none());
+    }
+}
+
+#[cfg(test)]
+mod check_plan_tests {
+    use super::{plan_check, CheckPlan, UPDATE_CHECK_INTERVAL};
+    use crate::update::UpdateCheckMode::{Disabled, Enabled};
+    use std::time::Duration;
+
+    const LONG_AGO: Duration = Duration::from_secs(60 * 60 * 24 * 30);
+
+    #[test]
+    fn turning_the_check_off_stops_a_running_checker() {
+        assert_eq!(
+            plan_check(Disabled, true, Some(LONG_AGO)),
+            CheckPlan {
+                stop: true,
+                ..CheckPlan::default()
+            }
+        );
+    }
+
+    #[test]
+    fn a_check_that_is_off_and_idle_does_nothing() {
+        assert_eq!(plan_check(Disabled, false, None), CheckPlan::default());
+    }
+
+    /// Update-check was off when deck started and has just been switched on.
+    /// Nothing has been asked yet, so ask once now.
+    #[test]
+    fn switching_the_check_on_asks_immediately() {
+        assert_eq!(
+            plan_check(Enabled, false, None),
+            CheckPlan {
+                stop: false,
+                spawn: true,
+                request: true,
+            }
+        );
+    }
+
+    /// A warm cache back-dates the timestamp at startup precisely so the first
+    /// ticks stay quiet. Spawning without asking is the point: asking here
+    /// would hit GitHub on every launch, and an in-flight request blocks
+    /// teardown until the HTTP call returns.
+    #[test]
+    fn a_warm_cache_spawns_the_checker_without_asking_it_anything() {
+        assert_eq!(
+            plan_check(Enabled, false, Some(Duration::from_secs(1))),
+            CheckPlan {
+                stop: false,
+                spawn: true,
+                request: false,
+            }
+        );
+    }
+
+    /// A cache old enough to have aged out gets asked on the same tick that
+    /// spawns the checker.
+    #[test]
+    fn a_stale_cache_asks_on_the_tick_that_spawns() {
+        let plan = plan_check(Enabled, false, Some(LONG_AGO));
+        assert!(plan.spawn && plan.request);
+    }
+
+    #[test]
+    fn a_running_checker_is_left_alone_until_the_interval_passes() {
+        assert_eq!(
+            plan_check(Enabled, true, Some(UPDATE_CHECK_INTERVAL / 2)),
+            CheckPlan::default()
+        );
+        assert_eq!(
+            plan_check(Enabled, true, Some(UPDATE_CHECK_INTERVAL)),
+            CheckPlan {
+                stop: false,
+                spawn: false,
+                request: true,
+            }
+        );
+    }
+
+    /// A checker that exists but was never asked has no interval to measure
+    /// from, so it waits rather than firing every tick.
+    #[test]
+    fn a_running_checker_with_no_prior_request_stays_quiet() {
+        assert_eq!(plan_check(Enabled, true, None), CheckPlan::default());
     }
 }
