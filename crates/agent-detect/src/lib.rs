@@ -4,8 +4,12 @@
 //! This crate is the pure, IO-free core of deck's agent detection: given a
 //! list of tmux panes ([`PaneInfo`]) and a process-table dump (`ps -axo
 //! pid=,ppid=,args=`), [`detect_agents`] walks each pane's subtree and returns
-//! the interactive agent (if any) running in it. [`classify_status`] reads an
-//! agent's raw pane buffer and derives a traffic-light [`AgentStatus`].
+//! the interactive agent (if any) running in it. [`classify_verdict`] reads an
+//! agent's raw pane buffer (and, when available, its OSC pane title) and
+//! derives a [`Verdict`] around a traffic-light [`AgentStatus`];
+//! [`classify_status`] is the status-only convenience form. The rule set is
+//! measured against real captures and borrows shapes from herdr's published
+//! detection manifests — see deck's `docs/agent-status-plan.md`.
 //!
 //! Detection targets *interactive* invocations only: `pane_current_command`
 //! is unreliable (it shows Claude Code's version string and flips while a
@@ -66,6 +70,59 @@ pub enum AgentStatus {
     Unknown,
 }
 
+/// A screen classification with the confidence metadata the merge layer
+/// needs (modeled on herdr's `AgentDetection`). The bare [`AgentStatus`]
+/// can't express two things the screen knows: "this screen can't show live
+/// state at all" and "there is visibly a dialog / a finished turn here".
+/// Hooks and the activity clock may *light* Working; only positive screen
+/// evidence may *retract* it — these flags carry that evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Verdict {
+    pub status: AgentStatus,
+    /// The visible screen is an agent-owned viewer (transcript overlay,
+    /// model picker) showing history instead of live state; the caller
+    /// should keep the previous status. `status` is `Unknown` here.
+    pub keep_previous: bool,
+    /// The screen visibly shows a dialog awaiting the user's choice —
+    /// the strongest tell there is; may override a non-blocked hook state.
+    pub visible_blocker: bool,
+    /// The screen shows positive completed/interrupted evidence (not just
+    /// "nothing matched"); strong enough to retract a stale hook Working.
+    pub visible_idle: bool,
+}
+
+impl Verdict {
+    fn status(status: AgentStatus) -> Self {
+        Verdict {
+            status,
+            keep_previous: false,
+            visible_blocker: false,
+            visible_idle: false,
+        }
+    }
+
+    fn blocker() -> Self {
+        Verdict {
+            visible_blocker: true,
+            ..Verdict::status(AgentStatus::Waiting)
+        }
+    }
+
+    fn idle_tell() -> Self {
+        Verdict {
+            visible_idle: true,
+            ..Verdict::status(AgentStatus::Idle)
+        }
+    }
+
+    fn keep_previous() -> Self {
+        Verdict {
+            keep_previous: true,
+            ..Verdict::status(AgentStatus::Unknown)
+        }
+    }
+}
+
 impl DetectedAgent {
     /// Compact `session:window` location for display. The pane index is
     /// omitted — it's noise in the sidebar; the real tmux target is `pane_id`.
@@ -74,14 +131,29 @@ impl DetectedAgent {
     }
 }
 
-/// Classify a `kind`'s status from its raw pane buffer. Pure (no IO) so it
-/// runs cheaply every refresh and is trivial to unit-test. Kinds without a
-/// real classifier stay `Unknown` (gray dot) until one is written.
+/// Status-only convenience form of [`classify_verdict`], with no pane title.
+/// Existing call sites keep this shape; new callers that have the title and
+/// care about the verdict flags use [`classify_verdict`] directly.
 pub fn classify_status(kind: AgentKind, buffer: &str) -> AgentStatus {
+    classify_verdict(kind, buffer, None).status
+}
+
+/// Classify a `kind`'s state from its raw pane buffer plus, when the caller
+/// has it, the pane's OSC title (`#{pane_title}`). Pure (no IO) so it runs
+/// cheaply every refresh and is trivial to unit-test.
+///
+/// The title is a tell of its own where the agent drives a spinner through
+/// it while a turn runs (older Claude versions, Codex per herdr's manifest)
+/// or flags "Action Required" — those survive the streaming blind spot,
+/// where the buffer shows no tell at all. Measured on Claude 2.1.241 the
+/// title stays "✳ <summary>" throughout, so for it the title tier is inert:
+/// neither working nor idle evidence.
+pub fn classify_verdict(kind: AgentKind, buffer: &str, title: Option<&str>) -> Verdict {
+    // An unset title comes through as an empty string; treat it as absent.
+    let title = title.map(str::trim).filter(|t| !t.is_empty());
     match kind {
-        AgentKind::Claude => claude_classify(buffer),
-        // TODO: characterize Codex's TUI states.
-        AgentKind::Codex => AgentStatus::Unknown,
+        AgentKind::Claude => claude_verdict(buffer, title),
+        AgentKind::Codex => codex_verdict(buffer, title),
     }
 }
 
@@ -149,8 +221,43 @@ fn working_tool_tail() -> &'static regex::Regex {
     })
 }
 
-/// Markers of a permission/confirmation dialog awaiting the user's choice.
-const CLAUDE_WAITING_MARKERS: &[&str] = &["do you want", "\u{276f} 1."];
+/// Dialog *chrome*: strings only Claude Code's own selection UI paints —
+/// the `❯ 1.` selector and the Bash-permission footer. These are strong
+/// evidence (`visible_blocker`): a dialog is on screen right now, whatever
+/// any other source says. Dialogs are bottom-anchored and clip from the
+/// top, so their chrome is visible whenever the dialog is.
+const CLAUDE_BLOCKER_CHROME: &[&str] = &["\u{276f} 1.", "tab to amend"];
+
+/// Dialog *question text*. Weak evidence on purpose: Claude routinely ends
+/// a finished turn with prose like "Do you want me to continue?", and that
+/// line lingers in the transcript. At rest it still reads Waiting (the
+/// agent did ask the user something), but it must not outrank live
+/// sources — a fresh activity clock or hook report says the next turn is
+/// already running past it.
+const CLAUDE_WAITING_PROSE: &[&str] = &[
+    "do you want",
+    "waiting for permission",
+    "run a dynamic workflow?",
+];
+
+/// The line Claude Code prints in the transcript when the user interrupts a
+/// turn (Esc): "⎿  Interrupted · What should Claude do instead?". A positive
+/// idle tell: interruption fires no lifecycle hook at all, so this line is
+/// what retracts a stale hook-reported Working.
+const CLAUDE_INTERRUPTED: &str = "interrupted \u{b7} what should claude do instead";
+
+/// Claude Code's busy-spinner pane title: a braille frame (≤ 2.1.227) or a
+/// half-circle frame (2.1.228+) leading the OSC title, per herdr's claude
+/// manifest. Measured on 2.1.241 the title does NOT spin — it stays
+/// "✳ <summary>" straight through a running turn — so this tier only ever
+/// fires on the older versions herdr documented, where a spinning title is
+/// unambiguous and outranks the buffer. Crucially the reverse rule is dead
+/// on 2.1.241: "✳ " appears mid-turn, so it must never count as idle
+/// evidence (herdr's `osc_title_idle` is wrong for tmux consumers).
+fn claude_title_working() -> &'static regex::Regex {
+    static R: OnceLock<regex::Regex> = OnceLock::new();
+    R.get_or_init(|| regex::Regex::new(r"^[\u{2800}-\u{28FF}\u{25D0}-\u{25D3}] ").unwrap())
+}
 
 /// A finished-turn summary line: "…ed for <number>…" (the past-tense verb
 /// Claude Code prints when a turn completes, e.g. "Cogitated for 8s").
@@ -162,22 +269,42 @@ fn completed_line(lower: &str) -> bool {
     })
 }
 
-/// Classify Claude Code's pane by scanning the capture's bottom slice
-/// bottom-up; the lowest status-bearing line wins (lines above are stale
-/// transcript). Per line:
+/// Classify Claude Code's pane. The title tier goes first (herdr ranks the
+/// spinning title above every buffer rule — it is live for the whole turn,
+/// while buffer tells vanish during plain-text streaming); then the buffer's
+/// bottom slice is scanned bottom-up; the lowest status-bearing line wins
+/// (lines above are stale transcript). Per line:
 /// - in-flight turn → `Working`, via verb-independent tells that survive
 ///   Claude's rotating spinner verbs ([`CLAUDE_INTERRUPT_HINT`],
 ///   [`working_timer_tail`], [`working_spinner_glyph`],
 ///   [`working_spinner_tail`], [`working_tool_tail`]);
-/// - permission/confirmation dialog ("Do you want to proceed?") → `Waiting`;
-/// - finished-turn summary "…ed for <number>…" ("Cogitated for 5s") → `Idle`;
-/// - nothing recognized → `Idle` at prompt; empty capture → `Unknown`.
-fn claude_classify(buffer: &str) -> AgentStatus {
+/// - dialog chrome → `Waiting` + `visible_blocker`; bare question prose →
+///   weak `Waiting` (see [`CLAUDE_WAITING_PROSE`]);
+/// - finished-turn summary "…ed for <number>…" or the interrupt line
+///   ("Interrupted · What should Claude do instead?") → `Idle` +
+///   `visible_idle` (positive evidence — retracts a stale hook Working);
+/// - a transcript viewer / model picker overlay → `keep_previous`;
+/// - nothing recognized → weak `Idle` at prompt; empty capture → `Unknown`.
+fn claude_verdict(buffer: &str, title: Option<&str>) -> Verdict {
+    if let Some(t) = title {
+        if claude_title_working().is_match(t) {
+            return Verdict::status(AgentStatus::Working);
+        }
+    }
     if buffer.trim().is_empty() {
-        return AgentStatus::Unknown;
+        return Verdict::status(AgentStatus::Unknown);
     }
     let lines: Vec<&str> = buffer.lines().collect();
     let scanned = &lines[lines.len().saturating_sub(MAX_SCAN_LINES)..];
+    let tail_lower = scanned.join("\n").to_ascii_lowercase();
+    // Agent-owned overlays that show history, not live state: the transcript
+    // viewer (ctrl+o) and the model picker. Nothing on these screens can say
+    // whether the turn behind them runs, so the caller keeps what it had.
+    if tail_lower.contains("showing detailed transcript")
+        || (tail_lower.contains("select model") && tail_lower.contains("enter to set as default"))
+    {
+        return Verdict::keep_previous();
+    }
     // Count non-blank lines from the bottom so the blank rows around the
     // input box don't shrink the live-tail window.
     let mut content_seen = 0usize;
@@ -185,15 +312,19 @@ fn claude_classify(buffer: &str) -> AgentStatus {
         let lower = line.to_ascii_lowercase();
         // Strong, high-precision tells — matchable anywhere in the tail.
         if lower.contains(CLAUDE_INTERRUPT_HINT) || working_timer_tail().is_match(line) {
-            return AgentStatus::Working;
+            return Verdict::status(AgentStatus::Working);
         }
-        if CLAUDE_WAITING_MARKERS.iter().any(|m| lower.contains(m)) {
-            return AgentStatus::Waiting;
+        if CLAUDE_BLOCKER_CHROME.iter().any(|m| lower.contains(m)) {
+            return Verdict::blocker();
+        }
+        if CLAUDE_WAITING_PROSE.iter().any(|m| lower.contains(m)) {
+            return Verdict::status(AgentStatus::Waiting);
         }
         // A finished-turn summary ("✶ Cogitated for 8s") reuses a spinner
-        // glyph, so rule it out before the bare-spinner tells below.
-        if completed_line(&lower) {
-            return AgentStatus::Idle;
+        // glyph, so rule it out before the bare-spinner tells below. Both it
+        // and the interrupt line are positive idle evidence.
+        if completed_line(&lower) || lower.contains(CLAUDE_INTERRUPTED) {
+            return Verdict::idle_tell();
         }
         if !line.trim().is_empty() {
             content_seen += 1;
@@ -206,11 +337,125 @@ fn claude_classify(buffer: &str) -> AgentStatus {
                 || working_spinner_tail().is_match(line)
                 || working_tool_tail().is_match(line))
         {
-            return AgentStatus::Working;
+            return Verdict::status(AgentStatus::Working);
         }
     }
-    // No status line recognized → sitting at the prompt.
-    AgentStatus::Idle
+    // No status line recognized → weak idle. The "✳ <summary>" title is NOT
+    // an upgrade to positive idle: measured on 2.1.241 it shows mid-turn too
+    // (tool phase and text streaming alike), so it can't distinguish the
+    // streaming blind spot from a real prompt wait.
+    Verdict::status(AgentStatus::Idle)
+}
+
+/// Codex's busy-spinner braille frames in the OSC pane title (herdr's char
+/// set), surrounded by spaces or line edges so mid-word braille can't match.
+fn codex_title_working() -> &'static regex::Regex {
+    static R: OnceLock<regex::Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        regex::Regex::new(
+            r"(?:^| )[\u{280B}\u{2819}\u{2839}\u{2838}\u{283C}\u{2834}\u{2826}\u{2827}\u{2807}\u{280F}](?: |$)",
+        )
+        .unwrap()
+    })
+}
+
+/// Codex's live turn line: "• Working (13s • esc to interrupt) · …". Bullet-
+/// led with a parenthetical holding the interrupt hint; the verb is left
+/// free so a renamed spinner ("Thinking…") still matches. The line is
+/// redrawn away the moment the turn ends, so it is a live tell.
+fn codex_working_line() -> &'static regex::Regex {
+    static R: OnceLock<regex::Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        regex::Regex::new(r"(?i)^\s*[\u{2022}\u{25e6}]\s+\w+ \([^)]*esc to interrupt").unwrap()
+    })
+}
+
+/// Footers of Codex dialogs that block on the user — approval prompts,
+/// question forms, and the hook trust gate ("… or esc to go back", which
+/// herdr's manifest misses; deck has to see that one because deck's own
+/// hook install is what causes it).
+const CODEX_BLOCKER_FOOTERS: &[&str] = &[
+    "press enter to confirm or esc to cancel",
+    "press enter to confirm or esc to go back",
+    "enter to submit answer",
+    "enter to submit all",
+    "allow command?",
+];
+
+/// Weaker per-line dialog tells (herdr's `weak_blocker`): cover an approval
+/// dialog whose footer is truncated or phrased differently.
+const CODEX_WEAK_BLOCKERS: &[&str] = &["[y/n]", "yes (y)", "do you want to", "would you like to"];
+
+/// Classify Codex's pane. Same tiering as [`claude_verdict`]: title first
+/// ("Action Required" → blocked; a braille spinner → working — both from
+/// herdr's manifest), then full-screen modals, then a bottom-up scan of the
+/// buffer tail, then the weak idle fallback.
+fn codex_verdict(buffer: &str, title: Option<&str>) -> Verdict {
+    if let Some(t) = title {
+        let t_lower = t.to_ascii_lowercase();
+        if t_lower.contains("action required") {
+            return Verdict::blocker();
+        }
+        if codex_title_working().is_match(t) {
+            return Verdict::status(AgentStatus::Working);
+        }
+    }
+    if buffer.trim().is_empty() {
+        return Verdict::status(AgentStatus::Unknown);
+    }
+    let lines: Vec<&str> = buffer.lines().collect();
+    let scanned = &lines[lines.len().saturating_sub(MAX_SCAN_LINES)..];
+    let tail_lower = scanned.join("\n").to_ascii_lowercase();
+    // The transcript overlay (q to quit / scroll keys) shows history, not
+    // live state.
+    if tail_lower.contains("q to quit")
+        && tail_lower.contains("to scroll")
+        && tail_lower.contains("edit prev")
+    {
+        return Verdict::keep_previous();
+    }
+    // Full-screen modals, matched anywhere: the directory-trust question
+    // (herdr's `trust_directory`) and the hook trust gate. Both paint over
+    // the whole pane, so position carries no information.
+    if tail_lower.contains("do you trust the contents of this directory?")
+        || tail_lower.contains("trust all and continue")
+        || tail_lower.contains("continue without trusting")
+    {
+        return Verdict::blocker();
+    }
+    let mut content_seen = 0usize;
+    for line in scanned.iter().rev() {
+        let lower = line.to_ascii_lowercase();
+        if CODEX_BLOCKER_FOOTERS.iter().any(|m| lower.contains(m)) {
+            return Verdict::blocker();
+        }
+        // The interrupt line persists in the transcript, but bottom-up
+        // scanning means anything live below it (a new turn's Working line,
+        // a fresh dialog) has already won.
+        if lower
+            .trim_start()
+            .starts_with("\u{25a0} conversation interrupted")
+        {
+            return Verdict::idle_tell();
+        }
+        if CODEX_WEAK_BLOCKERS.iter().any(|m| lower.contains(m)) {
+            return Verdict::status(AgentStatus::Waiting);
+        }
+        if !line.trim().is_empty() {
+            content_seen += 1;
+        }
+        // The live turn line renders directly above the composer; gate it
+        // like Claude's bare tells so stale-looking echoes far up can't sway
+        // the verdict.
+        if content_seen <= LIVE_TAIL_LINES && codex_working_line().is_match(line) {
+            return Verdict::status(AgentStatus::Working);
+        }
+    }
+    // Nothing recognized → weak idle. herdr upgrades this when the title is
+    // non-empty and non-spinner (`osc_title_idle`), but through tmux a title
+    // can be a stale shell-set one (a hostname) that Codex never touched, so
+    // an unanchored title must not become positive-idle evidence here.
+    Verdict::status(AgentStatus::Idle)
 }
 
 /// Classify a process by its `argv` string, returning the agent kind only
@@ -545,5 +790,212 @@ mod tests {
             classify_status(AgentKind::Claude, "   "),
             AgentStatus::Unknown
         );
+    }
+
+    /// Mid-turn plain-text streaming: no spinner, no interrupt hint — just
+    /// content and the composer (real capture, 2026-08-24). The buffer alone
+    /// is blind here; the spinning pane title is what carries Working.
+    const CLAUDE_STREAMING: &str = "  249\n  250\n  251\n\
+────────────────────────────────\n\
+❯ \n\
+────────────────────────────────\n\
+  ⏸ manual mode on · ? for shortcuts · ← for agents";
+
+    #[test]
+    fn claude_title_covers_the_streaming_blind_spot() {
+        // Buffer only → weak idle (the documented blind spot): no positive
+        // idle evidence, so a hook/activity source may still say Working.
+        let blind = classify_verdict(AgentKind::Claude, CLAUDE_STREAMING, None);
+        assert_eq!(blind.status, AgentStatus::Idle);
+        assert!(!blind.visible_idle && !blind.visible_blocker && !blind.keep_previous);
+
+        // A braille or half-circle spinner title outranks the blind buffer.
+        for title in ["⠧ fixing the flaky test", "◐ fixing the flaky test"] {
+            assert_eq!(
+                classify_verdict(AgentKind::Claude, CLAUDE_STREAMING, Some(title)).status,
+                AgentStatus::Working,
+                "title {title:?}"
+            );
+        }
+
+        // The "✳ <summary>" title upgrades nothing: measured on 2.1.241 it
+        // shows during a running turn too, so it is not idle evidence.
+        let rest = classify_verdict(AgentKind::Claude, CLAUDE_STREAMING, Some("✳ deck"));
+        assert_eq!(rest.status, AgentStatus::Idle);
+        assert!(!rest.visible_idle);
+
+        // A stale shell-set title (hostname) upgrades nothing either.
+        let stale = classify_verdict(AgentKind::Claude, CLAUDE_STREAMING, Some("mybox.local"));
+        assert_eq!(stale.status, AgentStatus::Idle);
+        assert!(!stale.visible_idle);
+    }
+
+    #[test]
+    fn claude_interrupt_and_completion_are_positive_idle() {
+        // Esc interrupt fires no lifecycle hook at all, so this transcript
+        // line is what retracts a stale hook-reported Working.
+        let interrupted = "  252\n  ⎿  Interrupted · What should Claude do instead?\n\n❯ \n\
+  ⏸ manual mode on · ? for shortcuts";
+        let v = classify_verdict(AgentKind::Claude, interrupted, None);
+        assert_eq!(v.status, AgentStatus::Idle);
+        assert!(v.visible_idle);
+
+        // Same for the finished-turn summary.
+        let done = classify_verdict(AgentKind::Claude, "⏺ pong\n\n✻ Churned for 6s\n\n❯ ", None);
+        assert_eq!(done.status, AgentStatus::Idle);
+        assert!(done.visible_idle);
+    }
+
+    #[test]
+    fn claude_dialogs_are_visible_blockers() {
+        // Workspace-trust dialog (real capture).
+        let trust = " Accessing workspace:\n\n /private/tmp/dh/work\n\n\
+ Claude Code'll be able to read, edit, and execute files here.\n\n\
+ ❯ 1. Yes, I trust this folder\n   2. No, exit\n\n Enter to confirm · Esc to cancel";
+        let v = classify_verdict(AgentKind::Claude, trust, None);
+        assert_eq!(v.status, AgentStatus::Waiting);
+        assert!(v.visible_blocker);
+
+        // Bash-permission footer alone (question scrolled off).
+        let footer = "   mkdir -p /tmp/probe\n\n Esc to cancel · Tab to amend · ctrl+e to explain";
+        assert!(classify_verdict(AgentKind::Claude, footer, None).visible_blocker);
+    }
+
+    #[test]
+    fn claude_question_prose_is_weak_waiting_not_a_blocker() {
+        // A finished turn that ends by asking the user something: Waiting at
+        // rest, but only weakly. The line lingers in the transcript, so it
+        // must not claim the hard `visible_blocker` that real dialog chrome
+        // gets -- a live source has to be able to outrank it while the next
+        // turn streams past it. What outranks it arrives with the evidence
+        // layers above this one; here the verdict just has to leave room.
+        let prose = "⏺ Done with the refactor. Do you want me to run the tests?\n\n❯ \n\
+  ⏸ manual mode on · ? for shortcuts";
+        let v = classify_verdict(AgentKind::Claude, prose, None);
+        assert_eq!(v.status, AgentStatus::Waiting);
+        assert!(!v.visible_blocker);
+
+        // Real dialog chrome stays a hard blocker.
+        let dialog = " Do you want to proceed?\n ❯ 1. Yes\n   2. No";
+        assert!(classify_verdict(AgentKind::Claude, dialog, None).visible_blocker);
+    }
+
+    #[test]
+    fn claude_viewer_overlays_keep_previous_status() {
+        let transcript = "  ⎿  Ran 1 shell command\n\n\
+  showing detailed transcript · ctrl+o to toggle";
+        let v = classify_verdict(AgentKind::Claude, transcript, None);
+        assert!(v.keep_previous);
+        assert_eq!(v.status, AgentStatus::Unknown);
+
+        let picker = " Select model\n ❯ 1. Default\n   2. Opus\n\n\
+ enter to set as default · esc to cancel";
+        assert!(classify_verdict(AgentKind::Claude, picker, None).keep_previous);
+    }
+
+    /// Codex approval dialog (real capture, 2026-08-24).
+    const CODEX_APPROVAL: &str = "  Would you like to run the following command?\n\n\
+  Environment: local\n\n  $ curl -sI https://example.com | head -1\n\n\
+› 1. Yes, proceed (y)\n  2. Yes, and don't ask again for commands like this (p)\n\
+  3. No, and tell Codex what to do differently (esc)\n\n\
+  Press enter to confirm or esc to cancel";
+
+    #[test]
+    fn codex_classifier_reads_traffic_light_from_buffer() {
+        // Live turn line, with and without the background-terminal suffix.
+        let working = "• Running it now; it should finish in about 40 seconds.\n\n\
+• Working (13s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close\n\n\
+› Ask Codex to do anything\n\n  gpt-5.6-sol low · /private/tmp/dc/work";
+        assert_eq!(
+            classify_status(AgentKind::Codex, working),
+            AgentStatus::Working
+        );
+        assert_eq!(
+            classify_status(AgentKind::Codex, "• Working (3s • esc to interrupt)\n› "),
+            AgentStatus::Working
+        );
+
+        // Approval dialog → waiting, visibly.
+        let v = classify_verdict(AgentKind::Codex, CODEX_APPROVAL, None);
+        assert_eq!(v.status, AgentStatus::Waiting);
+        assert!(v.visible_blocker);
+
+        // Esc interrupt → positive idle (no hook event fires for it).
+        let interrupted = "✗ You canceled the request to run curl -sI https://example.com | head -1\n\n\
+■ Conversation interrupted - tell the model what to do differently. Something went wrong? Hit `/feedback` to report the issue.\n\n\
+› Ask Codex to do anything\n\n  gpt-5.6-sol low · /private/tmp/dc/work";
+        let v = classify_verdict(AgentKind::Codex, interrupted, None);
+        assert_eq!(v.status, AgentStatus::Idle);
+        assert!(v.visible_idle);
+
+        // A stale interrupt line above a live turn: bottom-up, the lower
+        // Working line wins (real layout from the experiment).
+        let resumed = "■ Conversation interrupted - tell the model what to do differently.\n\n\
+› run this shell command: touch /tmp/probe\n\n\
+• Working (0s • esc to interrupt) · 1 background terminal running\n\n\
+› Ask Codex to do anything";
+        assert_eq!(
+            classify_status(AgentKind::Codex, resumed),
+            AgentStatus::Working
+        );
+
+        // Idle at the composer; empty capture → unknown.
+        assert_eq!(
+            classify_status(
+                AgentKind::Codex,
+                "› Ask Codex to do anything\n\n  gpt-5.6-sol low"
+            ),
+            AgentStatus::Idle
+        );
+        assert_eq!(classify_status(AgentKind::Codex, " "), AgentStatus::Unknown);
+    }
+
+    #[test]
+    fn codex_trust_screens_are_visible_blockers() {
+        // Directory-trust question (herdr's `trust_directory` shape).
+        let dir = "> You are in /tmp/dc/work\n\n\
+  Do you trust the contents of this directory?\n\n\
+› 1. Yes, continue\n  2. No, quit";
+        assert!(classify_verdict(AgentKind::Codex, dir, None).visible_blocker);
+
+        // The hook trust gate — deck's own install causes this screen, so
+        // deck must be able to see it (herdr's manifest has no rule for it).
+        let gate = "  Hooks need review\n  11 hooks are new or changed.\n\
+  Hooks can run outside the sandbox after you trust them.\n\n\
+› 1. Review hooks\n  2. Trust all and continue\n  3. Continue without trusting (hooks won't run)\n\n\
+  Press enter to confirm or esc to go back";
+        assert!(classify_verdict(AgentKind::Codex, gate, None).visible_blocker);
+    }
+
+    #[test]
+    fn codex_title_tiers() {
+        let idle_buffer = "› Ask Codex to do anything\n\n  gpt-5.6-sol low";
+        // "Action Required" title → blocked, ahead of everything.
+        let v = classify_verdict(
+            AgentKind::Codex,
+            idle_buffer,
+            Some("Action Required · codex"),
+        );
+        assert_eq!(v.status, AgentStatus::Waiting);
+        assert!(v.visible_blocker);
+        // Braille spinner title → working, even over a blind buffer.
+        assert_eq!(
+            classify_verdict(AgentKind::Codex, idle_buffer, Some("⠼ build the thing")).status,
+            AgentStatus::Working
+        );
+        // An unanchored title (stale shell title) must NOT become positive
+        // idle: through tmux we can't know Codex ever set it.
+        let stale = classify_verdict(AgentKind::Codex, idle_buffer, Some("mybox.local"));
+        assert_eq!(stale.status, AgentStatus::Idle);
+        assert!(!stale.visible_idle);
+    }
+
+    #[test]
+    fn codex_transcript_overlay_keeps_previous() {
+        let overlay = "  … transcript content …\n\n\
+  ↑/↓ to scroll · pgup/pgdn to page · q to quit · esc to edit prev";
+        let v = classify_verdict(AgentKind::Codex, overlay, None);
+        assert!(v.keep_previous);
+        assert_eq!(v.status, AgentStatus::Unknown);
     }
 }
