@@ -46,6 +46,11 @@ struct ModalStyle<'a> {
     title: Option<&'a str>,
     border_fg: Color,
     bg: Color,
+    /// The page behind the modal. The clearing halo paints *this*, not `bg`:
+    /// a cell outside the border showing the modal's own background reads as
+    /// the dialog leaking out of its frame, which is what it looked like at
+    /// the corners.
+    page_bg: Color,
 }
 
 impl<'a> ModalStyle<'a> {
@@ -54,6 +59,7 @@ impl<'a> ModalStyle<'a> {
             title,
             border_fg: theme.focus_border,
             bg: theme.elevated,
+            page_bg: theme.bg,
         }
     }
 
@@ -62,6 +68,7 @@ impl<'a> ModalStyle<'a> {
             title,
             border_fg: theme.border,
             bg: theme.elevated,
+            page_bg: theme.bg,
         }
     }
 
@@ -70,6 +77,7 @@ impl<'a> ModalStyle<'a> {
             title,
             border_fg: theme.yellow,
             bg: theme.elevated,
+            page_bg: theme.bg,
         }
     }
 }
@@ -143,7 +151,7 @@ impl<'a> ModalFrame<'a> {
     /// Draw the modal shell inside `bounds` and return its content rectangle.
     pub fn render(self, buf: &mut Buffer, bounds: Rect) -> Rect {
         let area = self.area(bounds);
-        clear_horizontal_margin(buf, area, bounds, self.style.bg);
+        clear_horizontal_margin(buf, area, bounds, self.style.page_bg);
         popup_frame(buf, area, self.style)
     }
 }
@@ -199,15 +207,23 @@ pub fn hint_rect(row: Rect, text: &str, hint: &str) -> Option<Rect> {
 /// border's cell in the terminal, making the border look interrupted. Keeping
 /// this margin in the shared frame makes the protection apply to every modal,
 /// including anchored ones, without changing their requested dimensions.
-fn clear_horizontal_margin(buf: &mut Buffer, area: Rect, bounds: Rect, bg: Color) {
+///
+/// The cleared column is painted in the *page* background, never the modal's:
+/// a cell outside the border wearing the modal's own colour makes the popup
+/// look two cells wider than it is, and reads at the corners as the dialog
+/// leaking out of its frame. In the page colour the same column becomes the
+/// gutter that makes the popup float instead.
+fn clear_horizontal_margin(buf: &mut Buffer, area: Rect, bounds: Rect, page_bg: Color) {
     let left = area.x.saturating_sub(1).max(bounds.x);
     let right = area.right().saturating_add(1).min(bounds.right());
     let margin = Rect::new(left, area.y, right.saturating_sub(left), area.height);
 
     Clear.render(margin, buf);
     Block::default()
-        .style(Style::default().bg(bg))
+        .style(Style::default().bg(page_bg))
         .render(margin, buf);
+    // `popup_frame` repaints the modal's own columns straight after, so only
+    // the two flanking ones keep the page colour.
 }
 
 /// Clear `area`, draw a rounded bordered block over it, and return the inner
@@ -248,10 +264,16 @@ mod tests {
         // Centered width 6 in width 12 occupies x=3..9, so x=2 and x=9
         // are the shared one-cell horizontal margins.
         assert_eq!(buf[(2, 2)].symbol(), " ");
-        assert_eq!(buf[(2, 2)].bg, theme.elevated);
         assert_eq!(buf[(3, 2)].symbol(), "│");
         assert_eq!(buf[(9, 2)].symbol(), " ");
-        assert_eq!(buf[(9, 2)].bg, theme.elevated);
+        // The margin wears the page's colour, not the modal's: outside the
+        // border is outside the dialog, and a cell of `elevated` there is the
+        // leak this asserts against.
+        assert_eq!(buf[(2, 2)].bg, theme.bg);
+        assert_eq!(buf[(9, 2)].bg, theme.bg);
+        assert_ne!(theme.bg, theme.elevated, "the two must be distinguishable");
+        // Inside the border is still the modal's own surface.
+        assert_eq!(buf[(4, 2)].bg, theme.elevated);
     }
 
     #[test]
