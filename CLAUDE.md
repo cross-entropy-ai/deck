@@ -43,17 +43,23 @@ uid. To run a build under test beside the deck you are working in, give it a loc
 and a tmux server of its own:
 
 ```bash
+mkdir -p /tmp/deck-test   # MUST exist first — see below
 env -u TMUX -u TMUX_PANE TMUX_TMPDIR=/tmp/deck-test \
     DECK_LOCK_PATH=/tmp/deck-under-test.lock \
     HOME=/tmp/deck-home XDG_STATE_HOME=/tmp/deck-state \
     tmux new-session -d -s ui -x 190 -y 45 ./target/release/deck
+env -u TMUX TMUX_TMPDIR=/tmp/deck-test tmux display -p '#{socket_path}' # assert /tmp/deck-test/…
 env -u TMUX TMUX_TMPDIR=/tmp/deck-test tmux capture-pane -p -t ui
 ```
 
 `capture-pane` is how the TUI gets read without a human looking at it. Both
 `-u TMUX` matter: a shell inside tmux would otherwise send every one of those
 commands to the *running* server. Keep `TMUX_TMPDIR` short — the socket path
-under it has to fit macOS's 104-byte limit.
+under it has to fit macOS's 104-byte limit. And **create the directory before
+first use, then assert `#{socket_path}`**: if `TMUX_TMPDIR` points at a missing
+directory, tmux silently falls back to the *default* socket — every "isolated"
+command (including a cleanup `kill-server`) then lands on the user's real
+server.
 
 ## Architecture
 

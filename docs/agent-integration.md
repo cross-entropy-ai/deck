@@ -30,7 +30,9 @@ every signature change so a new CLI form cannot silently add false positives.
 `classify_status` maps a captured pane buffer to `Working`, `Idle`, `Waiting`,
 or `Unknown`. Claude Code has tested spinner, interrupt-hint, completed-turn,
 and confirmation-dialog rules. Codex currently stays `Unknown` until a stable
-set of TUI signatures is characterized.
+set of TUI signatures is characterized. Both gaps — and the plan to close
+them with a Codex classifier, a tmux activity clock, and optional agent
+lifecycle hooks — are laid out in `agent-status-plan.md`.
 
 Runtime wiring is split deliberately:
 
