@@ -168,20 +168,32 @@ impl BuddyWorker {
         Some(peer)
     }
 
-    /// Answer the question on screen.
-    pub(in crate::app) fn answer(&mut self, allow: bool) {
-        let Some((peer, reply)) = self.asking.take() else {
-            return;
-        };
+    /// Answer the question on screen. Returns a peer the caller has to persist
+    /// — an allow for a device not already in the saved list.
+    pub(in crate::app) fn answer(&mut self, allow: bool) -> Option<IpAddr> {
+        let (peer, reply) = self.asking.take()?;
+        let mut fresh = None;
         if allow {
             if !self.approved.contains(&peer) {
                 self.approved.push(peer);
+                fresh = Some(peer);
             }
             self.denied.remove(&peer);
         } else {
             self.denied.insert(peer, Instant::now());
         }
         let _ = reply.send(allow);
+        fresh
+    }
+
+    /// Adopt the addresses approved in earlier runs.
+    ///
+    /// Replaces rather than merges, so deleting an entry from the config file
+    /// revokes that device on the next reload. Anything approved in this
+    /// session is already written back to the config before this runs.
+    /// Unparseable entries are dropped; config validation reports them.
+    pub(in crate::app) fn restore_approved(&mut self, saved: &[String]) {
+        self.approved = saved.iter().filter_map(|s| s.parse().ok()).collect();
     }
 
     /// The peer the prompt on screen is about.

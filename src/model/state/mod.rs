@@ -476,6 +476,8 @@ pub struct Prefs {
     pub buddy_port: u16,
     /// Bonjour display name; empty means the hostname.
     pub buddy_name: String,
+    /// Addresses already allowed to drive this machine, from config.
+    pub buddy_approved: Vec<String>,
 }
 
 impl Prefs {
@@ -520,6 +522,7 @@ impl Prefs {
             buddy_enabled: cfg.buddy_enabled,
             buddy_port: cfg.buddy_port,
             buddy_name: cfg.buddy_name.clone(),
+            buddy_approved: cfg.buddy_approved.clone(),
         }
     }
 
@@ -571,6 +574,7 @@ impl Prefs {
             buddy_enabled: self.buddy_enabled,
             buddy_port: self.buddy_port,
             buddy_name: self.buddy_name.clone(),
+            buddy_approved: self.buddy_approved.clone(),
         }
     }
 

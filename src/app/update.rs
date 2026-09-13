@@ -177,6 +177,8 @@ impl App {
     /// Bring the Buddy server in line with the current prefs, and mirror what
     /// it is doing into the state the Settings row reads.
     pub(super) fn reconfigure_buddy(&mut self) {
+        let saved = self.state.prefs.buddy_approved.clone();
+        self.buddy.restore_approved(&saved);
         let prefs = &self.state.prefs;
         let name = if prefs.buddy_name.is_empty() {
             crate::infra::buddy::hostname()

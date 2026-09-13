@@ -162,6 +162,41 @@ fn the_freeze_is_on_exactly_while_a_question_is_outstanding() {
 }
 
 #[test]
+fn an_approval_is_reported_once_so_the_caller_can_persist_it() {
+    let mut w = worker();
+    connect(&mut w, ip(10), false);
+    assert_eq!(w.answer(true), Some(ip(10)), "new device, save it");
+
+    // Reconnecting is allowed from memory and needs no second write.
+    connect(&mut w, ip(10), false);
+    assert_eq!(w.answer(true), None);
+
+    // A denial is remembered only in this process, so nothing to persist.
+    connect(&mut w, ip(11), false);
+    assert_eq!(w.answer(false), None);
+}
+
+#[test]
+fn a_device_approved_in_an_earlier_run_is_not_asked_about_again() {
+    // The whole point: approving an iPad once, not once per deck launch.
+    let mut w = worker();
+    w.restore_approved(&["192.168.1.10".to_string(), "not-an-address".to_string()]);
+    let (asked, verdict) = connect(&mut w, ip(10), false);
+    assert_eq!(asked, None, "should not prompt");
+    assert_eq!(verdict.try_recv(), Ok(true));
+}
+
+#[test]
+fn dropping_a_saved_address_revokes_it_on_reload() {
+    // Config is the source of truth, so editing it is how a device is removed.
+    let mut w = worker();
+    w.restore_approved(&["192.168.1.10".to_string()]);
+    w.restore_approved(&[]);
+    let (asked, _) = connect(&mut w, ip(10), false);
+    assert_eq!(asked, Some(ip(10)), "asked about again");
+}
+
+#[test]
 fn answering_nothing_is_harmless() {
     let mut w = worker();
     w.answer(true);
