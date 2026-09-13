@@ -114,8 +114,9 @@ impl InputSink for Synth {
             BuddyMsg::Key { steps } => steps.iter().for_each(press),
             BuddyMsg::Text { text } => type_text(text),
             BuddyMsg::Mouse(mouse) => self.mouse(mouse),
-            // Answered by the transport; never reaches a sink.
-            BuddyMsg::Ping => {}
+            // None of these is input. The transport answers a ping itself, and
+            // hands `state`/`select` to the UI thread; a sink never sees one.
+            BuddyMsg::Ping | BuddyMsg::State | BuddyMsg::Select(_) => {}
         }
     }
 

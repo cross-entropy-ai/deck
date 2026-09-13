@@ -4,8 +4,14 @@
 //! tested on every platform even though only `synth.rs` above it can act on
 //! the result. The shape is fixed by the shipped iPad client
 //! (`buddy/Networking/NetworkService.swift`) and its Python predecessor
-//! (`server/buddy_server.py`) — this is a port, not a redesign, so an
+//! (`server/buddy_server.py`) — the input half is a port, not a redesign, so an
 //! unrecognised field is dropped rather than rejected.
+//!
+//! Grown past that port by `state` and `select`, which are not input at all:
+//! they let the client read deck's sidebar and steer it. Both are additions,
+//! so a client that knows nothing about them still works, and a deck that
+//! knows nothing about them drops them the way it drops any unknown type.
+//! `docs/buddy-protocol.md` is the contract both ends are written against.
 
 // The keycode and modifier tables exist for `synth.rs`, which only builds on
 // macOS. They live here, portable and unit-tested, rather than inside the FFI
@@ -13,12 +19,20 @@
 // Narrowed to that platform so real dead code is still caught where it matters.
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-/// One message from the client. The client only ever sends; nothing travels
-/// back except WebSocket pongs, which the transport answers on its own.
+/// One message from the client.
+///
+/// Most of it is input, which travels one way and is answered by nothing. Two
+/// variants are not: [`Ping`](BuddyMsg::Ping) and [`State`](BuddyMsg::State)
+/// each get a frame back, and [`Select`](BuddyMsg::Select) drives deck's own
+/// sidebar rather than the frontmost app's keyboard.
+///
+/// `snake_case` rather than `lowercase` only so the multi-word names added
+/// later read properly; every tag frozen by the shipped client is one word and
+/// is spelled identically either way.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum BuddyMsg {
     /// A chord, or a burst of them: each step is pressed and released in turn.
     Key {
@@ -37,11 +51,175 @@ pub enum BuddyMsg {
     /// `webSocket:didReceivePong:`, so SocketRocket drops opcode 10 and JS
     /// `onmessage` never fires. Only a data frame reaches such a client.
     Ping,
+    /// Ask what deck's sidebar is showing, answered with a [`State`] frame.
+    ///
+    /// Unlike everything above it, the answer can only be assembled on the UI
+    /// thread — it is the only one that can see `AppState` — so the connection
+    /// hands the question over and writes the reply whenever it comes back.
+    State,
+    /// Move one of deck's own selections. The other half of remote control:
+    /// input types into whatever is frontmost, this steers deck itself.
+    Select(Select),
+}
+
+/// What a client asked deck to select — the three cursors the sidebar has.
+///
+/// Externally tagged inside the internally tagged [`BuddyMsg::Select`], which
+/// reads on the wire as `{"type":"select","tab":"agents"}`,
+/// `{"type":"select","session":{…}}`, `{"type":"select","agent":{…}}`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Select {
+    Tab(Tab),
+    Session(SessionRef),
+    Agent(AgentRef),
+}
+
+/// Which sidebar tab is showing, both ways: the client names one to switch to
+/// it, and a [`State`] reply names the one deck is actually rendering.
+///
+/// `projects` is deck's own name for the session list; `sessions` is accepted
+/// as a spelling of it because that is what the tab shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tab {
+    #[serde(alias = "sessions")]
+    Projects,
+    Agents,
+}
+
+/// Names one session in a [`State`] reply. Both halves are needed: a name is
+/// only unique within its lane.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SessionRef {
+    /// Opaque lane key, echoed back exactly as the reply spelled it.
+    pub lane: String,
+    pub name: String,
+}
+
+/// Names one detected agent in a [`State`] reply.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentRef {
+    /// Opaque lane key, echoed back exactly as the reply spelled it.
+    pub lane: String,
+    /// The `%N` pane id. Session and window names churn as panes move; this
+    /// is the one handle that survives.
+    pub pane: String,
+}
+
+/// The reply to [`BuddyMsg::State`]: what the sidebar is showing, as three
+/// flat lists.
+///
+/// Flat rather than nested (agents under sessions under hosts) because that is
+/// what the sidebar itself is — one list per tab, plus the section dividers —
+/// and because a client that only wants to render the agent list shouldn't
+/// have to walk a tree to find it. Every row carries the `lane` it belongs to,
+/// so a client that does want the grouping can do it in one pass.
+///
+/// Only rows that can actually be selected are listed. A lane with no
+/// attachable session contributes no `sessions` row at all; what it is doing
+/// instead is on its [`HostInfo::status`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename = "state")]
+pub struct State {
+    /// The tab deck is really rendering, which is not always the one that was
+    /// asked for — a narrow terminal has no tab bar to put Agents in.
+    pub tab: Tab,
+    pub hosts: Vec<HostInfo>,
+    pub sessions: Vec<SessionInfo>,
+    pub agents: Vec<AgentInfo>,
+}
+
+/// One sidebar section: a tmux server deck is showing sessions from.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct HostInfo {
+    /// Opaque key identifying this lane. Not for display — [`title`] is.
+    ///
+    /// [`title`]: Self::title
+    pub lane: String,
+    pub title: String,
+    /// The lane this one hangs under (a container under its host), or `null`
+    /// for a top-level one.
+    pub parent: Option<String>,
+    pub status: HostStatus,
+}
+
+/// Why a lane has no sessions listed, when it has none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostStatus {
+    /// Reachable; its sessions are in the reply.
+    Ok,
+    /// Its session list hasn't arrived yet.
+    Connecting,
+    /// deck couldn't reach it.
+    Unreachable,
+    /// Reached, but its tmux server has nothing to attach to.
+    NoSessions,
+}
+
+/// One attachable session.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SessionInfo {
+    pub lane: String,
+    pub name: String,
+    /// Working directory, as the sidebar shows it.
+    pub dir: String,
+    /// Whether the sidebar's session cursor is on this row — the "active
+    /// session" a `select` would otherwise move to.
+    pub selected: bool,
+}
+
+/// One detected coding agent.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AgentInfo {
+    pub lane: String,
+    pub kind: AgentKindName,
+    pub session: String,
+    pub window: String,
+    /// The `%N` pane id — echo it back to switch to this agent.
+    pub pane: String,
+    pub status: AgentStatusName,
+    /// Whether the sidebar's agent cursor is on this row.
+    pub selected: bool,
+}
+
+/// Which agent this is. Mirrors `agent_detect::AgentKind`, kept as its own
+/// type so the wire spelling is fixed here rather than following a rename in
+/// the detector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentKindName {
+    Claude,
+    Codex,
+}
+
+/// The agent's traffic-light health. Mirrors `agent_detect::AgentStatus`, for
+/// the same reason as [`AgentKindName`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentStatusName {
+    Working,
+    Idle,
+    Waiting,
+    Unknown,
 }
 
 /// The reply to [`BuddyMsg::Ping`]. A literal rather than a serialized value:
 /// there is one shape and it never varies.
 pub const PONG: &str = r#"{"type":"pong"}"#;
+
+impl State {
+    /// This reply as the text frame it goes out as.
+    ///
+    /// Infallible in practice — every field is a string, a bool or a unit
+    /// enum — but a `Result` from `serde_json` is not worth panicking on
+    /// inside the UI thread, so a failure degrades to a reply the client will
+    /// simply fail to decode.
+    pub fn encode(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| String::from(r#"{"type":"state"}"#))
+    }
+}
 
 /// One key press: a key name plus the modifiers held for it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]

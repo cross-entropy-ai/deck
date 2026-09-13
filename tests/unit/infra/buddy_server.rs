@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use tungstenite::stream::MaybeTlsStream;
 
 use super::*;
-use crate::infra::buddy::protocol::BuddyMsg;
+use crate::infra::buddy::protocol::{BuddyMsg, Tab};
 
 /// What a connection would have typed, readable from the test thread.
 #[derive(Default)]
@@ -350,4 +350,215 @@ fn junk_on_the_wire_does_not_kill_an_approved_connection() {
     eventually("the good message to still land", || {
         !harness.recording.typed().is_empty()
     });
+}
+
+impl Harness {
+    /// Take the next state question, stepping over the connection bookkeeping
+    /// that arrives alongside it.
+    fn next_state_question(&self) -> Sender<String> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match self
+                .events
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            {
+                Ok(BuddyEvent::State { reply }) => return reply,
+                Ok(_) => continue,
+                Err(_) => panic!("no state question arrived"),
+            }
+        }
+    }
+
+    /// Take the next selection, as [`Self::next_state_question`] does.
+    fn next_selection(&self) -> Select {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match self
+                .events
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            {
+                Ok(BuddyEvent::Select(select)) => return select,
+                Ok(_) => continue,
+                Err(_) => panic!("no selection arrived"),
+            }
+        }
+    }
+}
+
+fn ask_for_state() -> Message {
+    Message::Text(r#"{"type":"state"}"#.into())
+}
+
+fn select_agents_tab() -> Message {
+    Message::Text(r#"{"type":"select","tab":"agents"}"#.into())
+}
+
+#[test]
+fn a_state_request_is_answered_with_whatever_the_ui_thread_says() {
+    // The connection cannot see `AppState`, so the answer is round-tripped
+    // through the UI thread and written when it comes back.
+    let harness = Harness::start();
+    let mut client = harness.connect();
+    harness.answer(true);
+
+    client.send(ask_for_state()).unwrap();
+    harness
+        .next_state_question()
+        .send(r#"{"type":"state","tab":"agents"}"#.to_string())
+        .unwrap();
+
+    let Message::Text(reply) = next_data_frame(&mut client) else {
+        panic!("the state reply should be a text frame");
+    };
+    assert_eq!(reply.as_str(), r#"{"type":"state","tab":"agents"}"#);
+    // Neither the question nor the answer is input.
+    assert!(harness.recording.typed().is_empty());
+}
+
+#[test]
+fn the_connection_keeps_reading_while_a_state_question_is_outstanding() {
+    // The answer takes a UI frame to build. A connection that blocked on it
+    // would be a connection not reading the mouse, so the pong that follows
+    // has to come back before the state reply does.
+    let harness = Harness::start();
+    let mut client = harness.connect();
+    harness.answer(true);
+
+    client.send(ask_for_state()).unwrap();
+    let reply = harness.next_state_question();
+    client.send(send_ping()).unwrap();
+    let Message::Text(pong) = next_data_frame(&mut client) else {
+        panic!("the pong should be a text frame");
+    };
+    assert_eq!(pong.as_str(), r#"{"type":"pong"}"#);
+
+    // And the answer still lands once it exists.
+    reply.send(r#"{"type":"state"}"#.to_string()).unwrap();
+    let Message::Text(state) = next_data_frame(&mut client) else {
+        panic!("the state reply should be a text frame");
+    };
+    assert_eq!(state.as_str(), r#"{"type":"state"}"#);
+}
+
+#[test]
+fn a_question_the_ui_thread_drops_does_not_wedge_the_one_behind_it() {
+    // The UI thread can go away, or the server can be reconfigured under it,
+    // between asking and answering. The unanswered question is discarded.
+    let harness = Harness::start();
+    let mut client = harness.connect();
+    harness.answer(true);
+
+    client.send(ask_for_state()).unwrap();
+    let abandoned = harness.next_state_question();
+    client.send(ask_for_state()).unwrap();
+    let answered = harness.next_state_question();
+    drop(abandoned);
+    answered
+        .send(r#"{"type":"state","tab":"projects"}"#.to_string())
+        .unwrap();
+
+    let Message::Text(reply) = next_data_frame(&mut client) else {
+        panic!("the state reply should be a text frame");
+    };
+    assert_eq!(reply.as_str(), r#"{"type":"state","tab":"projects"}"#);
+}
+
+#[test]
+fn a_selection_reaches_the_ui_thread() {
+    let harness = Harness::start();
+    let mut client = harness.connect();
+    harness.answer(true);
+
+    client.send(select_agents_tab()).unwrap();
+    assert_eq!(harness.next_selection(), Select::Tab(Tab::Agents));
+    // Steering deck is not typing; nothing was synthesized.
+    assert!(harness.recording.typed().is_empty());
+}
+
+#[test]
+fn an_unapproved_client_can_neither_read_the_state_nor_steer_deck() {
+    // The session list is the user's, and a switch is an action. Both are
+    // gated exactly like input — silently, the way input is.
+    let harness = Harness::start();
+    let mut client = harness.connect();
+    let Ok(BuddyEvent::Connected { reply, .. }) =
+        harness.events.recv_timeout(Duration::from_secs(5))
+    else {
+        panic!("no connection arrived to approve");
+    };
+
+    client.send(ask_for_state()).unwrap();
+    client.send(select_agents_tab()).unwrap();
+    // A ping proves the server got that far, so the silence below is a
+    // refusal rather than a frame still in flight.
+    client.send(send_ping()).unwrap();
+    let Message::Text(pong) = next_data_frame(&mut client) else {
+        panic!("the pong should be a text frame");
+    };
+    assert_eq!(pong.as_str(), r#"{"type":"pong"}"#);
+
+    match harness.events.try_recv() {
+        Err(TryRecvError::Empty) => {}
+        other => panic!("a pending client got through: {other:?}"),
+    }
+    drop(reply);
+}
+
+#[test]
+fn a_state_question_asked_before_the_verdict_is_answered_once_it_lands() {
+    // A client asks for state the moment it connects, and for an already
+    // approved device the verdict arrives a frame or two after that. Dropping
+    // the question the way input is dropped would leave the client with an
+    // empty list until it happened to ask again.
+    let harness = Harness::start();
+    let mut client = harness.connect();
+    let Ok(BuddyEvent::Connected { reply, .. }) =
+        harness.events.recv_timeout(Duration::from_secs(5))
+    else {
+        panic!("no connection arrived to approve");
+    };
+
+    client.send(ask_for_state()).unwrap();
+    thread::sleep(Duration::from_millis(200));
+    // Still nothing: held, not answered.
+    assert!(matches!(
+        harness.events.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+
+    reply.send(true).unwrap();
+    harness
+        .next_state_question()
+        .send(r#"{"type":"state"}"#.to_string())
+        .unwrap();
+    let Message::Text(text) = next_data_frame(&mut client) else {
+        panic!("the state reply should be a text frame");
+    };
+    assert_eq!(text.as_str(), r#"{"type":"state"}"#);
+}
+
+#[test]
+fn a_switch_asked_for_before_the_verdict_is_not_replayed_on_approval() {
+    // The other half of the rule above: a question may wait, an action may
+    // not. This is the same reason a backlog of keystrokes is dropped.
+    let harness = Harness::start();
+    let mut client = harness.connect();
+    let Ok(BuddyEvent::Connected { reply, .. }) =
+        harness.events.recv_timeout(Duration::from_secs(5))
+    else {
+        panic!("no connection arrived to approve");
+    };
+
+    client.send(select_agents_tab()).unwrap();
+    thread::sleep(Duration::from_millis(200));
+    reply.send(true).unwrap();
+    thread::sleep(Duration::from_millis(200));
+    assert!(
+        matches!(harness.events.try_recv(), Err(TryRecvError::Empty)),
+        "the switch was replayed on approval"
+    );
+
+    // What is asked for after approval does land.
+    client.send(select_agents_tab()).unwrap();
+    assert_eq!(harness.next_selection(), Select::Tab(Tab::Agents));
 }

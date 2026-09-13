@@ -243,6 +243,7 @@ impl App {
                 crate::infra::buddy::BuddyEvent::Connected { peer, reply } => {
                     self.buddy.connected(peer, reply);
                     asked = true;
+                    redraw = Redraw::Force;
                 }
                 crate::infra::buddy::BuddyEvent::Disconnected { peer } => {
                     if self.buddy.disconnected(peer) {
@@ -251,13 +252,24 @@ impl App {
                             .close(crate::overlay::Modal::BuddyApprove);
                     }
                     asked = true;
+                    redraw = Redraw::Force;
                 }
                 crate::infra::buddy::BuddyEvent::Error(msg) => {
                     self.state.show_warning(msg.clone());
                     self.state.buddy = crate::state::BuddyStatus::Failed(msg);
+                    redraw = Redraw::Force;
+                }
+                // Answering changes nothing on screen, and a client is free to
+                // ask at whatever rate it likes — so this one deliberately does
+                // not force a repaint.
+                crate::infra::buddy::BuddyEvent::State { reply } => {
+                    let _ = reply.send(self.buddy_state().encode());
+                }
+                crate::infra::buddy::BuddyEvent::Select(select) => {
+                    self.apply_buddy_select(select);
+                    redraw = Redraw::Force;
                 }
             }
-            redraw = Redraw::Force;
         }
         // Retried every tick, not just on an event: a question queued behind
         // another overlay has to go up when that overlay closes, and an
