@@ -81,7 +81,10 @@ impl App {
                 }
                 Effect::SaveConfig => self.save_config(),
                 Effect::BuddyVerdict(allow) => {
-                    self.buddy.answer(*allow);
+                    if let Some(peer) = self.buddy.answer(*allow) {
+                        self.state.prefs.buddy_approved.push(peer.to_string());
+                        self.save_config();
+                    }
                     // Answering may free the screen for the next question, and
                     // unfreezes the other connections once none is left.
                     self.ask_next_buddy();

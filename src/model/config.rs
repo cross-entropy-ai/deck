@@ -341,6 +341,10 @@ pub struct Config {
     /// Bonjour display name for this machine. Empty means the short hostname,
     /// which is what the Python server used.
     pub buddy_name: String,
+    /// Addresses the user has allowed to drive this machine. Persisted so an
+    /// iPad is approved once, not once per deck launch; remove an entry here
+    /// to be asked about that device again.
+    pub buddy_approved: Vec<String>,
 }
 
 impl Default for Config {
@@ -388,6 +392,7 @@ impl Default for Config {
                 && std::env::var_os(crate::instance_guard::InstanceGuard::LOCK_PATH_ENV).is_none(),
             buddy_port: DEFAULT_BUDDY_PORT,
             buddy_name: String::new(),
+            buddy_approved: Vec::new(),
         }
     }
 }
@@ -568,6 +573,7 @@ impl Config {
         validate_ssh_control_path(&self.ssh_control_path)?;
         validate_ssh_control_persist(&self.ssh_control_persist)?;
         validate_buddy_name(&self.buddy_name)?;
+        validate_buddy_approved(&self.buddy_approved)?;
         if self.buddy_port == 0 {
             return Err("buddy_port must be a real port, not 0".to_string());
         }
@@ -631,6 +637,18 @@ pub fn validate_buddy_name(value: &str) -> Result<(), String> {
     }
     if value.chars().any(char::is_control) {
         return Err("Buddy name cannot contain control characters".to_string());
+    }
+    Ok(())
+}
+
+/// Approved Buddy peers. Parsed rather than trusted: a hand-edited entry that
+/// is not an address would silently never match, so it is rejected on the way
+/// in instead.
+pub fn validate_buddy_approved(values: &[String]) -> Result<(), String> {
+    for value in values {
+        if value.parse::<std::net::IpAddr>().is_err() {
+            return Err(format!("buddy_approved has a bad address: {value}"));
+        }
     }
     Ok(())
 }

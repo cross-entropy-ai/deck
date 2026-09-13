@@ -113,9 +113,12 @@ API.
 >
 > The protocol has no authentication, so **deck asks before letting a device
 > in**: the first connection from an address raises a prompt, and nothing it
-> sends is acted on until you allow it. Answers last as long as the deck
-> process. Change the port or the advertised name with `buddy_port` and
-> `buddy_name` in `~/.config/deck/config.yaml`.
+> sends is acted on until you allow it. An allowed address is remembered in
+> `buddy_approved` in `~/.config/deck/config.yaml`, so you are asked once
+> rather than once per launch — delete it from that list to be asked again. A
+> denial is only remembered for a minute, so a stray `n` is not a lockout.
+> Change the port or the advertised name with `buddy_port` and `buddy_name` in
+> the same file.
 
 ## Develop
 

@@ -1337,6 +1337,7 @@ fn prefs_config_round_trip_is_identity() {
         buddy_enabled: !cfg!(target_os = "macos"),
         buddy_port: 9000,
         buddy_name: "workbench".to_string(),
+        buddy_approved: vec!["192.168.1.10".to_string()],
     };
 
     let theme_index = 2;
