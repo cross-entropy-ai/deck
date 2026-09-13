@@ -81,8 +81,9 @@ pub struct BuddyServer {
     gate: Arc<AtomicBool>,
     connections: Arc<AtomicUsize>,
     /// Live sockets, so stopping can unblock a connection parked in `read`
-    /// instead of waiting out its tick.
-    open: Arc<Mutex<Vec<TcpStream>>>,
+    /// instead of waiting out its tick. Keyed by serial rather than by address:
+    /// a reconnecting client overlaps its own replacement.
+    open: Arc<Mutex<Vec<(u64, TcpStream)>>>,
     bonjour: Option<std::process::Child>,
 }
 
@@ -101,7 +102,7 @@ impl BuddyServer {
     pub fn stop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
         if let Ok(open) = self.open.lock() {
-            for stream in open.iter() {
+            for (_, stream) in open.iter() {
                 // Unblocks a connection parked in `read` so it runs its
                 // teardown — releasing any held mouse button — now rather than
                 // up to one tick from now.
@@ -199,8 +200,9 @@ fn accept_loop(
     cancel: Arc<AtomicBool>,
     gate: Arc<AtomicBool>,
     connections: Arc<AtomicUsize>,
-    open: Arc<Mutex<Vec<TcpStream>>>,
+    open: Arc<Mutex<Vec<(u64, TcpStream)>>>,
 ) {
+    let mut serial: u64 = 0;
     while !cancel.load(Ordering::Relaxed) {
         let stream = match listener.accept() {
             Ok((stream, _)) => stream,
@@ -223,9 +225,11 @@ fn accept_loop(
             continue;
         }
         connections.fetch_add(1, Ordering::Relaxed);
+        serial += 1;
+        let id = serial;
         if let Ok(mut open) = open.lock() {
             if let Ok(clone) = stream.try_clone() {
-                open.push(clone);
+                open.push((id, clone));
             }
         }
         let mut sink = sink();
@@ -240,7 +244,7 @@ fn accept_loop(
                 sink.release_all();
                 connections.fetch_sub(1, Ordering::Relaxed);
                 if let Ok(mut open) = open.lock() {
-                    open.retain(|s| s.peer_addr().ok().map(|a| a.ip()) != Some(peer));
+                    open.retain(|(other, _)| *other != id);
                 }
                 let _ = tx.send(BuddyEvent::Disconnected { peer });
             });

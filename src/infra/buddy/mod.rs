@@ -46,11 +46,18 @@ pub fn accessibility_trusted() -> bool {
 
 /// This machine's short hostname, which is what the Bonjour advertisement uses
 /// when no name is configured — the same default the Python server had.
+///
+/// Resolved once: the reconfigure path runs on every config save.
 pub fn hostname() -> String {
-    crate::infra::command::default_runner()
-        .run("hostname", &["-s"], std::time::Duration::from_secs(1))
-        .ok()
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "deck".to_string())
+    static HOSTNAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HOSTNAME
+        .get_or_init(|| {
+            crate::infra::command::default_runner()
+                .run("hostname", &["-s"], std::time::Duration::from_secs(1))
+                .ok()
+                .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| "deck".to_string())
+        })
+        .clone()
 }

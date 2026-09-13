@@ -138,28 +138,19 @@ impl BuddyWorker {
         self.queue.clear();
     }
 
-    /// Take a new connection's question. Returns the peer to prompt about, or
-    /// `None` when it was settled without asking.
-    pub(in crate::app) fn connected(
-        &mut self,
-        peer: IpAddr,
-        reply: Sender<bool>,
-        screen_busy: bool,
-    ) -> Option<IpAddr> {
+    /// Answer a new connection from what the user has already said, or queue
+    /// it. Only [`Self::next_question`] raises a prompt, so one that has to
+    /// wait for the screen is still raised once it frees.
+    pub(in crate::app) fn connected(&mut self, peer: IpAddr, reply: Sender<bool>) {
         match decide(peer, &self.approved, &self.denied, Instant::now()) {
             Verdict::Allow => {
                 let _ = reply.send(true);
-                None
             }
             // Dropping the sender is itself the denial; saying so is clearer.
             Verdict::Deny => {
                 let _ = reply.send(false);
-                None
             }
-            Verdict::Ask => {
-                self.queue.push_back((peer, reply));
-                self.next_question(screen_busy)
-            }
+            Verdict::Ask => self.queue.push_back((peer, reply)),
         }
     }
 

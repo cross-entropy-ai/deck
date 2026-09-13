@@ -204,11 +204,13 @@ impl App {
 
     /// Put the next queued connection question on screen, if the screen is
     /// free, and keep the server's freeze in step with whether one is up.
-    pub(super) fn ask_next_buddy(&mut self) {
+    /// The only place the prompt is raised; reports whether it raised one.
+    pub(super) fn ask_next_buddy(&mut self) -> bool {
         // Anything already on screen owns the modal slot: `open` replaces what
         // is there, so a connection arriving mid-rename would destroy it.
         let busy = self.state.active_modal().is_some();
-        if let Some(peer) = self.buddy.next_question(busy) {
+        let opened = self.buddy.next_question(busy);
+        if let Some(peer) = opened {
             self.state
                 .overlay
                 .open(crate::overlay::ModalState::BuddyApprove(
@@ -216,6 +218,7 @@ impl App {
                 ));
         }
         self.buddy.regate();
+        opened.is_some()
     }
 
     /// Re-ask macOS whether this process may post synthetic events. Cheap, but

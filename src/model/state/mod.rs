@@ -753,9 +753,8 @@ pub struct AppState {
     /// that controls it lives in `prefs`.
     pub buddy: BuddyStatus,
     /// Whether this process may actually post synthetic events. Cached because
-    /// the Settings row that shows it is re-evaluated every frame; refreshed
-    /// when that page is opened, so granting the permission shows up on the
-    /// next visit.
+    /// the Settings row that shows it is re-evaluated every frame; re-asked
+    /// when that page opens.
     pub buddy_trusted: bool,
 }
 

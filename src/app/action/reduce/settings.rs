@@ -40,6 +40,11 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         }
         SettingsAction::OpenPage(page) => {
             state.settings.push_page(page);
+            // Granting Accessibility takes effect without a restart, so the
+            // cached answer is stale until re-asked.
+            if page == crate::state::SettingsPage::Buddy {
+                fx.push(crate::effects::Effect::RefreshBuddyTrust);
+            }
         }
         SettingsAction::Back => {
             state.settings.pop_page();

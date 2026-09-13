@@ -8,15 +8,16 @@ fn worker() -> BuddyWorker {
     BuddyWorker::new()
 }
 
-/// Hand a connection to the worker and read back what it did with it.
+/// Hand a connection to the worker, and raise the prompt it queued if the
+/// screen is free — what the caller does on every tick.
 fn connect(
     w: &mut BuddyWorker,
     peer: IpAddr,
     screen_busy: bool,
 ) -> (Option<IpAddr>, Receiver<bool>) {
     let (reply, verdict) = mpsc::channel();
-    let asked = w.connected(peer, reply, screen_busy);
-    (asked, verdict)
+    w.connected(peer, reply);
+    (w.next_question(screen_busy), verdict)
 }
 
 #[test]
@@ -105,6 +106,15 @@ fn nothing_is_asked_while_another_overlay_owns_the_screen() {
     assert!(w.is_asking());
     assert_eq!(w.next_question(true), None);
     assert_eq!(w.next_question(false), Some(ip(10)));
+}
+
+#[test]
+fn a_question_queued_behind_an_overlay_still_freezes_every_connection() {
+    // The freeze is what makes leaving one queued unacceptable: an approved
+    // iPad stops working until the prompt is answered.
+    let mut w = worker();
+    connect(&mut w, ip(10), true);
+    assert!(w.is_asking(), "queued but outstanding");
 }
 
 #[test]

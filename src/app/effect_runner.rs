@@ -87,6 +87,7 @@ impl App {
                     self.ask_next_buddy();
                 }
                 Effect::ReconfigureBuddy => self.reconfigure_buddy(),
+                Effect::RefreshBuddyTrust => self.refresh_buddy_trust(),
                 Effect::SaveSessionOrder(lane) => {
                     let order = crate::state::attachable_on_lane(&self.state.entries, lane)
                         .map(|entry| entry.name.clone())
