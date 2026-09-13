@@ -31,7 +31,17 @@ pub enum BuddyMsg {
         text: String,
     },
     Mouse(Mouse),
+    /// A liveness probe answered with [`PONG`]. Needed because a client that
+    /// cannot observe WebSocket PONG *control* frames has no other inbound
+    /// signal: React Native's `RCTWebSocketModule` never implements
+    /// `webSocket:didReceivePong:`, so SocketRocket drops opcode 10 and JS
+    /// `onmessage` never fires. Only a data frame reaches such a client.
+    Ping,
 }
+
+/// The reply to [`BuddyMsg::Ping`]. A literal rather than a serialized value:
+/// there is one shape and it never varies.
+pub const PONG: &str = r#"{"type":"pong"}"#;
 
 /// One key press: a key name plus the modifiers held for it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]

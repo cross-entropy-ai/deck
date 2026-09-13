@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use tungstenite::protocol::WebSocketConfig;
 use tungstenite::{accept_with_config, Error as WsError, HandshakeError, Message, WebSocket};
 
-use super::protocol::parse;
+use super::protocol::{parse, BuddyMsg, PONG};
 use super::sink::InputSink;
 
 /// The Bonjour service type the iPad client browses for. Part of the wire
@@ -335,7 +335,18 @@ fn read_loop<S: Read + Write>(
             if !poll_verdict(verdict, &mut approved) {
                 return;
             }
-            feed(sink, &bytes, approved, gate);
+            if let Some(msg) = parse(&bytes) {
+                if msg == BuddyMsg::Ping {
+                    // Answered whatever the verdict is — see the fn docs.
+                    match ws.send(Message::Text(PONG.into())) {
+                        Ok(()) => {}
+                        Err(WsError::Io(e)) if is_timeout(&e) => {}
+                        Err(_) => return,
+                    }
+                } else {
+                    feed(sink, &msg, approved, gate);
+                }
+            }
         }
         // `read` only *queues* the pong it owes a ping; without this flush the
         // client never sees one and never finishes connecting.
@@ -364,19 +375,20 @@ fn poll_verdict(verdict: &Receiver<bool>, approved: &mut bool) -> bool {
     }
 }
 
-/// Act on one frame, if this connection is allowed to act at all.
+/// Act on one message, if this connection is allowed to act at all.
 ///
 /// `gate` freezes *every* connection, approved ones included, while the user is
 /// being asked about some other peer. Without that an approved client could
 /// synthesize the very keystroke that answers the prompt and approve a stranger
 /// on the user's behalf.
-fn feed(sink: &mut dyn InputSink, raw: &[u8], approved: bool, gate: &AtomicBool) {
+///
+/// [`BuddyMsg::Ping`] never reaches here — it is answered before the verdict
+/// is consulted at all.
+fn feed(sink: &mut dyn InputSink, msg: &BuddyMsg, approved: bool, gate: &AtomicBool) {
     if !approved || gate.load(Ordering::Relaxed) {
         return;
     }
-    if let Some(msg) = parse(raw) {
-        sink.dispatch(&msg);
-    }
+    sink.dispatch(msg);
 }
 
 /// A read that came back because its timeout expired, not because anything is

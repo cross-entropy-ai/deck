@@ -57,6 +57,13 @@ fn a_click_keeps_its_button_and_count() {
 }
 
 #[test]
+fn a_ping_parses_from_its_tag_alone() {
+    assert_eq!(parse(br#"{"type":"ping"}"#), Some(BuddyMsg::Ping));
+    // The reply is the one the client matches on.
+    assert_eq!(PONG, r#"{"type":"pong"}"#);
+}
+
+#[test]
 fn anything_unrecognised_is_dropped_rather_than_erroring() {
     // A newer client's button should do nothing, not kill the connection.
     for raw in [
