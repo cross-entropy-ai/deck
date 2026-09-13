@@ -29,8 +29,19 @@ every signature change so a new CLI form cannot silently add false positives.
 
 `classify_status` maps a captured pane buffer to `Working`, `Idle`, `Waiting`,
 or `Unknown`. Claude Code has tested spinner, interrupt-hint, completed-turn,
-and confirmation-dialog rules. Codex currently stays `Unknown` until a stable
-set of TUI signatures is characterized.
+and confirmation-dialog rules.
+
+Codex is read differently, and the difference matters. Claude Code's rule is
+that the lowest status-bearing line wins, because anything above it is stale
+transcript. Codex keeps its composer placeholder ("Ask Codex to do anything")
+on screen for the whole turn and draws it *below* the "Working (1s - esc to
+interrupt)" status line, so the same bottom-up rule reports every busy pane as
+idle. Its classifier takes precedence by state instead -- waiting, then
+working, then idle as the fallback -- over the bottom non-blank lines.
+
+Codex fixtures are `capture-pane` output from a real session (codex-cli
+0.154.0), including the approval dialog, the directory-trust prompt, and a
+turn in flight. Re-capture them when the TUI changes.
 
 Runtime wiring is split deliberately:
 

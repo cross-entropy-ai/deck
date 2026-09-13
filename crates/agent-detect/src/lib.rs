@@ -80,8 +80,7 @@ impl DetectedAgent {
 pub fn classify_status(kind: AgentKind, buffer: &str) -> AgentStatus {
     match kind {
         AgentKind::Claude => claude_classify(buffer),
-        // TODO: characterize Codex's TUI states.
-        AgentKind::Codex => AgentStatus::Unknown,
+        AgentKind::Codex => codex_classify(buffer),
     }
 }
 
@@ -210,6 +209,61 @@ fn claude_classify(buffer: &str) -> AgentStatus {
         }
     }
     // No status line recognized → sitting at the prompt.
+    AgentStatus::Idle
+}
+
+/// Codex's interruptible-turn hint, from "• Working (1s • esc to interrupt)".
+const CODEX_INTERRUPT_HINT: &str = "esc to interrupt";
+
+/// The same status line when a narrow pane truncates the hint away:
+/// "• Working (12s".
+fn codex_working_line() -> &'static regex::Regex {
+    static R: OnceLock<regex::Regex> = OnceLock::new();
+    R.get_or_init(|| regex::Regex::new(r"(?i)^\s*(?:[^\w\s]\s*)?working\s*\(").unwrap())
+}
+
+/// Whole dialog headers rather than a bare "would you like to", which Codex's
+/// own prose says too. The last two also catch the startup trust and update
+/// notices, which likewise sit waiting on a keypress.
+const CODEX_WAITING_MARKERS: &[&str] = &[
+    "would you like to run the following command?",
+    "would you like to make the following edits?",
+    "would you like to grant these permissions?",
+    "would you like to send input to the existing terminal?",
+    "press enter to confirm",
+    "do you trust the contents of this directory",
+];
+
+/// Classify Codex's pane from the bottom [`LIVE_TAIL_LINES`] non-blank lines.
+///
+/// Claude's rule -- lowest status line wins -- is wrong here. Codex keeps its
+/// composer ("› Ask Codex to do anything") on screen for the whole turn, and
+/// draws it *below* the "• Working" line, so reading bottom-up would call every
+/// busy pane idle. Precedence is by state instead: waiting, then working, then
+/// idle as the fallback.
+fn codex_classify(buffer: &str) -> AgentStatus {
+    if buffer.trim().is_empty() {
+        return AgentStatus::Unknown;
+    }
+    let lines: Vec<&str> = buffer.lines().collect();
+    let scanned = &lines[lines.len().saturating_sub(MAX_SCAN_LINES)..];
+    let mut content_seen = 0usize;
+    for line in scanned.iter().rev() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        content_seen += 1;
+        if content_seen > LIVE_TAIL_LINES {
+            break;
+        }
+        let lower = line.to_ascii_lowercase();
+        if CODEX_WAITING_MARKERS.iter().any(|m| lower.contains(m)) {
+            return AgentStatus::Waiting;
+        }
+        if lower.contains(CODEX_INTERRUPT_HINT) || codex_working_line().is_match(line) {
+            return AgentStatus::Working;
+        }
+    }
     AgentStatus::Idle
 }
 
@@ -543,6 +597,102 @@ mod tests {
         // Empty capture → unknown.
         assert_eq!(
             classify_status(AgentKind::Claude, "   "),
+            AgentStatus::Unknown
+        );
+    }
+
+    /// Fixtures below are `tmux capture-pane` output from codex-cli 0.154.0.
+    #[test]
+    fn codex_classifier_reads_traffic_light_from_buffer() {
+        // Idle at an empty composer.
+        let idle = "\
+\u{2022} You have 2 usage limit resets available. Run /usage to use one.
+
+\u{203a} Ask Codex to do anything
+
+  gpt-5.6-sol high \u{b7} /private/tmp/codex-probe";
+        assert_eq!(classify_status(AgentKind::Codex, idle), AgentStatus::Idle);
+
+        // Working. The composer keeps its placeholder for the whole turn and
+        // is drawn *below* the status line, so Claude's bottom-up rule would
+        // read this as idle.
+        let working = "\
+\u{203a} Think step by step and count slowly from 1 to 30, one line each.
+
+\u{2022} Working (1s \u{2022} esc to interrupt)
+
+\u{203a} Ask Codex to do anything
+
+  gpt-5.6-sol high \u{b7} /private/tmp/codex-probe \u{b7} renaming... \u{2834}";
+        assert_eq!(
+            classify_status(AgentKind::Codex, working),
+            AgentStatus::Working
+        );
+
+        // Same line with the hint truncated off by a narrow pane.
+        let narrow = "\u{2022} Working (2m 04s\n\n\u{203a} Ask Codex to do anything";
+        assert_eq!(
+            classify_status(AgentKind::Codex, narrow),
+            AgentStatus::Working
+        );
+
+        // A command approval. "esc to cancel" must not read as "esc to
+        // interrupt", and the dialog replaces the composer.
+        let approval = "\
+  Would you like to run the following command?
+
+  Environment: local
+
+  $ touch /tmp/codex-probe/hello.txt
+
+\u{203a} 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `touch` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel";
+        assert_eq!(
+            classify_status(AgentKind::Codex, approval),
+            AgentStatus::Waiting
+        );
+
+        // The startup directory-trust prompt is also waiting on the user.
+        let trust = "\
+  Do you trust the contents of this directory? Working with untrusted contents
+  comes with higher risk of prompt injection.
+
+\u{203a} 1. Yes, continue
+  2. No, quit";
+        assert_eq!(
+            classify_status(AgentKind::Codex, trust),
+            AgentStatus::Waiting
+        );
+
+        // A finished turn: the divider stays, the status line is gone.
+        let done = "\
+\u{2500} Worked for 11m 52s \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}
+
+\u{203a} Ask Codex to do anything
+
+  gpt-5.6-sol high \u{b7} ~/Downloads/dbs \u{b7} Context 66% used";
+        assert_eq!(classify_status(AgentKind::Codex, done), AgentStatus::Idle);
+
+        // Codex's own prose asking a question is not an approval dialog.
+        let prose = "\
+\u{2022} Would you like to proceed with the refactor? I can start with the parser.
+
+\u{203a} Ask Codex to do anything";
+        assert_eq!(classify_status(AgentKind::Codex, prose), AgentStatus::Idle);
+
+        // A stale status line scrolled out of the live tail is not the state now.
+        let stale = format!(
+            "\u{2022} Working (3s \u{2022} esc to interrupt)\n{}\u{203a} Ask Codex to do anything",
+            "x\n".repeat(14)
+        );
+        assert_eq!(classify_status(AgentKind::Codex, &stale), AgentStatus::Idle);
+
+        // Empty capture → unknown, same as Claude.
+        assert_eq!(
+            classify_status(AgentKind::Codex, "   "),
             AgentStatus::Unknown
         );
     }
