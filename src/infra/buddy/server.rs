@@ -8,9 +8,15 @@
 //!
 //! The UI thread is not in the input path. Mouse movement arrives at gesture
 //! rate, and routing it through a 16 ms poll loop would put latency and jitter
-//! on the one thing that has to feel direct. All the UI thread does is answer
-//! "may this peer act?" once per connection.
+//! on the one thing that has to feel direct. For input, all the UI thread does
+//! is answer "may this peer act?" once per connection.
+//!
+//! It *is* in the path of the two messages that are not input — `state` and
+//! `select` — because they are about deck itself, which only that thread can
+//! see or change. Both arrive at human rate, and a `state` answer is collected
+//! asynchronously so the connection never stops reading to wait for one.
 
+use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -22,7 +28,7 @@ use std::time::{Duration, Instant};
 use tungstenite::protocol::WebSocketConfig;
 use tungstenite::{accept_with_config, Error as WsError, HandshakeError, Message, WebSocket};
 
-use super::protocol::{parse, BuddyMsg, PONG};
+use super::protocol::{parse, BuddyMsg, Select, PONG};
 use super::sink::InputSink;
 
 /// The Bonjour service type the iPad client browses for. Part of the wire
@@ -51,6 +57,14 @@ const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 /// backoff, or something less friendly, shouldn't be able to spend threads.
 const MAX_CONNECTIONS: usize = 8;
 
+/// How many unanswered `state` questions one connection may hold.
+///
+/// The UI thread answers one per frame at worst, so a client asking faster
+/// than that is asking faster than deck changes. Past the cap the extra
+/// questions are dropped rather than queued: a stale answer delivered late is
+/// worse than no answer at all, and the client asks again anyway.
+const MAX_PENDING_STATE: usize = 4;
+
 /// What the server tells the UI thread. It asks a question exactly once per
 /// connection and otherwise only reports.
 #[derive(Debug)]
@@ -67,6 +81,17 @@ pub enum BuddyEvent {
     },
     /// The listener or the advertisement failed after startup.
     Error(String),
+    /// An approved client asked what deck's sidebar is showing. Only the UI
+    /// thread can see that, so it builds the answer and sends it back here;
+    /// the connection writes whatever arrives as an ordinary text frame.
+    /// Dropping the sender answers nothing, which the client survives.
+    State {
+        reply: Sender<String>,
+    },
+    /// An approved client asked deck to move one of its own selections.
+    /// Fire-and-forget: the client reads the result back with another
+    /// [`BuddyEvent::State`].
+    Select(Select),
 }
 
 /// A running server. Dropping it stops everything; so does [`BuddyServer::stop`],
@@ -272,7 +297,7 @@ fn serve(
     if tx.send(BuddyEvent::Connected { peer, reply }).is_err() {
         return;
     }
-    read_loop(&mut ws, sink, &verdict, cancel, gate);
+    read_loop(&mut ws, sink, tx, &verdict, cancel, gate);
     let _ = ws.close(None);
     let _ = ws.flush();
 }
@@ -306,14 +331,30 @@ fn handshake(stream: TcpStream) -> Option<WebSocket<TcpStream>> {
 /// user could give one. Messages that arrive in the meantime are discarded, not
 /// buffered — replaying a minute of queued keystrokes at the moment of approval
 /// is not what anybody means by "allow".
+///
+/// A `state` question is the one exception, and only because it is a question:
+/// it asks for nothing to happen, so holding one and answering it on approval
+/// is what the client asking wanted rather than a backlog being replayed.
 fn read_loop<S: Read + Write>(
     ws: &mut WebSocket<S>,
     sink: &mut dyn InputSink,
+    tx: &Sender<BuddyEvent>,
     verdict: &Receiver<bool>,
     cancel: &AtomicBool,
     gate: &AtomicBool,
 ) {
     let mut approved = false;
+    // `state` questions the UI thread hasn't answered yet, oldest first. Held
+    // rather than waited on: the answer takes a UI frame to build, and a
+    // connection blocked on it is a connection not reading the mouse.
+    let mut pending: VecDeque<Receiver<String>> = VecDeque::new();
+    // A `state` question that arrived before it could be put. Unlike input it
+    // is held rather than dropped, because a client asks for state the moment
+    // it connects and the verdict for an already-approved device lands a frame
+    // or two later — dropping it would leave the client with an empty list
+    // until it happened to ask again. Nothing leaks by holding one: it is only
+    // ever put once the connection may act.
+    let mut deferred_state = false;
     loop {
         if cancel.load(Ordering::Relaxed) || !poll_verdict(verdict, &mut approved) {
             return;
@@ -336,17 +377,41 @@ fn read_loop<S: Read + Write>(
                 return;
             }
             if let Some(msg) = parse(&bytes) {
-                if msg == BuddyMsg::Ping {
+                match msg {
                     // Answered whatever the verdict is — see the fn docs.
-                    match ws.send(Message::Text(PONG.into())) {
-                        Ok(()) => {}
-                        Err(WsError::Io(e)) if is_timeout(&e) => {}
-                        Err(_) => return,
+                    BuddyMsg::Ping => {
+                        if !send_text(ws, PONG) {
+                            return;
+                        }
                     }
-                } else {
-                    feed(sink, &msg, approved, gate);
+                    // Both of these leave the input path for the UI thread, and
+                    // both are gated exactly like input: the session list is the
+                    // user's, and steering deck is an action.
+                    BuddyMsg::State => deferred_state = true,
+                    // Dropped rather than deferred, for the reason input is: a
+                    // switch the user has not yet allowed, applied at the
+                    // moment they do, is not what "allow" means.
+                    BuddyMsg::Select(select) => {
+                        if may_act(approved, gate) && tx.send(BuddyEvent::Select(select)).is_err() {
+                            return;
+                        }
+                    }
+                    input => feed(sink, &input, approved, gate),
                 }
             }
+        }
+        if deferred_state && may_act(approved, gate) {
+            deferred_state = false;
+            if pending.len() < MAX_PENDING_STATE {
+                let (reply, answer) = std::sync::mpsc::channel();
+                if tx.send(BuddyEvent::State { reply }).is_err() {
+                    return;
+                }
+                pending.push_back(answer);
+            }
+        }
+        if !drain_state_replies(ws, &mut pending) {
+            return;
         }
         // `read` only *queues* the pong it owes a ping; without this flush the
         // client never sees one and never finishes connecting.
@@ -355,6 +420,47 @@ fn read_loop<S: Read + Write>(
             Err(WsError::Io(e)) if is_timeout(&e) => {}
             Err(_) => return,
         }
+    }
+}
+
+/// Write every state answer the UI thread has finished, oldest first, and stop
+/// at the first one still being built. Returns whether the connection lives on.
+///
+/// A question the UI thread dropped instead of answering (it went away, or the
+/// server was reconfigured under it) is discarded rather than waited on, so one
+/// unanswered question cannot wedge the ones behind it.
+fn drain_state_replies<S: Read + Write>(
+    ws: &mut WebSocket<S>,
+    pending: &mut VecDeque<Receiver<String>>,
+) -> bool {
+    loop {
+        let ready = match pending.front() {
+            Some(answer) => answer.try_recv(),
+            None => return true,
+        };
+        match ready {
+            Ok(json) => {
+                pending.pop_front();
+                if !send_text(ws, &json) {
+                    return false;
+                }
+            }
+            Err(TryRecvError::Empty) => return true,
+            Err(TryRecvError::Disconnected) => {
+                pending.pop_front();
+            }
+        }
+    }
+}
+
+/// Queue one text frame. Returns whether the connection lives on — a write
+/// that merely timed out has not failed, since the flush at the end of each
+/// tick tries again.
+fn send_text<S: Read + Write>(ws: &mut WebSocket<S>, text: &str) -> bool {
+    match ws.send(Message::Text(text.into())) {
+        Ok(()) => true,
+        Err(WsError::Io(e)) if is_timeout(&e) => true,
+        Err(_) => false,
     }
 }
 
@@ -382,13 +488,20 @@ fn poll_verdict(verdict: &Receiver<bool>, approved: &mut bool) -> bool {
 /// synthesize the very keystroke that answers the prompt and approve a stranger
 /// on the user's behalf.
 ///
-/// [`BuddyMsg::Ping`] never reaches here — it is answered before the verdict
-/// is consulted at all.
+/// Only input reaches here. [`BuddyMsg::Ping`] is answered before the verdict
+/// is consulted at all, and `state`/`select` go to the UI thread under the same
+/// rule this applies, checked at the call site.
 fn feed(sink: &mut dyn InputSink, msg: &BuddyMsg, approved: bool, gate: &AtomicBool) {
-    if !approved || gate.load(Ordering::Relaxed) {
+    if !may_act(approved, gate) {
         return;
     }
     sink.dispatch(msg);
+}
+
+/// Whether this connection may act at all right now. See [`feed`] for why the
+/// gate outranks an approval that has already been given.
+fn may_act(approved: bool, gate: &AtomicBool) -> bool {
+    approved && !gate.load(Ordering::Relaxed)
 }
 
 /// A read that came back because its timeout expired, not because anything is

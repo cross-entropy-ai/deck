@@ -104,6 +104,11 @@ machine on its own; turn it on or off under **Settings → Buddy**. It is on by
 default on macOS and unavailable elsewhere, since synthesizing input is a macOS
 API.
 
+The app can also read deck's sidebar and steer it — list the hosts, sessions
+and agents deck is showing, switch tabs, and switch the active session or
+agent from the iPad. See [`docs/buddy-protocol.md`](docs/buddy-protocol.md)
+for the wire contract.
+
 > [!IMPORTANT]
 > The keystrokes go to whatever app is frontmost, not to deck. That needs
 > **Accessibility** permission — granted to the terminal app running deck
@@ -123,7 +128,8 @@ API.
 > A client that cannot observe WebSocket PONG control frames (React Native
 > drops them) can send `{"type":"ping"}` and gets `{"type":"pong"}` back as an
 > ordinary text frame. It is answered before approval, so a device can tell it
-> is still connected while the prompt is up.
+> is still connected while the prompt is up. Everything else — reading the
+> session list included — waits for the allow.
 
 ## Develop
 

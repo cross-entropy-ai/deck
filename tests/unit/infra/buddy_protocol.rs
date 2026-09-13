@@ -144,3 +144,127 @@ fn a_character_wider_than_the_limit_still_goes_out_whole() {
     // truncating one emoji into two lone surrogates would corrupt it.
     assert_eq!(utf16_chunks("😀a", 1), ["😀", "a"]);
 }
+
+#[test]
+fn a_state_request_parses_from_its_tag_alone() {
+    assert_eq!(parse(br#"{"type":"state"}"#), Some(BuddyMsg::State));
+}
+
+#[test]
+fn each_selection_reads_from_the_key_that_names_it() {
+    // One `select` type with the target as its single key, so the three
+    // selections share a shape instead of needing three tags.
+    assert_eq!(
+        parse(br#"{"type":"select","tab":"agents"}"#),
+        Some(BuddyMsg::Select(Select::Tab(Tab::Agents)))
+    );
+    assert_eq!(
+        parse(br#"{"type":"select","session":{"lane":"tmux\u001flocal","name":"deck"}}"#),
+        Some(BuddyMsg::Select(Select::Session(SessionRef {
+            lane: "tmux\u{1f}local".to_string(),
+            name: "deck".to_string(),
+        })))
+    );
+    assert_eq!(
+        parse(br#"{"type":"select","agent":{"lane":"tmux\u001fbox","pane":"%7"}}"#),
+        Some(BuddyMsg::Select(Select::Agent(AgentRef {
+            lane: "tmux\u{1f}box".to_string(),
+            pane: "%7".to_string(),
+        })))
+    );
+}
+
+#[test]
+fn the_session_tab_answers_to_both_of_its_names() {
+    // `projects` is deck's own word for it; `sessions` is what the tab shows,
+    // and a client that says either means the same list.
+    for raw in [
+        br#"{"type":"select","tab":"projects"}"#.as_slice(),
+        br#"{"type":"select","tab":"sessions"}"#.as_slice(),
+    ] {
+        assert_eq!(
+            parse(raw),
+            Some(BuddyMsg::Select(Select::Tab(Tab::Projects))),
+            "{}",
+            String::from_utf8_lossy(raw)
+        );
+    }
+}
+
+#[test]
+fn a_selection_naming_nothing_known_is_dropped_not_rejected() {
+    // Same rule as every other unknown shape: a client from a newer app
+    // degrades to "that button does nothing", never to a dropped connection.
+    for raw in [
+        br#"{"type":"select"}"#.as_slice(),
+        br#"{"type":"select","window":{"lane":"x"}}"#.as_slice(),
+        br#"{"type":"select","tab":"settings"}"#.as_slice(),
+        br#"{"type":"select","session":{"lane":"x"}}"#.as_slice(),
+    ] {
+        assert_eq!(parse(raw), None, "{}", String::from_utf8_lossy(raw));
+    }
+}
+
+#[test]
+fn a_state_reply_carries_its_type_and_three_lists() {
+    let reply = State {
+        tab: Tab::Agents,
+        hosts: vec![HostInfo {
+            lane: "tmux\u{1f}local".to_string(),
+            title: "local".to_string(),
+            parent: None,
+            status: HostStatus::Ok,
+        }],
+        sessions: vec![SessionInfo {
+            lane: "tmux\u{1f}local".to_string(),
+            name: "deck".to_string(),
+            dir: "~/claude/deck".to_string(),
+            selected: true,
+        }],
+        agents: vec![AgentInfo {
+            lane: "tmux\u{1f}local".to_string(),
+            kind: AgentKindName::Claude,
+            session: "deck".to_string(),
+            window: "main".to_string(),
+            pane: "%3".to_string(),
+            status: AgentStatusName::Waiting,
+            selected: false,
+        }],
+    };
+    // Spelled out rather than compared field by field: this string is the
+    // contract the client decodes, so a rename has to fail here.
+    assert_eq!(
+        reply.encode(),
+        concat!(
+            r#"{"type":"state","tab":"agents","#,
+            r#""hosts":[{"lane":"tmux\u001flocal","title":"local","parent":null,"status":"ok"}],"#,
+            r#""sessions":[{"lane":"tmux\u001flocal","name":"deck","dir":"~/claude/deck","selected":true}],"#,
+            r#""agents":[{"lane":"tmux\u001flocal","kind":"claude","session":"deck","window":"main","#,
+            r#""pane":"%3","status":"waiting","selected":false}]}"#,
+        )
+    );
+}
+
+#[test]
+fn the_placeholder_reasons_keep_their_wire_names() {
+    // A lane with nothing to list says why here, since it contributes no
+    // session row to say it with.
+    let named = |status| {
+        State {
+            tab: Tab::Projects,
+            hosts: vec![HostInfo {
+                lane: "tmux\u{1f}box".to_string(),
+                title: "box".to_string(),
+                parent: Some("tmux\u{1f}local".to_string()),
+                status,
+            }],
+            sessions: Vec::new(),
+            agents: Vec::new(),
+        }
+        .encode()
+    };
+    assert!(named(HostStatus::Connecting).contains(r#""status":"connecting""#));
+    assert!(named(HostStatus::Unreachable).contains(r#""status":"unreachable""#));
+    assert!(named(HostStatus::NoSessions).contains(r#""status":"no_sessions""#));
+    assert!(named(HostStatus::Ok).contains(r#""parent":"tmux\u001flocal""#));
+}

@@ -6,14 +6,29 @@
 //! a 16 ms poll loop would put jitter on the one thing that has to feel direct.
 //! What arrives here is one question per connection, and the answer decides
 //! whether that connection is allowed to act at all.
+//!
+//! The rest of this module is the other half of that: the two messages that
+//! *are* about deck rather than about the frontmost app. [`App::buddy_state`]
+//! projects the sidebar into the wire DTO, and [`App::apply_buddy_select`]
+//! resolves what a client named back onto a live row and dispatches the same
+//! action a click on it would.
 
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
+use crate::geometry::AgentTarget;
+use crate::infra::buddy::protocol::{
+    AgentInfo, AgentKindName, AgentRef, AgentStatusName, HostInfo, HostStatus, Select, SessionInfo,
+    SessionRef, State, Tab,
+};
 use crate::infra::buddy::{self, BuddyEvent, BuddyServer};
-use crate::state::BuddyStatus;
+use crate::lane::LaneId;
+use crate::state::{AppState, BuddyStatus, SessionEntryKind, SidebarTab};
+
+use super::action::Action;
+use super::App;
 
 /// How long a denial is remembered. Long enough that a client cycling through
 /// its reconnect backoff cannot put the prompt back up over and over; short
@@ -232,6 +247,155 @@ impl BuddyWorker {
             .as_ref()
             .map_or(0, BuddyServer::connection_count)
     }
+}
+
+impl App {
+    /// What the sidebar is showing, as the `state` reply.
+    pub(super) fn buddy_state(&self) -> State {
+        snapshot(&self.state)
+    }
+
+    /// Move the selection a client named, by dispatching exactly the action a
+    /// click on that row would.
+    ///
+    /// Everything is resolved against the live lists rather than trusted as an
+    /// index: the client is describing a `state` reply that may be several
+    /// refreshes old, and a row that has since gone is a no-op, not a switch to
+    /// whatever slid into its place.
+    pub(super) fn apply_buddy_select(&mut self, select: Select) {
+        match select {
+            Select::Tab(tab) => {
+                self.dispatch(Action::SelectTab(match tab {
+                    Tab::Projects => SidebarTab::Projects,
+                    Tab::Agents => SidebarTab::Agents,
+                }));
+            }
+            Select::Session(want) => {
+                let Some(idx) = session_index(&self.state, &want) else {
+                    return;
+                };
+                // `FocusIndex` and `SwitchProject` both act on whichever tab is
+                // active, so asking for a session has to mean showing sessions
+                // — otherwise this would move the *agent* cursor instead.
+                self.dispatch(Action::SelectTab(SidebarTab::Projects));
+                self.dispatch(Action::SidebarClickSession(idx));
+            }
+            Select::Agent(want) => {
+                let Some(target) = agent_target(&self.state, &want) else {
+                    return;
+                };
+                // No tab switch: switching to an agent's pane works from either
+                // tab (a section footer offers it on Projects), and the active-
+                // pane probe steers the Agents cursor onto it either way.
+                self.dispatch(Action::SwitchToAgentPane(target));
+            }
+        }
+    }
+}
+
+/// What the sidebar is showing, as the `state` reply.
+///
+/// Reads the same fields the renderer does, in the same order, so the client's
+/// list and the sidebar agree row for row. Only selectable rows are listed: a
+/// lane's synthetic status row ("connecting…", "unreachable") is not a session,
+/// so it becomes that lane's [`HostStatus`] instead.
+fn snapshot(state: &AppState) -> State {
+    State {
+        // The tab actually being rendered, not the stored preference. A
+        // narrow terminal has no tab bar, so `sidebar_tab` can say Agents
+        // while the sidebar is showing sessions — reporting the preference
+        // would have the client draw a list deck isn't showing.
+        tab: if state.agents_tab_active() {
+            Tab::Agents
+        } else {
+            Tab::Projects
+        },
+        hosts: state
+            .system_sections
+            .iter()
+            .map(|section| HostInfo {
+                lane: section.lane.as_str().to_string(),
+                title: section.title.clone(),
+                parent: section.parent.as_ref().map(|p| p.as_str().to_string()),
+                status: host_status(state, &section.lane),
+            })
+            .collect(),
+        sessions: state
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.is_attachable())
+            .map(|(idx, entry)| SessionInfo {
+                lane: entry.lane.as_str().to_string(),
+                name: entry.name.clone(),
+                dir: entry.dir.clone(),
+                selected: idx == state.focused,
+            })
+            .collect(),
+        agents: state
+            .agent_entries
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, entry)| {
+                let agent = entry.agent()?;
+                Some(AgentInfo {
+                    lane: entry.lane.as_str().to_string(),
+                    kind: match agent.kind {
+                        crate::agent::AgentKind::Claude => AgentKindName::Claude,
+                        crate::agent::AgentKind::Codex => AgentKindName::Codex,
+                    },
+                    session: agent.session.clone(),
+                    window: agent.window.clone(),
+                    pane: agent.pane_id.clone(),
+                    status: match agent.status {
+                        crate::agent::AgentStatus::Working => AgentStatusName::Working,
+                        crate::agent::AgentStatus::Idle => AgentStatusName::Idle,
+                        crate::agent::AgentStatus::Waiting => AgentStatusName::Waiting,
+                        crate::agent::AgentStatus::Unknown => AgentStatusName::Unknown,
+                    },
+                    selected: idx == state.agent_focused,
+                })
+            })
+            .collect(),
+    }
+}
+
+/// Why `lane` has no sessions listed, when it has none. Its synthetic status
+/// row carries the answer; a lane with real rows is simply `Ok`.
+fn host_status(state: &AppState, lane: &LaneId) -> HostStatus {
+    state
+        .entries
+        .iter()
+        .find(|entry| entry.lane == *lane)
+        .map_or(HostStatus::Ok, |entry| match entry.kind {
+            SessionEntryKind::Live { .. } => HostStatus::Ok,
+            SessionEntryKind::Connecting => HostStatus::Connecting,
+            SessionEntryKind::Unreachable => HostStatus::Unreachable,
+            SessionEntryKind::NoSessions => HostStatus::NoSessions,
+        })
+}
+
+/// The flat sidebar index of the session a client named, or `None` if it is no
+/// longer listed. Free functions rather than `App` methods so the resolution
+/// rules are testable against a bare `AppState`.
+fn session_index(state: &AppState, want: &SessionRef) -> Option<usize> {
+    state.entries.iter().position(|entry| {
+        entry.is_attachable() && entry.lane.as_str() == want.lane && entry.name == want.name
+    })
+}
+
+/// The switch target for the agent a client named, or `None` if it is gone.
+/// Keyed on the pane id alone within its lane, which is the only handle that
+/// survives a window being renamed or a pane moving between them.
+fn agent_target(state: &AppState, want: &AgentRef) -> Option<AgentTarget> {
+    state.agent_entries.iter().find_map(|entry| {
+        let agent = entry.agent()?;
+        (entry.lane.as_str() == want.lane && agent.pane_id == want.pane).then(|| AgentTarget {
+            lane: entry.lane.clone(),
+            session: agent.session.clone(),
+            pane_id: agent.pane_id.clone(),
+        })
+    })
 }
 
 #[cfg(test)]

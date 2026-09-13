@@ -202,3 +202,197 @@ fn answering_nothing_is_harmless() {
     w.answer(true);
     assert!(!w.is_asking());
 }
+
+// --- The `state` reply, and resolving what a client selected ---------------
+
+use crate::agent::{AgentKind, AgentStatus, DetectedAgent};
+use crate::geometry::{AgentEntry, AgentEntryKind};
+use crate::state::{LayoutMode, SessionEntry};
+use crate::system::tmux::TmuxSystem;
+
+fn section(lane: LaneId, title: &str, parent: Option<LaneId>) -> crate::system::SectionDef {
+    crate::system::SectionDef {
+        lane,
+        title: title.to_string(),
+        parent,
+        divider_title: None,
+        buttons: Vec::new(),
+        top_margin: false,
+        primary: false,
+        session_capabilities: crate::system::SessionCapabilities::default(),
+        lane_capabilities: crate::system::LaneCapabilities::default(),
+    }
+}
+
+fn agent_row(lane: LaneId, pane: &str, status: AgentStatus) -> AgentEntry {
+    AgentEntry {
+        lane,
+        kind: AgentEntryKind::Agent(DetectedAgent {
+            kind: AgentKind::Claude,
+            session: "work".to_string(),
+            window: "main".to_string(),
+            pane_id: pane.to_string(),
+            status,
+        }),
+    }
+}
+
+/// A local lane with two sessions, a remote lane that hasn't answered yet, and
+/// one agent per lane — the smallest state with every case in it.
+fn sidebar() -> AppState {
+    let local = TmuxSystem::local_lane();
+    let box_lane = TmuxSystem::host_lane("box");
+    let mut state = AppState::new(120, 40);
+    state.system_sections = vec![
+        section(local.clone(), "local", None),
+        section(box_lane.clone(), "box", Some(local.clone())),
+    ];
+    state.entries = vec![
+        crate::testing::local_session("deck"),
+        crate::testing::local_session("notes"),
+        SessionEntry::placeholder(box_lane.clone(), SessionEntryKind::Connecting),
+    ];
+    state.agent_entries = vec![
+        AgentEntry {
+            lane: local.clone(),
+            kind: AgentEntryKind::Placeholder { probed: true },
+        },
+        agent_row(local, "%3", AgentStatus::Working),
+        agent_row(box_lane, "%9", AgentStatus::Idle),
+    ];
+    state
+}
+
+#[test]
+fn the_reply_lists_only_the_rows_a_client_could_select() {
+    let reply = snapshot(&sidebar());
+    // The remote's "(connecting…)" row is not a session, and the local
+    // section's "no agents" row is not an agent.
+    assert_eq!(
+        reply
+            .sessions
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>(),
+        ["deck", "notes"]
+    );
+    assert_eq!(
+        reply
+            .agents
+            .iter()
+            .map(|a| a.pane.as_str())
+            .collect::<Vec<_>>(),
+        ["%3", "%9"]
+    );
+    assert_eq!(reply.sessions[0].dir, "/tmp/deck");
+}
+
+#[test]
+fn a_lane_with_nothing_to_list_says_why_on_its_host_row() {
+    // The placeholder row carries the reason; dropping it from `sessions`
+    // would lose it unless the host row picks it up.
+    let mut state = sidebar();
+    let statuses = |state: &AppState| {
+        snapshot(state)
+            .hosts
+            .iter()
+            .map(|h| h.status)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(statuses(&state), [HostStatus::Ok, HostStatus::Connecting]);
+
+    state.entries[2].kind = SessionEntryKind::Unreachable;
+    assert_eq!(statuses(&state), [HostStatus::Ok, HostStatus::Unreachable]);
+
+    state.entries[2].kind = SessionEntryKind::NoSessions;
+    assert_eq!(statuses(&state), [HostStatus::Ok, HostStatus::NoSessions]);
+}
+
+#[test]
+fn a_nested_lane_names_the_one_it_hangs_under() {
+    let reply = snapshot(&sidebar());
+    assert_eq!(reply.hosts[0].parent, None);
+    assert_eq!(
+        reply.hosts[1].parent.as_deref(),
+        Some(TmuxSystem::local_lane().as_str())
+    );
+    assert_eq!(reply.hosts[1].title, "box");
+}
+
+#[test]
+fn each_cursor_marks_its_own_row() {
+    // Both cursors index the *unfiltered* lists, so the flags have to be
+    // computed before the placeholders are dropped — off by one otherwise.
+    let mut state = sidebar();
+    state.focused = 1;
+    state.agent_focused = 2;
+    let reply = snapshot(&state);
+    assert_eq!(
+        reply
+            .sessions
+            .iter()
+            .map(|s| s.selected)
+            .collect::<Vec<_>>(),
+        [false, true]
+    );
+    assert_eq!(
+        reply.agents.iter().map(|a| a.selected).collect::<Vec<_>>(),
+        [false, true]
+    );
+}
+
+#[test]
+fn the_reply_names_the_tab_being_rendered_not_the_one_stored() {
+    let mut state = sidebar();
+    state.prefs.sidebar_tab = SidebarTab::Agents;
+    assert_eq!(snapshot(&state).tab, Tab::Agents);
+
+    // A narrow terminal has no tab bar to put Agents in, so the sidebar shows
+    // sessions whatever the preference says. Reporting the preference would
+    // have the client draw a list deck isn't showing.
+    state.prefs.layout_mode = LayoutMode::Vertical;
+    assert_eq!(snapshot(&state).tab, Tab::Projects);
+}
+
+#[test]
+fn a_session_is_resolved_by_lane_and_name() {
+    let state = sidebar();
+    let local = TmuxSystem::local_lane().as_str().to_string();
+    let named = |lane: &str, name: &str| {
+        session_index(
+            &state,
+            &SessionRef {
+                lane: lane.to_string(),
+                name: name.to_string(),
+            },
+        )
+    };
+    assert_eq!(named(&local, "notes"), Some(1));
+    // Gone, on the wrong lane, or never attachable in the first place: all
+    // no-ops, not a switch to whatever slid into that row.
+    assert_eq!(named(&local, "gone"), None);
+    assert_eq!(named(TmuxSystem::host_lane("box").as_str(), "notes"), None);
+    assert_eq!(named(TmuxSystem::host_lane("box").as_str(), ""), None);
+}
+
+#[test]
+fn an_agent_is_resolved_by_its_pane_id_within_its_lane() {
+    let state = sidebar();
+    let named = |lane: &str, pane: &str| {
+        agent_target(
+            &state,
+            &AgentRef {
+                lane: lane.to_string(),
+                pane: pane.to_string(),
+            },
+        )
+    };
+    let found = named(TmuxSystem::host_lane("box").as_str(), "%9").expect("the box agent");
+    assert_eq!(found.lane, TmuxSystem::host_lane("box"));
+    assert_eq!(found.session, "work");
+    assert_eq!(found.pane_id, "%9");
+    // A pane id is only unique to its own tmux server, so the lane is part of
+    // the key rather than a hint.
+    assert_eq!(named(TmuxSystem::local_lane().as_str(), "%9"), None);
+    assert_eq!(named(TmuxSystem::host_lane("box").as_str(), "%1"), None);
+}
