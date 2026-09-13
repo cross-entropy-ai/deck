@@ -1,3 +1,4 @@
+pub mod buddy;
 pub mod mounts;
 pub mod port_forward;
 

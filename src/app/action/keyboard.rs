@@ -1,5 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::action::BuddyAction;
 use crate::forwards::{PfField, PortForwardOverlay};
 use crate::keybindings::Command;
 use crate::overlay::Modal;
@@ -265,6 +266,15 @@ fn modal_key_to_action(modal: Modal, key: &KeyEvent, state: &AppState) -> Action
                 Action::Kill(KillAction::Cancel)
             }
         }
+        // Unlike the kill prompt, anything that is not an answer is ignored.
+        // Denying is remembered for a while, so a stray keypress landing on
+        // "deny" would silence a device the user did want. (Esc still denies —
+        // `close_action` routes it before this.)
+        Modal::BuddyApprove => match key.code {
+            KeyCode::Char('y') => Action::Buddy(BuddyAction::Allow),
+            KeyCode::Char('n') => Action::Buddy(BuddyAction::Deny),
+            _ => Action::None,
+        },
     }
 }
 

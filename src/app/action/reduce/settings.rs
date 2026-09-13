@@ -80,6 +80,13 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
             state.prefs.cycle_summary_agent(direction);
             fx.save_config();
         }
+        SettingsAction::ToggleBuddy => {
+            state.prefs.buddy_enabled = !state.prefs.buddy_enabled;
+            // The listener follows the switch immediately; the save is what
+            // makes it survive a restart.
+            fx.push(crate::effects::Effect::ReconfigureBuddy);
+            fx.save_config();
+        }
         SettingsAction::ToggleSummary => {
             state.prefs.summary_enabled = !state.prefs.summary_enabled;
             fx.save_config();

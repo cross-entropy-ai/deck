@@ -135,6 +135,11 @@ fn open_modal(state: &mut AppState, modal: Modal) {
         }
         Modal::Help => state.overlay.open(ModalState::Help),
         Modal::ConfirmKill => state.overlay.open(ModalState::ConfirmKill),
+        Modal::BuddyApprove => state.overlay.open(ModalState::BuddyApprove(
+            crate::overlay::BuddyApproveState {
+                peer: std::net::IpAddr::from([192, 168, 1, 10]),
+            },
+        )),
     }
 }
 

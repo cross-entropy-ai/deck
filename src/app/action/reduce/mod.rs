@@ -616,6 +616,13 @@ pub fn apply_action(state: &mut AppState, action: Action) -> SideEffect {
         Action::AddRemote(a) => return reduce_add_remote(state, a),
         Action::Hidden(a) => return reduce_hidden(state, a),
         Action::Mount(a) => return reduce_mount(state, a),
+        Action::Buddy(answer) => {
+            state.overlay.close(crate::overlay::Modal::BuddyApprove);
+            fx.push(crate::effects::Effect::BuddyVerdict(matches!(
+                answer,
+                crate::action::BuddyAction::Allow
+            )));
+        }
 
         // Dispatch-only. Each of these needs something `AppState` is not — a
         // PTY to write to, the filesystem, the raw keybindings, the drag

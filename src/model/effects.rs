@@ -64,6 +64,12 @@ pub enum Effect {
         full_redraw: bool,
     },
     SaveConfig,
+    /// Hand the Buddy server the answer to its connection prompt. The reply
+    /// channel is on `App`, so the verdict travels as an effect rather than as
+    /// state a reducer could mutate.
+    BuddyVerdict(bool),
+    /// Start, stop, or restart the Buddy server to match the current prefs.
+    ReconfigureBuddy,
     SaveSessionOrder(LaneId),
     ApplyTmuxTheme,
     /// Ask the host terminal which color scheme it is showing (`CSI ? 996 n`),

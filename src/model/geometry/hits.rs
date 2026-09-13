@@ -92,6 +92,14 @@ pub struct KillConfirmHits {
     pub no: Rect,
 }
 
+/// Click-regions for the two answers in the Buddy connection prompt, so the
+/// question can be answered with the mouse as well as with `y`/`n`.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct BuddyHits {
+    pub allow: Rect,
+    pub deny: Rect,
+}
+
 /// Click rects for the two sidebar tab labels (`Projects` / `Agents`),
 /// published by the header renderer so mouse dispatch can switch tabs.
 /// Clamped to the header area so a narrow sidebar can't leak a click
@@ -257,6 +265,8 @@ pub struct HitRegions {
     pub hidden: HiddenHits,
     /// Rows and buttons of the active port-forward list.
     pub port_forward: PfHits,
+    /// The Buddy connection prompt's allow/deny hints, while shown.
+    pub buddy: Option<BuddyHits>,
     /// The expanded header's collapse button, or the collapsed rail's expand
     /// button.
     pub sidebar_toggle: Option<Rect>,
@@ -275,6 +285,10 @@ pub enum HitKind {
     KillYes,
     /// The kill-confirmation `[No]` button.
     KillNo,
+    /// The Buddy prompt's `y allow` hint.
+    BuddyAllow,
+    /// The Buddy prompt's `n deny` hint.
+    BuddyDeny,
     /// The footer banner's "upgrade" span.
     Banner,
     /// A header tab label; carries which tab.
@@ -332,6 +346,14 @@ impl HitRegions {
     /// summary buttons, menu, dividers, and agent rows.
     pub fn hit(&self, col: u16, row: u16) -> Option<HitKind> {
         let pos = Position::new(col, row);
+        if let Some(buddy) = self.buddy {
+            if buddy.allow.contains(pos) {
+                return Some(HitKind::BuddyAllow);
+            }
+            if buddy.deny.contains(pos) {
+                return Some(HitKind::BuddyDeny);
+            }
+        }
         if let Some(kill) = self.kill {
             if kill.yes.contains(pos) {
                 return Some(HitKind::KillYes);

@@ -232,6 +232,51 @@ impl App {
 
     /// Drain answers from the mount workers. The reducer drops stale generations,
     /// so a late reply for a closed picker is harmless.
+    /// Drain what the Buddy server has to say: new devices asking to be let
+    /// in, ones that went away, and anything that went wrong with the listener.
+    ///
+    /// The input itself never comes through here — a connection synthesizes on
+    /// its own thread — so this only ever moves the prompt and the status row.
+    fn pump_buddy(&mut self) -> Redraw {
+        let mut redraw = Redraw::No;
+        let mut asked = false;
+        while let Some(event) = self.buddy.try_recv() {
+            match event {
+                crate::infra::buddy::BuddyEvent::Connected { peer, reply } => {
+                    let busy = self.state.active_modal().is_some();
+                    if let Some(peer) = self.buddy.connected(peer, reply, busy) {
+                        self.state
+                            .overlay
+                            .open(crate::overlay::ModalState::BuddyApprove(
+                                crate::overlay::BuddyApproveState { peer },
+                            ));
+                    }
+                    asked = true;
+                }
+                crate::infra::buddy::BuddyEvent::Disconnected { peer } => {
+                    if self.buddy.disconnected(peer) {
+                        self.state
+                            .overlay
+                            .close(crate::overlay::Modal::BuddyApprove);
+                    }
+                    asked = true;
+                }
+                crate::infra::buddy::BuddyEvent::Error(msg) => {
+                    self.state.show_warning(msg.clone());
+                    self.state.buddy = crate::state::BuddyStatus::Failed(msg);
+                }
+            }
+            redraw = Redraw::Force;
+        }
+        if asked {
+            // A question may have been queued behind an overlay that has since
+            // closed, and the client count on the status row has moved.
+            self.ask_next_buddy();
+            self.refresh_buddy_clients();
+        }
+        redraw
+    }
+
     fn pump_mounts(&mut self) -> Redraw {
         let mut redraw = Redraw::No;
         while let Some(event) = self.mounts.try_recv() {
@@ -556,6 +601,8 @@ impl App {
             self.pump_port_forward()
                 .apply(&mut needs_render, &mut force_render);
             self.pump_mounts()
+                .apply(&mut needs_render, &mut force_render);
+            self.pump_buddy()
                 .apply(&mut needs_render, &mut force_render);
             self.pump_active_pane()
                 .apply(&mut needs_render, &mut force_render);

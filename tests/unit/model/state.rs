@@ -1332,6 +1332,11 @@ fn prefs_config_round_trip_is_identity() {
         agents_probe_interval: 5,
         summary_enabled: false,
         transparent_bg: false,
+        // Deliberately the opposite of every platform's default, so the round
+        // trip would notice a field that silently reverts.
+        buddy_enabled: !cfg!(target_os = "macos"),
+        buddy_port: 9000,
+        buddy_name: "workbench".to_string(),
     };
 
     let theme_index = 2;

@@ -2,6 +2,7 @@ pub mod action;
 pub mod ssh;
 
 mod attachment;
+mod buddy;
 mod dispatch;
 mod effect_runner;
 mod focus_executor;
@@ -98,6 +99,8 @@ pub struct App {
     active_pane_probe: ActivePaneProbeExecutor,
     /// Off-thread discovery/activation for the mount picker.
     mounts: self::mounts::MountWorker,
+    /// The iPad remote-control server, and who is allowed to use it.
+    buddy: self::buddy::BuddyWorker,
     /// The in-flight Agents-tab summary generation, if any. A one-shot
     /// [`Worker`](crate::worker::Worker) carrying `Ok(text)` or `Err(reason)`
     /// (no agents, selected CLI missing, non-zero exit, timeout, cancel).
@@ -285,6 +288,7 @@ impl App {
             port_forward_rx: pf_result_rx,
             active_pane_probe: ActivePaneProbeExecutor::new(),
             mounts: self::mounts::MountWorker::new(),
+            buddy: self::buddy::BuddyWorker::new(),
             active_pane_in_flight: false,
             summary_worker: None,
             focus_seq: 0,
@@ -300,6 +304,7 @@ impl App {
         // answer keep the assumed dark.
         app.apply_theme_change();
         app.request_refresh();
+        app.reconfigure_buddy();
 
         if ssh_settings.enabled {
             // Establish ControlMasters and launch configured forwards eagerly.

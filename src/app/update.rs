@@ -105,6 +105,11 @@ impl App {
             let stop_hosts =
                 crate::app::ssh::config_adapter::master_targets(&self.state.config_remotes);
             self.reconfigure_ssh_if_needed(&config, stop_hosts);
+            // Same shape as the ssh reconfigure, and for the same reason: every
+            // settings tweak lands here, so this has to be a no-op unless one
+            // of the Buddy values actually moved. Toggling Borders must not
+            // drop a live iPad session.
+            self.reconfigure_buddy();
             // Keep the injected backends and the model's materialized section
             // definitions aligned with an in-app remote/forward edit before the
             // next refresh or render.
@@ -167,6 +172,57 @@ impl App {
                 forward_lanes,
             });
         rebuilds
+    }
+
+    /// Bring the Buddy server in line with the current prefs, and mirror what
+    /// it is doing into the state the Settings row reads.
+    pub(super) fn reconfigure_buddy(&mut self) {
+        let prefs = &self.state.prefs;
+        let name = if prefs.buddy_name.is_empty() {
+            crate::infra::buddy::hostname()
+        } else {
+            prefs.buddy_name.clone()
+        };
+        if let Some(status) = self
+            .buddy
+            .reconfigure(prefs.buddy_enabled, prefs.buddy_port, &name)
+        {
+            if let crate::state::BuddyStatus::Failed(err) = &status {
+                self.state.show_warning(format!("buddy server: {err}"));
+            }
+            self.state.buddy = status;
+        }
+        self.refresh_buddy_trust();
+    }
+
+    /// Keep the settings row's device count current.
+    pub(super) fn refresh_buddy_clients(&mut self) {
+        if let crate::state::BuddyStatus::Listening { clients, .. } = &mut self.state.buddy {
+            *clients = self.buddy.clients();
+        }
+    }
+
+    /// Put the next queued connection question on screen, if the screen is
+    /// free, and keep the server's freeze in step with whether one is up.
+    pub(super) fn ask_next_buddy(&mut self) {
+        // Anything already on screen owns the modal slot: `open` replaces what
+        // is there, so a connection arriving mid-rename would destroy it.
+        let busy = self.state.active_modal().is_some();
+        if let Some(peer) = self.buddy.next_question(busy) {
+            self.state
+                .overlay
+                .open(crate::overlay::ModalState::BuddyApprove(
+                    crate::overlay::BuddyApproveState { peer },
+                ));
+        }
+        self.buddy.regate();
+    }
+
+    /// Re-ask macOS whether this process may post synthetic events. Cheap, but
+    /// it is a TCC lookup, so it happens on the paths that change the answer's
+    /// relevance rather than on every rendered frame.
+    pub(super) fn refresh_buddy_trust(&mut self) {
+        self.state.buddy_trusted = crate::infra::buddy::accessibility_trusted();
     }
 
     pub(super) fn tick_update_check(&mut self) -> bool {

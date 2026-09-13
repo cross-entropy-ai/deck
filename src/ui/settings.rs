@@ -56,6 +56,11 @@ pub fn draw_settings_page(frame: &mut Frame, area: Rect, settings: &SettingsView
             "settings",
             "Manage remote hosts and port forwards.",
         ),
+        SettingsPage::Buddy => (
+            "Buddy",
+            "settings",
+            "Let the Deck Buddy iPad app drive this Mac's keyboard and trackpad.",
+        ),
         SettingsPage::Root => (
             "Settings",
             "main pane",

@@ -95,6 +95,28 @@ Add hosts with `deck remote add <host>` (resolved through `~/.ssh/config`), and 
 >
 > Container lanes get the same thing without a bind mount, root, recreating the container, or anything installed in the image: deck streams a small static relay in and forwards the agent over the container's own `exec` channel. `forward_agent: false` turns that off too. See [`docs/ssh-agent-forwarding.md`](docs/ssh-agent-forwarding.md).
 
+### iPad remote control
+
+The [Deck Buddy](https://github.com/Junyi-99/buddy) iPad app turns an
+iPad into a keyboard and trackpad for your Mac, and deck is the receiver. It
+listens on port 8765 and advertises itself over Bonjour, so the app finds this
+machine on its own; turn it on or off under **Settings → Buddy**. It is on by
+default on macOS and unavailable elsewhere, since synthesizing input is a macOS
+API.
+
+> [!IMPORTANT]
+> The keystrokes go to whatever app is frontmost, not to deck. That needs
+> **Accessibility** permission — granted to the terminal app running deck
+> (Terminal, iTerm, Ghostty), not to deck itself, under System Settings →
+> Privacy & Security. Without it nothing happens and nothing says why, so the
+> Settings page checks and tells you.
+>
+> The protocol has no authentication, so **deck asks before letting a device
+> in**: the first connection from an address raises a prompt, and nothing it
+> sends is acted on until you allow it. Answers last as long as the deck
+> process. Change the port or the advertised name with `buddy_port` and
+> `buddy_name` in `~/.config/deck/config.yaml`.
+
 ## Develop
 
 ```bash

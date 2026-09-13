@@ -1240,6 +1240,7 @@ fn root_and_appearance_pages_group_rows_as_requested() {
             "Appearance",
             "Agents",
             "Remote",
+            "Buddy",
             "Exclude",
             "Keybindings",
             "Update check",
@@ -1263,6 +1264,10 @@ fn root_and_appearance_pages_group_rows_as_requested() {
         "Reuse duration",
         "Remotes",
         "Port forwards",
+        "Server",
+        "Status",
+        "Port",
+        "Name",
     ] {
         assert!(!labels.contains(&nested), "{nested} belongs in a submenu");
     }
@@ -1282,6 +1287,15 @@ fn root_and_appearance_pages_group_rows_as_requested() {
             "Highlight",
             "Frame rate"
         ]
+    );
+
+    open_settings_page(&mut state, SettingsPage::Buddy);
+    assert_eq!(
+        setting_rows(&state)
+            .iter()
+            .map(|row| row.label)
+            .collect::<Vec<_>>(),
+        vec!["Server", "Status", "Port", "Name"]
     );
 }
 

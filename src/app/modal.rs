@@ -26,6 +26,7 @@ pub(super) struct RenderedModal {
     pub mounts: crate::geometry::MountHits,
     pub hidden: crate::geometry::HiddenHits,
     pub port_forward: crate::geometry::PfHits,
+    pub buddy_hits: Option<crate::geometry::BuddyHits>,
 }
 
 impl RenderedModal {
@@ -46,7 +47,9 @@ impl RenderedModal {
             mounts,
             hidden,
             port_forward,
+            buddy_hits,
         } = self;
+        hits.buddy = buddy_hits;
         hits.new_session_dirs = new_session_dirs;
         hits.new_session_create = new_session_create;
         hits.add_remote = add_remote;
@@ -105,6 +108,10 @@ pub(super) fn close_action(modal: Modal, state: &AppState) -> Action {
         Modal::SummaryLang => Action::Summary(SummaryAction::LanguageCancel),
         Modal::Help => Action::Help(HelpAction::Close),
         Modal::ConfirmKill => Action::Kill(KillAction::Cancel),
+        // Esc denies rather than just dismissing: the device is sitting there
+        // waiting, and a prompt that vanishes without an answer leaves it
+        // connected and frozen with nothing to tell the user why.
+        Modal::BuddyApprove => Action::Buddy(crate::action::BuddyAction::Deny),
     }
 }
 
@@ -288,6 +295,16 @@ pub(super) fn draw_active_modal(
                 if let Some(name) = state.confirm_kill_name() {
                     rendered.kill_hits = ui::draw_confirm_kill_popup(frame, full, theme, &name);
                 }
+            }
+        }
+        Modal::BuddyApprove => {
+            if let Some(prompt) = state.overlay.buddy_approve() {
+                rendered.buddy_hits = Some(crate::ui::overlays::buddy::draw_buddy_approve(
+                    frame,
+                    full,
+                    prompt.peer,
+                    theme,
+                ));
             }
         }
     }

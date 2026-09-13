@@ -40,6 +40,10 @@ macro_rules! modals {
 }
 
 modals! {
+    // First, so it outranks everything: the prompt arrives unbidden from the
+    // network, and a modal that is open but neither painted nor routed leaves
+    // the device waiting on an answer nobody can give.
+    BuddyApprove,
     SummaryPopup,
     NewSession,
     AddRemote,
@@ -55,6 +59,12 @@ modals! {
     SummaryLang,
     Help,
     ConfirmKill,
+}
+
+/// The peer the Buddy connection prompt is asking about.
+#[derive(Debug, Clone)]
+pub struct BuddyApproveState {
+    pub peer: std::net::IpAddr,
 }
 
 /// UI state for an in-progress rename.
@@ -444,6 +454,10 @@ macro_rules! modal_states {
 }
 
 modal_states! {
+    /// "May this device drive your Mac?", raised by the Buddy server. Carries
+    /// only what the prompt shows: the reply channel stays on `App`, since
+    /// nothing in `model` owns an IO handle.
+    BuddyApprove(BuddyApproveState) => buddy_approve / _buddy_approve_mut,
     /// The Agents-tab summary "big view" popup.
     SummaryPopup,
     NewSession(NewSessionState) => new_session / new_session_mut,
