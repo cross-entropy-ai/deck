@@ -119,6 +119,11 @@ API.
 > denial is only remembered for a minute, so a stray `n` is not a lockout.
 > Change the port or the advertised name with `buddy_port` and `buddy_name` in
 > the same file.
+>
+> A client that cannot observe WebSocket PONG control frames (React Native
+> drops them) can send `{"type":"ping"}` and gets `{"type":"pong"}` back as an
+> ordinary text frame. It is answered before approval, so a device can tell it
+> is still connected while the prompt is up.
 
 ## Develop
 

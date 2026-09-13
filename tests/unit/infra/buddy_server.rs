@@ -103,6 +103,73 @@ fn press_escape() -> Message {
     Message::Binary(br#"{"type":"key","steps":[{"key":"escape"}]}"#.to_vec().into())
 }
 
+fn send_ping() -> Message {
+    Message::Text(r#"{"type":"ping"}"#.into())
+}
+
+/// Read frames until a data frame arrives, so a stray control frame from the
+/// library cannot be mistaken for the answer.
+fn next_data_frame(client: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> Message {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match client.read().expect("the connection should still be up") {
+            Message::Text(text) => return Message::Text(text),
+            Message::Binary(bytes) => return Message::Binary(bytes),
+            _ => continue,
+        }
+    }
+    panic!("no data frame came back");
+}
+
+#[test]
+fn a_json_ping_is_answered_with_a_json_pong() {
+    // A client that cannot see PONG control frames needs a data frame, so the
+    // answer has to arrive as text, not as opcode 10.
+    let harness = Harness::start();
+    let mut client = harness.connect();
+    harness.answer(true);
+
+    client.send(send_ping()).unwrap();
+    let Message::Text(reply) = next_data_frame(&mut client) else {
+        panic!("the pong should be a text frame");
+    };
+    assert_eq!(reply.as_str(), r#"{"type":"pong"}"#);
+
+    // A ping is not input, so it must not reach the sink.
+    assert!(harness.recording.typed().is_empty());
+}
+
+#[test]
+fn a_ping_is_answered_while_the_approval_prompt_is_still_up() {
+    // The reason this exists. The client holds "connected" on the reply, so a
+    // server that stays silent until the user clicks allow is declared dead
+    // before they get the chance.
+    let harness = Harness::start();
+    let mut client = harness.connect();
+
+    // Take the question and sit on it, the way an unattended screen would.
+    let Ok(BuddyEvent::Connected { reply, .. }) =
+        harness.events.recv_timeout(Duration::from_secs(5))
+    else {
+        panic!("no connection arrived to approve");
+    };
+
+    client.send(send_ping()).unwrap();
+    let Message::Text(text) = next_data_frame(&mut client) else {
+        panic!("the pong should be a text frame");
+    };
+    assert_eq!(text.as_str(), r#"{"type":"pong"}"#);
+
+    // Still unapproved: answering a ping must not have let input through.
+    client.send(press_escape()).unwrap();
+    thread::sleep(Duration::from_millis(200));
+    assert!(
+        harness.recording.typed().is_empty(),
+        "the ping reply opened the gate"
+    );
+    drop(reply);
+}
+
 #[test]
 fn an_approved_client_gets_its_messages_acted_on() {
     let harness = Harness::start();

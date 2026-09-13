@@ -44,11 +44,19 @@ and a tmux server of its own:
 
 ```bash
 env -u TMUX -u TMUX_PANE TMUX_TMPDIR=/tmp/deck-test \
-    DECK_LOCK_PATH=/tmp/deck-under-test.lock \
-    HOME=/tmp/deck-home XDG_STATE_HOME=/tmp/deck-state \
-    tmux new-session -d -s ui -x 190 -y 45 ./target/release/deck
+    tmux new-session -d -s ui -x 190 -y 45 \
+        -e DECK_LOCK_PATH=/tmp/deck-under-test.lock \
+        -e HOME=/tmp/deck-home -e XDG_STATE_HOME=/tmp/deck-state \
+        ./target/release/deck
 env -u TMUX TMUX_TMPDIR=/tmp/deck-test tmux capture-pane -p -t ui
 ```
+
+**The sandbox variables belong in `-e`, not on the `env` prefix.** A prefix
+reaches the tmux *client*; if a server is already running on that socket, the
+new session inherits the *server's* environment and `HOME` and
+`DECK_LOCK_PATH` are silently dropped — the build under test then reads your
+real config and takes over the deck you are working in. `TMUX_TMPDIR` stays on
+the prefix, since it picks which server to talk to.
 
 `capture-pane` is how the TUI gets read without a human looking at it. Both
 `-u TMUX` matter: a shell inside tmux would otherwise send every one of those
