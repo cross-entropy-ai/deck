@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod buddy;
 pub mod command;
 pub mod focus;
 pub mod guards;

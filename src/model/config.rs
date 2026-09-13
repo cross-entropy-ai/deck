@@ -328,6 +328,19 @@ pub struct Config {
     /// Use the terminal's default (transparent) background instead of the
     /// theme's solid background color.
     pub transparent_bg: bool,
+    /// Run the Buddy server: a LAN WebSocket listener that lets the Deck Buddy
+    /// iPad app drive this machine's keyboard and mouse. Defaults on for macOS,
+    /// which is the only platform that can synthesize the events, and off
+    /// everywhere else. Every new connection still has to be approved from the
+    /// TUI before anything it sends is acted on.
+    pub buddy_enabled: bool,
+    /// Port the Buddy server listens on, and advertises over Bonjour. Part of
+    /// the wire contract only in that the iPad learns it from the advertisement,
+    /// so it can be moved freely — handy when a second deck wants its own.
+    pub buddy_port: u16,
+    /// Bonjour display name for this machine. Empty means the short hostname,
+    /// which is what the Python server used.
+    pub buddy_name: String,
 }
 
 impl Default for Config {
@@ -367,9 +380,21 @@ impl Default for Config {
             agents_probe_interval: crate::state::DEFAULT_AGENTS_PROBE_INTERVAL,
             summary_enabled: true,
             transparent_bg: true,
+            // The one platform-conditional default deck has. Off where the
+            // server could only listen and discard, and off for a second deck
+            // under test (`DECK_LOCK_PATH`) so it cannot steal the iPad — or
+            // fight the real one for the port — while you are working on it.
+            buddy_enabled: cfg!(target_os = "macos")
+                && std::env::var_os(crate::instance_guard::InstanceGuard::LOCK_PATH_ENV).is_none(),
+            buddy_port: DEFAULT_BUDDY_PORT,
+            buddy_name: String::new(),
         }
     }
 }
+
+/// What the Python server listened on, and what the iPad has been finding it
+/// at; keep it unless there is a reason.
+pub const DEFAULT_BUDDY_PORT: u16 = 8765;
 
 fn is_default_frame_rate(fps: &u16) -> bool {
     *fps == crate::state::DEFAULT_FRAME_RATE_LIMIT
@@ -542,6 +567,10 @@ impl Config {
     fn validate(&self) -> Result<(), String> {
         validate_ssh_control_path(&self.ssh_control_path)?;
         validate_ssh_control_persist(&self.ssh_control_persist)?;
+        validate_buddy_name(&self.buddy_name)?;
+        if self.buddy_port == 0 {
+            return Err("buddy_port must be a real port, not 0".to_string());
+        }
         // Still checked on the way in: a bad host here would otherwise be
         // copied verbatim into the state file by the one-time seed.
         validate_remotes(&self.legacy_remotes)
@@ -588,6 +617,22 @@ impl Config {
         }
         confy::store_path(path, self).map_err(|e| format!("cannot write {}: {e}", path.display()))
     }
+}
+
+/// A Bonjour instance name. Empty means "use the hostname".
+///
+/// It reaches `dns-sd` as one argv element, never a shell word, so the worry
+/// is not injection but what mDNSResponder will accept: the DNS-SD spec caps
+/// an instance name at 63 UTF-8 bytes, and a control character in it would
+/// make the advertisement unreadable rather than rejected.
+pub fn validate_buddy_name(value: &str) -> Result<(), String> {
+    if value.len() > 63 {
+        return Err("Buddy name must be at most 63 bytes".to_string());
+    }
+    if value.chars().any(char::is_control) {
+        return Err("Buddy name cannot contain control characters".to_string());
+    }
+    Ok(())
 }
 
 /// Home-directory spellings accepted at the *start* of a ControlPath. OpenSSH

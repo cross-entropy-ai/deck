@@ -56,6 +56,19 @@ pub const SETTING_ROWS: &[SettingRow] = &[
         adjust: || Action::Settings(SettingsAction::OpenPage(SettingsPage::Remote)),
     },
     SettingRow {
+        label: "Buddy",
+        value: |s| match &s.buddy {
+            crate::state::BuddyStatus::Listening { clients, .. } if *clients > 0 => {
+                format!("{clients} connected  \u{203a}")
+            }
+            crate::state::BuddyStatus::Listening { .. } => "On  \u{203a}".to_string(),
+            crate::state::BuddyStatus::Failed(_) => "Error  \u{203a}".to_string(),
+            crate::state::BuddyStatus::Off => "Off  \u{203a}".to_string(),
+        },
+        help: |_| "Enter opens the iPad remote-control server".to_string(),
+        adjust: || Action::Settings(SettingsAction::OpenPage(SettingsPage::Buddy)),
+    },
+    SettingRow {
         label: "Exclude",
         value: |s| format!("{} patterns", s.prefs.exclude_patterns.len()),
         help: |_| "Enter opens the pattern editor".to_string(),
@@ -230,6 +243,66 @@ const SUMMARY_LANGUAGE_ROW: SettingRow = SettingRow {
     adjust: || Action::Summary(SummaryAction::OpenLanguageEditor),
 };
 
+const BUDDY_SERVER_ROW: SettingRow = SettingRow {
+    label: "Server",
+    value: |s| if s.prefs.buddy_enabled { "On" } else { "Off" }.to_string(),
+    help: |s| {
+        if s.prefs.buddy_enabled {
+            "Enter stops listening; every device still has to be allowed here first"
+        } else {
+            "Enter listens for the Deck Buddy iPad app on this network"
+        }
+        .to_string()
+    },
+    adjust: || Action::Settings(SettingsAction::ToggleBuddy),
+};
+
+const BUDDY_STATUS_ROW: SettingRow = SettingRow {
+    label: "Status",
+    value: |s| match &s.buddy {
+        crate::state::BuddyStatus::Off if !cfg!(target_os = "macos") => "macOS only".to_string(),
+        crate::state::BuddyStatus::Off => "Not listening".to_string(),
+        crate::state::BuddyStatus::Failed(err) => err.clone(),
+        crate::state::BuddyStatus::Listening { port, clients, .. } => match clients {
+            0 => format!("Listening on port {port}"),
+            1 => format!("Listening on port {port} \u{b7} 1 device"),
+            n => format!("Listening on port {port} \u{b7} {n} devices"),
+        },
+    },
+    help: |s| {
+        // The grant belongs to whatever launched deck, not to deck, and macOS
+        // will not say so — without it the events post successfully and do
+        // nothing at all, which looks exactly like a broken server.
+        if !s.buddy_trusted {
+            "Grant Accessibility to your terminal app in System Settings, then restart it"
+                .to_string()
+        } else {
+            "Devices are discovered over Bonjour; each one has to be allowed once".to_string()
+        }
+    },
+    adjust: || Action::None,
+};
+
+const BUDDY_PORT_ROW: SettingRow = SettingRow {
+    label: "Port",
+    value: |s| s.prefs.buddy_port.to_string(),
+    help: |_| "Set buddy_port in ~/.config/deck/config.yaml".to_string(),
+    adjust: || Action::None,
+};
+
+const BUDDY_NAME_ROW: SettingRow = SettingRow {
+    label: "Name",
+    value: |s| match &s.buddy {
+        // Show what is actually advertised, which is the hostname whenever the
+        // configured name is blank.
+        crate::state::BuddyStatus::Listening { name, .. } => name.clone(),
+        _ if s.prefs.buddy_name.is_empty() => "(hostname)".to_string(),
+        _ => s.prefs.buddy_name.clone(),
+    },
+    help: |_| "How this Mac is listed on the iPad; set buddy_name in config.yaml".to_string(),
+    adjust: || Action::None,
+};
+
 const REMOTES_ROW: SettingRow = SettingRow {
     label: "Remotes",
     value: |s| format!("{} hosts", s.config_remotes.len()),
@@ -356,6 +429,12 @@ pub fn setting_rows(state: &AppState) -> Vec<&'static SettingRow> {
             &SSH_CONTROL_PERSIST_ROW,
             &REMOTES_ROW,
             &PORT_FORWARDS_ROW,
+        ],
+        SettingsPage::Buddy => vec![
+            &BUDDY_SERVER_ROW,
+            &BUDDY_STATUS_ROW,
+            &BUDDY_PORT_ROW,
+            &BUDDY_NAME_ROW,
         ],
     }
 }

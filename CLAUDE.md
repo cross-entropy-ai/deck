@@ -160,14 +160,14 @@ re-parses** (argv boundaries are lost). Three recurring traps:
 Development work (bug fix or new feature):
 
 - **Always create a new branch** before making changes. Use `feature/<name>` or `fix/<name>` naming.
-- Commit on the branch, push, and open a PR into `main`. Do not push code changes directly to `main`.
+- Commit on the branch, then merge it into `main` and push. **Do not open a PR** — nothing here waits on review.
 - Follow existing commit message style: imperative mood, concise summary line, optional body explaining "why".
 
-Releases are the exception — see below.
+Releases skip the branch too — see below.
 
 ## Release
 
-Releases do **not** go through a branch or PR. Tag `main` directly with `vX.Y.Z` and push the tag:
+Releases do **not** go through a branch. Tag `main` directly with `vX.Y.Z` and push the tag:
 
 ```bash
 git tag vX.Y.Z

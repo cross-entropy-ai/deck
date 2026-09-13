@@ -40,6 +40,11 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         }
         SettingsAction::OpenPage(page) => {
             state.settings.push_page(page);
+            // Granting Accessibility takes effect without a restart, so the
+            // cached answer is stale until re-asked.
+            if page == crate::state::SettingsPage::Buddy {
+                fx.push(crate::effects::Effect::RefreshBuddyTrust);
+            }
         }
         SettingsAction::Back => {
             state.settings.pop_page();
@@ -78,6 +83,13 @@ pub(super) fn reduce_settings(state: &mut AppState, action: SettingsAction) -> S
         }
         SettingsAction::CycleSummaryAgent(direction) => {
             state.prefs.cycle_summary_agent(direction);
+            fx.save_config();
+        }
+        SettingsAction::ToggleBuddy => {
+            state.prefs.buddy_enabled = !state.prefs.buddy_enabled;
+            // The listener follows the switch immediately; the save is what
+            // makes it survive a restart.
+            fx.push(crate::effects::Effect::ReconfigureBuddy);
             fx.save_config();
         }
         SettingsAction::ToggleSummary => {

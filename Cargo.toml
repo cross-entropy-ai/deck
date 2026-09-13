@@ -28,6 +28,14 @@ semver = "1"
 ratatui-sectioned-list = "0.3.0"
 ratatui-textarea = "0.9.1"
 confy = { version = "2.0.0", default-features = false, features = ["yaml_conf"] }
+tungstenite = "0.30"
+
+# Only the Buddy server's *event synthesis* is macOS-only. Its transport is
+# not target-gated, so CI (Linux) still compiles and tests the accept loop,
+# the approval handshake, and teardown — the parts most likely to be wrong.
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = { version = "0.25", features = ["highsierra"] }
+core-foundation = "0.10"
 
 [patch.crates-io]
 # Track our long-lived `deck` branch on Junyi-99/vt100-rust, which

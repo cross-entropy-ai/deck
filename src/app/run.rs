@@ -230,6 +230,47 @@ impl App {
             .and_then(|runtime| runtime.lane_mounts())
     }
 
+    /// Drain what the Buddy server has to say: new devices asking to be let
+    /// in, ones that went away, and anything that went wrong with the listener.
+    ///
+    /// The input itself never comes through here — a connection synthesizes on
+    /// its own thread — so this only ever moves the prompt and the status row.
+    fn pump_buddy(&mut self) -> Redraw {
+        let mut redraw = Redraw::No;
+        let mut asked = false;
+        while let Some(event) = self.buddy.try_recv() {
+            match event {
+                crate::infra::buddy::BuddyEvent::Connected { peer, reply } => {
+                    self.buddy.connected(peer, reply);
+                    asked = true;
+                }
+                crate::infra::buddy::BuddyEvent::Disconnected { peer } => {
+                    if self.buddy.disconnected(peer) {
+                        self.state
+                            .overlay
+                            .close(crate::overlay::Modal::BuddyApprove);
+                    }
+                    asked = true;
+                }
+                crate::infra::buddy::BuddyEvent::Error(msg) => {
+                    self.state.show_warning(msg.clone());
+                    self.state.buddy = crate::state::BuddyStatus::Failed(msg);
+                }
+            }
+            redraw = Redraw::Force;
+        }
+        // Retried every tick, not just on an event: a question queued behind
+        // another overlay has to go up when that overlay closes, and an
+        // outstanding one freezes every connection meanwhile.
+        if asked || self.buddy.is_asking() {
+            if self.ask_next_buddy() {
+                redraw = Redraw::Force;
+            }
+            self.refresh_buddy_clients();
+        }
+        redraw
+    }
+
     /// Drain answers from the mount workers. The reducer drops stale generations,
     /// so a late reply for a closed picker is harmless.
     fn pump_mounts(&mut self) -> Redraw {
@@ -556,6 +597,8 @@ impl App {
             self.pump_port_forward()
                 .apply(&mut needs_render, &mut force_render);
             self.pump_mounts()
+                .apply(&mut needs_render, &mut force_render);
+            self.pump_buddy()
                 .apply(&mut needs_render, &mut force_render);
             self.pump_active_pane()
                 .apply(&mut needs_render, &mut force_render);

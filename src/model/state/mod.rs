@@ -282,6 +282,25 @@ pub fn attachable_on_lane<'a>(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FocusTarget(pub usize);
 
+/// What the Buddy server is doing, mirrored into `AppState` so the Settings
+/// row can read it. The row's `value` closure only ever sees `&AppState`, and
+/// runs on every rendered frame — which is also why the Accessibility answer is
+/// cached here rather than re-asked through TCC sixty times a second.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum BuddyStatus {
+    /// Switched off, or not started because this platform cannot synthesize
+    /// input.
+    #[default]
+    Off,
+    Listening {
+        port: u16,
+        name: String,
+        clients: usize,
+    },
+    /// Could not bind, or could not advertise. The message is shown verbatim.
+    Failed(String),
+}
+
 // --- Settings page state ---
 
 /// One page in the hierarchical Settings navigator.
@@ -293,6 +312,7 @@ pub enum SettingsPage {
     Theme,
     Agents,
     Remote,
+    Buddy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -451,6 +471,11 @@ pub struct Prefs {
     /// Whether the inline Summary card is shown. Off collapses the card to
     /// zero height (`summary_card_height`) so the list reclaims the rows.
     pub summary_enabled: bool,
+    /// Whether the Buddy server listens. See `config::Config::buddy_enabled`.
+    pub buddy_enabled: bool,
+    pub buddy_port: u16,
+    /// Bonjour display name; empty means the hostname.
+    pub buddy_name: String,
 }
 
 impl Prefs {
@@ -492,6 +517,9 @@ impl Prefs {
             summary_language: cfg.summary_language.clone(),
             agents_probe_interval_secs: normalize_agents_probe_interval(cfg.agents_probe_interval),
             summary_enabled: cfg.summary_enabled,
+            buddy_enabled: cfg.buddy_enabled,
+            buddy_port: cfg.buddy_port,
+            buddy_name: cfg.buddy_name.clone(),
         }
     }
 
@@ -540,6 +568,9 @@ impl Prefs {
             agents_probe_interval: self.agents_probe_interval_secs,
             summary_enabled: self.summary_enabled,
             transparent_bg: self.transparent_bg,
+            buddy_enabled: self.buddy_enabled,
+            buddy_port: self.buddy_port,
+            buddy_name: self.buddy_name.clone(),
         }
     }
 
@@ -718,6 +749,13 @@ pub struct AppState {
     /// — the two tabs fold independently. Persisted to config
     /// (`collapsed_agent_sections`), restored at startup.
     pub collapsed_agent_sections: HashSet<LaneId>,
+    /// What the Buddy server is doing. Runtime, not persisted — the switch
+    /// that controls it lives in `prefs`.
+    pub buddy: BuddyStatus,
+    /// Whether this process may actually post synthetic events. Cached because
+    /// the Settings row that shows it is re-evaluated every frame; re-asked
+    /// when that page opens.
+    pub buddy_trusted: bool,
 }
 
 /// Auto-expiry windows for the sidebar reload banner. Success fades
@@ -781,6 +819,8 @@ impl AppState {
             hidden_sessions: HashMap::new(),
             collapsed_sections: HashSet::new(),
             collapsed_agent_sections: HashSet::new(),
+            buddy: BuddyStatus::Off,
+            buddy_trusted: true,
         }
     }
 

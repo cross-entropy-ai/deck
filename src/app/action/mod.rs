@@ -120,6 +120,8 @@ pub enum Action {
     /// Add-remote-host picker.
     AddRemote(AddRemoteAction),
     Mount(MountAction),
+    /// Answering the Buddy server's "may this device drive your Mac?" prompt.
+    Buddy(BuddyAction),
 
     None,
 }
@@ -146,10 +148,21 @@ pub enum SettingsAction {
     CycleSummaryAgent(i32),
     /// Toggle the inline Summary card on/off (settings, left/right/Enter).
     ToggleSummary,
+    /// Start or stop the Buddy server (settings "Server" row).
+    ToggleBuddy,
     /// Open the add-remote-host picker (settings "Remotes" row).
     OpenAddRemotePicker,
     /// Open a configured lane's port-forward overlay.
     OpenPortForwards,
+}
+
+/// Answering the Buddy connection prompt. There is deliberately no third
+/// "later" option: the device is sitting there waiting, and leaving it waiting
+/// is what the prompt already does.
+#[derive(Debug)]
+pub enum BuddyAction {
+    Allow,
+    Deny,
 }
 
 /// The kill-confirmation overlay.

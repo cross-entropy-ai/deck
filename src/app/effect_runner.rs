@@ -80,6 +80,14 @@ impl App {
                     self.needs_full_redraw |= *full_redraw;
                 }
                 Effect::SaveConfig => self.save_config(),
+                Effect::BuddyVerdict(allow) => {
+                    self.buddy.answer(*allow);
+                    // Answering may free the screen for the next question, and
+                    // unfreezes the other connections once none is left.
+                    self.ask_next_buddy();
+                }
+                Effect::ReconfigureBuddy => self.reconfigure_buddy(),
+                Effect::RefreshBuddyTrust => self.refresh_buddy_trust(),
                 Effect::SaveSessionOrder(lane) => {
                     let order = crate::state::attachable_on_lane(&self.state.entries, lane)
                         .map(|entry| entry.name.clone())

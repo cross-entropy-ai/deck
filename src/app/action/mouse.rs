@@ -244,6 +244,22 @@ fn modal_mouse_to_action(
     hit: Option<HitKind>,
 ) -> Action {
     match modal {
+        // Same shape as the kill prompt: the two answers are clickable and
+        // every other click is inert, so nothing punches through.
+        Modal::BuddyApprove => {
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                match hit {
+                    Some(HitKind::BuddyAllow) => {
+                        return Action::Buddy(crate::action::BuddyAction::Allow)
+                    }
+                    Some(HitKind::BuddyDeny) => {
+                        return Action::Buddy(crate::action::BuddyAction::Deny)
+                    }
+                    _ => {}
+                }
+            }
+            Action::None
+        }
         Modal::ConfirmKill => {
             // The kill prompt owns the sidebar: a button click confirms/cancels,
             // every other click (including the update banner) is inert, so

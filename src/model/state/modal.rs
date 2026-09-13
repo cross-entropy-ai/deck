@@ -79,7 +79,8 @@ impl Modal {
             | Self::ContextMenu
             | Self::PortForward
             | Self::Help
-            | Self::ConfirmKill => state.overlay.is(self),
+            | Self::ConfirmKill
+            | Self::BuddyApprove => state.overlay.is(self),
         }
     }
 }

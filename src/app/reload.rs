@@ -130,6 +130,9 @@ impl App {
         // run for it — otherwise a reload that changed the duration *and* added
         // a forward would silently drop the new rule.
         let ssh_forwards_rebuilt = self.reconfigure_ssh_if_needed(&cfg, stop_hosts);
+        // Same as the save path: a hand-edited `buddy_*` has to move the
+        // listener, not just the value the settings page shows.
+        self.reconfigure_buddy();
 
         let changes = plan_lane_changes(
             &old_remotes,
